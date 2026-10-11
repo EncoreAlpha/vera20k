@@ -82,7 +82,12 @@ impl RmgOptions {
         self.time = self.time.clamp(0, 3);
         self.ruggedness = self.ruggedness.clamp(0, 100);
         self.water_amount = self.water_amount.clamp(0, 100);
-        self.num_players = self.num_players.clamp(2, 8);
+        // 32-player extension: the player-count ceiling moves from stock 8 to 32.
+        // This governs how many houses a generated map must seat; it does **not**
+        // govern how large the map is — `rmg::generated_dimensions` clamps its
+        // dimension-table index independently, so a 32-player map still uses the
+        // 8-player size row. See todo/32-player-plan.md phase 3.
+        self.num_players = self.num_players.clamp(2, 32);
         self.tiberium = self.tiberium.clamp(1, 100);
         self.tiberium_layout = self.tiberium_layout.clamp(0, 100);
         self.vegetation = self.vegetation.clamp(0, 100);

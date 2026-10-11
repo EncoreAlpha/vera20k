@@ -152,15 +152,20 @@ impl MapGeometry {
 /// asymmetry (width re-narrowed, height kept wide) is preserved even though
 /// clamped options never reach it.
 pub fn generated_dimensions(options: &RmgOptions) -> (i32, i32) {
-    let players = options.num_players.clamp(2, 8);
-    // The dimension table has seven entries covering the 2..8 player span the
-    // clamp above admits. Widening that clamp for the 32-player extension
-    // (see todo/32-player-plan.md phase 3) must not index past the table: the
-    // VERA20k decision is to keep the existing size table and let 32-player
-    // maps use the 8-player row, so the index is clamped independently of the
-    // player count.
-    let index = usize::try_from(players - 2).unwrap_or(0).min(DIM_MIN.len() - 1);
-    debug_assert!(index < DIM_MIN.len(), "dimension row must stay in the table");
+    // The dimension table has seven rows covering stock's 2..8 player span and
+    // is deliberately **not** extended for the 32-player work: a 32-player map
+    // reuses the 8-player row (120x120 interior at size option 3). The index is
+    // therefore clamped on its own rather than through a player-count clamp, so
+    // widening `RmgOptions::num_players` cannot push it past the table. See
+    // todo/32-player-plan.md phase 3.
+    let player_row = usize::try_from(options.num_players.saturating_sub(2))
+        .unwrap_or(0)
+        .min(DIM_MIN.len() - 1);
+    debug_assert!(
+        player_row < DIM_MIN.len(),
+        "dimension row must stay in the table"
+    );
+    let index = player_row;
 
     let third = x87::TruncF64::from_f64(f64::from(f32::from_bits(THIRD_F32_BITS)));
     let scale =
@@ -486,7 +491,14 @@ mod tests {
             ..Default::default()
         };
         options.normalize();
-        assert!((2..=8).contains(&options.num_players));
+        // Stock clamped to 2..8; the 32-player extension widens the seat count
+        // to 32 while leaving the dimension table alone, so this range is a
+        // deliberate divergence rather than the native bound.
+        assert!(
+            (2..=32).contains(&options.num_players),
+            "player count must land in the 32-player range, got {}",
+            options.num_players
+        );
         assert!(!executed_stages(&options).is_empty());
         let geometry = MapGeometry::from_options(&options);
         assert!(geometry.gen_w > 0 && geometry.gen_h > 0);

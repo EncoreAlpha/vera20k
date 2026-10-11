@@ -548,8 +548,11 @@ mod tests {
     #[test]
     fn mutators_clamp_through_normalize() {
         let mut state = opened();
+        // Stock clamped the player count to 8; the 32-player extension raises
+        // that ceiling, so an out-of-range request now lands on 32 instead.
+        // See todo/32-player-plan.md phase 3.
         state.set_num_players(99);
-        assert_eq!(state.options.num_players, 8);
+        assert_eq!(state.options.num_players, 32);
         state.set_num_players(0);
         assert_eq!(state.options.num_players, 2);
     }

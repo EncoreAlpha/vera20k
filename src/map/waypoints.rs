@@ -15,8 +15,19 @@ pub struct Waypoint {
     pub ry: u16,
 }
 
-/// Standard multiplayer/skirmish start waypoints in RA2/YR.
-pub const MULTIPLAYER_START_WAYPOINTS: std::ops::RangeInclusive<u32> = 0..=7;
+/// Standard multiplayer/skirmish start waypoints.
+///
+/// Stock gamemd reads exactly eight numeric `[Waypoints]` keys, and this range
+/// reproduces that. The 32-player extension widens it to 32 so a generated map
+/// can seat one start per house — a deliberate divergence from stock, so a map
+/// authored with waypoints past 7 becomes selectable in a skirmish it would not
+/// be in retail. See todo/32-player-plan.md phase 3.
+pub const MULTIPLAYER_START_WAYPOINTS: std::ops::RangeInclusive<u32> = 0..=31;
+
+/// Houses a skirmish can seat, from the 32-player extension. A stock map
+/// exposes at most eight starts, so `skirmish_player_capacity` stays below this
+/// for retail content; the ceiling matters only for generated maps.
+pub const MAX_SKIRMISH_PLAYERS: i32 = 32;
 
 /// Native fallback when a map defines neither a usable `[Waypoints]` start nor
 /// a non-zero `[RandomMap] NumPlayers` value.
@@ -29,10 +40,12 @@ pub const DEFAULT_SKIRMISH_PLAYER_CAPACITY: i32 = 8;
 /// validated by this UI query. Only when that count is zero does it consult
 /// `[RandomMap] NumPlayers`, with zero/missing falling back to eight.
 ///
-/// The eight-key scan is native behavior, and VERA20k's 32-player extension
-/// keeps reading the same range — a 32-player map's starts beyond waypoint 7
-/// are not discoverable through this query, which is a documented limit of the
-/// shell rather than a bug. See todo/32-player-plan.md phase 3.
+/// Stock counted exactly eight numeric `[Waypoints]` keys; the 32-player
+/// extension counts the wider `MULTIPLAYER_START_WAYPOINTS` range, so a map
+/// that starts past waypoint 7 now reports the extra seats. Either way the
+/// result is clamped to [`MAX_SKIRMISH_PLAYERS`]: the lobby cannot seat more
+/// houses than the bit-mask ceiling allows, and reporting the raw count would
+/// let a map ask for slots that cannot be bound.
 pub fn skirmish_player_capacity(ini: &IniFile) -> i32 {
     let waypoint_count = ini.section("Waypoints").map_or(0, |section| {
         MULTIPLAYER_START_WAYPOINTS
@@ -40,20 +53,21 @@ pub fn skirmish_player_capacity(ini: &IniFile) -> i32 {
             .count()
     });
     if waypoint_count != 0 {
-        // The old expect text ("the native query examines only eight keys")
-        // described the native ceiling, not an invariant of this function: the
-        // count is bounded by MULTIPLAYER_START_WAYPOINTS, so widening that range
-        // stays safe. Keep the conversion checked but state the real bound.
-        return i32::try_from(waypoint_count).expect(
-            "waypoint count is bounded by MULTIPLAYER_START_WAYPOINTS and fits i32",
-        );
+        let counted = i32::try_from(waypoint_count)
+            .expect("waypoint count is bounded by MULTIPLAYER_START_WAYPOINTS and fits i32");
+        return counted.min(MAX_SKIRMISH_PLAYERS);
     }
 
     let random_map_players = ini.section_or_empty("RandomMap").read_int("NumPlayers", 0);
     if random_map_players == 0 {
         DEFAULT_SKIRMISH_PLAYER_CAPACITY
-    } else {
+    } else if random_map_players < 0 {
+        // Stock passes a negative `[RandomMap] NumPlayers` through untouched:
+        // it is the "let the generator decide" sentinel, not a seat count.
+        // Clamping it would turn "random" into a one-player match.
         random_map_players
+    } else {
+        random_map_players.min(MAX_SKIRMISH_PLAYERS)
     }
 }
 
@@ -275,22 +289,57 @@ mod tests {
 
     #[test]
     fn test_multiplayer_start_waypoints_are_sorted_and_filtered() {
+        // Indices 0, 3 and 11 are inside the start range; 99 is a mission
+        // waypoint above it. Stock's range stopped at 7, so 11 was filtered out
+        // there; the 32-player range admits it (deliberate divergence — see
+        // MULTIPLAYER_START_WAYPOINTS).
         let ini = IniFile::from_str(
             "[Basic]\nNewINIFormat=5\n[Waypoints]\n11=200300\n3=100200\n0=100050\n99=55098\n",
         );
         let waypoints = parse_waypoints(&ini);
         let starts = multiplayer_start_waypoints(&waypoints);
-        assert_eq!(starts.len(), 2);
+        assert_eq!(starts.len(), 3);
         assert_eq!(starts[0].index, 0);
         assert_eq!(starts[1].index, 3);
+        assert_eq!(starts[2].index, 11);
         assert_eq!(first_multiplayer_start(&waypoints), Some(starts[0]));
     }
 
+    /// The start range ends at the 32-player ceiling; anything above it is a
+    /// mission waypoint and must not become a seat.
     #[test]
-    fn skirmish_capacity_counts_native_non_minus_one_waypoint_values() {
+    fn start_range_excludes_waypoints_above_the_player_ceiling() {
+        let ini = IniFile::from_str("[Waypoints]\n0=100050\n31=300900\n32=320900\n99=990099\n");
+        let starts = multiplayer_start_waypoints(&parse_waypoints(&ini));
+        let indices: Vec<u32> = starts.iter().map(|wp| wp.index).collect();
+        assert_eq!(indices, vec![0, 31], "index 32 is one past the ceiling");
+    }
+
+    #[test]
+    fn skirmish_capacity_counts_non_minus_one_waypoint_values() {
+        // Waypoints 0, 7 and 8 carry a cell; 1 and 2 are the native -1/-2
+        // sentinels and do not count. Stock stopped counting at index 7, so a
+        // key of 8 was invisible here; the 32-player range admits it, which is
+        // the intended divergence (see MULTIPLAYER_START_WAYPOINTS).
         let ini = IniFile::from_str("[Waypoints]\n0=100011\n1=-1\n2=-2\n7=120034\n8=130040\n");
 
-        assert_eq!(skirmish_player_capacity(&ini), 3);
+        assert_eq!(skirmish_player_capacity(&ini), 4);
+    }
+
+    /// A map may not declare more starts than the extension can seat, and the
+    /// shell must be told rather than silently truncating the lobby.
+    #[test]
+    fn skirmish_capacity_never_exceeds_the_player_ceiling() {
+        let mut ini = String::from("[Waypoints]\n");
+        for index in 0..40 {
+            ini.push_str(&format!("{index}={}034\n", 100 + index));
+        }
+        let capacity = skirmish_player_capacity(&IniFile::from_str(&ini));
+        assert_eq!(
+            capacity,
+            MAX_SKIRMISH_PLAYERS,
+            "a map with 40 starts must report the ceiling, not 40"
+        );
     }
 
     #[test]

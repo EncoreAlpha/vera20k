@@ -205,7 +205,28 @@ fn archipelago(ctx: &mut BlobCtx<'_>, args: &WaterArgs) {
             break value;
         }
     };
-    let islands = args.num_players + extra;
+    // `partition_grid` splits the playable rect by ceil(sqrt(n)), so the drawn
+    // count sets each island's size: `n = num_players + extra` gives up to 48
+    // islands at 32 players, which on the unchanged 8-player size table leaves
+    // slivers too small to build on. Cap the count so the thinnest cell keeps a
+    // workable area. Deliberate divergence from stock's unbounded draw; see
+    // todo/32-player-plan.md phase 3.
+    let playable_cells = args.playable.w.max(0) as i64 * args.playable.h.max(0) as i64;
+    // Each island needs at least MIN_ISLAND_CELLS of the playable area to stay
+    // buildable; stock's 2..8 player range never approaches this bound.
+    const MIN_ISLAND_CELLS: i64 = 900;
+    let island_ceiling = if playable_cells > 0 {
+        (playable_cells / MIN_ISLAND_CELLS).clamp(1, i64::from(i32::MAX)) as i32
+    } else {
+        args.num_players + extra
+    };
+    let islands = (args.num_players + extra).min(island_ceiling);
+    if islands < args.num_players + extra {
+        log::debug!(
+            "archipelago: capped {} islands to {islands} for a {playable_cells}-cell playable area",
+            args.num_players + extra
+        );
+    }
 
     let rect4 = [
         args.playable.x,

@@ -13,8 +13,13 @@ use crate::skirmish_modes::SkirmishGameMode;
 pub const RANDMAP_SED: &str = "RandMap.Sed";
 /// `[RandomMap] NumPlayers` is clamped to this inclusive range before
 /// generation, so the sentinel has to advertise the same span.
+///
+/// Stock clamps to 2..8. The upper bound moves to 32 for the 32-player
+/// extension: `RmgOptions::normalize` accepts the same span, and a sentinel that
+/// still advertised 8 would make a 9..32 player random map unselectable in the
+/// shell. Deliberate divergence from stock — see todo/32-player-plan.md phase 3.
 pub const RANDOM_MAP_MIN_PLAYERS: u8 = 2;
-pub const RANDOM_MAP_MAX_PLAYERS: u8 = 8;
+pub const RANDOM_MAP_MAX_PLAYERS: u8 = 32;
 /// Start slots the generator produces before a `.SED` supplies `NumPlayers`.
 /// This is a *default quota*, not a capacity limit: `RANDOM_MAP_MAX_PLAYERS`
 /// used to alias it, which capped the sentinel at 4 and made 5-8 player random
@@ -491,7 +496,11 @@ mod tests {
         // Pinned to literals on purpose: the capacity used to alias the
         // generated-start quota, which silently capped random maps at 4.
         assert_eq!(RANDOM_MAP_MIN_PLAYERS, 2);
-        assert_eq!(RANDOM_MAP_MAX_PLAYERS, 8, "NumPlayers clamps to 2..8");
+        // Stock clamped to 2..8. The 32-player extension raises the ceiling so a
+        // 9..32 player random map stays selectable; `RmgOptions::normalize`
+        // accepts the same span. Deliberate divergence from stock —
+        // see todo/32-player-plan.md phase 3.
+        assert_eq!(RANDOM_MAP_MAX_PLAYERS, 32, "NumPlayers clamps to 2..32");
         assert_ne!(
             RANDOM_MAP_MAX_PLAYERS, RANDOM_MAP_GENERATED_START_QUOTA,
             "capacity must not be re-aliased to the start quota"
@@ -502,7 +511,11 @@ mod tests {
             "Random Map",
             i32::from(RANDOM_MAP_GENERATED_START_QUOTA),
         );
-        assert_eq!(rec.max_players, Some(8));
+        // Capacity comes from the player ceiling, not the start quota: stock
+        // advertised 8 here. Raising it to 32 keeps a 32-player random map
+        // selectable. Deliberate divergence — see todo/32-player-plan.md phase 3.
+        assert_eq!(rec.max_players, Some(32));
+        assert_eq!(rec.max_players, Some(RANDOM_MAP_MAX_PLAYERS));
     }
 
     #[test]

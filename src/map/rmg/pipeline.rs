@@ -51,8 +51,28 @@ pub const LAND_TYPES: usize = super::phases::zones::LAND_TYPES;
 
 /// The generator's default ground level (`MapSeed+0x30C` = 4).
 const DEFAULT_LEVEL: u8 = 4;
-/// The generated-start quota standard skirmish writes (`MapSeed` start slots).
+/// The generated-start quota stock skirmish writes (`MapSeed` start slots).
+///
+/// This is a **default, not a capacity**: `MapSeed`'s slot count is written from
+/// the requested player count, and stock skirmish happens to ask for four. The
+/// 32-player extension therefore raises it to seat one start per house — a
+/// deliberate divergence from stock, not parity (stock's own waypoint scan stops
+/// at eight; see `map::waypoints::MULTIPLAYER_START_WAYPOINTS`).
+///
+/// Raising the quota makes the starts phase divide slots across regions by cell
+/// count (`phases::starts`), so the distribution scales without further change.
+/// Denser starts on the unchanged size table are accepted: 32 houses share the
+/// 8-player interior. See todo/32-player-plan.md phase 3.
 pub const STANDARD_START_QUOTA: i32 = 4;
+
+/// Start slots for a run, one per requested house, never below the stock quota.
+///
+/// Native asks for four regardless of the house count it was given, which is why
+/// stock 8-player maps place two houses per start. That is a stock limitation,
+/// not a rule to reproduce at 32.
+fn start_quota_for(num_players: i32) -> i32 {
+    STANDARD_START_QUOTA.max(num_players.clamp(1, i32::from(u8::MAX)))
+}
 
 /// Pre-resolved inputs for one generation run.
 pub struct PipelineInputs<'a> {
@@ -288,7 +308,7 @@ pub fn run_pipeline(
         );
         let args = StartsArgs {
             map_type: inputs.map_type,
-            start_quota: STANDARD_START_QUOTA,
+            start_quota: start_quota_for(inputs.num_players),
             num_players: inputs.num_players,
             tiberium_layout: inputs.tiberium_layout,
             gen_w,
@@ -863,8 +883,12 @@ mod tests {
             })
             .count();
         assert!(assigned > 0, "the pipeline assigned real tiles");
-        // Waypoints are bounded by the start quota.
-        assert!(output.waypoints.len() <= STANDARD_START_QUOTA as usize);
+        // Waypoints are bounded by the run's start quota, which scales with the
+        // requested house count.
+        assert!(
+            output.waypoints.len() <= start_quota_for(4) as usize,
+            "waypoints must not exceed the quota"
+        );
     }
 
     #[test]
@@ -965,9 +989,11 @@ mod tests {
         );
         // Conservation: every quota slot is either written or counted. This is
         // what pins the counter to the whole remaining tail rather than to 1.
+        // The quota tracks the fixture's own `num_players` (4), so this stays
+        // the stock value without hardcoding it.
         assert_eq!(
             output.waypoints.len() + output.unfilled_start_slots,
-            STANDARD_START_QUOTA as usize,
+            start_quota_for(4) as usize,
             "written + unfilled must account for every start slot"
         );
     }

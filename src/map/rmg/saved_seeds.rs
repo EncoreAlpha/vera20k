@@ -345,10 +345,14 @@ mod tests {
             description: "Prior map".into(),
         };
         let loaded = load_saved_seed(&path, &current, "Localized random map").unwrap();
+        // `NumPlayers=99` clamps to the ceiling. Stock clamped that to 8; the
+        // 32-player extension raises the ceiling, so a saved request for 99 now
+        // yields 32 rather than being silently reduced. Deliberate divergence —
+        // see todo/32-player-plan.md phase 3.
         let expected = RmgOptions {
             seed: 4660,
             water_amount: 73,
-            num_players: 8,
+            num_players: 32,
             description: "Localized random map".into(),
             ..current.clone()
         };
