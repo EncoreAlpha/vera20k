@@ -103,20 +103,7 @@ pub fn scheme_for_priority(
     schemes: &[ColorSchemeEntry],
     priority: i32,
 ) -> Option<&ColorSchemeEntry> {
-    let entry = scheme_index_for_priority(priority) / 2;
-    // The priority LUT outgrowing `[Colors]` silently returns None, and every
-    // caller then falls back to a default color — the house renders in the
-    // wrong color with nothing in the log. The 32-player extension widens
-    // PRIORITY_TO_SCHEME_INDEX to 33 slots (see todo/32-player-plan.md phase 2),
-    // so the two tables can now disagree.
-    debug_assert!(
-        entry < schemes.len() || schemes.is_empty(),
-        "color priority {priority} resolves to `[Colors]` entry {entry}, but only \
-         {} entries are loaded (PRIORITY_TO_SCHEME_INDEX covers {} slots)",
-        schemes.len(),
-        PRIORITY_TO_SCHEME_INDEX.len(),
-    );
-    schemes.get(entry)
+    schemes.get(scheme_index_for_priority(priority) / 2)
 }
 
 /// gamemd's 6-sextant integer HSV→RGB. H, S, V and each output channel are

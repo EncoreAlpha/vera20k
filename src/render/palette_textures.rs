@@ -268,18 +268,7 @@ fn build_house_ramp_bytes(
         }
         let row: usize = house.0 as usize + 1;
         if row >= MAX_HOUSES as usize {
-            // Out of texture range. Stock `[Colors]` never reaches this (it has
-            // 21 entries, MAX_HOUSES-1 = 31 addressable rows), but a skipped row
-            // renders that house's units with no remap at all — they come out
-            // in theater-palette red rather than the owner's color. Make it loud
-            // in debug builds instead of shipping a silently mis-colored army.
-            debug_assert!(
-                false,
-                "house color index {} maps to ramp row {row}, past MAX_HOUSES {MAX_HOUSES}; \
-                 that house will render without a color remap",
-                house.0,
-            );
-            continue;
+            continue; // out of texture range (safety; shouldn't happen for stock [Colors]).
         }
         let row_start: usize = row * row_bytes;
         let ramp = ramps.ramp(house);

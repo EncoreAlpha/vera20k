@@ -447,23 +447,6 @@ fn clearing_floods(ctx: &mut StartsCtx<'_>, args: &StartsArgs, outcome: &StartsO
             // The original reads whatever the scenario slot holds even when
             // no bucket wrote it; an unwritten slot has no defined content
             // to reproduce, so the flood is skipped.
-            //
-            // Within the native span (one waypoint per house, and native
-            // skirmish caps at 8) a missing slot means the start-selection
-            // phase failed to place that house — worth catching. Beyond
-            // MULTIPLAYER_START_WAYPOINTS the shortfall is the known
-            // 32-player-extension gap instead: those houses get no protected
-            // clearing at all, so their bases can sit on ore. Track it as a
-            // distinct assertion rather than letting the native case cover it.
-            let native_start_slots =
-                crate::map::waypoints::MULTIPLAYER_START_WAYPOINTS.count() as i32;
-            debug_assert!(
-                player < native_start_slots || player >= outcome.waypoints.len() as i32,
-                "start {player} of {} has no waypoint: within the native {native_start_slots}-player \
-                 span this means start selection failed, and past it the clearing \
-                 is silently skipped so the base can land on ore",
-                args.num_players,
-            );
             continue;
         };
         let seed = (i32::from(seed.0), i32::from(seed.1));

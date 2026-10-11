@@ -28,11 +28,6 @@ pub const DEFAULT_SKIRMISH_PLAYER_CAPACITY: i32 = 8;
 /// of `-1` and counts every result other than `-1`; the coordinate itself is not
 /// validated by this UI query. Only when that count is zero does it consult
 /// `[RandomMap] NumPlayers`, with zero/missing falling back to eight.
-///
-/// The eight-key scan is native behavior, and VERA20k's 32-player extension
-/// keeps reading the same range — a 32-player map's starts beyond waypoint 7
-/// are not discoverable through this query, which is a documented limit of the
-/// shell rather than a bug. See todo/32-player-plan.md phase 3.
 pub fn skirmish_player_capacity(ini: &IniFile) -> i32 {
     let waypoint_count = ini.section("Waypoints").map_or(0, |section| {
         MULTIPLAYER_START_WAYPOINTS
@@ -40,13 +35,7 @@ pub fn skirmish_player_capacity(ini: &IniFile) -> i32 {
             .count()
     });
     if waypoint_count != 0 {
-        // The old expect text ("the native query examines only eight keys")
-        // described the native ceiling, not an invariant of this function: the
-        // count is bounded by MULTIPLAYER_START_WAYPOINTS, so widening that range
-        // stays safe. Keep the conversion checked but state the real bound.
-        return i32::try_from(waypoint_count).expect(
-            "waypoint count is bounded by MULTIPLAYER_START_WAYPOINTS and fits i32",
-        );
+        return i32::try_from(waypoint_count).expect("the native query examines only eight keys");
     }
 
     let random_map_players = ini.section_or_empty("RandomMap").read_int("NumPlayers", 0);
