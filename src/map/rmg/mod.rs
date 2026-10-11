@@ -153,7 +153,14 @@ impl MapGeometry {
 /// clamped options never reach it.
 pub fn generated_dimensions(options: &RmgOptions) -> (i32, i32) {
     let players = options.num_players.clamp(2, 8);
-    let index = (players - 2) as usize;
+    // The dimension table has seven entries covering the 2..8 player span the
+    // clamp above admits. Widening that clamp for the 32-player extension
+    // (see todo/32-player-plan.md phase 3) must not index past the table: the
+    // VERA20k decision is to keep the existing size table and let 32-player
+    // maps use the 8-player row, so the index is clamped independently of the
+    // player count.
+    let index = usize::try_from(players - 2).unwrap_or(0).min(DIM_MIN.len() - 1);
+    debug_assert!(index < DIM_MIN.len(), "dimension row must stay in the table");
 
     let third = x87::TruncF64::from_f64(f64::from(f32::from_bits(THIRD_F32_BITS)));
     let scale =
@@ -388,6 +395,29 @@ mod tests {
         assert_eq!(dims(8, 2), (113, 113));
         assert_eq!(dims(8, 3), (120, 120));
         assert_eq!(dims(5, 0), (80, 80), "endpoint table shifts at 5 players");
+    }
+
+    /// The dimension table has seven rows covering 2..8 players. Player counts
+    /// outside that span must clamp to a row rather than index past the table —
+    /// the 32-player extension keeps the existing size table, so 32 players map
+    /// onto the 8-player row (120x120 interior at size option 3).
+    #[test]
+    fn player_counts_outside_the_table_span_clamp_to_a_row() {
+        let dims = |players: i32, size: i32| {
+            generated_dimensions(&RmgOptions {
+                num_players: players,
+                width: size,
+                height: size,
+                ..Default::default()
+            })
+        };
+        let eight_player_row = dims(8, 3);
+        // Native clamps to 2..8, so these all match the 8-player row today.
+        assert_eq!(dims(9, 3), eight_player_row);
+        assert_eq!(dims(32, 3), eight_player_row);
+        assert_eq!(dims(255, 3), eight_player_row);
+        assert_eq!(dims(0, 3), dims(2, 3));
+        assert_eq!(dims(-4, 3), dims(2, 3));
     }
 
     #[test]
