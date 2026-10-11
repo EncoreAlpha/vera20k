@@ -56,6 +56,15 @@ pub enum RulesLayerKind {
     LangRule,
     GameMode,
     Scenario,
+    /// The 32-player extension's own data, applied last.
+    ///
+    /// **Not a native source.** gamemd has no such layer; every entry that
+    /// reaches it is extension-authored data (currently the extra house colors).
+    /// It must stay last so appended `[Colors]` entries land after the stock
+    /// ones — `parse_color_schemes` preserves declaration order and
+    /// `PRIORITY_TO_SCHEME_INDEX` addresses entries by that order. See
+    /// `crate::rules::extension_overlay`.
+    Extension,
 }
 
 #[derive(Debug, Clone)]

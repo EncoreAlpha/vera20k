@@ -25,11 +25,39 @@ pub struct ColorSchemeEntry {
     pub hsv: [u8; 3],
 }
 
-/// Player color priority (lobby slot 0..=7, plus the trailing default) → runtime
-/// color-scheme array index. Matches gamemd's SessionClass priority table. The 8
-/// multiplayer colors land on the scattered indices below; index 8 is the default
-/// also used for the random/observer priority.
-pub const PRIORITY_TO_SCHEME_INDEX: [usize; 9] = [3, 11, 21, 29, 13, 25, 17, 15, 5];
+/// Player color priority (lobby slot, plus the trailing default) → runtime
+/// color-scheme array index. Matches gamemd's SessionClass priority table.
+///
+/// **The first nine entries are native and must not change.** Priority 0..=7 are
+/// the eight stock multiplayer colors; entry 8 is the default also used for the
+/// random/observer priority. Their values are fixed by the retail `rulesmd.ini`
+/// `[Colors]` order (verified against ModEnc's multiplayer color table):
+/// Gold, DarkRed, DarkBlue, DarkGreen, Orange, DarkSky, Purple, Magenta,
+/// LightGrey. Changing any of them moves stock 8-player behavior.
+///
+/// Entries 9..=31 are VERA20k's 32-player extension and have **no native
+/// precedent** — see todo/32-player-plan.md phase 2 for the derivation:
+///   - 9..16   reuse stock entries 3,4,9,11,13,16,17,18
+///              (Grey, Red, LightBlue, NeonBlue, Green, Yellow, Purple2, Purple3)
+///   - 17..31  new `[Colors]` entries added in the VERA20k override layer
+/// Entry 32 is the random/observer default and repeats stock LightGrey (scheme 5)
+/// so a 32-player match without explicit colors still resolves.
+///
+/// Values are `entry * 2 + 1`: the odd half of the doubled scheme array, which is
+/// the remap band. Stock `[Colors]` also carries three entries that must NOT be
+/// reused as player colors — NeonGreen (15, H=0,S=0,V=0, hides superweapon
+/// timers and power bars), AlliedLoad (19) and SovietLoad (20) (loading screen
+/// only; reuse corrupts the loading screen).
+pub const PRIORITY_TO_SCHEME_INDEX: [usize; 33] = [
+    // 0..=7 stock multiplayer colors, 8 = default. Native, do not reorder.
+    3, 11, 21, 29, 13, 25, 17, 15, 5,
+    // 9..=16 reuse stock entries 3,4,9,11,13,16,17,18.
+    7, 9, 19, 23, 27, 33, 35, 37,
+    // 17..=31 VERA20k override-layer entries 21..=35.
+    43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71,
+    // 32 = the trailing default, same as slot 8: entry 2 (LightGrey).
+    5,
+];
 
 /// Scheme index for priority `-2` (random / no explicit color choice).
 pub const RANDOM_PRIORITY_SCHEME_INDEX: usize = 5;

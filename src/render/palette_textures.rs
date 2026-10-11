@@ -26,7 +26,13 @@ use crate::rules::house_colors::{HouseColorIndex, HouseColorRamps, NO_REMAP};
 /// Maximum number of houses supported in the per-house ramp texture
 /// (per project_scale_target). Row 0 is reserved for the no-remap fallback,
 /// so up to MAX_HOUSES - 1 distinct houses are addressable.
-pub const MAX_HOUSES: u32 = 32;
+///
+/// VERA20k's 32-player target needs 32 addressable house rows on top of that
+/// fallback, hence 33. Texture sampling is `textureLoad` with integer
+/// coordinates (`sprite_voxel_shader.wgsl:253`, `terrain_packed_voxel.wgsl:13`),
+/// so the row count does not need to be a power of two. See
+/// todo/32-player-plan.md phase 2.
+pub const MAX_HOUSES: u32 = 33;
 
 /// Number of palette entries (RA2 standard: 256 colors).
 pub const PALETTE_ENTRIES: u32 = 256;

@@ -345,6 +345,16 @@ impl NativeRulesProcessOwner {
             layers.push(RulesLayerKind::GameMode, mode.clone());
         }
         layers.push(RulesLayerKind::Scenario, map_rules_overrides.clone());
+        // Extension data goes last, unconditionally. Appending after the
+        // retail and map sources keeps `parse_color_schemes`'s declaration
+        // order aligned with `PRIORITY_TO_SCHEME_INDEX`, and pushing it outside
+        // the `if let` covers campaign too — campaign passes no GameMode layer
+        // (`init.rs` selects a scenario-named INI instead), so gating on the
+        // mode override would silently drop the 32-player colors there.
+        layers.push(
+            RulesLayerKind::Extension,
+            crate::rules::extension_overlay::extension_colors_ini(),
+        );
         layers
     }
 

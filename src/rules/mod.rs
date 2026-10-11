@@ -151,6 +151,7 @@ pub mod sound_ini;
 pub mod superweapon_type;
 pub mod team_ai_ini;
 pub mod terrain_asset_catalog;
+pub mod extension_overlay;
 pub mod terrain_object_type;
 pub mod terrain_rules;
 pub mod tiberium_type;
