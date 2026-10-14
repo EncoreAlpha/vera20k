@@ -784,6 +784,19 @@ pub(crate) fn process_boarding_passenger(
     let transport_obj = rules.object(&transport_type_str);
     let transport_gunner = transport_obj.map(|obj| obj.gunner).unwrap_or(false);
     let transport_open_topped = transport_obj.map(|obj| obj.open_topped).unwrap_or(false);
+    let infantry_absorber_entry =
+        sim.substrate
+            .entities
+            .get(transport_id)
+            .is_some_and(|transport| {
+                transport.category() == EntityCategory::Structure
+                    && sim
+                        .substrate
+                        .entities
+                        .get(pax_id)
+                        .is_some_and(|passenger| passenger.category() == EntityCategory::Infantry)
+                    && transport_obj.is_some_and(|object| object.infantry_absorb)
+            });
 
     let can_board = if sim
         .substrate
@@ -854,12 +867,26 @@ pub(crate) fn process_boarding_passenger(
         {
             sim.invalidate_house_power(owner, false);
         }
+        // Infantry::PerCellProcess writes `+0x439 = 1` immediately before
+        // Limbo for InfantryAbsorb (`0x0051A30F`). Add_Tracking then skips its
+        // house-total arm while retaining the per-type count; the explicit
+        // post-Limbo tail removes the old `+0x2F4` contribution and clears
+        // `+0x438` (`0x0051A327..0x0051A348`).
+        if infantry_absorber_entry {
+            sim.set_infantry_absorber_entry(pax_id, true);
+        }
         // CargoClass::AddPassenger conceals the passenger before splicing it
         // into the cargo chain. Techno Limbo owns BREAK, Mark removal, and
         // LogicVector removal in that order.
         let context = UninitContext::new(Some(rules), registry).with_effects(effects);
         if sim.techno_limbo_with_context(pax_id, context) != ConcealOutcome::Concealed {
+            if infantry_absorber_entry {
+                sim.set_infantry_absorber_entry(pax_id, false);
+            }
             return BoardingOutcome::Refused;
+        }
+        if infantry_absorber_entry {
+            sim.account_infantry_absorber_entry(pax_id);
         }
         // PerCellProcess clears OnBridge in both Unit arms (`0x0073A297`,
         // `0x0073A6F5`) and the Infantry transport arm (`0x0051A407`), not the
@@ -901,6 +928,10 @@ pub(crate) fn process_boarding_passenger(
             // No mutation can race the single-threaded transaction, but recover
             // the passenger rather than stranding a concealed object if an
             // invariant is broken.
+            if infantry_absorber_entry {
+                // Reveal's Add_Tracking must observe both native latches clear.
+                sim.set_infantry_absorber_entry(pax_id, false);
+            }
             let _ = sim.reveal_entity_with_context(pax_id, context);
             return BoardingOutcome::Refused;
         }

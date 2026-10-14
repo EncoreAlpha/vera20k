@@ -299,11 +299,14 @@ fn mission_construction(
 
 /// `BuildingClass::Mission_Unload` (`0x0044D880`). A building with
 /// occupants (`vt+0x408`) first hands every one to `SellBuilding(0, 0)`
-/// (`0x0044D89C`). An absorber holding passengers (`InfantryAbsorb=` /
-/// `UnitAbsorb=`, Type `+0x16AE`/`+0x16AF`, Passengers `+0x114`) and a
-/// `WeaponsFactory=` (`+0x16BD`) then take their own arms. The absorber's
-/// passenger mechanism remains with its existing owner; the factory arm
-/// below uses the shared Techno Door, Drive track and Unit PerCell owners.
+/// (`0x0044D89C`). Native admits the shared absorber scan when either
+/// `UnitAbsorb=` (`Type+0x16AE`) or `InfantryAbsorb=` (`+0x16AF`) is set
+/// (`0x0044D8A7..0x0044D8DF`); the later success tail independently checks
+/// `InfantryAbsorb` (`0x0044DBA9..0x0044DBB7`). This issue's Bio Reactor path
+/// enters that shared scan only for `InfantryAbsorb=`. The UnitAbsorb-only
+/// path remains outside this contribution. A `WeaponsFactory=` (`+0x16BD`)
+/// then takes its own arm; the factory arm below uses the shared Techno Door,
+/// Drive track and Unit PerCell owners.
 /// Every other building queues Guard
 /// (`vt+0x1E8(5, 0)` at `0x0044E379`) and returns 1.
 ///
@@ -330,8 +333,16 @@ fn mission_unload(
         .passenger_role
         .cargo()
         .is_some_and(|cargo| !cargo.is_empty());
-    if (object.infantry_absorb || object.unit_absorb) && holds_passengers {
-        return None;
+    if object.infantry_absorb && holds_passengers {
+        return Some(
+            crate::sim::transport_unload::building_mission_unload_absorber(
+                sim,
+                rules,
+                id,
+                ctx.overlay_registry,
+                ctx.effects,
+            ),
+        );
     }
     if object.weapons_factory {
         return Some(mission_factory_unload(sim, id, rules, ctx));

@@ -4613,13 +4613,21 @@ impl Simulation {
         stable_id: u64,
         update: fn(
             &mut crate::sim::house_tracking::HouseTracking,
-            &crate::sim::game_entity::GameEntity,
+            &mut crate::sim::game_entity::GameEntity,
         ),
     ) {
-        let Some(entity) = self.substrate.entities.get(stable_id) else {
+        let Some(owner) = self
+            .substrate
+            .entities
+            .get(stable_id)
+            .map(crate::sim::game_entity::GameEntity::owner)
+        else {
             return;
         };
-        if let Some(house) = self.houses.get_mut(&entity.owner()) {
+        if let (Some(entity), Some(house)) = (
+            self.substrate.entities.get_mut(stable_id),
+            self.houses.get_mut(&owner),
+        ) {
             update(&mut house.tracking, entity);
         }
     }
@@ -5064,7 +5072,7 @@ impl Simulation {
         );
         //7015E6 receives the NEW House before the object owner changes.
         //Call the one native Add_Tracking owner with that explicit receiver.
-        if let Some(entity) = self.substrate.entities.get(stable_id)
+        if let Some(entity) = self.substrate.entities.get_mut(stable_id)
             && let Some(house) = self.houses.get_mut(&new_owner)
         {
             house.tracking.add_tracking(entity);

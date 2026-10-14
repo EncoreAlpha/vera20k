@@ -1229,10 +1229,9 @@ impl Simulation {
                 self.recalculate_house_base_geometry(owner, rules);
             }
             // Building440D13: IncrementFactoryCount right after it.
-            self.update_house_tracking(
-                stable_id,
-                crate::sim::house_tracking::HouseTracking::increment_factory_count,
-            );
+            self.update_house_tracking(stable_id, |tracking, entity| {
+                tracking.increment_factory_count(entity)
+            });
             self.append_live_build_const(stable_id);
             self.append_house_base_building(stable_id);
             if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
@@ -2924,10 +2923,7 @@ impl Simulation {
             .get(stable_id)
             .is_some_and(|entity| !entity.lifecycle.in_limbo)
         {
-            self.update_house_tracking(
-                stable_id,
-                crate::sim::house_tracking::HouseTracking::recount,
-            );
+            self.update_house_tracking(stable_id, |tracking, entity| tracking.recount(entity));
             // Building445D99 follows Recount and precedes Techno Limbo.
             // The non-factory prerequisite path stops here: its strip
             // cancellation is decided only after this frame's Factory sweep.

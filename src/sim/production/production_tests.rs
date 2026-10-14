@@ -560,10 +560,9 @@ pub(super) fn spawn_structure(
     // prerequisites read them.
     sim.update_house_tracking(sid, crate::sim::house_tracking::HouseTracking::add_tracking);
     sim.house_added_to_game(sid);
-    sim.update_house_tracking(
-        sid,
-        crate::sim::house_tracking::HouseTracking::increment_factory_count,
-    );
+    sim.update_house_tracking(sid, |tracking, entity| {
+        tracking.increment_factory_count(entity)
+    });
     if sim.substrate.next_stable_object_id <= sid {
         sim.substrate.next_stable_object_id = sid + 1;
     }
