@@ -1436,7 +1436,11 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         b"foot-building-entry-68f-690".hash(hasher);
         entity.building_entry.hash(hasher);
     }
-    entity.hash_house_tracking_latches(hasher);
+    let latches = entity.house_tracking_latches();
+    if latches != Default::default() {
+        b"house-tracking-infantry-latches-v1".hash(hasher);
+        latches.hash(hasher);
+    }
     entity.native_unique_id().hash(hasher);
     if let Some(manager) = entity.slave_manager.as_ref() {
         b"slave-manager-v209".hash(hasher);

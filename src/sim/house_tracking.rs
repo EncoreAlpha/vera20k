@@ -223,7 +223,7 @@ pub(crate) struct InfantryTrackingLatches {
 impl InfantryTrackingLatches {
     /// Add_Tracking `0x004FF81A..0x004FF83B` increments the house total and
     /// sets `+0x438` only when both latches are clear.
-    pub(crate) fn add_total(&mut self) -> bool {
+    fn add_total(&mut self) -> bool {
         if self.counted_infantry_total || self.skip_infantry_total_on_add {
             return false;
         }
@@ -233,17 +233,17 @@ impl InfantryTrackingLatches {
 
     /// Remove_Tracking `0x004FF636..0x004FF64D` subtracts only when `+0x438`
     /// is set, then clears it.
-    pub(crate) fn remove_total(&mut self) -> bool {
+    fn remove_total(&mut self) -> bool {
         let counted = self.counted_infantry_total;
         self.counted_infantry_total = false;
         counted
     }
 
-    pub(crate) fn set_absorbed(&mut self, absorbed: bool) {
+    fn set_absorbed(&mut self, absorbed: bool) {
         self.skip_infantry_total_on_add = absorbed;
     }
 
-    pub(crate) fn restore_absorbed(&mut self) -> bool {
+    fn restore_absorbed(&mut self) -> bool {
         self.skip_infantry_total_on_add = false;
         if self.counted_infantry_total {
             false
@@ -432,9 +432,9 @@ impl HouseTracking {
             }
             EntityCategory::Infantry => {
                 let count_total = if delta > 0 {
-                    entity.house_tracking_add_infantry_total()
+                    entity.house_tracking_latches_mut().add_total()
                 } else {
-                    entity.house_tracking_remove_infantry_total()
+                    entity.house_tracking_latches_mut().remove_total()
                 };
                 if count_total {
                     self.infantry = self.infantry.wrapping_add(delta);
@@ -453,13 +453,16 @@ impl HouseTracking {
     }
 
     fn absorber_entry(&mut self, entity: &mut GameEntity) {
-        if entity.category() == EntityCategory::Infantry && entity.house_tracking_absorber_entry() {
+        if entity.category() == EntityCategory::Infantry
+            && entity.house_tracking_latches_mut().remove_total()
+        {
             self.infantry = self.infantry.wrapping_sub(1);
         }
     }
 
     fn restore_absorbed_infantry(&mut self, entity: &mut GameEntity) {
-        if entity.category() == EntityCategory::Infantry && entity.house_tracking_restore_absorbed()
+        if entity.category() == EntityCategory::Infantry
+            && entity.house_tracking_latches_mut().restore_absorbed()
         {
             self.infantry = self.infantry.wrapping_add(1);
         }
@@ -757,7 +760,7 @@ impl Simulation {
             .get_mut(stable_id)
             .filter(|entity| entity.category() == EntityCategory::Infantry)
         {
-            entity.house_tracking_set_absorbed(absorbed);
+            entity.house_tracking_latches_mut().set_absorbed(absorbed);
         }
     }
 

@@ -3328,7 +3328,7 @@ mod deploy_key_tests {
         let mut cargo = PassengerCargo::new(5, 0);
         cargo.board(99, 1);
         sim.entities_mut().get_mut(reactor).unwrap().passenger_role =
-            PassengerRole::Transport { cargo };
+            PassengerRole::transport(cargo);
 
         assert_eq!(
             deploy_key_commands(&sim, Some(&rules), &[reactor], sim.session.current_house),

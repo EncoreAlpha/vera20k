@@ -293,35 +293,27 @@ fn absorber_passenger_can_enter(
     rules: &RuleSet,
     registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
     passenger_id: u64,
-    passenger_is_infantry: bool,
     cell: (u16, u16),
     octant: usize,
     height: i32,
 ) -> bool {
-    if passenger_is_infantry {
-        let Some(terrain) = sim.resolved_terrain.as_ref() else {
-            return false;
-        };
-        let cell = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain)
-            .lookup((cell.0 as i16, cell.1 as i16));
-        return sim
-            .foot_can_enter(
-                passenger_id,
-                cell,
-                crate::sim::movement::infantry_entry::InfantryEntryArgs {
-                    direction: octant as i32,
-                    height,
-                    previous_cell: None,
-                },
-                rules,
-                registry,
-            )
-            .is_ok_and(|code| code == 0);
-    }
-    sim.substrate
-        .entities
-        .get(passenger_id)
-        .is_some_and(|passenger| passenger_can_enter(sim, rules, passenger, cell))
+    let Some(terrain) = sim.resolved_terrain.as_ref() else {
+        return false;
+    };
+    let cell = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain)
+        .lookup((cell.0 as i16, cell.1 as i16));
+    sim.foot_can_enter(
+        passenger_id,
+        cell,
+        crate::sim::movement::infantry_entry::InfantryEntryArgs {
+            direction: octant as i32,
+            height,
+            previous_cell: None,
+        },
+        rules,
+        registry,
+    )
+    .is_ok_and(|code| code == 0)
 }
 
 fn queue_guard(sim: &mut Simulation, id: u64) {
@@ -612,6 +604,11 @@ fn eject_head_passenger(
 /// infantry placement delegates to `MapClass::PlaceInfantryInCell
 /// @ 0x004ACA10` and the existing `CellClass::PlaceInfantryInCell @
 /// 0x00481180` owner.
+///
+/// Only an `InfantryAbsorb=` building reaches this, and only its infantry
+/// passengers are ported. Residual: a non-infantry passenger (a custom type
+/// that also sets `UnitAbsorb=`; no retail type does) fails placement and
+/// stays in the cargo, as a `UnitAbsorb=`-only building's do.
 pub(crate) fn building_mission_unload_absorber(
     sim: &mut Simulation,
     rules: &RuleSet,
@@ -620,7 +617,7 @@ pub(crate) fn building_mission_unload_absorber(
     effects: FrameEffects<'_>,
 ) -> i32 {
     let now = sim.session.binary_frame;
-    let Some((base, facing16, building_owner, infantry_absorb, extra_power, sound, height)) =
+    let Some((base, facing16, building_owner, extra_power, height)) =
         sim.substrate.entities.get(id).and_then(|building| {
             let object = sim.object_type(building.type_ref(), rules)?;
             // Native 0x44D92D calls Building+0x1B8 (GetMapCoords) and scans
@@ -643,17 +640,12 @@ pub(crate) fn building_mission_unload_absorber(
                 base,
                 building.body_facing_current(now),
                 building.owner(),
-                object.infantry_absorb,
                 // Native Type+0xEE8 is `ExtraPower`: BuildingType::ReadINI
                 // passes the raw `ExtraPower` string at 0x81A7B0 to the
                 // integer reader at 0x5276D0 and stores it at +0xEE8
                 // (0x004610B3..0x004610C7). The unload tail tests this field
                 // `> 0` before dirtying House+0x5778 (0x0044DC55..0x0044DC75).
                 object.extra_power > 0,
-                object
-                    .infantry_absorb
-                    .then(|| rules.general.leave_bio_reactor_sound.clone())
-                    .flatten(),
                 height,
             ))
         })
@@ -676,7 +668,9 @@ pub(crate) fn building_mission_unload_absorber(
             else {
                 return Err(DepartureFailure::MissingPassenger);
             };
-            let passenger_is_infantry = passenger_category == EntityCategory::Infantry;
+            if passenger_category != EntityCategory::Infantry {
+                return Err(DepartureFailure::Placement);
+            }
             let start =
                 ((((u32::from(facing16.wrapping_add(0x7FFF)) >> 12) + 1) >> 1) as usize) & 7;
             let mut strict_pass = true;
@@ -695,7 +689,6 @@ pub(crate) fn building_mission_unload_absorber(
                             rules,
                             overlay_registry,
                             passenger_id,
-                            passenger_is_infantry,
                             cell,
                             octant,
                             height,
@@ -708,7 +701,6 @@ pub(crate) fn building_mission_unload_absorber(
                                 rules,
                                 overlay_registry,
                                 passenger_id,
-                                passenger_is_infantry,
                                 cell,
                                 octant,
                                 height,
@@ -721,7 +713,6 @@ pub(crate) fn building_mission_unload_absorber(
                             rules,
                             overlay_registry,
                             passenger_id,
-                            passenger_is_infantry,
                             cell,
                             octant,
                             height,
@@ -752,49 +743,24 @@ pub(crate) fn building_mission_unload_absorber(
                 return Err(DepartureFailure::Placement);
             };
 
-            let (placed_cell, sub_cell) = if passenger_is_infantry {
-                // Native supplies the cell centre (x*256+0x80,y*256+0x80,z=0)
-                // to 4ACA10. A bridge candidate was skipped above, so this
-                // path uses the selected ground plane and consumes the shared
-                // center-row Scenario draw in 481180.
-                let sub_cell = bump_crush::place_infantry_in_cell(
-                    &sim.substrate.raw_cell_occupation,
-                    adjacent.0,
-                    adjacent.1,
-                    MovementLayer::Ground,
-                    CELL_CENTER_LEPTON,
-                    CELL_CENTER_LEPTON,
-                    &mut sim.scenario_rng,
-                );
-                let Some(sub_cell) = sub_cell else {
-                    return Err(DepartureFailure::Placement);
-                };
-                (adjacent, Some(sub_cell))
-            } else {
-                let passenger = sim
-                    .substrate
-                    .entities
-                    .get(passenger_id)
-                    .expect("passenger resolved above");
-                let placed = sim
-                    .object_type(passenger.type_ref(), rules)
-                    .and_then(|object| {
-                        sim.nearby_location_cell(
-                            (i32::from(adjacent.0), i32::from(adjacent.1)),
-                            PassabilityArgs {
-                                speed_type: object.speed_type,
-                                required_zone_id: None,
-                                movement_zone: MovementZone::Normal,
-                                bridge_aware_zone: false,
-                            },
-                        )
-                    })
-                    .unwrap_or(adjacent);
-                (placed, None)
+            // Native supplies the cell centre (x*256+0x80,y*256+0x80,z=0)
+            // to 4ACA10. A bridge candidate was skipped above, so this path
+            // uses the selected ground plane and consumes the shared
+            // center-row Scenario draw in 481180.
+            let Some(sub_cell) = bump_crush::place_infantry_in_cell(
+                &sim.substrate.raw_cell_occupation,
+                adjacent.0,
+                adjacent.1,
+                MovementLayer::Ground,
+                CELL_CENTER_LEPTON,
+                CELL_CENTER_LEPTON,
+                &mut sim.scenario_rng,
+            ) else {
+                return Err(DepartureFailure::Placement);
             };
-            let destination = strict_beyond.unwrap_or(placed_cell);
+            let destination = strict_beyond.unwrap_or(adjacent);
             if let Some(passenger) = sim.substrate.entities.get_mut(passenger_id) {
-                passenger.sub_cell = sub_cell;
+                passenger.sub_cell = Some(sub_cell);
                 passenger.body_facing.snap((octant as u16) << 13, now);
                 if let Some(locomotor) = passenger.locomotor.as_mut() {
                     locomotor.layer = MovementLayer::Ground;
@@ -805,48 +771,46 @@ pub(crate) fn building_mission_unload_absorber(
                 .entities
                 .get(id)
                 .map_or(0, |building| building.position.z);
-            let z = cell_level_or(sim, placed_cell, fallback_z);
+            let z = cell_level_or(sim, adjacent, fallback_z);
             reveal_unloaded_passenger(
                 sim,
                 rules,
                 id,
                 passenger_id,
-                placed_cell.0,
-                placed_cell.1,
+                adjacent.0,
+                adjacent.1,
                 z,
                 Some((octant as u8) << 5),
                 effects,
             )?;
 
-            if infantry_absorb && passenger_is_infantry {
-                if let Some(sound) = sound.as_ref() {
-                    let coordinate = sim.substrate.entities.get(id).map(|building| {
-                        crate::sim::movement::ground_pose::object_get_coords(
-                            building,
-                            sim.resolved_terrain.as_ref(),
-                        )
-                    });
-                    if let Some(coordinate) = coordinate {
-                        let (rx, ry, sub_x, sub_y, _) = crate::sim::anim_class::AnimWorldCoord {
-                            x: coordinate.x,
-                            y: coordinate.y,
-                            z: coordinate.z,
-                        }
-                        .to_cell_sub_z();
-                        sim.sound_events.push(SimSoundEvent::VocAt {
-                            sound_id: sound.clone(),
-                            audible_to: None,
-                            rx,
-                            ry,
-                            sub_x,
-                            sub_y,
-                            world_z_leptons: coordinate.z,
-                        });
+            if let Some(sound) = rules.general.leave_bio_reactor_sound.as_ref() {
+                let coordinate = sim.substrate.entities.get(id).map(|building| {
+                    crate::sim::movement::ground_pose::object_get_coords(
+                        building,
+                        sim.resolved_terrain.as_ref(),
+                    )
+                });
+                if let Some(coordinate) = coordinate {
+                    let (rx, ry, sub_x, sub_y, _) = crate::sim::anim_class::AnimWorldCoord {
+                        x: coordinate.x,
+                        y: coordinate.y,
+                        z: coordinate.z,
                     }
+                    .to_cell_sub_z();
+                    sim.sound_events.push(SimSoundEvent::VocAt {
+                        sound_id: sound.clone(),
+                        audible_to: None,
+                        rx,
+                        ry,
+                        sub_x,
+                        sub_y,
+                        world_z_leptons: coordinate.z,
+                    });
                 }
-                sim.clear_human_absorber_seek_on_unload(passenger_id);
-                sim.restore_absorbed_infantry_tracking(passenger_id);
             }
+            sim.clear_human_absorber_seek_on_unload(passenger_id);
+            sim.restore_absorbed_infantry_tracking(passenger_id);
 
             sim.queue_order_mission(passenger_id, MissionType::Move);
             if let Err(cause) = sim.assign_destination_represented(

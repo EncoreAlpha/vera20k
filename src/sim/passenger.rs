@@ -1063,8 +1063,10 @@ pub(crate) fn process_boarding_passenger(
             // the passenger rather than stranding a concealed object if an
             // invariant is broken.
             if infantry_absorber_entry {
-                // Reveal's Add_Tracking must observe both native latches clear.
-                sim.set_infantry_absorber_entry(pax_id, false);
+                // Reveal does not re-run Add_Tracking, so undo the entry's
+                // House+0x2F4 removal and +0x439 skip byte through the same
+                // owner the successful unload uses.
+                sim.restore_absorbed_infantry_tracking(pax_id);
             }
             let _ = sim.reveal_entity_with_context(pax_id, context);
             return BoardingOutcome::Refused;

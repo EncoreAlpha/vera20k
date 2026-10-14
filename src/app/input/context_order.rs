@@ -3631,7 +3631,7 @@ mod tests {
         let mut cargo = crate::sim::passenger::PassengerCargo::new(5, 0);
         cargo.board(99, 1);
         sim.entities_mut().get_mut(reactor).unwrap().passenger_role =
-            crate::sim::passenger::PassengerRole::Transport { cargo };
+            crate::sim::passenger::PassengerRole::transport(cargo);
         let hover = HoverTargetKindWithId {
             kind: HoverTargetKind::FriendlyStructure,
             stable_id: reactor,

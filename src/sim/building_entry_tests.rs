@@ -739,15 +739,23 @@ fn a_bio_reactor_unload_command_reveals_its_passenger() {
         5
     );
     for &passenger in &passengers {
-        assert!(!entity(&sim, passenger).house_tracking_total_latch_for_test());
-        assert!(entity(&sim, passenger).house_tracking_absorbed_latch_for_test());
+        assert!(
+            !entity(&sim, passenger)
+                .house_tracking_latches()
+                .is_counted()
+        );
+        assert!(
+            entity(&sim, passenger)
+                .house_tracking_latches()
+                .is_absorbed()
+        );
     }
     let cargo_lifo = entity(&sim, reactor)
         .passenger_role
         .cargo()
         .unwrap()
-        .passengers
-        .clone();
+        .passengers()
+        .to_vec();
     assert_eq!(
         cargo_lifo,
         passengers.iter().rev().copied().collect::<Vec<_>>()
@@ -804,8 +812,8 @@ fn a_bio_reactor_unload_command_reveals_its_passenger() {
         assert!(passenger.lifecycle.cell_marked);
         assert!(passenger.in_logic_vector);
         assert!(!passenger.building_entry.should_enter_absorber());
-        assert!(passenger.house_tracking_total_latch_for_test());
-        assert!(!passenger.house_tracking_absorbed_latch_for_test());
+        assert!(passenger.house_tracking_latches().is_counted());
+        assert!(!passenger.house_tracking_latches().is_absorbed());
     }
     assert_eq!(sim.houses[&owner].tracking.infantry(), 5);
     assert_eq!(
@@ -1002,7 +1010,7 @@ fn a_bio_reactor_unlimbo_failure_keeps_the_placement_draw_and_restores_cargo() {
         .passenger_role
         .cargo()
         .unwrap()
-        .passengers[0];
+        .passengers()[0];
     let owner = entity(&sim, reactor).owner();
     sim.substrate
         .entities
@@ -1080,7 +1088,7 @@ fn a_bio_reactor_scan_uses_location_cell_on_a_multi_cell_foundation() {
         .passenger_role
         .cargo()
         .unwrap()
-        .passengers[0];
+        .passengers()[0];
     let base = (16u16, 10u16);
     let center = {
         let coords = crate::sim::movement::ground_pose::object_get_coords(
@@ -1173,7 +1181,7 @@ fn a_bio_reactor_scan_uses_infantry_cell_entry_with_building_height() {
         .passenger_role
         .cargo()
         .unwrap()
-        .passengers[0];
+        .passengers()[0];
     sim.substrate
         .entities
         .get_mut(reactor)
@@ -1221,7 +1229,7 @@ fn a_bio_reactor_relaxed_scan_wraps_from_octant_seven() {
         .passenger_role
         .cargo()
         .unwrap()
-        .passengers[0];
+        .passengers()[0];
     let base = (16u16, 10u16);
     let directions = crate::util::direction_tables::CELL_DELTAS;
     let step = |delta: (i32, i32), scale: i32| {
@@ -1333,8 +1341,16 @@ fn a_computer_bio_reactor_passenger_keeps_its_seek_latch_after_unload() {
             .building_entry
             .should_enter_absorber()
     );
-    assert!(entity(&sim, passenger).house_tracking_total_latch_for_test());
-    assert!(!entity(&sim, passenger).house_tracking_absorbed_latch_for_test());
+    assert!(
+        entity(&sim, passenger)
+            .house_tracking_latches()
+            .is_counted()
+    );
+    assert!(
+        !entity(&sim, passenger)
+            .house_tracking_latches()
+            .is_absorbed()
+    );
 }
 
 /// `IsControlledByHuman` also admits campaign PlayerControl houses, but the
@@ -1408,8 +1424,16 @@ fn absorbed_infantry_tracking_is_restored_after_building_death_and_sale() {
                 .owned_count(EntityCategory::Infantry, infantry_type),
             1
         );
-        assert!(!entity(&sim, passenger).house_tracking_total_latch_for_test());
-        assert!(entity(&sim, passenger).house_tracking_absorbed_latch_for_test());
+        assert!(
+            !entity(&sim, passenger)
+                .house_tracking_latches()
+                .is_counted()
+        );
+        assert!(
+            entity(&sim, passenger)
+                .house_tracking_latches()
+                .is_absorbed()
+        );
 
         if selling {
             assert!(crate::sim::production::sell_building_now_for_test(
@@ -1429,8 +1453,8 @@ fn absorbed_infantry_tracking_is_restored_after_building_death_and_sale() {
         let released = entity(&sim, passenger);
         assert!(!released.lifecycle.in_limbo());
         assert!(released.lifecycle.cell_marked);
-        assert!(released.house_tracking_total_latch_for_test());
-        assert!(!released.house_tracking_absorbed_latch_for_test());
+        assert!(released.house_tracking_latches().is_counted());
+        assert!(!released.house_tracking_latches().is_absorbed());
         assert_eq!(sim.houses[&owner].tracking.infantry(), 1);
         assert_eq!(
             sim.houses[&owner]

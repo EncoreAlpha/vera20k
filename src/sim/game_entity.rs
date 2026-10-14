@@ -1196,50 +1196,19 @@ mod simple_deploy;
 mod voxel_recoil;
 
 impl GameEntity {
-    /// HouseTracking's Add_Tracking arm updates Techno+0x438 only when both
-    /// infantry-total latches allow it.
-    pub(crate) fn house_tracking_add_infantry_total(&mut self) -> bool {
-        self.house_tracking_latches.add_total()
+    /// The infantry house-total latches (`Techno+0x438/+0x439`). Only
+    /// `sim::house_tracking` can change them; the mutable borrow exists so
+    /// that owner can reach the latches stored on the object.
+    pub(crate) fn house_tracking_latches(
+        &self,
+    ) -> crate::sim::house_tracking::InfantryTrackingLatches {
+        self.house_tracking_latches
     }
 
-    /// HouseTracking's Remove_Tracking arm consumes the once-counted latch.
-    pub(crate) fn house_tracking_remove_infantry_total(&mut self) -> bool {
-        self.house_tracking_latches.remove_total()
-    }
-
-    /// Infantry::PerCellProcess sets Techno+0x439 before absorber Limbo.
-    pub(crate) fn house_tracking_set_absorbed(&mut self, absorbed: bool) {
-        self.house_tracking_latches.set_absorbed(absorbed);
-    }
-
-    /// Remove House+0x2F4's contribution after the absorber's Limbo.
-    pub(crate) fn house_tracking_absorber_entry(&mut self) -> bool {
-        self.house_tracking_latches.remove_total()
-    }
-
-    /// Restore House+0x2F4 and clear the absorbed Add_Tracking skip byte when
-    /// native successfully reveals an absorbed infantryman.
-    pub(crate) fn house_tracking_restore_absorbed(&mut self) -> bool {
-        self.house_tracking_latches.restore_absorbed()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn house_tracking_total_latch_for_test(&self) -> bool {
-        self.house_tracking_latches.is_counted()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn house_tracking_absorbed_latch_for_test(&self) -> bool {
-        self.house_tracking_latches.is_absorbed()
-    }
-
-    pub(crate) fn hash_house_tracking_latches(&self, hasher: &mut impl std::hash::Hasher) {
-        use std::hash::Hash;
-
-        if self.house_tracking_latches != Default::default() {
-            b"house-tracking-infantry-latches-v1".hash(hasher);
-            self.house_tracking_latches.hash(hasher);
-        }
+    pub(crate) fn house_tracking_latches_mut(
+        &mut self,
+    ) -> &mut crate::sim::house_tracking::InfantryTrackingLatches {
+        &mut self.house_tracking_latches
     }
 
     /// Techno+0x284, the Chronosphere warp-in's frames.
