@@ -1844,7 +1844,7 @@ impl Simulation {
                     let passenger_ids = entity
                         .passenger_role
                         .cargo()
-                        .map(|cargo| cargo.passengers.clone())
+                        .map(|cargo| cargo.passengers().to_vec())
                         .unwrap_or_default();
                     if !object.can_be_occupied || passenger_ids.is_empty() {
                         return None;

@@ -336,7 +336,11 @@ fn test_box_skips_a_miner_docked_on_a_refinery() {
     // The miner sits on the refinery's own cell while it unloads. The native
     // gate is the dock flag AND a building in that cell, so both halves hold.
     spawn_structure(&mut store, 3, 11, 10, "GAREFN", "Americans");
-    store.get_mut(2).expect("miner").dock_entered_with = Some(3);
+    store
+        .get_mut(2)
+        .expect("miner")
+        .tether
+        .set_for_test(Some(3));
 
     let snapshot = box_over_two(&store, 1, 2).expect("snapshot");
     assert_eq!(snapshot.select, vec![1]);
@@ -352,7 +356,11 @@ fn test_box_keeps_a_vehicle_that_drove_clear_of_its_factory() {
     // so it stays band-selectable. Without that half every freshly built
     // vehicle would drop out of a box for the whole exit sequence.
     spawn_structure(&mut store, 3, 11, 11, "GAWEAP", "Americans");
-    store.get_mut(2).expect("vehicle").dock_entered_with = Some(3);
+    store
+        .get_mut(2)
+        .expect("vehicle")
+        .tether
+        .set_for_test(Some(3));
 
     let snapshot = box_over_two(&store, 1, 2).expect("snapshot");
     assert_eq!(snapshot.select, vec![1, 2]);

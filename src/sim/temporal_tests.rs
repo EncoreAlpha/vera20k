@@ -442,10 +442,7 @@ fn native_update_corpus() {
             }
             if attacker.open_topped == 1 {
                 sim.substrate.entities.get_mut(id).unwrap().passenger_role =
-                    crate::sim::passenger::PassengerRole::Inside {
-                        transport_id: transport,
-                        open_topped: true,
-                    };
+                    crate::sim::passenger::PassengerRole::inside_for_test(transport, true);
             }
             if let Some(coords) = attacker.coords {
                 place(&mut sim, id, coords);
@@ -1966,9 +1963,9 @@ fn a_warped_transport_admits_no_one() {
     for carrier in [fortress, reactor] {
         let entity = sim.substrate.entities.get_mut(carrier).unwrap();
         if entity.passenger_role.cargo().is_none() {
-            entity.passenger_role = crate::sim::passenger::PassengerRole::Transport {
-                cargo: crate::sim::passenger::PassengerCargo::new(5, 0),
-            };
+            entity.passenger_role = crate::sim::passenger::PassengerRole::transport(
+                crate::sim::passenger::PassengerCargo::new(5, 0),
+            );
         }
     }
     let admits = |sim: &Simulation, carrier: u64| {

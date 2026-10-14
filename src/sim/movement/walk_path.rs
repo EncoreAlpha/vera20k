@@ -247,7 +247,7 @@ impl Simulation {
                 current.y.wrapping_sub(destination.y),
                 current.z.wrapping_sub(destination.z),
             ) < rules.general.close_enough;
-            if close && actor.dock_entered_with.is_none() {
+            if close && actor.tether.partner().is_none() {
                 self.assign_null_destination(id, Some(rules), None, frame_effects);
             } else if actor.navigation.path_runtime.retries_left != 0 {
                 //The test is before the decrement: 1->0 does not run the

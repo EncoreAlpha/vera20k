@@ -332,7 +332,7 @@ fn assert_radio_pair(sim: &Simulation, ids: (u64, u64), native: &Value, name: &s
             "{name}: {role} Contacts"
         );
         assert_eq!(
-            endpoint.dock_entered_with,
+            endpoint.tether.partner(),
             (expected["tether"] == 1).then_some(peer),
             "{name}: {role} tether owner"
         );
@@ -1218,7 +1218,7 @@ fn retail_land_factory_delivery_matches_original_unit_unlimbo_suffix() {
             "{name}: Radio HELLO contact"
         );
         assert_eq!(
-            actor.dock_entered_with,
+            actor.tether.partner(),
             Some(producer_id),
             "{name}: Radio TETHER receiver"
         );

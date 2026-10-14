@@ -159,9 +159,7 @@ fn crew_scene(input: &Value) -> (SlaveScene, Vec<u64>) {
     building.selected = input["selected"] == true;
     let mut passengers = Vec::new();
     if let Some(names) = input["passengers"].as_array() {
-        building.passenger_role = PassengerRole::Transport {
-            cargo: PassengerCargo::new(5, 0),
-        };
+        building.passenger_role = PassengerRole::transport(PassengerCargo::new(5, 0));
         for name in names {
             let id = sim
                 .construct_object_limbo_at_height(
@@ -174,10 +172,8 @@ fn crew_scene(input: &Value) -> (SlaveScene, Vec<u64>) {
                     rules,
                 )
                 .expect("absorbed infantry");
-            sim.substrate.entities.get_mut(id).unwrap().passenger_role = PassengerRole::Inside {
-                transport_id: refinery,
-                open_topped: false,
-            };
+            sim.substrate.entities.get_mut(id).unwrap().passenger_role =
+                PassengerRole::inside_for_test(refinery, false);
             passengers.push(id);
         }
         // AddPassenger prepends: the list's head is the first passenger.

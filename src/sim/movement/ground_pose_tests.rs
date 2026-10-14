@@ -1398,12 +1398,9 @@ fn foot_set_location_always_writes_but_moves_riders_only_on_a_change() {
     transport.position.exact_z_leptons = Some(0);
     let mut cargo = PassengerCargo::new(5, 2);
     assert!(cargo.board(2, 1));
-    transport.passenger_role = PassengerRole::Transport { cargo };
+    transport.passenger_role = PassengerRole::transport(cargo);
     let mut rider = GameEntity::test_default(2, "E1", "Americans", 3, 0);
-    rider.passenger_role = PassengerRole::Inside {
-        transport_id: 1,
-        open_topped: true,
-    };
+    rider.passenger_role = PassengerRole::inside_for_test(1, true);
     entities.insert(transport);
     entities.insert(rider);
     let interner = crate::sim::intern::test_interner();

@@ -154,7 +154,8 @@ fn fixture(row: &Value) -> (Simulation, RuleSet, OverlayTypeRegistry, u64, Optio
     e.in_playfield = input["in_playfield"].as_bool().unwrap_or(false);
     e.lifecycle.set_object_alive_for_test(true);
     e.lifecycle.cell_marked = true;
-    e.dock_entered_with = input["tethered"].as_bool().unwrap_or(false).then_some(999);
+    e.tether
+        .set_for_test(input["tethered"].as_bool().unwrap_or(false).then_some(999));
     e.mission.apply_test_fixture(MissionTestFixture {
         current: MissionId::from_raw(before["mission"].as_i64().unwrap() as i32),
         queued: MissionId::from_raw(before["queued_mission"].as_i64().unwrap() as i32),

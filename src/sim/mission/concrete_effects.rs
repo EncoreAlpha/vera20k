@@ -865,7 +865,7 @@ mod tests {
         let queued = [NavTargetRef::cell(14, 10), NavTargetRef::cell(16, 10)];
         let infantry = sim.substrate.entities.get_mut(id).unwrap();
         infantry.mark_live_contact_with(building);
-        infantry.dock_entered_with = Some(building);
+        infantry.tether.set_for_test(Some(building));
         infantry.navigation.nav_queue = queued.to_vec();
         sim.substrate
             .entities

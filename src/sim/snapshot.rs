@@ -1824,26 +1824,25 @@ fn validate_nav_reference(
 
 fn validate_passenger_size_tables(sim: &Simulation) -> Result<(), SnapshotRestoreError> {
     for (carrier_id, entity) in sim.substrate.entities.iter_sorted() {
-        let crate::sim::passenger::PassengerRole::Transport { cargo } = &entity.passenger_role
-        else {
+        let Some(cargo) = entity.passenger_role.cargo() else {
             continue;
         };
-        if cargo.passengers.len() != cargo.passenger_sizes.len() {
+        if cargo.passengers().len() != cargo.passenger_sizes().len() {
             return Err(SnapshotRestoreError::PassengerSizeCountMismatch {
                 carrier_id,
-                passenger_count: cargo.passengers.len(),
-                size_count: cargo.passenger_sizes.len(),
+                passenger_count: cargo.passengers().len(),
+                size_count: cargo.passenger_sizes().len(),
             });
         }
         let computed_total: u64 = cargo
-            .passenger_sizes
+            .passenger_sizes()
             .iter()
             .map(|&size| u64::from(size))
             .sum();
-        if computed_total != u64::from(cargo.total_size) {
+        if computed_total != u64::from(cargo.total_size()) {
             return Err(SnapshotRestoreError::PassengerSizeTotalMismatch {
                 carrier_id,
-                saved_total: cargo.total_size,
+                saved_total: cargo.total_size(),
                 computed_total,
             });
         }
@@ -1857,7 +1856,6 @@ fn restore_object_references(
 ) -> Result<(), SnapshotRestoreError> {
     use crate::sim::combat::TargetKind;
     use crate::sim::game_entity::BunkerLink;
-    use crate::sim::passenger::PassengerRole;
     use crate::sim::projectile::ProjectileTarget;
 
     let entity_ids: BTreeSet<u64> = sim.substrate.entities.keys_sorted().into_iter().collect();
@@ -1922,8 +1920,8 @@ fn restore_object_references(
             )?;
         }
 
-        if let PassengerRole::Transport { cargo } = &entity.passenger_role {
-            for &passenger_id in &cargo.passengers {
+        if let Some(cargo) = entity.passenger_role.cargo() {
+            for &passenger_id in cargo.passengers() {
                 require_resolved_reference(
                     entity_ids.contains(&passenger_id),
                     "EntityStore",
@@ -2060,12 +2058,12 @@ fn restore_object_references(
             )?;
         }
 
-        if let Some(target_id) = entity.dock_entered_with {
+        if let Some(target_id) = entity.tether.partner() {
             require_resolved_reference(
                 entity_ids.contains(&target_id),
                 "EntityStore",
                 entity_id,
-                "dock_entered_with",
+                "tether",
                 "EntityStore",
                 target_id,
             )?;

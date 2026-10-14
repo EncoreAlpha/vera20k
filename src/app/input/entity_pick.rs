@@ -1111,7 +1111,7 @@ pub(crate) fn selection_dynamic_prefix(
     if entity.bunker_link.installed_in().is_some() {
         return false;
     }
-    if entity.dock_entered_with.is_some()
+    if entity.tether.partner().is_some()
         && building_covers_cell(
             entities,
             rules,

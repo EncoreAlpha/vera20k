@@ -3172,7 +3172,7 @@ mod tests {
                 .entities
                 .get(1)
                 .and_then(|house| house.passenger_role.cargo())
-                .is_some_and(|cargo| cargo.passengers == [2]),
+                .is_some_and(|cargo| cargo.passengers() == [2]),
             "precondition: Capture admitted the occupant"
         );
         (
@@ -5378,9 +5378,8 @@ mod tests {
             // arms run Mission_Enter.
             if mission == MissionType::Enter {
                 if category == EntityCategory::Infantry {
-                    unit.passenger_role = crate::sim::passenger::PassengerRole::Boarding {
-                        target_transport_id: 2,
-                    };
+                    unit.passenger_role =
+                        crate::sim::passenger::PassengerRole::boarding_for_test(2);
                 } else {
                     unit.bunker_link = crate::sim::game_entity::BunkerLink::Approaching(2);
                 }

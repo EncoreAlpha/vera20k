@@ -84,7 +84,7 @@ fn infantry_arrival_runs_reciprocal_clearance_then_the_existing_foot_tail() {
     .unwrap();
     assert!(radio::take_transmit_log().is_empty());
     assert_eq!(
-        sim.substrate.entities.get(1).unwrap().dock_entered_with,
+        sim.substrate.entities.get(1).unwrap().tether.partner(),
         Some(2)
     );
     assert!(!sim.substrate.entities.get(1).unwrap().in_playfield);
@@ -114,7 +114,7 @@ fn infantry_arrival_runs_reciprocal_clearance_then_the_existing_foot_tail() {
     );
     for id in [1, 2] {
         let entity = sim.substrate.entities.get(id).unwrap();
-        assert_eq!(entity.dock_entered_with, None);
+        assert_eq!(entity.tether.partner(), None);
         assert!(entity.radio_contacts.is_empty());
     }
     let infantry = sim.substrate.entities.get(1).unwrap();
@@ -169,7 +169,7 @@ fn an_untethered_infantry_arrival_preserves_its_contact_and_runs_the_foot_tail()
     assert!(radio::take_transmit_log().is_empty());
     for (id, partner) in [(1, 2), (2, 1)] {
         let entity = sim.substrate.entities.get(id).unwrap();
-        assert_eq!(entity.dock_entered_with, None);
+        assert_eq!(entity.tether.partner(), None);
         assert_eq!(entity.radio_contacts.slot(0), Some(partner));
     }
     assert!(sim.substrate.entities.get(1).unwrap().in_playfield);

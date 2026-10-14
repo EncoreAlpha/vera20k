@@ -850,8 +850,10 @@ impl Simulation {
             .and_then(|cargo| cargo.unload_first())
         {
             self.team_script_vm.mark_member_team_leaving_map(passenger);
+            // RemoveFirstPassenger leaves the passenger's own hold for its
+            // teardown.
             if let Some(passenger) = self.substrate.entities.get_mut(passenger) {
-                passenger.passenger_role = crate::sim::passenger::PassengerRole::None;
+                passenger.passenger_role.clear_carrier_relation();
             }
             self.uninit_with_context(passenger, context);
         }

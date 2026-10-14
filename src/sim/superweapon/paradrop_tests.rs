@@ -154,7 +154,7 @@ fn cargo(sim: &Simulation, plane: u64) -> Vec<u64> {
         .unwrap()
         .passenger_role
         .cargo()
-        .map_or_else(Vec::new, |cargo| cargo.passengers.clone())
+        .map_or_else(Vec::new, |cargo| cargo.passengers().to_vec())
 }
 
 /// A PDPLANE as SendParadropPlanes builds one (mission-only before its

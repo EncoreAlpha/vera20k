@@ -123,7 +123,7 @@ impl Simulation {
         let Some(entity) = self.substrate.entities.get(id) else {
             return false;
         };
-        if entity.dock_entered_with.is_none()
+        if entity.tether.partner().is_none()
             || entity.mission.effective()
                 != crate::sim::mission::MissionId::from_known(MissionType::Enter)
         {
@@ -315,7 +315,7 @@ impl Simulation {
         let Some(unit) = self.substrate.entities.get(id) else {
             return;
         };
-        if unit.dock_entered_with.is_none() {
+        if unit.tether.partner().is_none() {
             return;
         }
         let nav_com = unit.navigation.nav_com;
@@ -593,7 +593,7 @@ impl Simulation {
                     .substrate
                     .entities
                     .get(id)
-                    .is_some_and(|entity| entity.dock_entered_with.is_some())
+                    .is_some_and(|entity| entity.tether.partner().is_some())
             {
                 radio::transmit_to_contact(
                     self,

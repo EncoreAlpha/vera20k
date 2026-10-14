@@ -338,7 +338,8 @@ fn synchronized_deploy_obeys_native_event9_actor_guards() {
                     .entities
                     .get_mut(id)
                     .unwrap()
-                    .dock_entered_with = Some(partner);
+                    .tether
+                    .set_for_test(Some(partner));
             }
             "construction" | "selling" => {
                 let mission = if case == "construction" {

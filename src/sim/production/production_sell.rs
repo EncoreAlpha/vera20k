@@ -424,7 +424,7 @@ pub(crate) fn sell_stage_one(
         .substrate
         .entities
         .get(id)
-        .is_none_or(|building| building.dock_entered_with.is_some())
+        .is_none_or(|building| building.tether.partner().is_some())
     {
         return false;
     }
@@ -634,7 +634,6 @@ mod tests {
     use super::*;
     use crate::rules::ini_parser::IniFile;
     use crate::sim::game_entity::GameEntity;
-    use crate::sim::passenger::PassengerRole;
     use crate::sim::passenger::garrison_eject::tests::{
         garrison_map, garrison_rules, insert_player_owned_garrison,
     };
@@ -711,7 +710,7 @@ mod tests {
             .entities
             .get(passenger_id)
             .expect("passenger should survive sell eject");
-        assert!(matches!(passenger.passenger_role, PassengerRole::None));
+        assert!(passenger.passenger_role.is_none());
         assert!(!passenger.dying);
         assert!(
             passenger.position.rx < 10

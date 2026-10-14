@@ -1060,7 +1060,7 @@ fn production_stock_harv_far_return_preserves_existing_navcom_owner() {
             miner.cargo.clone(),
             *entity.native_stage(),
             entity.radio_contacts.clone(),
-            entity.dock_entered_with,
+            entity.tether.partner(),
         )
     };
     let refinery_contacts_before = sim
@@ -1097,7 +1097,7 @@ fn production_stock_harv_far_return_preserves_existing_navcom_owner() {
     assert_eq!(miner.cargo, cargo_before);
     assert_eq!(timers_after, timers_before);
     assert_eq!(entity.radio_contacts, miner_contacts_before);
-    assert_eq!(entity.dock_entered_with, dock_entered_before);
+    assert_eq!(entity.tether.partner(), dock_entered_before);
     assert_eq!(
         sim.substrate
             .entities

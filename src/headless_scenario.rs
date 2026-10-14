@@ -2723,7 +2723,7 @@ mod retail_construction_tests {
             {
                 entered = Some(frame);
             }
-            if entered.is_some() && entity.dock_entered_with.is_some() {
+            if entered.is_some() && entity.tether.partner().is_some() {
                 docked = Some(frame);
                 break;
             }

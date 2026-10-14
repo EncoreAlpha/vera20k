@@ -696,7 +696,7 @@ fn receive_damage_scatter_gates_match_original_execution() {
             actor.locomotor = Some(locomotor);
         }
         if flag("tether") {
-            actor.dock_entered_with = Some(9);
+            actor.tether.set_for_test(Some(9));
         }
         if flag("target") {
             actor

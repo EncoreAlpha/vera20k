@@ -767,7 +767,7 @@ pub(crate) fn unit_can_enter_radio(
     let occupied = transport
         .passenger_role
         .cargo()
-        .map_or(0, |cargo| cargo.total_size);
+        .map_or(0, |cargo| cargo.total_size());
     if i64::from(occupied) + i64::from(passenger_type.size) > i64::from(transport_type.passengers)
         || passenger_type.size > transport_type.size_limit
     {
@@ -813,7 +813,7 @@ fn unit_prepare_to_dock(
     let dock = entity
         .radio_contacts
         .slot(0)
-        .filter(|_| entity.dock_entered_with.is_some())
+        .filter(|_| entity.tether.partner().is_some())
         .filter(|_| entity.mission.effective() == MissionId::from_known(MissionType::Enter));
     let dock = dock.filter(|&dock| {
         sim.substrate
@@ -1539,7 +1539,7 @@ fn techno_over_out(
             sim.substrate
                 .entities
                 .get(id)
-                .is_some_and(|e| e.dock_entered_with.is_some())
+                .is_some_and(|e| e.tether.partner().is_some())
         };
         if tethered(techno) && tethered(from) {
             transmit(
@@ -1577,11 +1577,11 @@ fn techno_tether(
         && rules
             .and_then(|rules| sim.object_type(entity.type_ref(), rules))
             .is_some_and(|object| object.airport_bound);
-    if airport_bound || entity.dock_entered_with.is_some() {
+    if airport_bound || entity.tether.partner().is_some() {
         return radio_receive(sim, techno, sender, RadioMessage::Tether);
     }
     if let Some(entity) = sim.substrate.entities.get_mut(techno) {
-        entity.dock_entered_with = Some(from);
+        entity.tether.attach(from);
     }
     transmit(
         sim,
@@ -1606,10 +1606,10 @@ fn techno_untether(
     let Some(entity) = sim.substrate.entities.get_mut(techno) else {
         return RadioResponse::None;
     };
-    if entity.dock_entered_with.is_none() {
+    if entity.tether.partner().is_none() {
         return radio_receive(sim, techno, sender, RadioMessage::Untether);
     }
-    entity.dock_entered_with = None;
+    entity.tether.release();
     if let Some(from) = sender {
         transmit(
             sim,
@@ -1986,7 +1986,7 @@ mod tests {
         for id in [1, 2] {
             let entity = sim.substrate.entities.get(id).unwrap();
             assert!(entity.radio_contacts.is_empty());
-            assert_eq!(entity.dock_entered_with, None);
+            assert_eq!(entity.tether.partner(), None);
         }
         crate::sim::radio::take_transmit_log();
         clear_test_trace();
@@ -2033,7 +2033,7 @@ mod tests {
             let entity = sim.substrate.entities.get(id).unwrap();
             assert_eq!(entity.radio_contacts.len(), 1);
             assert!(entity.has_live_contact_with(peer));
-            assert_eq!(entity.dock_entered_with, Some(peer));
+            assert_eq!(entity.tether.partner(), Some(peer));
         }
         assert_eq!(sim.rng_state(), rng);
     }
@@ -2087,7 +2087,7 @@ mod tests {
         );
         for id in [1, 2] {
             let entity = sim.substrate.entities.get(id).unwrap();
-            assert_eq!(entity.dock_entered_with, None);
+            assert_eq!(entity.tether.partner(), None);
             assert_eq!(entity.radio_contacts.slot(0), None);
             assert_eq!(entity.radio_contacts.slot(1), None);
             assert_eq!(entity.radio_contacts.slot(2), Some(99));
@@ -2117,7 +2117,7 @@ mod tests {
         assert_eq!(log.len(), 5);
         for id in [1, 2] {
             let entity = sim.substrate.entities.get(id).unwrap();
-            assert_eq!(entity.dock_entered_with, None);
+            assert_eq!(entity.tether.partner(), None);
             assert!(entity.radio_contacts.is_empty());
         }
     }
@@ -2313,7 +2313,7 @@ mod tests {
             crate::sim::world::FrameEffects::default(),
         );
         assert_eq!(
-            sim.substrate.entities.get(1).unwrap().dock_entered_with,
+            sim.substrate.entities.get(1).unwrap().tether.partner(),
             Some(2)
         );
 
@@ -2327,7 +2327,7 @@ mod tests {
             crate::sim::world::FrameEffects::default(),
         );
         assert_eq!(
-            sim.substrate.entities.get(1).unwrap().dock_entered_with,
+            sim.substrate.entities.get(1).unwrap().tether.partner(),
             None
         );
         assert!(
@@ -2396,11 +2396,11 @@ mod tests {
         );
 
         assert_eq!(
-            sim.substrate.entities.get(1).unwrap().dock_entered_with,
+            sim.substrate.entities.get(1).unwrap().tether.partner(),
             None
         );
         assert_eq!(
-            sim.substrate.entities.get(2).unwrap().dock_entered_with,
+            sim.substrate.entities.get(2).unwrap().tether.partner(),
             Some(1)
         );
     }
@@ -2518,7 +2518,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            sim.substrate.entities.get(1).unwrap().dock_entered_with,
+            sim.substrate.entities.get(1).unwrap().tether.partner(),
             None
         );
         assert!(
@@ -2569,7 +2569,7 @@ mod tests {
             .expect("common receiver clear boundary");
         assert!(effect_index < common_index);
         assert_eq!(
-            sim.substrate.entities.get(1).unwrap().dock_entered_with,
+            sim.substrate.entities.get(1).unwrap().tether.partner(),
             None
         );
         assert!(
@@ -2742,7 +2742,7 @@ mod tests {
             for (index, entry) in input["cargo_sizes"].as_array().unwrap().iter().enumerate() {
                 cargo.board_forced(10 + index as u64, entry.as_u64().unwrap() as u32);
             }
-            carrier.passenger_role = PassengerRole::Transport { cargo };
+            carrier.passenger_role = PassengerRole::transport(cargo);
             if input["warped"].as_bool().unwrap_or(false) {
                 carrier.temporal = crate::sim::temporal::TemporalState::warped_by_for_test(99);
             }

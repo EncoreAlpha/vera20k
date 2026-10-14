@@ -3819,7 +3819,7 @@ mod tests {
         let mut cargo = PassengerCargo::new(2, 1);
         assert!(cargo.board(2, 1));
         assert!(cargo.board(3, 1));
-        building.passenger_role = PassengerRole::Transport { cargo };
+        building.passenger_role = PassengerRole::transport(cargo);
         assert_eq!(
             live_threat_posed(
                 &building,

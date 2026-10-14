@@ -341,14 +341,12 @@ fn a_garrison_fires_its_occupy_weapon_or_nothing() {
         let mut cargo = crate::sim::passenger::PassengerCargo::new(5, 1);
         assert!(cargo.board(3, 1));
         let bunker = store.get_mut(1).unwrap();
-        bunker.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        bunker.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         bunker
             .attack_target
             .set_for_test(Some(TargetKind::Entity(2)));
-        store.get_mut(3).unwrap().passenger_role = crate::sim::passenger::PassengerRole::Inside {
-            transport_id: 1,
-            open_topped: false,
-        };
+        store.get_mut(3).unwrap().passenger_role =
+            crate::sim::passenger::PassengerRole::inside_for_test(1, false);
         combat_frame(&mut store, &rules, &Default::default());
         (
             store.get(2).unwrap().health.current(),

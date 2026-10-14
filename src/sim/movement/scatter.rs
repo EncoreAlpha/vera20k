@@ -289,7 +289,7 @@ fn receive_damage_scatter_admitted(
     let refused = retaliation == DamageRetaliation::Refused;
     if refused
         && (!mission_permits_scatter(entity, rules)
-            || entity.dock_entered_with.is_some()
+            || entity.tether.partner().is_some()
             || super::motion_query::is_moving(entity)
                 .ok_or("damage Scatter requires an active locomotor Is_Moving")?)
     {

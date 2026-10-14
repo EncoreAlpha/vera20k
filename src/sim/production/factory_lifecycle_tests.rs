@@ -941,7 +941,7 @@ fn produced_infantry_retains_its_barracks_rally_until_exit_handoff() {
         Some(crate::sim::components::NavTargetRef::cell(30, 30))
     );
     assert!(entity.has_live_contact_with(2));
-    assert_eq!(entity.dock_entered_with, Some(2));
+    assert_eq!(entity.tether.partner(), Some(2));
 }
 
 /// `TechnoClass::ChangeOwner @ 0x007014A0` clears the ArchiveTarget
@@ -1619,13 +1619,13 @@ fn occupied_barracks_radio_refunds_discards_and_promotes_one_gi() {
     assert!(!first_entity.lifecycle.in_limbo() && first_entity.in_logic_vector);
     let first_contacts = first_entity.radio_contacts.clone();
     assert_eq!(first_contacts.slot(0), Some(producer));
-    assert_eq!(first_entity.dock_entered_with, Some(producer));
+    assert_eq!(first_entity.tether.partner(), Some(producer));
     let producer_entity = sim.substrate.entities.get(producer).unwrap();
     let producer_contacts = producer_entity.radio_contacts.clone();
     assert_eq!(producer_contacts.capacity(), 1);
     assert_eq!(producer_contacts.slot(0), Some(first));
     assert_eq!(producer_contacts.first_free(), None);
-    assert_eq!(producer_entity.dock_entered_with, Some(first));
+    assert_eq!(producer_entity.tether.partner(), Some(first));
     assert!(
         sim.production
             .factories
@@ -1734,10 +1734,10 @@ fn occupied_barracks_radio_refunds_discards_and_promotes_one_gi() {
     assert!(!successor_entity.in_logic_vector);
     let first_entity = sim.substrate.entities.get(first).unwrap();
     assert_eq!(first_entity.radio_contacts, first_contacts);
-    assert_eq!(first_entity.dock_entered_with, Some(producer));
+    assert_eq!(first_entity.tether.partner(), Some(producer));
     let producer_entity = sim.substrate.entities.get(producer).unwrap();
     assert_eq!(producer_entity.radio_contacts, producer_contacts);
-    assert_eq!(producer_entity.dock_entered_with, Some(first));
+    assert_eq!(producer_entity.tether.partner(), Some(first));
     assert!(
         sim.production
             .factories

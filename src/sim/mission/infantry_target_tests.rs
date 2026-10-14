@@ -298,7 +298,7 @@ fn compare_original_infantry_target_rows(consumer: TargetConsumer) {
                         0,
                         true,
                     );
-                    transport.passenger_role = PassengerRole::Transport { cargo };
+                    transport.passenger_role = PassengerRole::transport(cargo);
                     sim.substrate.entities.insert(transport);
                     sim.open_topped_passengers_take_target(
                         4,

@@ -7,7 +7,7 @@
 //! removal control starts its stale selection through the shared selector.
 
 use super::{
-    DepartureFailure, DepartureRoute, PassengerRole, depart_cargo_head, reveal_unloaded_passenger,
+    DepartureFailure, DepartureRoute, depart_cargo_head, reveal_unloaded_passenger,
     tick_passenger_system,
 };
 use crate::rules::ruleset::RuleSet;
@@ -88,10 +88,12 @@ fn spawn_and_board(sim: &mut Simulation, rules: &RuleSet, passenger_type: &str) 
         },
         Some(rules),
     ));
-    assert!(matches!(
-        entity(sim, passenger).passenger_role,
-        PassengerRole::Boarding { target_transport_id } if target_transport_id == ifv
-    ));
+    assert_eq!(
+        entity(sim, passenger)
+            .passenger_role
+            .boarding_transport_id(),
+        Some(ifv)
+    );
     // Walk to the occupied transport cell through the production entry path.
     let grid = sim.path_grid_snapshot().unwrap();
     for _ in 0..240 {
@@ -110,10 +112,7 @@ fn assert_boarded(sim: &Simulation, ifv: u64, passenger: u64) {
     assert_eq!(cargo.passenger_sizes, [1]);
     assert_eq!(cargo.total_size, 1);
     let pax = entity(sim, passenger);
-    assert!(matches!(
-        pax.passenger_role,
-        PassengerRole::Inside { transport_id, open_topped: false } if transport_id == ifv
-    ));
+    assert_eq!(pax.passenger_role.inside_transport(), Some((ifv, false)));
     assert!(pax.lifecycle.in_limbo());
     assert!(!sim.live_object_order_snapshot().contains(&passenger));
 }
@@ -158,7 +157,7 @@ fn unload_at_clear_exit(sim: &mut Simulation, rules: &RuleSet, ifv: u64, passeng
     assert!(cargo.passenger_sizes.is_empty());
     assert_eq!(cargo.total_size, 0);
     let pax = entity(sim, passenger);
-    assert!(matches!(pax.passenger_role, PassengerRole::None));
+    assert!(pax.passenger_role.is_none());
     assert!(!pax.lifecycle.in_limbo());
     assert_eq!((pax.position.rx, pax.position.ry), exit);
     assert_eq!(
@@ -232,10 +231,10 @@ fn retail_infantry_transport_boarding_waits_for_transport_cell() {
         crate::sim::world::FrameEffects::default(),
     );
     assert!(
-        matches!(
-            entity(&sim, passenger).passenger_role,
-            PassengerRole::Boarding { .. }
-        ),
+        entity(&sim, passenger)
+            .passenger_role
+            .boarding_transport_id()
+            .is_some(),
         "an adjacent passenger must remain visible until it reaches the vehicle cell"
     );
     assert!(entity(&sim, ifv).passenger_role.cargo().unwrap().is_empty());
@@ -507,10 +506,7 @@ fn retail_replacement_move_cancels_pending_vehicle_boarding() {
         entity(&sim, ifv).passenger_role.cargo().unwrap().is_empty(),
         "crossing the old destination cannot board after Move replaced NavCom"
     );
-    assert!(matches!(
-        entity(&sim, passenger).passenger_role,
-        PassengerRole::None
-    ));
+    assert!(entity(&sim, passenger).passenger_role.is_none());
     assert!(!entity(&sim, passenger).lifecycle.in_limbo());
 }
 

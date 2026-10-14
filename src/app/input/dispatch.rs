@@ -3272,7 +3272,7 @@ mod deploy_key_tests {
         sim.entities_mut()
             .get_mut(transport)
             .unwrap()
-            .passenger_role = PassengerRole::Transport { cargo };
+            .passenger_role = PassengerRole::transport(cargo);
 
         assert_eq!(
             deploy_key_command(&sim, Some(&rules), heli, sim.session.current_house),

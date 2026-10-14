@@ -86,14 +86,11 @@ fn fixture(row: &serde_json::Value) -> (Simulation, RuleSet) {
     if flag("loaded") {
         assert_eq!(sim.allocate_stable_id(), 2);
         insert_entity(&mut sim, 2, EntityCategory::Infantry);
-        sim.substrate.entities.get_mut(2).unwrap().passenger_role = PassengerRole::Inside {
-            transport_id: 1,
-            open_topped: false,
-        };
+        sim.substrate.entities.get_mut(2).unwrap().passenger_role =
+            PassengerRole::inside_for_test(1, false);
         let mut cargo = PassengerCargo::new(1, 0);
         cargo.board_forced(2, 1);
-        sim.substrate.entities.get_mut(1).unwrap().passenger_role =
-            PassengerRole::Transport { cargo };
+        sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::transport(cargo);
     }
     let entity = sim.substrate.entities.get_mut(1).unwrap();
     entity.position.exact_z_leptons = Some(integer("z", 0));

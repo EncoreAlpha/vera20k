@@ -323,10 +323,7 @@ fn a_controlled_transports_rider_takes_its_own_house_and_spares_the_controllers(
     // One cell, the rider's own house's man at its head.
     place(&mut entities, 6, "GI", YURI, (7, 5), infantry, 100);
     place(&mut entities, 7, "GI", OWNER, (7, 5), infantry, 100);
-    entities.get_mut(RIDER).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 2,
-        open_topped: true,
-    };
+    entities.get_mut(RIDER).unwrap().passenger_role = PassengerRole::inside_for_test(2, true);
     entities.get_mut(2).unwrap().mind_control = MindControlLink::controlled_by_for_test(3);
     let scan = |entities: &EntityStore| scan_without_world(entities, &rules, RIDER);
     assert_eq!(scan(&entities), None);

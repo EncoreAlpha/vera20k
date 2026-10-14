@@ -2136,7 +2136,7 @@ fn dying_corpse_break_frees_the_dock_before_its_animation_ends() {
 
     let corpse = sim.substrate.entities.get(occupant).expect("corpse stays");
     assert!(!corpse.radio_contacts.contains(2));
-    assert_eq!(corpse.dock_entered_with, None);
+    assert_eq!(corpse.tether.partner(), None);
     assert!(crate::sim::miner::miner_dock::test_support::dock_test_hello(&mut sim, 2, waiter));
 }
 
@@ -2181,7 +2181,7 @@ fn megamission_before_the_unload_breaks_the_refinery_contact() {
             let entity = sim.substrate.entities.get_mut(id).unwrap();
             entity.radio_contacts.set_slot(0, partner);
             if tethered {
-                entity.dock_entered_with = Some(partner);
+                entity.tether.set_for_test(Some(partner));
             }
         }
 
@@ -2196,13 +2196,13 @@ fn megamission_before_the_unload_breaks_the_refinery_contact() {
 
         let entity = sim.substrate.entities.get(miner_id).unwrap();
         assert!(!entity.radio_contacts.contains(2), "tethered={tethered}");
-        assert_eq!(entity.dock_entered_with, None, "tethered={tethered}");
+        assert_eq!(entity.tether.partner(), None, "tethered={tethered}");
         let refinery = sim.substrate.entities.get(2).unwrap();
         assert!(
             !refinery.radio_contacts.contains(miner_id),
             "tethered={tethered}"
         );
-        assert_eq!(refinery.dock_entered_with, None, "tethered={tethered}");
+        assert_eq!(refinery.tether.partner(), None, "tethered={tethered}");
         assert!(
             crate::sim::miner::miner_dock::test_support::dock_test_hello(&mut sim, 2, waiter),
             "tethered={tethered}"
@@ -2296,7 +2296,7 @@ fn harvest_order_mid_unload_drops_the_unload_latch_and_image() {
     let miner = entity.miner.as_ref().unwrap();
     assert!(!miner.unload_active);
     assert_eq!(entity.display_type_override, None);
-    assert_eq!(entity.dock_entered_with, None);
+    assert_eq!(entity.tether.partner(), None);
     assert!(!crate::sim::miner::miner_dock::has_contact(
         &sim, 2, miner_id
     ));
@@ -3115,7 +3115,7 @@ fn dock_for_unload(sim: &mut Simulation, miner: u64, refinery: u64) {
     for (id, partner) in [(miner, refinery), (refinery, miner)] {
         let entity = sim.substrate.entities.get_mut(id).expect("dock end");
         entity.radio_contacts.set_slot(0, partner);
-        entity.dock_entered_with = Some(partner);
+        entity.tether.set_for_test(Some(partner));
     }
     let entity = sim.substrate.entities.get_mut(miner).expect("miner");
     let mut hull = crate::sim::movement::FacingClass::new(DOCK_FACING, 5);

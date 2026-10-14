@@ -787,10 +787,10 @@ BuildSpeed=0.02
             let mut building = make_building(1, "TEST", "Owner", value("actual"));
             let occupants = value("occupants") as u32;
             let mut cargo = crate::sim::passenger::PassengerCargo::new(occupants, 0);
-            cargo.passengers = (0..occupants).map(|i| 100 + u64::from(i)).collect();
-            cargo.passenger_sizes = vec![1; occupants as usize];
-            cargo.total_size = occupants;
-            building.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+            cargo.set_passengers_for_test((0..occupants).map(|i| 100 + u64::from(i)).collect());
+            cargo.set_passenger_sizes_for_test(vec![1; occupants as usize]);
+            cargo.set_total_size_for_test(occupants);
+            building.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
             store.insert(building);
             // Supply existing aggregate output with a signed-HP Power=1 source.
             store.insert(make_building(2, "PRIOR", "Owner", value("prior_output")));
@@ -1284,7 +1284,7 @@ BuildSpeed=0.02
         for i in 0..passenger_count {
             cargo.board_forced(100 + i as u64, 1);
         }
-        e.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        e.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         e
     }
 
@@ -1342,7 +1342,7 @@ BuildSpeed=0.02
         let mut e = make_building(1, "GAPOWR", "Allies", 600);
         let mut cargo = crate::sim::passenger::PassengerCargo::new(5, 0);
         cargo.board_forced(100, 1);
-        e.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        e.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         store.insert(e);
 
         let allies = intern::test_intern("Allies");
@@ -1377,7 +1377,7 @@ BuildSpeed=0.02
         for i in 0..5 {
             cargo.board_forced(100 + i as u64, 1);
         }
-        e.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        e.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         store.insert(e);
 
         let yuri = intern::test_intern("Yuri");
@@ -1415,7 +1415,7 @@ BuildSpeed=0.02
         for i in 0..3 {
             cargo.board_forced(100 + i as u64, 1);
         }
-        e.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        e.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         store.insert(e);
 
         let yuri = intern::test_intern("Yuri");
@@ -1456,7 +1456,7 @@ BuildSpeed=0.02
         for i in 0..2 {
             cargo.board_forced(100 + i as u64, 1);
         }
-        e.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        e.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         store.insert(e);
 
         let yuri = intern::test_intern("Yuri");

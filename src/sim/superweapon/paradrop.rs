@@ -68,7 +68,6 @@ use crate::rules::ruleset::RuleSet;
 use crate::sim::combat::TargetKind;
 use crate::sim::intern::InternedId;
 use crate::sim::mission::{MissionId, MissionType};
-use crate::sim::passenger::{PassengerCargo, PassengerRole};
 use crate::sim::world::FrameEffects;
 use crate::sim::world::edge_cell::{Edge, find_paradrop_edge_cell};
 use crate::sim::world::{PlacementEvidence, SimSoundEvent, Simulation};
@@ -329,13 +328,9 @@ fn board_passengers(
         let Some(entity) = sim.substrate.entities.get_mut(plane) else {
             return;
         };
-        if !entity.passenger_role.is_transport() {
-            entity.passenger_role = PassengerRole::Transport {
-                cargo: PassengerCargo::new(0, 0),
-            };
-        }
-        if let Some(cargo) = entity.passenger_role.cargo_mut() {
-            cargo.board_forced(passenger, size);
-        }
+        entity
+            .passenger_role
+            .ensure_hold()
+            .board_forced(passenger, size);
     }
 }

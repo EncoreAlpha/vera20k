@@ -1632,7 +1632,7 @@ fn techno_constructor_routes_preserve_components_and_authored_overrides() {
                         route != 0
                     );
                     let cargo = entity.passenger_role.cargo().unwrap();
-                    assert_eq!((cargo.capacity, cargo.size_limit), (3, 2));
+                    assert_eq!((cargo.capacity(), cargo.size_limit()), (3, 2));
                 }
                 "PLANE" => {
                     assert_eq!(
@@ -1647,7 +1647,7 @@ fn techno_constructor_routes_preserve_components_and_authored_overrides() {
                     assert!(entity.building_gate.is_some() && entity.bunker_runtime.is_some());
                     assert_eq!(entity.foundation, "1x1");
                     let cargo = entity.passenger_role.cargo().unwrap();
-                    assert_eq!((cargo.capacity, cargo.size_limit), (4, 1));
+                    assert_eq!((cargo.capacity(), cargo.size_limit()), (4, 1));
                 }
                 _ => unreachable!(),
             }

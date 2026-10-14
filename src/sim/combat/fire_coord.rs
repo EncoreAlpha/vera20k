@@ -599,7 +599,7 @@ fn open_topped_port_coordinate(
     let port = transport
         .passenger_role
         .cargo()?
-        .passengers
+        .passengers()
         .iter()
         .position(|&id| id == snap.stable_id)?;
     let transport_obj = rules.object(world.interner.resolve(transport.type_ref()))?;

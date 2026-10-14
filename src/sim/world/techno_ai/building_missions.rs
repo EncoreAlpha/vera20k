@@ -382,7 +382,7 @@ fn mission_factory_unload(
     let naval = object.naval;
     let phase = entity.door_phase();
     let contact = entity.radio_contacts.slot(0);
-    let tethered = entity.dock_entered_with.is_some();
+    let tethered = entity.tether.partner().is_some();
     let location = crate::sim::movement::ground_pose::position_world_coord(&entity.position);
     let track = crate::sim::movement::factory_exit_track_coordinate(location, object);
     let damaged = requested_damage_state(

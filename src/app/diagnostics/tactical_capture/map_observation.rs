@@ -3177,7 +3177,7 @@ impl TacticalCaptureSession {
                     "cloak": cloak,
                     "building": building, "unit": unit,
                     "miner": miner,
-                    "radio": {"contacts": contacts, "dock_entered_with": entity.dock_entered_with},
+                    "radio": {"contacts": contacts, "dock_entered_with": entity.tether.partner()},
                 });
                 if profile.observe_disguise_inputs == Some(true) {
                     observation["disguise_inputs"] = disguise_inputs(state, entity)?;

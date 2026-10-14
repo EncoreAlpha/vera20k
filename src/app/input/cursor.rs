@@ -2197,18 +2197,17 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
                     .unwrap()
                     .board(gi, 1)
             );
-            sim.entities_mut().get_mut(gi).unwrap().passenger_role = PassengerRole::Inside {
-                transport_id: house,
-                open_topped: false,
-            };
+            sim.entities_mut().get_mut(gi).unwrap().passenger_role =
+                PassengerRole::inside_for_test(house, false);
             let occupant = sim.entities().get(gi).unwrap();
             assert!(occupant.lifecycle.in_limbo());
             assert!(!occupant.lifecycle.cell_marked);
             assert!(!occupant.in_logic_vector);
             assert!(!sim.live_object_order_snapshot().contains(&gi));
-            assert!(matches!(occupant.passenger_role, PassengerRole::Inside {
-                transport_id, open_topped: false
-            } if transport_id == house));
+            assert_eq!(
+                occupant.passenger_role.inside_transport(),
+                Some((house, false))
+            );
             let target = if cell_route {
                 TargetKind::Cell(4, 10)
             } else {

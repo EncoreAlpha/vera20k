@@ -683,10 +683,12 @@ fn full_transport_arrival_replays_original_warp_in_refusal_tail() {
             "{name}: warp-in retained"
         );
         assert!(
-            matches!(
-                sim.substrate.entities.get(id).unwrap().passenger_role,
-                crate::sim::passenger::PassengerRole::None
-            ),
+            sim.substrate
+                .entities
+                .get(id)
+                .unwrap()
+                .passenger_role
+                .is_none(),
             "{name}: rejected passenger stays outside"
         );
         assert_rng(&sim, &row["rng_after"], name);

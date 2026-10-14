@@ -15,7 +15,6 @@ use crate::sim::lifecycle_request::LifecycleRequest;
 use crate::sim::occupancy::{
     BUILDING_OCCUPATION_BIT, CellListInsertion, cell_list_layer_for_entity, entity_occupancy_cells,
 };
-use crate::sim::passenger::PassengerRole;
 use crate::sim::projectile::ProjectileTarget;
 use crate::util::lepton::BRIDGE_DECK_HEIGHT_LEPTONS;
 use crate::util::lepton::LEPTONS_PER_LEVEL;
@@ -3614,7 +3613,7 @@ impl Simulation {
             || listener
                 .passenger_role
                 .cargo()
-                .is_some_and(|cargo| cargo.passengers.contains(&expired_id))
+                .is_some_and(|cargo| cargo.passengers().contains(&expired_id))
             || listener.passenger_role.boarding_transport_id() == Some(expired_id)
             || listener.passenger_role.inside_transport_id() == Some(expired_id)
             || nav_names(listener.navigation.suspended_nav_com.as_ref())
@@ -3961,10 +3960,10 @@ impl Simulation {
         // reference to the expiring object.
         let drops_contact =
             control == PointerExpiryControl::Uninit && listener.has_live_contact_with(expired_id);
-        let drops_passenger = matches!(
-            &listener.passenger_role,
-            PassengerRole::Transport { cargo } if cargo.passengers.contains(&expired_id)
-        );
+        let drops_passenger = listener
+            .passenger_role
+            .cargo()
+            .is_some_and(|cargo| cargo.passengers().contains(&expired_id));
         // `0x007077EE..0x007077FD`, after the radio and cargo, whatever the
         // control: a child whose SpawnOwner (`+0x2D4`) expires forgets it.
         let drops_spawn_owner = listener.spawn_owner_id == Some(expired_id);
@@ -4025,9 +4024,7 @@ impl Simulation {
 
             // TechnoClass removes an expiring passenger from its CargoClass before
             // clearing its target/archive/manager reference family.
-            if drops_passenger
-                && let PassengerRole::Transport { cargo } = &mut listener.passenger_role
-            {
+            if drops_passenger && let Some(cargo) = listener.passenger_role.cargo_mut() {
                 let _ = cargo.disembark(expired_id);
             }
             if drops_spawn_owner {

@@ -10,7 +10,6 @@ use crate::sim::{
     components::DriveCoord,
     house_state::HouseState,
     movement::{PerCellReason, ground_pose, locomotor::MovementLayer},
-    passenger::PassengerRole,
 };
 use crate::util::lepton::BRIDGE_DECK_HEIGHT_LEPTONS;
 
@@ -81,10 +80,15 @@ fn boarded_transport(sim: &mut Simulation, rules: &RuleSet, kind: &str) -> (u64,
             break;
         }
     }
-    assert!(matches!(
-        sim.substrate.entities.get(passenger).unwrap().passenger_role,
-        PassengerRole::Inside { transport_id, .. } if transport_id == carrier
-    ));
+    assert_eq!(
+        sim.substrate
+            .entities
+            .get(passenger)
+            .unwrap()
+            .passenger_role
+            .inside_transport_id(),
+        Some(carrier)
+    );
     assert_eq!(
         sim.substrate
             .entities
@@ -93,7 +97,7 @@ fn boarded_transport(sim: &mut Simulation, rules: &RuleSet, kind: &str) -> (u64,
             .passenger_role
             .cargo()
             .unwrap()
-            .passengers,
+            .passengers(),
         [passenger],
     );
     assert!(
@@ -423,7 +427,7 @@ fn a_transport_shot_mid_fall_kills_its_passenger_without_the_landing_force_flags
             .passenger_role
             .cargo()
             .unwrap()
-            .passengers
+            .passengers()
             .is_empty()
     );
 }

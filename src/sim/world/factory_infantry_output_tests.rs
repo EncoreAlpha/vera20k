@@ -1773,7 +1773,7 @@ fn local_state(sim: &Simulation, id: u64) -> Value {
         "queued": entity.mission.queued().raw(),
         "nav_is_set": entity.navigation.nav_com.is_some(),
         "archive_is_set": entity.archive_target().is_some(),
-        "tether": entity.dock_entered_with.is_some(),
+        "tether": entity.tether.partner().is_some(),
         "contact_count": entity.radio_contacts.len(),
         "doing": entity.mission_leaf.as_infantry().unwrap().doing(),
         "idle_entry_latch": entity.mission_leaf.foot_idle_entry_latch(),
@@ -2184,7 +2184,7 @@ fn joined_two_paid_gi(route: OutputRoute) {
                 );
                 assert!(frame > progress.first_live_frame.unwrap());
                 assert_eq!(json!(&transmissions[start..]), golden["arrival_radio"]);
-                assert!(entity.radio_contacts.is_empty() && entity.dock_entered_with.is_none());
+                assert!(entity.radio_contacts.is_empty() && entity.tether.partner().is_none());
                 assert!(
                     sim.substrate
                         .entities

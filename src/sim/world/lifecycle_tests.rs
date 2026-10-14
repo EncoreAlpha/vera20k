@@ -548,10 +548,7 @@ fn receiver_garrison_survivor_keeps_height_aware_playfield_membership() {
     {
         let passenger = sim.substrate.entities.get_mut(passenger_id).unwrap();
         passenger.set_type_ref_for_test(passenger_type);
-        passenger.passenger_role = PassengerRole::Inside {
-            transport_id: building_id,
-            open_topped: false,
-        };
+        passenger.passenger_role = PassengerRole::inside_for_test(building_id, false);
     }
     {
         let building = sim.substrate.entities.get_mut(building_id).unwrap();
@@ -559,7 +556,7 @@ fn receiver_garrison_survivor_keeps_height_aware_playfield_membership() {
         building.foundation = "2x2".to_string();
         let mut cargo = PassengerCargo::new(5, 1);
         assert!(cargo.board(passenger_id, 1));
-        building.passenger_role = PassengerRole::Transport { cargo };
+        building.passenger_role = PassengerRole::transport(cargo);
     }
     assert!(matches!(
         sim.try_reveal_entity_with_context(
@@ -2534,10 +2531,8 @@ fn open_topped_direct_registration_keeps_hidden_passenger_live() {
     let _ = sim.reveal(2);
 
     assert_eq!(sim.techno_limbo(1), super::ConcealOutcome::Concealed);
-    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 99,
-        open_topped: true,
-    };
+    sim.substrate.entities.get_mut(1).unwrap().passenger_role =
+        PassengerRole::inside_for_test(99, true);
 
     assert!(sim.register_open_topped_passenger(1));
     let passenger = sim.substrate.entities.get(1).unwrap();
@@ -3183,15 +3178,11 @@ fn lifecycle_authority_transport_uninits_passengers_in_cargo_order_before_carrie
     let mut cargo = PassengerCargo::new(5, 1);
     cargo.board_forced(2, 1);
     cargo.board_forced(3, 1);
-    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::Transport { cargo };
-    sim.substrate.entities.get_mut(2).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 1,
-        open_topped: false,
-    };
-    sim.substrate.entities.get_mut(3).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 1,
-        open_topped: false,
-    };
+    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::transport(cargo);
+    sim.substrate.entities.get_mut(2).unwrap().passenger_role =
+        PassengerRole::inside_for_test(1, false);
+    sim.substrate.entities.get_mut(3).unwrap().passenger_role =
+        PassengerRole::inside_for_test(1, false);
     sim.lifecycle_test_events.clear();
 
     sim.uninit(1);
@@ -3207,14 +3198,22 @@ fn lifecycle_authority_transport_uninits_passengers_in_cargo_order_before_carrie
         })
         .collect::<Vec<_>>();
     assert_eq!(notify_order, vec![3, 2, 1]);
-    assert!(matches!(
-        sim.substrate.entities.get(2).unwrap().passenger_role,
-        PassengerRole::None
-    ));
-    assert!(matches!(
-        sim.substrate.entities.get(3).unwrap().passenger_role,
-        PassengerRole::None
-    ));
+    assert!(
+        sim.substrate
+            .entities
+            .get(2)
+            .unwrap()
+            .passenger_role
+            .is_none()
+    );
+    assert!(
+        sim.substrate
+            .entities
+            .get(3)
+            .unwrap()
+            .passenger_role
+            .is_none()
+    );
     let cargo = sim
         .substrate
         .entities
@@ -3223,10 +3222,10 @@ fn lifecycle_authority_transport_uninits_passengers_in_cargo_order_before_carrie
         .passenger_role
         .cargo()
         .unwrap();
-    assert!(cargo.passengers.is_empty());
-    assert!(cargo.passenger_sizes.is_empty());
-    assert_eq!(cargo.total_size, 0);
-    assert_eq!(cargo.garrison_fire_index, 0);
+    assert!(cargo.passengers().is_empty());
+    assert!(cargo.passenger_sizes().is_empty());
+    assert_eq!(cargo.total_size(), 0);
+    assert_eq!(cargo.garrison_fire_index(), 0);
 }
 
 #[test]
@@ -3238,12 +3237,11 @@ fn nested_transport_uninit_keeps_inner_cargo_until_its_recursive_transaction() {
     let _ = sim.reveal(1);
     let mut outer = PassengerCargo::new(12, 6);
     outer.board_forced(2, 3);
-    sim.substrate.entities.get_mut(1).unwrap().passenger_role =
-        PassengerRole::Transport { cargo: outer };
+    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::transport(outer);
     let mut inner = PassengerCargo::new(5, 2);
     inner.board_forced(3, 1);
     let entity = sim.substrate.entities.get_mut(2).unwrap();
-    entity.passenger_role = PassengerRole::Transport { cargo: inner };
+    entity.passenger_role = PassengerRole::transport(inner);
     entity.passenger_role.set_inside_transport(1, false);
     sim.substrate
         .entities
@@ -3305,7 +3303,7 @@ fn nested_transport_parent_expiry_preserves_its_independent_cargo() {
             let mut cargo = PassengerCargo::new(5, 2);
             cargo.board_forced(3, 1);
             let entity = sim.substrate.entities.get_mut(2).unwrap();
-            entity.passenger_role = PassengerRole::Transport { cargo };
+            entity.passenger_role = PassengerRole::transport(cargo);
             if inside {
                 entity.passenger_role.set_inside_transport(1, false);
             } else {
@@ -3343,8 +3341,8 @@ fn nested_transport_parent_expiry_preserves_its_independent_cargo() {
                 },
                 "inside={inside}, control1={conceal_control}, alive={alive}, health={health}, scope={placement_scope}"
             );
-            assert_eq!(role.cargo().unwrap().passengers, [3]);
-            assert_eq!(role.cargo().unwrap().total_size, 1);
+            assert_eq!(role.cargo().unwrap().passengers(), [3]);
+            assert_eq!(role.cargo().unwrap().total_size(), 1);
             assert_eq!(
                 sim.substrate
                     .entities
@@ -3952,15 +3950,11 @@ fn expiring_mixed_size_passenger_updates_transport_total_exactly() {
     let mut cargo = PassengerCargo::new(5, 0);
     cargo.board_forced(2, 3);
     cargo.board_forced(3, 1);
-    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::Transport { cargo };
-    sim.substrate.entities.get_mut(2).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 1,
-        open_topped: false,
-    };
-    sim.substrate.entities.get_mut(3).unwrap().passenger_role = PassengerRole::Inside {
-        transport_id: 1,
-        open_topped: false,
-    };
+    sim.substrate.entities.get_mut(1).unwrap().passenger_role = PassengerRole::transport(cargo);
+    sim.substrate.entities.get_mut(2).unwrap().passenger_role =
+        PassengerRole::inside_for_test(1, false);
+    sim.substrate.entities.get_mut(3).unwrap().passenger_role =
+        PassengerRole::inside_for_test(1, false);
 
     sim.uninit(2);
 
@@ -3972,9 +3966,9 @@ fn expiring_mixed_size_passenger_updates_transport_total_exactly() {
         .passenger_role
         .cargo()
         .unwrap();
-    assert_eq!(cargo.passengers, vec![3]);
-    assert_eq!(cargo.passenger_sizes, vec![1]);
-    assert_eq!(cargo.total_size, 1);
+    assert_eq!(cargo.passengers(), vec![3]);
+    assert_eq!(cargo.passenger_sizes(), vec![1]);
+    assert_eq!(cargo.total_size(), 1);
 }
 
 #[test]
@@ -5981,10 +5975,7 @@ fn gsi_05_04_combat_fatal_garrison_recursion_keeps_cell_target() {
     {
         let passenger = sim.substrate.entities.get_mut(passenger_id).unwrap();
         passenger.set_type_ref_for_test(passenger_type);
-        passenger.passenger_role = PassengerRole::Inside {
-            transport_id: building_id,
-            open_topped: false,
-        };
+        passenger.passenger_role = PassengerRole::inside_for_test(building_id, false);
     }
     {
         let building = sim.substrate.entities.get_mut(building_id).unwrap();
@@ -5993,7 +5984,7 @@ fn gsi_05_04_combat_fatal_garrison_recursion_keeps_cell_target() {
         building.health.set_for_test(10);
         let mut cargo = PassengerCargo::new(5, 1);
         assert!(cargo.board(passenger_id, 1));
-        building.passenger_role = PassengerRole::Transport { cargo };
+        building.passenger_role = PassengerRole::transport(cargo);
     }
     assert!(matches!(
         sim.try_reveal_entity_with_context(

@@ -73,7 +73,7 @@ fn fixture(input: &Value) -> (Simulation, RuleSet) {
     if passenger {
         let mut cargo = crate::sim::passenger::PassengerCargo::new(8, 0);
         cargo.board_forced(2, 1);
-        entity.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        entity.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
     }
     sim.substrate.entities.insert(entity);
     sim.substrate.next_stable_object_id = 2;
@@ -93,10 +93,7 @@ fn fixture(input: &Value) -> (Simulation, RuleSet) {
         infantry.set_category_for_test(EntityCategory::Infantry);
         infantry.is_voxel = false;
         infantry.sub_cell = Some(2);
-        infantry.passenger_role = crate::sim::passenger::PassengerRole::Inside {
-            transport_id: 1,
-            open_topped: false,
-        };
+        infantry.passenger_role = crate::sim::passenger::PassengerRole::inside_for_test(1, false);
         sim.substrate.entities.insert(infantry);
         sim.substrate.next_stable_object_id = 3;
     }

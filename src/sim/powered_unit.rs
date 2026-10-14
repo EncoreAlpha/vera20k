@@ -247,7 +247,7 @@ impl Simulation {
         let Some(entity) = self.substrate.entities.get(id) else {
             return;
         };
-        if entity.dock_entered_with.is_some()
+        if entity.tether.partner().is_some()
             && let Some(contact) = entity.radio_contacts.slot(0)
             && self.substrate.occupancy.first_building_on_layer(
                 entity.position.rx,

@@ -257,7 +257,7 @@ impl Simulation {
         let garrisoned = entity
             .passenger_role
             .cargo()
-            .is_some_and(|cargo| !cargo.passengers.is_empty());
+            .is_some_and(|cargo| !cargo.passengers().is_empty());
         // 0x00446382..0x004463B4: the built type's InfantryGainSelfHeal and
         // UnitsGainSelfHeal join the owner's house on every reached opening
         // (a capture counts), with the +0x6E4 test done by the entry guard
@@ -636,7 +636,7 @@ impl Simulation {
         let garrisoned = entity
             .passenger_role
             .cargo()
-            .is_some_and(|cargo| !cargo.passengers.is_empty());
+            .is_some_and(|cargo| !cargo.passengers().is_empty());
         let delayed_fire = self.building_anim_delayed_fire(owner, rules);
         self.clear_building_anim_reference(expired);
         let next = match slot {
@@ -835,7 +835,7 @@ pub(crate) fn receiver_body_frame(
                 entity
                     .passenger_role
                     .cargo()
-                    .map_or(0, |cargo| cargo.passengers.len() as i32),
+                    .map_or(0, |cargo| cargo.passengers().len() as i32),
             ),
             tech_level: object.tech_level,
             selling: false,

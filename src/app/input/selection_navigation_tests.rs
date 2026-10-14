@@ -1816,7 +1816,7 @@ fn fixture(inputs: &Inputs, selected: &[u64]) -> (Simulation, RuleSet) {
             entity.bunker_link = BunkerLink::Installed(999);
         }
         if actor.docked {
-            entity.dock_entered_with = Some(999);
+            entity.tether.set_for_test(Some(999));
         }
         let [x, y, z] = actor.coord;
         ground_pose::put_location(&mut entity.position, DriveCoord { x, y, z });

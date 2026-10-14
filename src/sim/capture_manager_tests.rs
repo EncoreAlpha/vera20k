@@ -893,7 +893,6 @@ fn native_decide_unit_fate_corpus() {
 /// The corpus above stubs the seek to find none.
 #[test]
 fn a_captive_sent_to_a_bio_reactor_does_not_hunt() {
-    use crate::sim::passenger::PassengerRole;
     let mut rules = rules_from(&RULES.replace(
         "[BIOR]\nStrength=900\nPassengers=5",
         "[BIOR]\nStrength=900\nPassengers=5\nInfantryAbsorb=yes\nSizeLimit=15",
@@ -917,10 +916,7 @@ fn a_captive_sent_to_a_bio_reactor_does_not_hunt() {
     let entity = sim.substrate.entities.get(gi).unwrap();
     assert_eq!(queued_mission(&sim, gi), Some(MissionType::Enter));
     assert!(entity.building_entry.should_enter_absorber());
-    assert!(matches!(
-        entity.passenger_role,
-        PassengerRole::Boarding { target_transport_id } if target_transport_id == reactor
-    ));
+    assert_eq!(entity.passenger_role.boarding_transport_id(), Some(reactor));
     assert_eq!(sim.scenario_rng.state(), replay.state());
 }
 
@@ -1680,9 +1676,7 @@ fn a_captive_boarding_an_absorber_is_freed_first() {
     // PerCellProcess boards from the absorber's own foundation cell.
     let gi_entity = sim.substrate.entities.get_mut(gi).unwrap();
     gi_entity.position.rx = 14;
-    gi_entity.passenger_role = PassengerRole::Boarding {
-        target_transport_id: reactor,
-    };
+    gi_entity.passenger_role = PassengerRole::boarding_for_test(reactor);
 
     crate::sim::passenger::tick_passenger_system(
         &mut sim,

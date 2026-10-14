@@ -692,9 +692,8 @@ pub(crate) mod tests {
         building.foundation = "2x2".to_string();
         building.set_owner_for_test(americans);
         building.set_type_ref_for_test(sim.interner.intern(type_id));
-        building.passenger_role = PassengerRole::Transport {
-            cargo: crate::sim::passenger::PassengerCargo::new(5, 1),
-        };
+        building.passenger_role =
+            PassengerRole::transport(crate::sim::passenger::PassengerCargo::new(5, 1));
         if let Some(cargo) = building.passenger_role.cargo_mut() {
             assert!(cargo.board(passenger_id, 1));
         }
@@ -835,7 +834,7 @@ pub(crate) mod tests {
             .entities
             .get(passenger_id)
             .expect("passenger should remain");
-        assert!(matches!(passenger.passenger_role, PassengerRole::None));
+        assert!(passenger.passenger_role.is_none());
         assert!(!passenger.dying);
     }
 
@@ -896,7 +895,7 @@ pub(crate) mod tests {
                 owner,
                 "destruction keeps death-time building owner"
             );
-            assert!(matches!(pax.passenger_role, PassengerRole::None));
+            assert!(pax.passenger_role.is_none());
             assert!(!pax.dying);
             assert!(!pax.lifecycle.in_limbo());
             assert!(pax.lifecycle.cell_marked);
@@ -994,7 +993,7 @@ pub(crate) mod tests {
             .expect("player-sell no-exit passenger should remain");
         assert_eq!((passenger.position.rx, passenger.position.ry), (11, 11));
         assert!(!passenger.dying);
-        assert!(matches!(passenger.passenger_role, PassengerRole::None));
+        assert!(passenger.passenger_role.is_none());
         assert_eq!(sim.scenario_rng.state(), rng_before);
 
         let cargo = sim
@@ -1080,7 +1079,7 @@ pub(crate) mod tests {
             .expect("UnInit keeps the no-exit occupant resolvable until the drain");
         assert_eq!(passenger.health.current(), 0);
         assert!(passenger.dying);
-        assert!(matches!(passenger.passenger_role, PassengerRole::None));
+        assert!(passenger.passenger_role.is_none());
         assert!(!passenger.lifecycle.object_alive());
         assert!(passenger.lifecycle.in_limbo());
         assert!(sim.substrate.pending_delete.contains_object(&passenger_id));

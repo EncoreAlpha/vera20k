@@ -114,7 +114,7 @@ fn a_tethered_foot_marks_before_radio13_and_changes_its_list_after_the_receiver(
     for (id, contact) in [(1, 2), (2, 1)] {
         let entity = sim.substrate.entities.get(id).unwrap();
         assert_eq!(entity.radio_contacts.slot(0), Some(contact));
-        assert_eq!(entity.dock_entered_with, Some(contact));
+        assert_eq!(entity.tether.partner(), Some(contact));
     }
     assert_eq!(sim.rng_state(), rng_before);
 }

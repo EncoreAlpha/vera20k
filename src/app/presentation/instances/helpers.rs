@@ -855,17 +855,14 @@ mod tests {
             "Americans",
             false
         ));
-        entity.passenger_role = PassengerRole::Inside {
-            transport_id: 9,
-            open_topped: false,
-        };
+        entity.passenger_role = PassengerRole::inside_for_test(9, false);
         assert!(!admitted(
             TacticalEntityPurpose::Drawing,
             &entity,
             "Americans",
             false
         ));
-        entity.passenger_role = PassengerRole::None;
+        entity.passenger_role = PassengerRole::default();
         entity.lifecycle.set_in_limbo_for_test(true);
         assert!(!admitted(
             TacticalEntityPurpose::Drawing,

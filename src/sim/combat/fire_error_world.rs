@@ -272,7 +272,7 @@ impl<'a> FireSubject<'a> {
             navcom: firer.navigation.nav_com.is_some(),
             moving_faster_than_tenth: firer.foot_speed.above_tenth(),
             deploying: firer.unit_deploying(),
-            tethered: firer.dock_entered_with.is_some(),
+            tethered: firer.tether.partner().is_some(),
             radio_link: match radio_link {
                 None => RadioLink::None,
                 Some(contact) if contact.category() == EntityCategory::Structure => {

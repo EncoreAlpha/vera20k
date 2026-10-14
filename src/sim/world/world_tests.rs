@@ -1988,7 +1988,7 @@ fn gsi_04_07_damage_fatal_transport_lifecycle_brackets_nested_death_weapon() {
         carrier.set_owner_for_test(enemy);
         carrier.set_type_ref_for_test(sim.interner.intern("BOOMER"));
         carrier.health.set_for_test(carrier_hp);
-        carrier.passenger_role = crate::sim::passenger::PassengerRole::Transport { cargo };
+        carrier.passenger_role = crate::sim::passenger::PassengerRole::transport(cargo);
         sim.substrate.entities.insert(carrier);
         let _ = sim.reveal(10);
 
@@ -2000,10 +2000,7 @@ fn gsi_04_07_damage_fatal_transport_lifecycle_brackets_nested_death_weapon() {
             EntityCategory::Infantry,
         );
         passenger.is_voxel = false;
-        passenger.passenger_role = crate::sim::passenger::PassengerRole::Inside {
-            transport_id: 10,
-            open_topped: false,
-        };
+        passenger.passenger_role = crate::sim::passenger::PassengerRole::inside_for_test(10, false);
         sim.substrate.entities.insert(passenger);
 
         let mut listener = GameEntity::test_default_of_category(
@@ -2191,7 +2188,7 @@ fn gsi_04_07_damage_fatal_transport_lifecycle_brackets_nested_death_weapon() {
             .passenger_role
             .cargo()
             .unwrap()
-            .passengers,
+            .passengers(),
         vec![11]
     );
     assert!(boundary.substrate.entities.get(11).unwrap().is_alive());

@@ -6,7 +6,7 @@ use crate::app::input::cursor::{capability_cursor_for_hover, cursor_id_for_feedb
 use crate::app::types::{CursorFeedbackKind, CursorId};
 use crate::rules::ruleset::RuleSet;
 use crate::sim::house_state::HouseState;
-use crate::sim::passenger::{PassengerRole, tick_passenger_system};
+use crate::sim::passenger::tick_passenger_system;
 use crate::sim::world::UnitRepairAction;
 use crate::sim::world::{FrameEffects, Simulation};
 
@@ -39,17 +39,24 @@ fn boarded_ifv(rules: &RuleSet, passenger_type: &str) -> (Simulation, u64, u64) 
     tick_passenger_system(&mut sim, rules, None, FrameEffects::default());
     let grid = sim.path_grid_snapshot().unwrap();
     for _ in 0..240 {
-        if matches!(
-            sim.entities().get(engineer).unwrap().passenger_role,
-            PassengerRole::Inside { .. }
-        ) {
+        if sim
+            .entities()
+            .get(engineer)
+            .unwrap()
+            .passenger_role
+            .is_inside_transport()
+        {
             break;
         }
         sim.advance_tick(&[], Some(rules), Some(&grid), None, 67);
     }
     assert!(
-        matches!(sim.entities().get(engineer).unwrap().passenger_role,
-        PassengerRole::Inside { transport_id, .. } if transport_id == ifv)
+        sim.entities()
+            .get(engineer)
+            .unwrap()
+            .passenger_role
+            .inside_transport_id()
+            == Some(ifv)
     );
     let tank = sim.spawn_object("MTNK", OWNER, 17, 16, 64, rules).unwrap();
     sim.entities_mut()

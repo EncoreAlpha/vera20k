@@ -903,7 +903,7 @@ fn classify_foot_entry<'a>(
                     }
                     return Ok(
                         if layer == MovementLayer::Ground
-                            && e.dock_entered_with.is_none()
+                            && e.tether.partner().is_none()
                             && !row_nonzero(live, cell, obj.speed_type)?
                         {
                             7
@@ -1094,7 +1094,7 @@ fn classify_foot_entry<'a>(
         }
     }
     if layer == MovementLayer::Ground
-        && (!infantry || e.dock_entered_with.is_none())
+        && (!infantry || e.tether.partner().is_none())
         && !row_nonzero(live, cell, obj.speed_type)?
     {
         return Ok(7);

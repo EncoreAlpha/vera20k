@@ -649,7 +649,7 @@ impl Simulation {
                         actor.category().is_foot()
                             && actor.lifecycle.object_alive()
                             && !actor.lifecycle.in_limbo()
-                            && actor.dock_entered_with.is_none()
+                            && actor.tether.partner().is_none()
                     });
                 if !admitted {
                     return false;
@@ -710,15 +710,15 @@ impl Simulation {
                 // The IDLE arm returns at `0x004C7504..0x004C750C` when the
                 // object's tether byte (`+0x418`) is set: a miner that has
                 // entered its dock ignores Stop and finishes unloading, and so
-                // does a vehicle still leaving its war factory (the other
-                // writer of `dock_entered_with`). Current missions 0x12/0x13
+                // does a vehicle still leaving its war factory (the tether's
+                // other writer). Current missions 0x12/0x13
                 // also return before radio, destination and target writes.
                 if self
                     .substrate
                     .entities
                     .get(*entity_id)
                     .is_some_and(|entity| {
-                        entity.dock_entered_with.is_some()
+                        entity.tether.partner().is_some()
                             || matches!(entity.mission.current().raw(), 0x12 | 0x13)
                     })
                 {
@@ -3204,7 +3204,7 @@ mod tests {
         );
         assert!(cargo.board(3, rules.object("E1").unwrap().size));
         sim.substrate.entities.get_mut(1).unwrap().passenger_role =
-            crate::sim::passenger::PassengerRole::Transport { cargo };
+            crate::sim::passenger::PassengerRole::transport(cargo);
         let grid = crate::sim::pathfinding::PathGrid::new(64, 64);
         sim.install_fixture_path_grid(Some(&grid));
         let rider_target = |sim: &Simulation| {
@@ -3538,7 +3538,7 @@ mod tests {
         for (id, partner) in [(1, 2), (2, 1)] {
             let entity = sim.substrate.entities.get_mut(id).unwrap();
             entity.radio_contacts.set_slot(0, partner);
-            entity.dock_entered_with = Some(partner);
+            entity.tether.set_for_test(Some(partner));
         }
         let now = sim.session.binary_frame;
         sim.mission_assign_exact(
@@ -3575,10 +3575,10 @@ mod tests {
         assert!(!miner.unload_active);
         assert_eq!(miner_entity.display_type_override, None);
         assert!(!miner_entity.radio_contacts.contains(2));
-        assert_eq!(miner_entity.dock_entered_with, None);
+        assert_eq!(miner_entity.tether.partner(), None);
         let refinery = sim.substrate.entities.get(2).unwrap();
         assert!(!refinery.radio_contacts.contains(1));
-        assert_eq!(refinery.dock_entered_with, None);
+        assert_eq!(refinery.tether.partner(), None);
         spawn_miner(&mut sim, 7);
         assert!(crate::sim::miner::miner_dock::test_support::dock_test_hello(&mut sim, 2, 7));
     }

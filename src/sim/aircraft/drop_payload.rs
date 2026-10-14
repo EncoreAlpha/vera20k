@@ -584,7 +584,7 @@ mod tests {
         aircraft.aircraft_ammo = Some(AircraftAmmo::new(4));
         let mut cargo = PassengerCargo::new(8, 0);
         cargo.board_forced(passenger_id, 1);
-        aircraft.passenger_role = PassengerRole::Transport { cargo };
+        aircraft.passenger_role = PassengerRole::transport(cargo);
         sim.substrate.entities.insert(aircraft);
 
         let mut passenger = GameEntity::new_at_frame_zero_for_test(
@@ -603,10 +603,7 @@ mod tests {
         );
         passenger.is_voxel = false;
         passenger.sub_cell = Some(2);
-        passenger.passenger_role = PassengerRole::Inside {
-            transport_id: aircraft_id,
-            open_topped: false,
-        };
+        passenger.passenger_role = PassengerRole::inside_for_test(aircraft_id, false);
         sim.substrate.entities.insert(passenger);
     }
 
@@ -640,8 +637,8 @@ mod tests {
             .passenger_role
             .cargo()
             .unwrap()
-            .passengers
-            .clone()
+            .passengers()
+            .to_vec()
     }
 
     fn chute_sounds(sim: &Simulation) -> Vec<(u16, u16)> {
@@ -1077,7 +1074,7 @@ mod tests {
             );
             let passenger = sim.substrate.entities.get(2).unwrap();
             (
-                matches!(passenger.passenger_role, PassengerRole::Inside { .. }),
+                passenger.passenger_role.is_inside_transport(),
                 passenger.on_bridge,
             )
         };
@@ -1129,7 +1126,7 @@ mod tests {
 
         drop_payload(&mut sim, plane, &rules, None, effects);
         let rider = sim.substrate.entities.get(passenger).unwrap();
-        assert!(matches!(rider.passenger_role, PassengerRole::Inside { .. }));
+        assert!(rider.passenger_role.is_inside_transport());
         assert!(rider.on_bridge, "the refusal keeps OnBridge");
 
         // The plane flies on; its next drop is over plain ground at (51, 24).
@@ -1273,10 +1270,10 @@ mod tests {
             );
             assert_eq!(plane.rearm_timer, rearm);
             let passenger = sim.substrate.entities.get(passenger_id).unwrap();
-            assert!(matches!(
-                passenger.passenger_role,
-                PassengerRole::Inside { transport_id, .. } if transport_id == aircraft_id
-            ));
+            assert_eq!(
+                passenger.passenger_role.inside_transport_id(),
+                Some(aircraft_id)
+            );
             assert!(!passenger.is_falling_down());
             assert!(passenger.lifecycle.object_alive() && passenger.lifecycle.in_limbo());
             assert!(!passenger.lifecycle.cell_marked && !passenger.in_logic_vector);
@@ -1357,12 +1354,12 @@ mod tests {
                 let aircraft = sim.substrate.entities.get_mut(1).unwrap();
                 aircraft.set_gunner_selection_for_test(99, -1);
                 let cargo = aircraft.passenger_role.cargo_mut().unwrap();
-                cargo.passenger_sizes[0] = 7;
-                cargo.total_size = 7;
-                cargo.board_forced(1234, 3);
-                // Put the real passenger back at the head, preserving mixed sizes.
-                cargo.passengers.swap(0, 1);
-                cargo.passenger_sizes.swap(0, 1);
+                // The real passenger (admitted at size 7) at the head, then
+                // a size-3 entry: mixed sizes.
+                let real = cargo.passengers()[0];
+                cargo.set_passengers_for_test(vec![real, 1234]);
+                cargo.set_passenger_sizes_for_test(vec![7, 3]);
+                cargo.set_total_size_for_test(10);
             }
             let held = serde_json::to_value(
                 sim.substrate
@@ -1432,9 +1429,9 @@ mod tests {
                     .passenger_role
                     .cargo()
                     .unwrap();
-                assert_eq!(cargo.passengers, vec![1234]);
-                assert_eq!(cargo.passenger_sizes, vec![3]);
-                assert_eq!(cargo.total_size, 3);
+                assert_eq!(cargo.passengers(), vec![1234]);
+                assert_eq!(cargo.passenger_sizes(), vec![3]);
+                assert_eq!(cargo.total_size(), 3);
                 let passenger = sim.substrate.entities.get(2).unwrap();
                 assert!(passenger.is_falling_down());
                 assert!(passenger.lifecycle.cell_marked && passenger.in_logic_vector);

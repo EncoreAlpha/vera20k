@@ -145,10 +145,7 @@ impl Fixture {
                     .entities
                     .get_mut(passenger)
                     .unwrap()
-                    .passenger_role = PassengerRole::Inside {
-                    transport_id: transport,
-                    open_topped: false,
-                };
+                    .passenger_role = PassengerRole::inside_for_test(transport, false);
                 passenger
             })
             .collect()
@@ -194,12 +191,12 @@ impl Fixture {
     }
 
     fn boarding(&self, id: u64) -> Option<u64> {
-        match self.sim.substrate.entities.get(id)?.passenger_role {
-            PassengerRole::Boarding {
-                target_transport_id,
-            } => Some(target_transport_id),
-            _ => None,
-        }
+        self.sim
+            .substrate
+            .entities
+            .get(id)?
+            .passenger_role
+            .boarding_transport_id()
     }
 
     fn cargo(&self, transport: u64) -> Vec<u64> {
@@ -208,7 +205,7 @@ impl Fixture {
             .entities
             .get(transport)
             .and_then(|entity| entity.passenger_role.cargo())
-            .map(|cargo| cargo.passengers.clone())
+            .map(|cargo| cargo.passengers().to_vec())
             .unwrap_or_default()
     }
 
@@ -843,9 +840,9 @@ impl OracleTeam {
                     u32::try_from(passengers.max(0)).unwrap(),
                     0,
                 );
-                cargo.passengers = vec![u64::MAX; count];
-                cargo.passenger_sizes = vec![1; count];
-                entity.passenger_role = PassengerRole::Transport { cargo };
+                cargo.set_passengers_for_test(vec![u64::MAX; count]);
+                cargo.set_passenger_sizes_for_test(vec![1; count]);
+                entity.passenger_role = PassengerRole::transport(cargo);
             }
             entity.navigation.nav_com = flag(&member["nav"]).then(|| NavTargetRef::cell(1, 1));
             entity
@@ -996,11 +993,8 @@ impl OracleTeam {
                 && entity.passenger_role.cargo().is_none()
             {
                 assert!(
-                    matches!(
-                        entity.passenger_role,
-                        PassengerRole::Boarding { target_transport_id }
-                            if target_transport_id == self.members[slot(target)]
-                    ),
+                    entity.passenger_role.boarding_transport_id()
+                        == Some(self.members[slot(target)]),
                     "{at}: boarding"
                 );
             }

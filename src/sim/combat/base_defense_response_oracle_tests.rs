@@ -561,7 +561,7 @@ fn native_base_response_live_threat_matches_representable_original_rows() {
             for id in 0..count as u64 {
                 assert!(cargo.board(id + 10, 1));
             }
-            owner.passenger_role = PassengerRole::Transport { cargo };
+            owner.passenger_role = PassengerRole::transport(cargo);
         }
         let mut entities = EntityStore::new();
         entities.insert(GameEntity::test_default(2, "LINK", "House", 5, 5));

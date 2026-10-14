@@ -623,7 +623,7 @@ fn assert_snapshot(fixture: &Fixture, native: &Value, name: &str) {
             "{name}: {role} Contact0"
         );
         assert_eq!(
-            actor.dock_entered_with,
+            actor.tether.partner(),
             (expected["tether"] == 1).then_some(other),
             "{name}: {role} tether"
         );

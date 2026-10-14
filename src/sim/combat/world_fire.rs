@@ -1487,10 +1487,7 @@ pub(super) fn emit_admitted_fire(
             .get_mut(snap.stable_id)
             .and_then(|building| building.passenger_role.cargo_mut())
     {
-        let count = cargo.count() as u8;
-        if count > 0 {
-            cargo.garrison_fire_index = (cargo.garrison_fire_index + 1) % count;
-        }
+        cargo.advance_garrison_fire_index();
     }
     // Techno6FF0B7..6FF15B: only a successfully launched shot arms recoil.
     // Stock recoil buildings have their own Turret=yes. Building4527D0's
@@ -1926,7 +1923,7 @@ pub(crate) fn visit_fire(
                     .filter(|obj| combat_weapon::is_occupied(actor, obj))
                     .and_then(|_| actor.passenger_role.cargo())
                     .map(|cargo| GarrisonSnapshot {
-                        fire_index: cargo.garrison_fire_index,
+                        fire_index: cargo.garrison_fire_index(),
                         occupant_count: cargo.count() as u8,
                     });
                 AttackerSnapshot {

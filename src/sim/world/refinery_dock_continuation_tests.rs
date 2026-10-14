@@ -187,7 +187,7 @@ fn fixture(row: &Value) -> Scene {
         if let Some(contact) = contact {
             e.radio_contacts.set_slot(0, contact);
         }
-        e.dock_entered_with = (before[tether] == 1).then_some(peer);
+        e.tether.set_for_test((before[tether] == 1).then_some(peer));
     }
     if let Some(slots) = case["actual_slots"].as_array() {
         // These native controls supply an actual vector independently of the
@@ -382,7 +382,8 @@ fn compare(s: &Scene, native: &Value, context: &str) {
                     .entities
                     .get(id)
                     .unwrap()
-                    .dock_entered_with
+                    .tether
+                    .partner()
                     .is_some()
             ),
             int(&native[field]) as u8,
