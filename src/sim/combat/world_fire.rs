@@ -532,6 +532,8 @@ fn unit_reaches_fire_update(world: &Simulation, id: u64) -> bool {
 /// Non-Unit fire hosts require Health: a Building's delayed fire,
 /// an Infantry's fire and an Aircraft's attack mission do not run for a
 /// Health-0 wreck. Units use their own live-slot IsAlive guard above.
+/// An Aircraft's Mission_Attack runs behind `MissionClass::AI` (`0x005B3060`)'s
+/// IsAlive (`+0x90`, `0x005B306C`) and Health (`+0x6C`, `0x005B30A7`) gates.
 fn attacker_reaches_fire(entity: &crate::sim::game_entity::GameEntity) -> bool {
     entity.is_alive() && !entity.death.is_dying()
 }
@@ -1514,7 +1516,6 @@ pub(super) fn emit_admitted_fire(
         });
 
     let next_index = burst.next_index();
-    let mid_burst = rof_weapon.is_some_and(|weapon| next_index < weapon.burst);
     // `CALL [EDX+0x318]` at `0x006FF289`.
     let rof = fireat_get_rof(world, rules, snap, obj, weapon, rof_weapon, next_index);
 
@@ -1557,17 +1558,8 @@ pub(super) fn emit_admitted_fire(
         prism_support_count,
     );
     super::electric_bolt::fired(world, rules, snap.stable_id, snap.target, weapon);
-    // Aircraft ammo deduction: one ammo per burst completion (not per shot).
-    if !mid_burst
-        && !world
-            .substrate
-            .entities
-            .get(snap.stable_id)
-            .and_then(crate::sim::aircraft::attack_state)
-            .is_some()
-    {
-        out.ammo_deduct.push(snap.stable_id);
-    }
+    // `0x006FF656`: DecreaseAmmo (vt+0x390). Only an aircraft holds Ammo here,
+    // and `AircraftClass`'s slot is a bare RET (`0x0041B900`).
     // `0x006FF66C`, after DecreaseAmmo (`0x006FF656`): RevealOnFire.
     if weapon.reveal_on_fire {
         reveal_on_fire(world, rules, snap.stable_id, snap.target);
@@ -1633,7 +1625,8 @@ fn fireat_tail(
 
 /// What a firer shoots this frame, and its infantry fire latch: a building's
 /// request carries the target its visit fired at ([`super::BuildingShot`]);
-/// any other firer fires at its live target.
+/// any other firer fires at its live target, the Target (`+0x2B4`) that
+/// `UnitClass::Fire_At_Target` (`0x00736DF0`) and an aircraft's Mission_Attack read.
 fn shot_target(
     entity: &crate::sim::game_entity::GameEntity,
     building_shot: Option<super::BuildingShot>,
@@ -1864,19 +1857,6 @@ impl LastFireFrame {
     }
 }
 
-fn deduct_fire_ammo(world: &mut Simulation, firers: &[u64]) {
-    for &id in firers {
-        if let Some(ammo) = world
-            .substrate
-            .entities
-            .get_mut(id)
-            .and_then(|entity| entity.aircraft_ammo.as_mut())
-        {
-            ammo.decrease();
-        }
-    }
-}
-
 /// Call-local native trigger; no variant stores a future shot.
 pub(crate) enum FireVisit {
     /// Building44B6D0/450492 already admitted the exact target and slot.
@@ -1951,7 +1931,6 @@ pub(crate) fn visit_fire(
 ) {
     let boundary = FireCommitBoundary::capture(emit);
     let remove_start = emit.remove_attack.len();
-    let ammo_start = emit.ammo_deduct.len();
     let mut unit_tail = None;
     let mut infantry_tail = None;
     let facing_start = emit.unit_facing.len();
@@ -2096,8 +2075,6 @@ pub(crate) fn visit_fire(
             )
             .expect("FireAt target receiver remains retained");
     }
-    deduct_fire_ammo(world, &emit.ammo_deduct[ammo_start..]);
-    emit.ammo_deduct.truncate(ammo_start);
     if let Some(id) = infantry_tail {
         infantry_fire_tail(world, id, rules, overlay_registry, run.effects());
     }
@@ -2377,7 +2354,6 @@ pub(crate) fn tick_combat(
         mut damage_events,
         mut remove_attack,
         fire_events,
-        ammo_deduct,
         unit_facing,
         spawn_target_updates: _,
         drain_links: _,
@@ -2385,9 +2361,6 @@ pub(crate) fn tick_combat(
 
     // Phase 3: the burst step and rearm were written in each shot's FireAt
     // emission.
-    // Phase 3b: deduct ammo from aircraft that completed a burst this tick.
-    deduct_fire_ammo(world, &ammo_deduct);
-
     // Phase 3.5: fold radiation-emitting detonations into the field, then
     // collect the periodic radiation damage. The original applies this damage
     // inside each foot unit's own AI step, gated on the global frame counter;

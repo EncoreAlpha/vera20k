@@ -7,11 +7,12 @@
 //! - `factory_lifecycle`: held-object birth, completion, cancellation and release
 //! - `factory_ai`: a computer house's production at its own factory buildings
 //! - `production_queue`: queue views and completed mobile delivery
+//! - `production_spawn`: the ExitObject arm a mobile product leaves through
 //! - `production_economy`: resource harvesting and credit delivery
 //! - `production_placement`: building placement
 //! - `production_repair`: building repair and the computer's low-credit sale
 //! - `production_sell`: building sale
-//! - `production_tech`: the player's build options, factory matching, spawn cells
+//! - `production_tech`: the player's build options and factory matching
 
 mod can_build;
 mod factory;

@@ -198,6 +198,8 @@ impl Simulation {
     /// [`attack_mission::strike_leaves`], taken here because VERA's combat
     /// phase visits only an object that holds a target: whether the combat
     /// phase runs the strike visit, else the aircraft leaves for state 10.
+    /// `AircraftClass::Mission_Attack @ 0x00417FE0`'s strike-state test of TarCom (`+0x2B4`)
+    /// and Ammo (`+0x2FC`, state 4 at `0x004182A3`).
     pub(crate) fn aircraft_strikes(&self, id: u64, state: u8) -> bool {
         let entity = self.substrate.entities.get(id).expect("aircraft dispatch");
         let attack = entity.attack_target.target();

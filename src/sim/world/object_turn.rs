@@ -21,6 +21,18 @@ pub(super) fn unit_body_counter_admitted(tube_active_at_entry: bool) -> bool {
     !tube_active_at_entry
 }
 
+/// `UnitClass::AI` (`0x007360C0`) and `InfantryClass::AI` (`0x0051BAB0`)
+/// give an object holding a tube (`Foot+0x684`) the whole turn
+/// ([`Simulation::tube_object_turn`]).
+fn tube_active(entity: &crate::sim::game_entity::GameEntity) -> bool {
+    !entity.death.is_dying()
+        && matches!(
+            entity.category(),
+            EntityCategory::Unit | EntityCategory::Infantry
+        )
+        && entity.low_bridge_tube_state.is_some()
+}
+
 #[cfg(test)]
 #[path = "track_object_turn_tests.rs"]
 mod track_object_turn_tests;
@@ -61,8 +73,6 @@ pub(crate) struct GroundLocomotorOutcome {
     pub(super) movement: movement::MovementTickStats,
     pub(super) bridge_state_changed: bool,
     track_owned: bool,
-    /// The tube-exit arrival ran `Per_Cell_Process(2)`.
-    per_cell_ran: bool,
 }
 
 #[derive(Default)]
@@ -99,7 +109,7 @@ impl LocomotorProcess {
             movement: ground.movement,
             bridge_state_changed: ground.bridge_state_changed,
             track_owned: ground.track_owned,
-            per_cell_ran: ground.per_cell_ran,
+            per_cell_ran: false,
             ended: false,
         }
     }
@@ -517,7 +527,8 @@ impl Simulation {
 
 impl Simulation {
     /// Component-based movement fixtures enter the same Process corridor as
-    /// live object turns. This exposes no alternate physics or callback loop.
+    /// live object turns, or the tube turn that replaces it. This exposes no
+    /// alternate physics or callback loop.
     #[cfg(test)]
     pub(crate) fn process_ground_locomotor_for_test(
         &mut self,
@@ -527,11 +538,11 @@ impl Simulation {
         registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
     ) -> Result<movement::MovementTickStats, super::FrameAdvanceError> {
         self.install_fixture_path_grid(grid);
-        self.process_ground_locomotor_one(id, rules, registry, super::FrameEffects::default())
-            .map(|outcome| outcome.movement)
+        self.process_ground_locomotor_stats_for_test(id, rules, registry)
     }
 
-    /// The ordinary ground locomotor Process corridor, without Object/Techno AI.
+    /// The ordinary ground locomotor Process corridor, without Object/Techno AI,
+    /// or the tube turn of an object holding a tube.
     /// Infantry Scatter51D478 calls the active locomotor synchronously; its
     /// PerCell and boundary receivers must finish before Scatter returns.
     #[cfg(test)]
@@ -541,13 +552,19 @@ impl Simulation {
         rules: Option<&RuleSet>,
         overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
     ) -> Result<movement::MovementTickStats, super::FrameAdvanceError> {
-        self.process_ground_locomotor_one(
-            stable_id,
-            rules,
-            overlay_registry,
-            super::FrameEffects::default(),
-        )
-        .map(|outcome| outcome.movement)
+        let effects = super::FrameEffects::default();
+        if self
+            .substrate
+            .entities
+            .get(stable_id)
+            .is_some_and(tube_active)
+        {
+            return self
+                .tube_object_turn(stable_id, rules, overlay_registry, effects)
+                .map(|turn| turn.movement);
+        }
+        self.process_ground_locomotor_one(stable_id, rules, overlay_registry, effects)
+            .map(|outcome| outcome.movement)
     }
 
     pub(crate) fn process_ground_locomotor_one(
@@ -560,16 +577,9 @@ impl Simulation {
         let sim = self;
         let mut outcome = GroundLocomotorOutcome::default();
         sim.complete_pending_order(stable_id, rules, overlay_registry, effects);
-        let movement_before = sim
-            .substrate
-            .entities
-            .get(stable_id)
-            .map(|entity| entity.low_bridge_tube_state.is_some());
         // Drive4B050B..0557 / Ship69FC1B..FC67 samples the containing
         // cell slope before any active-track, destination or turn return.
-        // Entry-active Tube owns its whole visit and does not call Process.
         if let Some(entity) = sim.substrate.entities.get_mut(stable_id)
-            && entity.low_bridge_tube_state.is_none()
             && let Some(slope) = sim.resolved_terrain.as_ref().and_then(|terrain| {
                 terrain
                     .cell(entity.position.rx(), entity.position.ry())
@@ -591,10 +601,8 @@ impl Simulation {
                 &mut sim.substrate.entities,
                 stable_id,
                 current_grid.as_deref(),
-                &mut sim.substrate.occupancy,
+                &sim.substrate.occupancy,
                 &mut sim.substrate.cell_occupation,
-                &mut sim.substrate.raw_cell_occupation,
-                &mut sim.scenario_rng,
                 sim.session.binary_frame,
                 sim.resolved_terrain.as_ref(),
                 sim.playfield_bounds,
@@ -616,16 +624,6 @@ impl Simulation {
         };
         let mut retry = false;
         loop {
-            // The Scatter calls a step queued while the pass held the world
-            // (the tube exit), in call order.
-            outcome.bridge_state_changed |= sim
-                .run_scatter_requests(
-                    pending_movement.take_scatter_requests(),
-                    rules,
-                    overlay_registry,
-                    effects,
-                )
-                .map_err(|cause| frame_error(sim, cause))?;
             if let Some(request) = pending_movement.take_foot_path_request() {
                 let outcome = sim
                     .run_foot_path_request(&request, rules, overlay_registry, effects)
@@ -723,14 +721,6 @@ impl Simulation {
             );
             retry = true;
         }
-        outcome.bridge_state_changed |= sim
-            .run_scatter_requests(
-                pending_movement.take_scatter_requests(),
-                rules,
-                overlay_registry,
-                effects,
-            )
-            .map_err(|cause| frame_error(sim, cause))?;
         if let Some((id, head)) = pending_movement.take_walk_per_cell() {
             outcome.bridge_state_changed |=
                 sim.run_completed_walk_step(id, head, rules, overlay_registry, effects)?;
@@ -745,24 +735,6 @@ impl Simulation {
             .merge(movement::movement_tick::finish_movement_pass(
                 pending_movement,
             ));
-        if let Some(tube_active) = movement_before {
-            // Tube exits Unit73603F / Infantry51BA9B call vt+0x18C(2).
-            let per_cell = sim
-                .substrate
-                .entities
-                .get(stable_id)
-                .is_some_and(|entity| tube_active && entity.low_bridge_tube_state.is_none());
-            if per_cell {
-                outcome.bridge_state_changed |= sim.per_cell_process(
-                    stable_id,
-                    movement::PerCellReason::Arrival,
-                    rules,
-                    overlay_registry,
-                    effects,
-                )?;
-                outcome.per_cell_ran = true;
-            }
-        }
         Ok(outcome)
     }
     pub(super) fn advance_live_object_pass(
@@ -816,14 +788,11 @@ impl Simulation {
         // object the whole live-object turn.  Capture before the leaf:
         // successful finalization clears the payload but must still skip
         // every ordinary locomotor tail and the second mission checkpoint.
-        let tube_active_at_entry = sim.substrate.entities.get(stable_id).is_some_and(|entity| {
-            !entity.death.is_dying()
-                && matches!(
-                    entity.category(),
-                    EntityCategory::Unit | EntityCategory::Infantry
-                )
-                && entity.low_bridge_tube_state.is_some()
-        });
+        let tube_active_at_entry = sim
+            .substrate
+            .entities
+            .get(stable_id)
+            .is_some_and(tube_active);
         let was_structure = sim
             .substrate
             .entities
@@ -911,18 +880,16 @@ impl Simulation {
             .get(stable_id)
             .and_then(|e| e.locomotor.as_ref())
             .is_some_and(|l| l.active_kind() == crate::rules::locomotor_type::LocomotorKind::Walk);
-        // An entry-active TubeMovement leaf runs through the ground corridor
-        // in place of the Foot AI and its Process.
+        // An entry-active TubeMovement leaf runs in place of the Foot AI and
+        // its Process.
         let process = if tube_active_at_entry {
-            let ground = sim.process_ground_locomotor_one(
-                stable_id,
-                rules,
-                overlay_registry,
-                object_ctx.effects,
-            )?;
+            let tube =
+                sim.tube_object_turn(stable_id, rules, overlay_registry, object_ctx.effects)?;
             LocomotorProcess {
-                admitted: false,
-                ..LocomotorProcess::from_ground(ground)
+                movement: tube.movement,
+                bridge_state_changed: tube.bridge_state_changed,
+                per_cell_ran: tube.per_cell_ran,
+                ..LocomotorProcess::default()
             }
         } else {
             sim.process_active_locomotor(stable_id, rules, object_ctx)?
@@ -984,18 +951,12 @@ impl Simulation {
             }
         }
 
-        // A direction-8 producer also ends this object's ordinary turn as
-        // soon as it arms TubeMovement.  The leaf itself starts on the
-        // object's next visit; an entry-active leaf may have cleared the
-        // payload above, hence the captured half of this predicate.
-        let tube_owns_whole_turn = tube_active_at_entry
-            || sim.substrate.entities.get(stable_id).is_some_and(|entity| {
-                matches!(
-                    entity.category(),
-                    EntityCategory::Unit | EntityCategory::Infantry
-                ) && entity.low_bridge_tube_state.is_some()
-            });
-        if tube_owns_whole_turn {
+        // UnitClass::AI (`0x007363A4..0x007363C8`) and InfantryClass::AI
+        // (`0x0051BAB8..0x0051BAD9`) return after an entry-active
+        // TubeMovement. A tube the Process armed this turn ends nothing:
+        // neither AI reads `+0x684` after its FootClass::AI call, so the
+        // Foot and class tails run.
+        if tube_active_at_entry {
             outcome.tube_owned = true;
             return Ok(outcome);
         }

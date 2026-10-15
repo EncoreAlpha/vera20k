@@ -327,8 +327,9 @@ pub(super) fn accept_path_replay(
     consume_path_replay(queue, consumed_directions);
 }
 
-/// Accepted chain4B1DF7/6A143A and Drive tube4B1362..136E pop the queue
-/// without rewriting Foot+558.
+/// Accepted chain4B1DF7/6A143A and the tube entries (Walk 75B3E0..75B3EB,
+/// Drive 4B135D..4B1373, Ship 6A0A25..6A0A3B) pop the queue without rewriting
+/// Foot+558.
 pub(super) fn consume_path_replay(queue: &mut FootPathQueue, consumed_directions: usize) {
     let cursor = usize::from(queue.cursor())
         .saturating_add(consumed_directions)
@@ -347,6 +348,8 @@ pub(super) fn consume_walk_path_replay(queue: &mut FootPathQueue) {
     }
 }
 
+/// The peer path `PathfinderClass::UpdateBridgePassability` (`0x0042ACF0`) replays:
+/// Foot `+0x558` (`0x0042AE33`) and the directions at `+0x5E0` (`0x0042AE88`).
 fn remaining_path_from_entity(
     entity: &crate::sim::game_entity::GameEntity,
 ) -> ((i16, i16), Vec<u8>) {

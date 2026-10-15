@@ -1930,7 +1930,7 @@ mod tests {
             let mut plane =
                 item83_entity(1, 10, 10, owner, type_ref, EntityCategory::Aircraft, false);
             if row["mission_only"].as_bool().unwrap() {
-                plane.mark_mission_only();
+                plane.mission_only.mark();
             }
             let (x, y) = crate::render::locomotor_visual::screen_position(&plane);
             entities.insert(plane);

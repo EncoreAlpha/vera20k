@@ -362,8 +362,6 @@ pub(crate) struct CombatEmit {
     pub(crate) damage_events: Vec<combat_aoe::AreaDamageReceiver>,
     pub(crate) remove_attack: Vec<u64>,
     pub(crate) fire_events: Vec<SimFireEvent>,
-    /// aircraft that fired this tick
-    pub(crate) ammo_deduct: Vec<u64>,
     /// Unit Facing outputs committed immediately at each live object slot.
     /// Component fixtures retain them here for observation.
     pub(crate) unit_facing: Vec<UnitFacingUpdate>,

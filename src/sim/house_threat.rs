@@ -14,6 +14,36 @@ use crate::rules::ruleset::RuleSet;
 use crate::sim::intern::InternedId;
 use crate::sim::world::Simulation;
 
+/// Techno `+0x508`, the threat this object last published to its enemies'
+/// spatial maps. The constructor leaves the dword unwritten
+/// (`0x006F310C..0x006F311E`); `None` keeps that domain until the first
+/// publication. Publishing stores the value ([`Self::publish`]: Unlimbo
+/// `0x006F6ED2`, `AddCellThreat` `0x0070F689`, ChangeOwner `0x00701774`,
+/// `UpdateThreatInCell` `0x0070F71B`) and withdrawing stores 0
+/// ([`Self::withdraw`]: Limbo `0x006F6C2F`, `RemoveCellThreat` `0x0070F6C2`,
+/// ChangeOwner `0x00701719`, `UpdateThreatInCell` `0x0070F706`). It is
+/// independent of the current type and garrison threat and survives saves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct SpatialThreat(Option<i32>);
+
+impl SpatialThreat {
+    /// The last published threat, or `None` before the first publication.
+    pub(crate) const fn get(self) -> Option<i32> {
+        self.0
+    }
+
+    /// Store the threat just added to the maps.
+    pub(crate) fn publish(&mut self, value: i32) {
+        self.0 = Some(value);
+    }
+
+    /// Store 0 after the threat is removed from the maps.
+    pub(crate) fn withdraw(&mut self) {
+        self.0 = Some(0);
+    }
+}
+
 const SIDE: i32 = 130;
 const LENGTH: usize = 130 * 130;
 // Original retail dwords8243C8/8243EC: row-major surrounding coarse cells.
@@ -170,7 +200,7 @@ impl Simulation {
         };
         let actor = self.substrate.entities.get_mut(id).unwrap();
         let owner = actor.owner();
-        actor.retain_spatial_threat(value);
+        actor.cached_spatial_threat.publish(value);
         self.cell_update_spatial_threat(owner, cell, value);
     }
 
@@ -185,7 +215,8 @@ impl Simulation {
             .entities
             .get_mut(id)
             .unwrap()
-            .retain_spatial_threat(0);
+            .cached_spatial_threat
+            .withdraw();
     }
 
     /// TechnoUnlimbo6F6EB7..6F6EDE, after successful Reveal and the alive gate,

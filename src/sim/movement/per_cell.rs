@@ -269,9 +269,10 @@ impl Simulation {
                         &mut self.sound_events,
                     );
                 }
-                if let Some(entity) = self.substrate.entities.get_mut(victim) {
-                    entity.health.set(0);
-                }
+                // `UnitClass::Crush_Or_Prescatter_Cell @ 0x007416A0`: the
+                // victim records its kill by the crusher (vtable `+0xE0`,
+                // `0x007418F0`) and is UnInit (vtable `+0xF8`, `0x00741910`),
+                // with no Health store.
                 self.record_the_kill(
                     victim,
                     crate::sim::combat::KillSource::Techno(Some(id)),
@@ -301,8 +302,10 @@ impl Simulation {
     }
 
     /// Unit739EC0's tethered arrival chapter73A7D2..73AADB, before its
-    /// Ready/Commence checkpoint. The human continuation calls the existing
-    /// archive destination, FootStop4DF0D0 and UnitScatter743A50 owners.
+    /// Ready/Commence checkpoint. A computer House's unit from a war factory
+    /// takes its post ([`Self::unit_factory_post`]); the other continuation
+    /// calls the existing archive destination, FootStop4DF0D0 and
+    /// UnitScatter743A50 owners.
     /// Source: anytown_damage/unit_unlimbo radio receipt and original Unit
     /// listing; the composed factory-Unload control binds the null-NavCom arm.
     fn unit_per_cell_factory_clearance(
@@ -423,28 +426,28 @@ impl Simulation {
             return;
         }
         if unit.slave_manager.is_some() {
-            // RESIDUAL:73A9D4 invokes the existing SlaveManager6B0CC0 owner.
-            // The current delivery adapter starts its hunt earlier; its exact
-            // arrival integration remains a manager-lifecycle dependency.
+            //73A9CA..73A9D9: a Slave Miner's manager (+2D8) starts its hunt
+            // (6B0CC0) in place of the rally or post.
+            self.begin_slave_hunt(id, rules, effects);
             return;
         }
         let producer = contact
             .and_then(|contact| self.substrate.entities.get(contact))
             .filter(|contact| contact.category() == EntityCategory::Structure);
-        let human = self
+        // A missing House cannot stand in for Human50B730.
+        let Some(human) = self
             .houses
             .get(&unit.owner())
-            .map(|house| house.is_controlled_by_human(self.session.game_mode_nonzero));
-        if human.is_none()
-            || (human == Some(false)
-                && producer
-                    .and_then(|producer| self.object_type(producer.type_ref(), rules))
-                    .is_some_and(|object| object.weapons_factory))
+            .map(|house| house.is_controlled_by_human(self.session.game_mode_nonzero))
+        else {
+            return;
+        };
+        if !human
+            && producer
+                .and_then(|producer| self.object_type(producer.type_ref(), rules))
+                .is_some_and(|object| object.weapons_factory)
         {
-            // RESIDUAL:73AA19's House500200 placement/spreading owner is
-            // unported. It draws Scenario RNG for armed computer units,
-            // queues Move, Commences, archives its post and queues AreaGuard.
-            // A missing House cannot stand in for Human50B730.
+            self.unit_factory_post(id, unit.owner(), rules, effects);
             return;
         }
         let archive = unit.archive_target();
@@ -468,12 +471,73 @@ impl Simulation {
             );
         }
         // RESIDUAL:73AB6C..73ABD0 rereads the first ground Building, NavCom,
-        // and distinct counts+5BC/+598 before Scatter(NULL,1,1). NavQueue
-        // represents+598; vector+5AC/count+5BC is not represented. Its full
-        // producer/consumer/save/expiry chain is required before this fallback
-        // can be ported; SuspendedNavCom(+5A8) is not that vector. The composed
-        // fresh human control publishes NavCom in the first Scatter and skips
-        // this second call, so no invented count or factory marker is needed.
+        // and the navigation list and NavQueue counts (+5BC, +598) before
+        // Scatter(NULL,1,1); it is not ported. The composed fresh human
+        // control publishes NavCom in the first Scatter and skips this second
+        // call, so no invented count or factory marker is needed.
+        // The Slave Miner (73A9D9), harvester (73AAF5) and computer post
+        // (73AA9C, 73AB4C) arms jump here too. VERA returns from them first.
+        // A war factory clears its product on its own foundation (location
+        // +(4,1), where the exit track ends) with a null NavCom, so natively
+        // every harvester and Slave Miner from a war factory Scatters here, as
+        // does a product without a post. After a post the NavCom is set.
+    }
+
+    /// `0x0073AA0D..0x0073AA9C`: a computer House's unit cleared by its war
+    /// factory takes a post near its base, House500200 (`0x0073AA19`,
+    /// [`Self::house_return_cell`], two Scenario draws). The post queues Move
+    /// (`0x0073AA48`), becomes the destination (vt+0x480, `0x0073AA65`), the
+    /// mission Commences (vt+0x1EC, `0x0073AA70`), the post is archived
+    /// (`0x0070C610`, `0x0073AA88`) and AreaGuard is queued (`0x0073AA96`).
+    /// With no post (the packed zero Cell at `0x00B1CFB8`, which only the
+    /// static initializer `0x00735320` writes) the archive clears
+    /// (`0x0073AB43`).
+    ///
+    /// A product reaches this on the factory's Move with nothing queued, so
+    /// the Queue and Commence of Move change nothing. The Ready/Commence that
+    /// follows (`0x0073ACC2`, `0x0073ACD1`) then commences AreaGuard at once:
+    /// Drive emptied HeadTo before this arrival call (`0x004B21ED..
+    /// 0x004B2204`) and Move_To writes only the destination, so the unit is
+    /// not moving (native trace: `spatial_oracle/anytown_damage/
+    /// unit_unlimbo.json`, `factory_unload_rows[0]`, Ready 1 at `0x0073ACC2`).
+    /// Whether a Hover or Jumpjet product is moving at its arrival call is
+    /// not established; if it is, `ready_to_commence_answer`'s moving-defer
+    /// residual applies.
+    fn unit_factory_post(
+        &mut self,
+        id: u64,
+        owner: crate::sim::intern::InternedId,
+        rules: &RuleSet,
+        effects: FrameEffects<'_>,
+    ) {
+        let Some(post) = self.house_return_cell(owner, id) else {
+            if let Some(unit) = self.substrate.entities.get_mut(id) {
+                unit.set_archive_target(None);
+            }
+            return;
+        };
+        let now = self.session.binary_frame;
+        let readiness = LiveReadyInputProvider { rules };
+        let _ = self.mission_queue_exact(
+            id,
+            MissionId::from_known(MissionType::Move),
+            0,
+            now,
+            &readiness,
+        );
+        let _ =
+            self.set_unit_destination(id, NavTargetRef::cell(post.0, post.1), rules, true, effects);
+        let _ = self.mission_commence_exact(id, now);
+        if let Some(unit) = self.substrate.entities.get_mut(id) {
+            unit.set_archive_target(Some(crate::sim::combat::TargetKind::Cell(post.0, post.1)));
+        }
+        let _ = self.mission_queue_exact(
+            id,
+            MissionId::from_known(MissionType::AreaGuard),
+            0,
+            now,
+            &readiness,
+        );
     }
 
     /// `InfantryClass::Per_Cell_Process @ 0x00519630`: for reason 2 its

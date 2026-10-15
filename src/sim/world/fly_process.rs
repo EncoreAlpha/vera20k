@@ -835,11 +835,13 @@ impl Simulation {
             Some(bounds),
             self.resolved_terrain.as_ref(),
         ) {
+            // `0x004CD5F0`.
             self.substrate
                 .entities
                 .get_mut(id)
                 .unwrap()
-                .set_in_playfield(true);
+                .in_playfield
+                .enter();
             return;
         }
         if !retreat {

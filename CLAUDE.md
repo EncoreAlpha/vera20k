@@ -109,11 +109,19 @@ Use the simplest implementation that fully satisfies the required behavior. Avoi
 unnecessary abstractions, duplicated logic and speculative features; prefer clarity
 over minimizing line count.
 
-Prefer data-oriented design for simulation hot loops: organize data for efficient access and batch processing, minimize unnecessary per-entity work. Match gamemd's results, not its execution strategy: batch, vectorize or parallelize freely when the outcome is identical to native order; keep RNG draws and same-frame cross-object effects in native sequence.
+Prefer data-oriented design for simulation hot loops: organize data for efficient
+access and batch processing, minimize unnecessary per-entity work. Match gamemd's
+results, not its execution strategy: batch, vectorize or parallelize freely. Objects
+need not update in gamemd's order: any deterministic order (never thread timing) is
+acceptable when it causes no noticeable gameplay change; RNG draws and same-frame
+cross-object effects then follow it. Within one object's update, keep gamemd's step,
+RNG and timer order. Record each change to object order (trigger, visible effect) in
+its PR for side-by-side play.
 
 Choose boundaries and abstractions by responsibility and consumers, not line/type
-counts or C++ structure. Preserve state authority, lifecycle, scheduler/RNG order,
-timers, same-tick effects, persistence and numeric semantics under the policy below.
+counts or C++ structure. Preserve state authority, lifecycle, tick phase order, each
+object's own RNG order, timers, same-tick effects, persistence and numeric semantics
+under the policy below.
 Document and validate floating-point use where native behavior requires it.
 Storage order and active-object order are distinct.
 

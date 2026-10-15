@@ -6,8 +6,7 @@
 //! embedded at `+0xB0`; that half lives in [`crate::sim::bounce`].
 //!
 //! This is NOT `AnimClass` — that draws SHP sprites and is a separate hierarchy
-//! sharing only `ObjectClass`. It is also not `sim::animation::VoxelAnimation`,
-//! which is a per-entity HVA frame cursor.
+//! sharing only `ObjectClass`.
 //!
 //! The store IS wired: `world::substrate.voxel_anims` owns it, the LogicVector
 //! owns AI order through `ObjectKind::VoxelAnim`, and it folds into the state

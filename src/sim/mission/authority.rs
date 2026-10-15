@@ -89,6 +89,8 @@ impl SuspendedTarget {
 /// (clear first, then conditionally Restore); live-object detach uses a separate
 /// wrapper and order. `saved_target_commits` is `assign_target_commits` for the
 /// archived target, read before the receiver was borrowed.
+/// `FootClass::Restore_Mission @ 0x004D8F80`, a Building's `TechnoClass::Restore_Mission`
+/// (`0x007013E0`): `+0xB0` to `+0xAC`, Assign_Target(`+0x2B8`), Assign_Destination(`+0x5A8`, 1).
 pub(crate) fn restore_entity_after_target_expiry(
     entity: &mut crate::sim::game_entity::GameEntity,
     saved_target_commits: bool,
@@ -117,6 +119,8 @@ pub(crate) fn restore_entity_after_target_expiry(
 /// Receiver special-damage branches already hold the target's mutable entity
 /// and must make the queued selector visible before the next ordered receiver.
 /// `commence=false` performs no readiness query or synchronous promotion.
+/// `AircraftClass::Queue_Mission @ 0x0041BA90`'s filter, then
+/// `MissionClass::Queue_Mission @ 0x005B35E0` with `commence_now` false.
 pub(crate) fn queue_entity_mission_deferred(
     entity: &mut crate::sim::game_entity::GameEntity,
     requested: MissionId,
@@ -202,6 +206,8 @@ impl LiveUnitWorld<'_> {
 }
 
 impl UnitReadyWorld for LiveUnitWorld<'_> {
+    /// `UnitClass::Is_Ready_To_Commence @ 0x00744270`'s contact read:
+    /// `GetNthLink(0)` (`0x0065AD40` at `0x0074433C`) and a Building's WeaponsFactory.
     fn contact_slot_zero(&self) -> Result<Option<UnitReadyContact>, ReadyUnavailable> {
         let Some(contact_id) = self.entity.radio_contacts.slot(0) else {
             return Ok(None);
@@ -220,6 +226,8 @@ impl UnitReadyWorld for LiveUnitWorld<'_> {
         }))
     }
 
+    /// `UnitClass::Is_Ready_To_Commence @ 0x00744270`'s lookup without a contact:
+    /// `Look_up_building_in_cell` (`0x0047C520` at `0x007443B8`) on its Location's cell.
     fn building_under_in_stored_order(
         &self,
         _unit_position: ReadyLeptonPoint,
@@ -503,6 +511,8 @@ fn ready_to_commence_answer(
     }
 }
 
+/// The five-mission filter `AircraftClass::Queue_Mission @ 0x0041BA90` and
+/// `Assign_Mission @ 0x0041B9F0` share: current `+0xAC`, and no Airstrike (`+0x294`).
 fn aircraft_allows(entity: &crate::sim::game_entity::GameEntity, requested: MissionId) -> bool {
     let Some(leaf) = entity.mission_leaf.as_aircraft() else {
         return true;
@@ -512,6 +522,8 @@ fn aircraft_allows(entity: &crate::sim::game_entity::GameEntity, requested: Miss
         || AIRCRAFT_PROTECTED.contains(&requested)
 }
 
+/// `AircraftClass::Commence @ 0x0041B870` (clears `+0x6D2` unless current is
+/// SpyplaneApproach), then `MissionClass::Commence @ 0x005B3570`.
 pub(crate) fn commence_entity_mission(
     entity: &mut crate::sim::game_entity::GameEntity,
     now: u32,
@@ -575,6 +587,8 @@ impl Simulation {
         self.mission_rate_epilogue(rules, current)
     }
 
+    /// `AircraftClass::Assign_Mission @ 0x0041B9F0`'s filter, then
+    /// `MissionClass::Assign_Mission @ 0x005B2FD0`.
     pub(crate) fn mission_assign_exact(
         &mut self,
         receiver: u64,

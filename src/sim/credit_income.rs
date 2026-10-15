@@ -254,6 +254,8 @@ pub(crate) fn building_at_cell(sim: &Simulation, rx: u16, ry: u16) -> Option<u64
 
 /// [`building_at_cell`] over a bare entity store (the combat host holds no
 /// `Simulation` while it applies fire emissions).
+/// Serves `CellClass::Look_up_building_in_cell @ 0x0047C520` (the first Building
+/// on the cell's `+0xE4` list) with a foundation test over each live structure.
 pub(crate) fn building_at_cell_in_store(entities: &EntityStore, rx: u16, ry: u16) -> Option<u64> {
     entities.values().find_map(|entity| {
         if entity.category() != EntityCategory::Structure || entity.death.is_dying() {

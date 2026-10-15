@@ -435,6 +435,8 @@ impl HouseTracking {
         self.track(entity, -1);
     }
 
+    /// Shared body of `Add_Tracking @ 0x004FF700` (+1) and `Remove_Tracking @ 0x004FF550` (-1);
+    /// Infantry latches `+0x438`/`+0x439`: `0x004FF81A..0x004FF83B`, `0x004FF636..0x004FF64D`.
     fn track(&mut self, entity: &mut GameEntity, delta: i32) {
         let facts = entity.tracking_facts;
         if facts.insignificant || entity.tracking_facts.dont_score() {
@@ -469,6 +471,8 @@ impl HouseTracking {
         *count = count.wrapping_add(delta);
     }
 
+    /// `InfantryClass::PerCellProcess @ 0x00519630`'s absorber entry
+    /// (`0x0051A327..0x0051A348`): a set `+0x438` lowers the total and clears.
     fn absorber_entry(&mut self, entity: &mut GameEntity) {
         if entity.category() == EntityCategory::Infantry
             && entity.house_tracking_latches_mut().remove_total()
@@ -477,6 +481,8 @@ impl HouseTracking {
         }
     }
 
+    /// A reveal's restore (Mission_Unload `0x0044DBEA..0x0044DC02`, SpawnSurvivors
+    /// `0x00442F6D..0x00442FA1`, Mission_Selling `0x0044A510..0x0044A548`).
     fn restore_absorbed_infantry(&mut self, entity: &mut GameEntity) {
         if entity.category() == EntityCategory::Infantry
             && entity.house_tracking_latches_mut().restore_absorbed()

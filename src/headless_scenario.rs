@@ -342,11 +342,6 @@ pub(crate) fn load_with_launch(
             &overlay_registry,
             &scenario_prefix_projection,
         );
-    crate::app::loading::init_helpers::bind_staged_app_scenario_metadata(
-        &mut sim,
-        &assets,
-        Some(&rules),
-    );
     let post_map = crate::sim::runtime::finalize_constructed_scenario(
         &mut sim,
         &map,

@@ -930,7 +930,8 @@ fn depot_rally_cell(
 }
 
 /// BREAK the unit↔depot link over the bus (both slots cleared). No-op when the
-/// unit holds no contact with the depot.
+/// unit holds no contact with the depot. This is the refusal BREAK of
+/// `FootClass::TryEnterTransport` (`0x0070D7E0`, `0x0070D85E..0x0070D889`).
 fn break_depot_contact(
     sim: &mut Simulation,
     unit_id: u64,
@@ -955,8 +956,52 @@ fn break_depot_contact(
     }
 }
 
-/// The native Unit+500 pending entry, retained by the existing depot owner.
-/// Unit741D9F and Foot70D84F/70D889 are its admission/clear writers.
+/// The pending entry (`Unit+0x500`): the building a Foot waits to enter,
+/// independent of its Radio contacts. The Techno constructor clears it
+/// (`0x006F310C`).
+///
+/// - [`Self::install`]: the class destination setters' `UnitRepair=` arms
+///   (`UnitClass::Set_Destination` `0x00741D9F`, `AircraftClass::
+///   Set_Destination` `0x0041ABC4`), for a building holding no free slot.
+/// - [`Self::clear`]: `FootClass::TryEnterTransport`'s admission, refusal
+///   and dead-building drop (`0x0070D84F`, `0x0070D87F`, `0x0070D8D8`), its
+///   parking tail's dead-building drop (`0x0070D96D`), the depot's release
+///   arms (`BuildingClass::MissionRepairAndProduce`: `0x0044BEE2`,
+///   `0x0044BFB5`, `0x0044C3D6`, `0x0044C4B1`), the depot's death
+///   (`BuildingClass::ReceiveDamage`, `0x004425AA`) and an order event
+///   (`EventClass::Execute`, `0x004C7353`).
+/// - [`Self::expire`]: `TechnoClass::PointerExpired`'s clear of a matching
+///   entry (`0x00707AF5`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct PendingEntry(Option<u64>);
+
+impl PendingEntry {
+    /// The building waited for.
+    pub(crate) const fn get(self) -> Option<u64> {
+        self.0
+    }
+
+    /// A class destination setter's store of a full `UnitRepair=` building.
+    pub(crate) fn install(&mut self, building: u64) {
+        self.0 = Some(building);
+    }
+
+    /// Drop the entry (see the type).
+    pub(crate) fn clear(&mut self) {
+        self.0 = None;
+    }
+
+    /// PointerExpired: drop the entry only when it is `expired`.
+    pub(crate) fn expire(&mut self, expired: u64) {
+        if self.0 == Some(expired) {
+            self.0 = None;
+        }
+    }
+}
+
+/// A fixture's pending entry.
+#[cfg(test)]
 pub(crate) fn set_pending_entry(sim: &mut Simulation, id: u64, depot: Option<u64>) {
     if let Some(unit) = sim.substrate.entities.get_mut(id) {
         unit.set_pending_entry(depot);
@@ -999,7 +1044,7 @@ pub(crate) fn try_pending_entry(
         .is_some_and(|depot| depot.is_object_alive())
     {
         if let Some(unit) = sim.substrate.entities.get_mut(id) {
-            clear_pending_entry(unit);
+            unit.pending_entry.clear();
         }
         return;
     };
@@ -1045,7 +1090,9 @@ pub(crate) fn try_pending_entry(
             None,
             frame_effects,
         );
-        set_pending_entry(sim, id, None);
+        if let Some(unit) = sim.substrate.entities.get_mut(id) {
+            unit.pending_entry.clear();
+        }
     } else {
         let _ = sim.mission_queue_exact(
             id,
@@ -1056,7 +1103,7 @@ pub(crate) fn try_pending_entry(
         );
         sim.assign_null_destination(id, Some(rules), None, frame_effects);
         if let Some(unit) = sim.substrate.entities.get_mut(id) {
-            clear_pending_entry(unit);
+            unit.pending_entry.clear();
         }
         break_depot_contact(sim, id, depot, frame_effects);
     }
@@ -1110,7 +1157,7 @@ pub(crate) fn park_pending_entry(
         .is_some_and(|depot| depot.is_object_alive())
     {
         if let Some(unit) = sim.substrate.entities.get_mut(id) {
-            clear_pending_entry(unit);
+            unit.pending_entry.clear();
         }
         return false;
     }
@@ -1130,18 +1177,6 @@ pub(crate) fn park_pending_entry(
         &LiveReadyInputProvider { rules },
     );
     true
-}
-
-/// Building NowDead4425AA clears native+500 after RUN_AWAY returns.
-pub(crate) fn clear_pending_entry(unit: &mut crate::sim::game_entity::GameEntity) {
-    unit.set_pending_entry(None);
-}
-
-/// Techno707AE7's destructive expiry clears only the matching entry pointer.
-pub(crate) fn expire_reference(unit: &mut crate::sim::game_entity::GameEntity, expired: u64) {
-    if unit.pending_entry() == Some(expired) {
-        unit.set_pending_entry(None);
-    }
 }
 
 /// Building vt+4D8, original447E00: distance from the contact GetCoords(+48)
@@ -1261,13 +1296,13 @@ fn release_contact(
         && ai_archive.is_some()
         && let Some(contact) = sim.substrate.entities.get_mut(unit)
     {
-        clear_pending_entry(contact);
+        contact.pending_entry.clear();
     }
     radio::transmit_to_contact(sim, depot, RadioMessage::Break, Some(rules), frame_effects);
     if !(state1 && ai_archive.is_some())
         && let Some(contact) = sim.substrate.entities.get_mut(unit)
     {
-        clear_pending_entry(contact);
+        contact.pending_entry.clear();
     }
 }
 
@@ -2224,7 +2259,12 @@ mod tests {
             Some(pending + 1)
         );
         assert!(linked(&sim, 1));
-        clear_pending_entry(sim.substrate.entities.get_mut(1).unwrap());
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .pending_entry
+            .clear();
         assert_eq!(sim.substrate.entities.get(1).unwrap().pending_entry(), None);
         assert!(linked(&sim, 1));
         assert_eq!(
@@ -2255,7 +2295,12 @@ mod tests {
         let pending = DEPOT + 1;
         link_for_service(&mut sim, 1);
         set_pending_entry(&mut sim, 1, Some(pending));
-        expire_reference(sim.substrate.entities.get_mut(1).unwrap(), pending);
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .pending_entry
+            .expire(pending);
         assert_eq!(sim.substrate.entities.get(1).unwrap().pending_entry(), None);
         assert!(
             linked(&sim, 1),
@@ -2267,7 +2312,12 @@ mod tests {
         let unit = sim.substrate.entities.get(1).unwrap();
         assert_eq!(unit.pending_entry(), Some(pending));
         assert!(!unit.radio_contacts.contains(DEPOT));
-        expire_reference(sim.substrate.entities.get_mut(1).unwrap(), pending);
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .pending_entry
+            .expire(pending);
         assert_eq!(sim.substrate.entities.get(1).unwrap().pending_entry(), None);
     }
 

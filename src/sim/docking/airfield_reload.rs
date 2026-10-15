@@ -32,7 +32,9 @@ use crate::sim::mission::{MissionId, MissionType};
 use crate::sim::radio::{self, RadioMessage, RadioPayload, RadioResponse};
 use crate::sim::world::{FrameEffects, Simulation};
 
-/// What the arm asks and does, each where the original does it.
+/// What the arm asks and does, each where the original does it. It supplies
+/// the reads of `BuildingClass::Mission_Repair` (`0x0044B780`)'s `UnitReload=`
+/// arm (`0x0044C836..0x0044C96F`).
 pub(crate) trait ReloadHost {
     /// The radio slot count (`+0xE8`).
     fn capacity(&mut self) -> usize;

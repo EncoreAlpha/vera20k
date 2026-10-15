@@ -125,6 +125,7 @@ struct UnitFacing {
 }
 
 impl UnitFacing {
+    /// Reads the hull `+0x388`, the turret `+0x3A0` and the `+0x6AF` latch.
     fn of(entity: &GameEntity) -> Self {
         Self {
             hull: entity.body_facing,

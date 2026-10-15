@@ -13,7 +13,8 @@
 //! The run is deterministic for a given map, seed and arguments: the final
 //! `Simulation::state_hash` (and the optional periodic hashes, taken outside
 //! the timed region) identify the simulation result, so two builds can be
-//! compared for identical behavior as well as for speed.
+//! compared for identical behavior as well as for speed. The periodic hashes
+//! are timed on their own, which measures the hash every frame also takes.
 //!
 //! `--map` also takes a loose map file; `python -m tools.scale_map` writes the
 //! flat 500x500-cell map used for 20,000-unit, 30-house runs.
@@ -292,6 +293,7 @@ fn main() -> Result<(), String> {
 
     let mut times = Vec::with_capacity(args.ticks as usize);
     let mut hashes = Vec::new();
+    let mut hash_times = Vec::new();
     for tick in 0..args.ticks {
         let batch = orders.get(tick as usize).map_or(&[][..], Vec::as_slice);
         let started = Instant::now();
@@ -300,7 +302,10 @@ fn main() -> Result<(), String> {
             .map_err(|error| format!("tick {tick}: {error}"))?;
         times.push(started.elapsed());
         if args.hash_every > 0 && (tick + 1) % args.hash_every == 0 {
-            hashes.push((tick + 1, runtime.simulation.state_hash()));
+            let started = Instant::now();
+            let hash = runtime.simulation.state_hash();
+            hash_times.push(started.elapsed());
+            hashes.push((tick + 1, hash));
         }
     }
     let final_hash = runtime.simulation.state_hash();
@@ -345,6 +350,15 @@ fn main() -> Result<(), String> {
     }
     for (tick, hash) in &hashes {
         println!("hash tick={tick} {hash:016x}");
+    }
+    if !hash_times.is_empty() {
+        let total: Duration = hash_times.iter().sum();
+        hash_times.sort_unstable();
+        println!(
+            "periodic_hash_mean_ms={:.3} p50_ms={:.3}",
+            total.as_secs_f64() * 1000.0 / hash_times.len() as f64,
+            percentile(&hash_times, 0.5)
+        );
     }
     println!("live_objects start={live_at_start} end={live_at_end}");
     println!("final_hash={final_hash:016x}");

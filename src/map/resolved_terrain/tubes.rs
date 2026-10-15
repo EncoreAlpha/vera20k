@@ -114,6 +114,10 @@ impl ResolvedTerrainGrid {
     }
 
     pub fn tube_at_cell(&self, rx: u16, ry: u16) -> Option<&TubeFact> {
+        // No index validates against an empty registry.
+        if self.tube_facts.is_empty() {
+            return None;
+        }
         let index = self.index(rx, ry)?;
         let tube_id = self
             .native_tube_indices
@@ -144,6 +148,10 @@ impl ResolvedTerrainGrid {
     /// Cell484F20 reads its retained receiver's signed index; unlike a map
     /// coordinate helper this performs no additional lookup or Dummy stamp.
     pub(crate) fn tube_for_native_cell(&self, cell: NativeCellIdentity) -> Option<&TubeFact> {
+        // No index validates against an empty registry.
+        if self.tube_facts.is_empty() {
+            return None;
+        }
         let index = match cell {
             NativeCellIdentity::Real(index) => self.native_tube_indices[index],
             NativeCellIdentity::Dummy => {

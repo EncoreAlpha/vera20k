@@ -104,13 +104,16 @@ fn garrison_inside_foundation_fallback(rx: u16, ry: u16, width: u16, height: u16
     )
 }
 
+/// An occupant with no exit cell: `SellBuilding`'s closing
+/// `KillOccupants(NULL)` (`0x00458184`) UnInits each remaining occupant
+/// (vtable `+0xF8`, `0x004585F3`), last first, with no RecordKill and no
+/// Health store.
 fn uninit_garrison_passenger_without_exit(
     sim: &mut Simulation,
     passenger_id: u64,
     context: UninitContext<'_>,
 ) {
     if let Some(pax) = sim.substrate.entities.get_mut(passenger_id) {
-        pax.health.set(0);
         pax.passenger_role.clear_carrier_relation();
     }
     sim.uninit_with_context(passenger_id, context);
@@ -1072,7 +1075,11 @@ pub(crate) mod tests {
             .entities
             .get(passenger_id)
             .expect("UnInit keeps the no-exit occupant resolvable until the drain");
-        assert_eq!(passenger.health.current(), 0);
+        assert_eq!(
+            passenger.health.current(),
+            100,
+            "KillOccupants(NULL) stores no Health"
+        );
         assert!(passenger.death.is_dying());
         assert!(passenger.passenger_role.is_none());
         assert!(!passenger.lifecycle.object_alive());

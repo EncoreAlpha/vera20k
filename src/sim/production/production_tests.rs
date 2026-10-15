@@ -706,13 +706,13 @@ fn war_factory_spawn_contact_is_marked_per_produced_mover() {
         .spawn_object("MTNK", "Americans", 30, 30, 64, &rules)
         .expect("unrelated tank should spawn");
 
-    assert!(mark_war_factory_spawn_contact(
+    mark_war_factory_spawn_contact(
         &mut sim,
         &rules,
         10,
         produced,
         crate::sim::world::FrameEffects::default(),
-    ));
+    );
     assert!(
         sim.substrate
             .entities

@@ -226,33 +226,36 @@ fn building_receive(
     }
 }
 
+/// What CAN_LOAD answers ([`can_load`]) before its UnitRepair arm's
+/// IsOccupied question (`0x0043C56A`), which the caller sends.
+pub(crate) enum CanLoad {
+    Answer(RadioResponse),
+    AskOccupied,
+}
+
 /// CAN_LOAD0F, Building43C2D0: common admission, then class/type arm.
 /// The refinery scanner and pending depot entry use this same receiver.
 /// Effective mission43C310, body43C34C, contacts43C35A, Naval/Balloon/online
 /// gates precede UnitRepair43C61B and DockUnload43C64F. The wide scan's
 /// A8E7AC context skips contact/passenger capacity, not the other gates.
-fn building_can_load(
-    sim: &mut Simulation,
+pub(crate) fn can_load(
+    sim: &Simulation,
     building_id: u64,
-    sender: Option<u64>,
+    from: u64,
     payload: RadioPayload,
-    rules: Option<&RuleSet>,
-    effects: FrameEffects<'_>,
-) -> RadioResponse {
-    let (Some(from), Some(rules)) = (sender, rules) else {
-        return RadioResponse::None;
-    };
+    rules: &RuleSet,
+) -> CanLoad {
     let (Some(building), Some(unit)) = (
         sim.substrate.entities.get(building_id),
         sim.substrate.entities.get(from),
     ) else {
-        return RadioResponse::None;
+        return CanLoad::Answer(RadioResponse::None);
     };
     let (Some(building_type), Some(unit_type)) = (
         sim.object_type(building.type_ref(), rules),
         sim.object_type(unit.type_ref(), rules),
     ) else {
-        return RadioResponse::None;
+        return CanLoad::Answer(RadioResponse::None);
     };
     if !crate::sim::combat::combat_weapon::is_ally_by_object(
         Some(&sim.fog.alliances),
@@ -260,7 +263,7 @@ fn building_can_load(
         building.owner(),
         unit.owner(),
     ) {
-        return RadioResponse::None;
+        return CanLoad::Answer(RadioResponse::None);
     }
     let absorbs = building_type.unit_absorb || building_type.infantry_absorb;
     if matches!(
@@ -273,7 +276,7 @@ fn building_can_load(
         || unit_type.balloon_hover
         || !building.building_online()
     {
-        return RadioResponse::Negatory;
+        return CanLoad::Answer(RadioResponse::Negatory);
     }
     // 0x0043C43B..0x0043C4F2, an absorber (UnitAbsorb +0x16AE /
     // InfantryAbsorb +0x16AF): a Unit or an infantryman it does not absorb,
@@ -294,7 +297,7 @@ fn building_can_load(
                 .as_ref()
                 .is_some_and(|manager| manager.has_any())
         {
-            return RadioResponse::Negatory;
+            return CanLoad::Answer(RadioResponse::Negatory);
         }
         let passengers = building
             .passenger_role
@@ -303,21 +306,54 @@ fn building_can_load(
         if i64::from(passengers) < i64::from(building_type.passengers)
             && unit_type.size <= building_type.size_limit
         {
-            return RadioResponse::Roger;
+            return CanLoad::Answer(RadioResponse::Roger);
         }
     }
     // Other building mechanisms retain their existing owner/residual.
     if building_type.grinding || building_type.bunker {
-        return RadioResponse::None;
+        return CanLoad::Answer(RadioResponse::None);
     }
     if building_type.unit_repair {
         if !matches!(
             unit.category(),
             EntityCategory::Unit | EntityCategory::Aircraft
         ) {
-            return RadioResponse::Negatory;
+            return CanLoad::Answer(RadioResponse::Negatory);
         }
-        return match transmit(
+        return CanLoad::AskOccupied;
+    }
+    // 0x0043C620: a Helipad takes an Aircraft and nothing else.
+    if building_type.helipad {
+        return CanLoad::Answer(if unit.category() == EntityCategory::Aircraft {
+            RadioResponse::Roger
+        } else {
+            RadioResponse::Negatory
+        });
+    }
+    if unit.category() == EntityCategory::Unit
+        && (building_type.dock_unload && unit_type.harvester
+            || building_type.weeder && unit_type.weeder)
+    {
+        // Native passenger-head+118 is never filled by a refinery unload.
+        return CanLoad::Answer(RadioResponse::Roger);
+    }
+    CanLoad::Answer(RadioResponse::None)
+}
+
+fn building_can_load(
+    sim: &mut Simulation,
+    building_id: u64,
+    sender: Option<u64>,
+    payload: RadioPayload,
+    rules: Option<&RuleSet>,
+    effects: FrameEffects<'_>,
+) -> RadioResponse {
+    let (Some(from), Some(rules)) = (sender, rules) else {
+        return RadioResponse::None;
+    };
+    match can_load(sim, building_id, from, payload, rules) {
+        CanLoad::Answer(reply) => reply,
+        CanLoad::AskOccupied => match transmit(
             sim,
             building_id,
             from,
@@ -328,24 +364,34 @@ fn building_can_load(
         ) {
             RadioResponse::Roger => RadioResponse::Negatory,
             _ => RadioResponse::Roger,
-        };
+        },
     }
-    // 0x0043C620: a Helipad takes an Aircraft and nothing else.
-    if building_type.helipad {
-        return if unit.category() == EntityCategory::Aircraft {
+}
+
+/// CAN_LOAD as a click asks it (`UnitClass::What_Action_OnObject`'s
+/// `vt+0x278(0x0F)`), sending nothing: the building's answer, a `Bunker=`
+/// building's from VERA's bunker adapter, with the IsOccupied question
+/// answered by its receiver ([`foot_is_occupied`]).
+pub(crate) fn can_load_query(
+    sim: &Simulation,
+    building_id: u64,
+    from: u64,
+    rules: &RuleSet,
+) -> RadioResponse {
+    if is_bunker_building(sim, building_id) {
+        return if bunker_admits(sim, building_id, from) {
             RadioResponse::Roger
         } else {
             RadioResponse::Negatory
         };
     }
-    if unit.category() == EntityCategory::Unit
-        && (building_type.dock_unload && unit_type.harvester
-            || building_type.weeder && unit_type.weeder)
-    {
-        // Native passenger-head+118 is never filled by a refinery unload.
-        return RadioResponse::Roger;
+    match can_load(sim, building_id, from, RadioPayload::default(), rules) {
+        CanLoad::Answer(reply) => reply,
+        CanLoad::AskOccupied => match foot_is_occupied(sim, from, Some(building_id)) {
+            RadioResponse::Roger => RadioResponse::Negatory,
+            _ => RadioResponse::Roger,
+        },
     }
-    RadioResponse::None
 }
 
 /// IsOccupied (0x23), `FootClass::Receive_Radio @ 0x004D8FB0`: ROGER when
@@ -1727,6 +1773,8 @@ fn radio_hello(sim: &mut Simulation, receiver: u64, sender: Option<u64>) -> Radi
 
 /// A tank bunker is any structure seeded with a `bunker_runtime` (Bunker=yes at
 /// spawn). Routing on this lets the bus stay rules-free (it has no `RuleSet`).
+/// It stands in for the Type's `Bunker=` byte (`+0x16AB`) that
+/// `BuildingClass::Receive_Radio` tests at `0x0043C506` and `0x0043C75A`.
 fn is_bunker_building(sim: &Simulation, sid: u64) -> bool {
     sim.substrate
         .entities
@@ -1736,6 +1784,8 @@ fn is_bunker_building(sim: &Simulation, sid: u64) -> bool {
 
 /// Tank-bunker inbound admission + commit. Mirrors the refinery handshake shape:
 /// CAN_ENTER is the eligibility query; DOCK_NOW commits the install machine.
+/// Native: `BuildingClass::Receive_Radio` (`0x0043C2D0`)'s Bunker arms, CanEnterBunker
+/// (`0x0043C512`) and the DOCK_NOW queue (`0x0043C75A..0x0043C773`).
 fn bunker_receive(
     sim: &mut Simulation,
     bld: u64,

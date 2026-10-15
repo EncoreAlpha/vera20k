@@ -352,6 +352,8 @@ impl Simulation {
 
     /// The two bodies' tails: the type's sound for a change of state, at the
     /// object's Location, then the latch.
+    /// `TechnoClass::Deactivate @ 0x0070FC90` (`0x0070FD0E..0x0070FD62`) and
+    /// `TechnoClass::Reactivate @ 0x0070FBE0` (`0x0070FC18..0x0070FC7A`).
     fn latch_deactivated(&mut self, id: u64, deactivated: bool, rules: &RuleSet) {
         let Some(entity) = self.substrate.entities.get(id) else {
             return;

@@ -208,6 +208,27 @@ impl TeleportState {
     }
 }
 
+/// Techno `+0x284`, the frames the Chronosphere's warp-in waits
+/// (`0x00719B23`). The Techno constructor clears it (`0x006F2DDE`); a blocked
+/// landing stores `[General] ChronoDelay=` (state 3, `0x00719983`), which
+/// stays for every later warp of the object. Its other writer, the chrono
+/// reinforcement (`0x0065F212`, `ChronoReinfDelay=`), is not ported.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct ChronoWarpDelay(i32);
+
+impl ChronoWarpDelay {
+    /// The stored frames.
+    pub(crate) const fn get(self) -> i32 {
+        self.0
+    }
+
+    /// State 3's store of `[General] ChronoDelay=` (`0x00719983`).
+    pub(crate) fn store_chrono_delay(&mut self, frames: i32) {
+        self.0 = frames;
+    }
+}
+
 /// The Chronosphere's warp on the Teleport a Chrono Warp piggybacks over a
 /// Foot's locomotor (`SuperClass::Launch 0x006CC989..0x006CCB6A`): Teleport
 /// Process's states (`+0x38`, `0x007197CC..0x00719BE2`, run by
@@ -253,6 +274,9 @@ impl ChronoWarp {
         self.state
     }
 
+    /// Teleport `+0x38`, which the Process's warp states
+    /// (`0x007197CC..0x00719BE2`) and TimerCheck's expiry (`0x00719BF0`)
+    /// store.
     pub(crate) fn set_state(&mut self, state: u8) {
         self.state = state;
     }
@@ -269,6 +293,7 @@ impl ChronoWarp {
         self.destination
     }
 
+    /// Techno `+0x288`, moved by the Process's blocked-landing search.
     pub(crate) fn set_destination(&mut self, destination: DriveCoord) {
         self.destination = destination;
     }
@@ -288,12 +313,15 @@ impl ChronoWarp {
         self.warping_in
     }
 
+    /// Techno `+0x27C`, `+0x270` and `+0x271` as warp states 0 and 2 store
+    /// them.
     pub(crate) fn set_bytes(&mut self, latched: bool, warped_out: bool, warping_in: bool) {
         self.latched = latched;
         self.warped_out = warped_out;
         self.warping_in = warping_in;
     }
 
+    /// Techno `+0x271`, cleared by TimerCheck's expiry and state 7.
     pub(crate) fn set_warping_in(&mut self, warping_in: bool) {
         self.warping_in = warping_in;
     }
@@ -779,7 +807,8 @@ pub(crate) fn teleport_stop_moving(entity: &mut crate::sim::game_entity::GameEnt
 /// Whether the owner's Teleport Process runs this frame: Teleport is its
 /// active locomotor. A Teleport stashed under a Drive piggyback runs nothing,
 /// so a warp Teleport the Unit setter's Drive suspended waits for
-/// End_Piggyback.
+/// End_Piggyback. The Foot's Locomotor (`+0x674`) is then the
+/// `TeleportLocomotionClass` whose Process is `0x007192F0`.
 pub(crate) fn teleport_process_active(entity: &crate::sim::game_entity::GameEntity) -> bool {
     entity
         .locomotor
@@ -1049,13 +1078,13 @@ impl crate::sim::world::Simulation {
                         (destination.x / 256) as i16,
                         (destination.y / 256) as i16,
                     ));
-                    entity.set_on_bridge(terrain.native_cell_flags(cell) & 0x100 != 0);
                     entity
-                        .position
-                        .store_level(super::movement_bridge::stored_level(
-                            terrain.native_cell_ground_fields(cell).0,
-                            entity.on_bridge(),
-                        ));
+                        .on_bridge
+                        .store(terrain.native_cell_flags(cell) & 0x100 != 0);
+                    entity.position.store_cell_level(
+                        terrain.native_cell_ground_fields(cell).0,
+                        entity.on_bridge(),
+                    );
                 }
                 let on_bridge = entity.on_bridge();
                 entity.position.set_height(on_bridge, 0, terrain, None);
@@ -1063,11 +1092,7 @@ impl crate::sim::world::Simulation {
                 // lists move through the caller's Mark pair around this
                 // relocation (`0x007195D4` UP, `0x007196B8` DOWN).
                 if let Some(locomotor) = entity.locomotor.as_mut() {
-                    locomotor.set_layer(if on_bridge {
-                        crate::sim::movement::locomotor::MovementLayer::Bridge
-                    } else {
-                        crate::sim::movement::locomotor::MovementLayer::Ground
-                    });
+                    locomotor.store_ground_layer(on_bridge);
                 }
                 // Harvester instant-warp: when chrono delay is 0, finish in one
                 // frame (cleanup runs at end of this frame) — no post-warp lock.

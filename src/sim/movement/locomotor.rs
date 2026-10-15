@@ -129,7 +129,8 @@ impl LocomotorState {
     /// type data: Jumpjet (`0x0054AD30`) copies the type's jumpjet block and
     /// builds the locomotor facing at its `JumpjetTurnRate=`; Hover
     /// (`0x00513CB0`) builds the steering facing at the type's `ROT=`; Fly
-    /// keeps whether the type is an `AirportBound=` aircraft.
+    /// (`FlyLocomotionClass::Link_To_Object @ 0x004CCA20`) keeps whether the
+    /// type is an `AirportBound=` aircraft (`0x004CCA5B`, `0x004CCA64`).
     fn link_to_object(&mut self, obj: &ObjectType) {
         match &mut self.runtime_payload {
             LocomotorRuntimePayload::Jumpjet(runtime) => runtime.link(&obj.jumpjet_params),
@@ -674,9 +675,30 @@ impl LocomotorState {
         &self.runtime_payload
     }
 
-    /// Class-local state of this locomotor object, for its class's Process.
+    /// Class-local state of this locomotor object, for fixtures.
+    #[cfg(test)]
     pub(crate) fn runtime_payload_mut(&mut self) -> &mut LocomotorRuntimePayload {
         &mut self.runtime_payload
+    }
+
+    /// The active Drive object's class state, lent to its class module
+    /// (`drive_locomotion`), whose methods alone write it.
+    pub(crate) fn drive_runtime_mut(
+        &mut self,
+    ) -> Option<&mut super::drive_locomotion::DriveRuntime> {
+        match (self.kind, &mut self.runtime_payload) {
+            (LocomotorKind::Drive, LocomotorRuntimePayload::Drive(state)) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// The active Ship object's class state, lent to `drive_locomotion`,
+    /// whose methods alone write it.
+    pub(crate) fn ship_runtime_mut(&mut self) -> Option<&mut super::drive_locomotion::ShipRuntime> {
+        match (self.kind, &mut self.runtime_payload) {
+            (LocomotorKind::Ship, LocomotorRuntimePayload::Ship(state)) => Some(state),
+            _ => None,
+        }
     }
 
     /// A fixture's class-local state.
@@ -690,9 +712,24 @@ impl LocomotorState {
         self.layer
     }
 
-    /// Store the Foot's layer.
+    /// Store the Foot's layer: the piggyback swap's copy and fixtures, and
+    /// the unload writers in `transport_unload` until they move to
+    /// [`Self::store_ground_layer`].
     pub(crate) fn set_layer(&mut self, layer: MovementLayer) {
         self.layer = layer;
+    }
+
+    /// Put the cached layer on the ground plane as OnBridge (`Object+0x8C`)
+    /// projects it: [`MovementLayer::Bridge`] on a deck, otherwise
+    /// [`MovementLayer::Ground`]. gamemd keeps no such field (the layer is
+    /// the locomotor's `In_Which_Layer`); a placement or mover that stores
+    /// OnBridge stores this with it.
+    pub(crate) fn store_ground_layer(&mut self, on_bridge: bool) {
+        self.layer = if on_bridge {
+            MovementLayer::Bridge
+        } else {
+            MovementLayer::Ground
+        };
     }
 
     /// The type's `BalloonHover=`.

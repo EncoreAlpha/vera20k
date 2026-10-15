@@ -1685,7 +1685,8 @@ fn a_rocketeer_taken_over_in_flight_stops_over_his_cell() {
         .entities
         .get_mut(1)
         .unwrap()
-        .retain_spatial_threat(0);
+        .cached_spatial_threat
+        .withdraw();
     let soviets = sim.interner.intern("Soviets");
     sim.change_owner_with_rules(
         1,

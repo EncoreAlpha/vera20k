@@ -14,8 +14,36 @@
 //! See docs/plans/2026-05-11-bridge-locomotor-layer-correctness-design.md.
 
 use crate::sim::components::Position;
-use crate::sim::movement::locomotor::{LocomotorState, MovementLayer};
+use crate::sim::movement::locomotor::LocomotorState;
+#[cfg(test)]
+use crate::sim::movement::locomotor::MovementLayer;
 use crate::sim::pathfinding::PathGrid;
+
+/// ObjectClass::OnBridge (`Object+0x8C`): the object stands on a bridge deck,
+/// not the ground beneath it. The ObjectClass constructor clears it
+/// (`0x005F396F`), and the map's Unit and Infantry entries read it
+/// (`0x007434F3`, `0x0051FDB2`). A ground Foot's cell crossing stores it
+/// through [`apply_bridge_layer_state`]. Every other writer ports a native
+/// store and cites it at the call: the air and Teleport movers, the drop and
+/// parachute paths, and the placements that copy a building's or a
+/// transport's OnBridge to the occupants it leaves. The locomotor's cached
+/// layer projects it ([`LocomotorState::store_ground_layer`]), and VERA's
+/// coarse level adds the deck for it ([`stored_level`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct OnBridge(bool);
+
+impl OnBridge {
+    /// Whether the object stands on a bridge deck.
+    pub(crate) const fn get(self) -> bool {
+        self.0
+    }
+
+    /// Store OnBridge, as the native writer the caller ports does.
+    pub(crate) fn store(&mut self, on_bridge: bool) {
+        self.0 = on_bridge;
+    }
+}
 
 /// Result of the gamemd on_bridge transition predicate at a cell boundary.
 ///
@@ -202,7 +230,7 @@ pub(super) fn resolve_cell_transition_bridge_state(
     // and therefore no value that can be absent, so this must not consult the A*
     // layer or any cell-side walkability permission — both are VERA inventions
     // that silently substituted ground level for the deck.
-    position.store_level(stored_level(dst_cell.ground_level, on_bridge_after));
+    position.store_cell_level(dst_cell.ground_level, on_bridge_after);
     // Raw Object Z has a separate setter cadence. Paid Drive/Ship points and
     // Walk commits refresh it; a residual crossing retains it (0x4B253F).
     update
@@ -261,22 +289,23 @@ pub(super) fn resolve_cell_transition_bridge_state_oracle(
 /// keeps no path layer; its `loco.layer` is the OnBridge projection, which is
 /// what its next Find_Path starts from (AStar 0x00429A90 picks the start
 /// height from Foot+0x8C).
+///
+/// The predicate's stores are each ground locomotor's own copy: Walk
+/// `0x0075C179`/`0x0075C193`, and the Drive track's paid point
+/// (`0x004B1830`/`0x004B184A`) and residual step (`0x004B2586`/`0x004B25A0`),
+/// with Ship's at `0x006A0EBC`/`0x006A0ED6` and `0x006A1BD7`/`0x006A1BF1`.
 pub(super) fn apply_bridge_layer_state(
     locomotor: &mut Option<LocomotorState>,
-    on_bridge: &mut bool,
+    on_bridge: &mut OnBridge,
     bridge_update: BridgeStateUpdate,
 ) {
     match bridge_update {
-        BridgeStateUpdate::Set => *on_bridge = true,
-        BridgeStateUpdate::Clear => *on_bridge = false,
+        BridgeStateUpdate::Set => on_bridge.store(true),
+        BridgeStateUpdate::Clear => on_bridge.store(false),
         BridgeStateUpdate::Unchanged => {}
     }
     if let Some(loco) = locomotor {
-        loco.set_layer(if *on_bridge {
-            MovementLayer::Bridge
-        } else {
-            MovementLayer::Ground
-        });
+        loco.store_ground_layer(on_bridge.get());
     }
 }
 
@@ -779,9 +808,9 @@ mod tests {
             (MovementLayer::Ground, true, BridgeStateUpdate::Clear, false),
         ] {
             let mut loco = make_loco(layer);
-            let mut on_b = before;
+            let mut on_b = OnBridge(before);
             apply_bridge_layer_state(&mut loco, &mut on_b, update);
-            assert_eq!(on_b, after, "{update:?}");
+            assert_eq!(on_b.get(), after, "{update:?}");
             let expected = if after {
                 MovementLayer::Bridge
             } else {

@@ -327,16 +327,24 @@ impl Simulation {
         distance > radius && radius.wrapping_shl(2) < distance
     }
 
-    /// Ordinary Unit/Infantry arm of House500200 (Find_Passable_Cell_Near_Unit),
-    /// used by Foot Mission_Rescue. Their original virtual+2D4/+2D8/+2DC bodies
-    /// (41BF00/10/20) return zero, selecting House501AC0 variant0 without the
-    /// alternative-selector draw. Other classes/variants are not covered here.
+    /// Ordinary Unit/Infantry arm of House500200 (Find_Passable_Cell_Near_Unit)
+    /// on `house` for `actor_id`. Callers: Foot Mission_Rescue (`0x004DE143`)
+    /// and Unit Per_Cell_Process's war-factory post (`0x0073AA19`) ask the
+    /// actor's own House; ExitObject's generic arm (`0x00444924`) and its
+    /// Infantry post (`0x00444D51`) ask the producer's. Their original
+    /// virtual+2D4/+2D8/+2DC bodies (41BF00/10/20) return zero, selecting
+    /// House501AC0 variant0 without the alternative-selector draw. Other
+    /// classes/variants are not covered here.
     /// Native comparison: spatial_oracle/house_base_return, all28 home rows.
     ///
     /// Returns None for native packed-zero FNPC or unavailable actor/House/map
     /// authority. Missing terrain/Size/LocalSize/zones consume no RNG and do
     /// not supply a substitute map. This is a query: no mission or radius write.
-    pub(crate) fn house_return_cell(&mut self, actor_id: u64) -> Option<(u16, u16)> {
+    pub(crate) fn house_return_cell(
+        &mut self,
+        house: InternedId,
+        actor_id: u64,
+    ) -> Option<(u16, u16)> {
         let actor = self.substrate.entities.get(actor_id)?;
         if !matches!(
             actor.category(),
@@ -347,7 +355,7 @@ impl Simulation {
         //50025F..5002C9 reads physical Object+9C/+A0, not Should_Be/NavCom or
         //a virtual bridge-height coordinate. OnBridge does not change its zone.
         let current = crate::sim::movement::ground_pose::position_world_coord(&actor.position);
-        let house = self.houses.get(&actor.owner())?;
+        let house = self.houses.get(&house)?;
         let radius = house.base_radius().clamp(768, 2048);
         let origin = house.base_origin();
         let terrain = self.resolved_terrain.as_ref()?;
@@ -936,7 +944,7 @@ mod tests {
                 row["rng_before"].as_str().unwrap(),
                 "initial full Scenario RNG: {name}"
             );
-            let (answer, trace) = crate::sim::rng::trace_draws(|| sim.house_return_cell(id));
+            let (answer, trace) = crate::sim::rng::trace_draws(|| sim.house_return_cell(owner, id));
             let cell = (
                 row["output"][0].as_i64().unwrap() as u16,
                 row["output"][1].as_i64().unwrap() as u16,
@@ -1021,7 +1029,11 @@ mod tests {
             }
             let before = sim.rng_state();
             let hash_before = sim.state_hash();
-            assert_eq!(sim.house_return_cell(id), None, "missing premise {missing}");
+            assert_eq!(
+                sim.house_return_cell(owner, id),
+                None,
+                "missing premise {missing}"
+            );
             assert_eq!(sim.rng_state(), before, "missing premise {missing}");
             assert_eq!(sim.state_hash(), hash_before, "missing premise {missing}");
             assert_eq!(held_terrain.dummy_cell_requested_coord(), (-7, 1));

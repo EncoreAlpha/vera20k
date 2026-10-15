@@ -1577,6 +1577,11 @@ pub struct GeneralRules {
     /// `0x006671BB`): in game mode 0 the house IQ from which a computer house
     /// fires its superweapons (`AI_Building_Strategy 0x004FD77C..0x004FD797`).
     pub iq_super_weapons: i32,
+    /// `[IQ] GuardArea=` (`Rules+0x1440`, ReadInt at `0x006742C7..0x006742DB`
+    /// with the field as its default; constructor 4 at `0x006671C7`; retail
+    /// 2): the house IQ from which a computer infantryman outside a team
+    /// takes Area Guard when idle (`0x0051CCD2..0x0051CCFC`).
+    pub iq_guard_area: i32,
     /// `[IQ] RepairSell` outer gate for BuildingClass repair/sell AI.
     pub iq_repair_sell: i32,
     /// `[IQ] AutoCrush=` (`Rules+0x1448`, ReadInt at `0x00674315`;
@@ -2347,6 +2352,7 @@ impl Default for GeneralRules {
             iq_production: 5,
             iq_harvester: 3,
             iq_super_weapons: 4,
+            iq_guard_area: 4,
             iq_repair_sell: 3,
             iq_auto_crush: 2,
             iq_sell_back: 2,
@@ -3483,6 +3489,7 @@ impl GeneralRules {
             iq_production,
             iq_harvester,
             iq_super_weapons,
+            iq_guard_area: iq.read_int("GuardArea", defaults.iq_guard_area),
             iq_repair_sell: iq.read_int("RepairSell", defaults.iq_repair_sell),
             iq_auto_crush: iq.read_int("AutoCrush", defaults.iq_auto_crush),
             iq_sell_back: iq.read_int("SellBack", defaults.iq_sell_back),

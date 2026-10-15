@@ -797,6 +797,65 @@ impl crate::sim::world::Simulation {
             self.session.binary_frame,
         )
     }
+
+    /// `MapClass::Find_Nearby_Passable_Cell` in the argument shape
+    /// OnConstructionComplete's FreeUnit searches (`0x00446BF4..0x00446CCD`,
+    /// `0x00446D42..0x00446E10`) and the Unit setter's Dock arm
+    /// (`0x00743032..0x007430EE`) push: SpeedType 2 (Wheel), whatever the
+    /// mover's own; the zone `MapClass::GetZoneID @ 0x0056D230` gives the seed
+    /// for `movement_zone` (`Type+0x5B4`) without the bridge lookup, and that
+    /// MovementZone; not bridge-aware; 1x1; the height gate on; no obstacle
+    /// gate; bridge cells refused; a zero target cell, so selection is the
+    /// frame-counter modulo and draws no RNG; no quadrant skip; no final
+    /// occupancy check. `options` carries the overlay rejection. `None` when
+    /// nothing passes or the map size is unknown.
+    pub(crate) fn nearby_wheel_cell(
+        &self,
+        seed: (u16, u16),
+        movement_zone: MovementZone,
+        options: NearbySearchOptions,
+    ) -> Option<(u16, u16)> {
+        let (width, height) = self.map_size_diamond()?;
+        let zone = self
+            .zone_grid
+            .as_ref()
+            .zip(self.resolved_terrain.as_ref())
+            .and_then(|(zones, terrain)| {
+                zones.get_zone_id_native(terrain, seed, movement_zone, false)
+            });
+        let query = NearbyQuery {
+            native_cells: None,
+            raw_occupation: Some(&self.substrate.raw_cell_occupation),
+            passability: PassabilityArgs {
+                speed_type: SpeedType::Wheel,
+                required_zone_id: zone,
+                movement_zone,
+                bridge_aware_zone: false,
+            },
+            footprint: NearbyFootprint::SINGLE,
+            allow_bridge_cells: false,
+            check_height: true,
+            check_occupancy: false,
+            radius_cap: map_owned_radius_cap(width, height),
+            target_cell: None,
+            path_grid: self.path_grid(),
+            resolved_terrain: self.resolved_terrain.as_ref(),
+            overlay_grid: self.overlay_grid.as_ref(),
+            occupancy: Some(&self.substrate.occupancy),
+            entities: Some(&self.substrate.entities),
+            zone_grid: self.zone_grid.as_ref(),
+            playfield_bounds: self.playfield_bounds,
+        };
+        find_nearby_passable_cell_with_options(
+            (i32::from(seed.0), i32::from(seed.1)),
+            &query,
+            options,
+            // The frame counter is committed late, so during this advance it
+            // still holds the current frame — the value the selection modulo
+            // must alias.
+            self.session.binary_frame,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -989,7 +1048,8 @@ mod tests {
                         "{case}"
                     );
                     assert_eq!(
-                        raw.owner_at(RawCellKey::Dummy, layer)
+                        raw.occupant_at(RawCellKey::Dummy, layer)
+                            .1
                             .map_or(u32::MAX, |owner| owner.index()),
                         output["dummy_owners"][index].as_u64().unwrap() as u32,
                         "{case}"
@@ -1811,6 +1871,68 @@ mod tests {
             find_nearby_passable_cell((13, 12), &q, 0),
             None,
             "missing bounds must not approximate MapClass with a rectangle"
+        );
+    }
+
+    /// Every cell but `open` blocks a Track mover.
+    fn track_blocked_but(width: u16, height: u16, open: &[(u16, u16)]) -> ResolvedTerrainGrid {
+        let mut terrain = flat_terrain(width, height);
+        for cell in &mut terrain.cells {
+            cell.ground_walk_blocked = true;
+            cell.base_ground_walk_blocked = true;
+            cell.speed_costs.track = Some(0);
+            cell.base_speed_costs.track = Some(0);
+        }
+        for &(x, y) in open {
+            let cell = terrain.cell_mut(x, y).expect("open cell");
+            cell.ground_walk_blocked = false;
+            cell.base_ground_walk_blocked = false;
+            cell.speed_costs.track = Some(100);
+            cell.base_speed_costs.track = Some(100);
+        }
+        terrain
+    }
+
+    /// The radius cap bounds the rings searched: a MapClass Size sum of 40
+    /// caps at 32 and reaches ring 12; a cap of 12 scans rings 0 to 11 only;
+    /// a nonpositive Size sum searches no ring.
+    #[test]
+    fn find_nearby_radius_cap_bounds_the_rings_searched() {
+        let terrain = track_blocked_but(40, 40, &[(8, 8)]);
+        let path_grid = PathGrid::from_resolved_terrain(&terrain);
+        let mut q = base_query(&terrain, &path_grid);
+        for (size, found) in [((20, 20), Some((8, 8))), ((6, 6), None), ((-10, 10), None)] {
+            q.radius_cap = map_owned_radius_cap(size.0, size.1);
+            assert_eq!(
+                find_nearby_passable_cell((20, 20), &q, 0),
+                found,
+                "{size:?}"
+            );
+        }
+    }
+
+    /// Each candidate's own playfield gate drops a passable cell inside the
+    /// terrain rectangle but off the diamond, here the ring-two cell that
+    /// ring order visits first, so frame 0 picks the other one.
+    #[test]
+    fn find_nearby_anchor_gate_skips_an_earlier_off_diamond_candidate() {
+        // Diamond: pass iff 12 < x+y <= 26, x−y < 14, y−x < 6.
+        let terrain = track_blocked_but(40, 40, &[(7, 2), (7, 6)]);
+        let path_grid = PathGrid::from_resolved_terrain(&terrain);
+        let mut q = base_query(&terrain, &path_grid);
+        q.playfield_bounds = Some(crate::sim::cell_rect::PlayfieldBounds {
+            base: 10,
+            off_fc: 2,
+            off_100: 1,
+            off_104: 10,
+            off_108: 6,
+        });
+        assert_eq!(find_nearby_passable_cell((9, 4), &q, 0), Some((7, 6)));
+        q.playfield_bounds = Some(covering_bounds());
+        assert_eq!(
+            find_nearby_passable_cell((9, 4), &q, 0),
+            Some((7, 2)),
+            "without the gate, ring order puts (7,2) first"
         );
     }
 }

@@ -587,16 +587,19 @@ impl Simulation {
             } else {
                 Some(requested)
             };
-            let sub_cell = infantry.then(|| {
+            let spot_offset = infantry.then(|| {
                 let position = positioned.unwrap_or(requested);
-                bump_crush::priority_sub_cell(position.sub_x(), position.sub_y())
+                (position.sub_x(), position.sub_y())
             });
             // The dying building's expiry broadcast already cleared the
             // passenger's transporter link; the cargo list still held it.
             if let Some(entity) = sim.substrate.entities.get_mut(passenger) {
                 entity.passenger_role.clear_carrier_relation();
-                entity.set_on_bridge(on_bridge);
-                entity.set_sub_cell(sub_cell);
+                entity.on_bridge.store(on_bridge);
+                match spot_offset {
+                    Some((sub_x, sub_y)) => entity.sub_cell.hold_offset(sub_x, sub_y),
+                    None => entity.sub_cell.release(),
+                }
             }
             let revealed = !no_survivor
                 && positioned.is_some_and(|position| {
@@ -764,7 +767,11 @@ impl Simulation {
             self.resolved_terrain.as_ref(),
         ) > 0xD0
         {
-            self.kill_passengers(unit_id, dying.attacker, rules, registry, effects);
+            self.kill_passengers(
+                unit_id,
+                dying.attacker,
+                UninitContext::new(Some(rules), registry).with_effects(effects),
+            );
         }
         if crashable {
             return;
@@ -859,12 +866,16 @@ impl Simulation {
         };
         // `0x0073803B`: the unit's OnBridge.
         if let Some(entity) = self.substrate.entities.get_mut(passenger) {
-            entity.set_on_bridge(on_bridge);
+            entity.on_bridge.store(on_bridge);
         }
         // `0x007380A3..0x007380BF`: bomb passengers never escape, even
         // when another hit kills the falling transport without IgnoreDefenses.
         if dying.ignore_defenses || dropped_as_bomb || !admitted {
-            self.record_kill_and_uninit(passenger, dying.attacker, rules, registry, effects);
+            self.record_kill_and_uninit(
+                passenger,
+                dying.attacker,
+                UninitContext::new(Some(rules), registry).with_effects(effects),
+            );
             return;
         }
 
@@ -911,11 +922,15 @@ impl Simulation {
                 .get_mut(passenger)
                 .and_then(|entity| entity.locomotor.as_mut())
             {
-                locomotor.set_layer(MovementLayer::Ground);
+                locomotor.store_ground_layer(false);
             }
             // `0x007380EC..0x007380F4`: a refused Unlimbo kills.
             if !sim.unlimbo_crew(rules, passenger, unlimbo, Some(facing), registry, effects) {
-                sim.record_kill_and_uninit(passenger, dying.attacker, rules, registry, effects);
+                sim.record_kill_and_uninit(
+                    passenger,
+                    dying.attacker,
+                    UninitContext::new(Some(rules), registry).with_effects(effects),
+                );
                 return;
             }
 
@@ -1018,7 +1033,7 @@ impl Simulation {
         let requested_z = match unlimbo {
             CrewUnlimbo::Place { raw_z, .. } | CrewUnlimbo::Exact { raw_z, .. } => raw_z,
         };
-        let (sub_cell, sub_x, sub_y, on_bridge) = match unlimbo {
+        let (holds_spot, sub_x, sub_y, on_bridge) = match unlimbo {
             CrewUnlimbo::Place {
                 cell,
                 mut request,
@@ -1049,31 +1064,28 @@ impl Simulation {
                 ) else {
                     return false;
                 };
-                (
-                    Some(bump_crush::priority_sub_cell(
-                        position.sub_x(),
-                        position.sub_y(),
-                    )),
-                    position.sub_x(),
-                    position.sub_y(),
-                    false,
-                )
+                (true, position.sub_x(), position.sub_y(), false)
             }
             CrewUnlimbo::Exact {
                 sub_x,
                 sub_y,
                 on_bridge,
                 ..
-            } => (
-                infantry.then(|| bump_crush::priority_sub_cell(sub_x, sub_y)),
-                sub_x,
-                sub_y,
-                on_bridge,
-            ),
+            } => (infantry, sub_x, sub_y, on_bridge),
         };
         if let Some(entity) = self.substrate.entities.get_mut(id) {
-            entity.set_sub_cell(sub_cell);
-            entity.set_on_bridge(on_bridge);
+            if holds_spot {
+                entity.sub_cell.hold_offset(sub_x, sub_y);
+            } else {
+                entity.sub_cell.release();
+            }
+            // The OnBridge the native caller copies from the object being left
+            // before this Unlimbo: `BuildingClass::SpawnSurvivors`
+            // (`0x00442EF7`), `Mission_Selling` (`0x0044A493`) and
+            // `UnitClass::ReceiveDamage` (passenger `0x00738041`, crew
+            // `0x007382B7`). A floor placement comes only from an object off
+            // any deck.
+            entity.on_bridge.store(on_bridge);
         }
         let facing = facing.or_else(|| {
             self.substrate

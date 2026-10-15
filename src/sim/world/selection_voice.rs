@@ -23,6 +23,35 @@ use crate::rules::ruleset::RuleSet;
 #[path = "selection_voice_tests.rs"]
 mod tests;
 
+/// Techno `+0x4F8`: the next ordinary VoiceDeploy attempt is silenced. The
+/// constructor clears it (`0x006F30FA`). A SlaveManager relocation sets it
+/// ([`Self::suppress`], `0x006B01C4`) before the refinery's undeploy voice,
+/// and the common `TechnoClass::VoiceDeploy @ 0x00708E00` clears it after
+/// its attempt ([`Self::clear`], `0x00708E6A`/`0x00708EA0`), even when the
+/// type has no voice. The Building resource-Archive voice (`0x00459C20`)
+/// bypasses both the test and the clear. This control history is distinct
+/// from the audio pending line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct DeployVoiceSuppression(bool);
+
+impl DeployVoiceSuppression {
+    /// Whether the next VoiceDeploy is silenced.
+    pub(crate) const fn get(self) -> bool {
+        self.0
+    }
+
+    /// The SlaveManager relocation's store (`0x006B01C4`).
+    pub(crate) fn suppress(&mut self) {
+        self.0 = true;
+    }
+
+    /// VoiceDeploy's clear after its attempt (`0x00708E6A`, `0x00708EA0`).
+    pub(crate) fn clear(&mut self) {
+        self.0 = false;
+    }
+}
+
 impl Simulation {
     /// TechnoSelect6FBFA0 admits VoiceSelect only for House50B6F0 or
     /// HouseType+1A6 (MultiplayPassive), and only while the caller's selection
@@ -125,7 +154,8 @@ impl Simulation {
         };
         self.entities_mut()
             .get_mut(entity_id)?
-            .clear_deploy_voice_suppression();
+            .suppress_deploy_voice
+            .clear();
         request
     }
 

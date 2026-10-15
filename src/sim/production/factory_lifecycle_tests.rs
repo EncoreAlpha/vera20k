@@ -10,7 +10,11 @@ use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
 use crate::sim::{intern::InternedId, rng::SimRng, world::Simulation};
 
 pub(super) fn manager_rules() -> RuleSet {
-    RuleSet::from_ini(&IniFile::from_str(
+    RuleSet::from_ini(&manager_ini()).expect("factory manager fixture")
+}
+
+fn manager_ini() -> IniFile {
+    IniFile::from_str(
         "[Countries]\n0=Americans\n1=Russians\n[InfantryTypes]\n0=E1\n1=SLAV\n\
          [VehicleTypes]\n0=MTNK\n1=SMIN\n\
          [AircraftTypes]\n0=HORN\n1=ORCA\n\
@@ -28,11 +32,14 @@ pub(super) fn manager_rules() -> RuleSet {
          [GAPOWR]\nCost=800\nStrength=500\nFoundation=1x1\nTechLevel=1\nOwner=Americans\n\
          [GATECH]\nStrength=500\n\
          [GAAIRC]\nOwner=Americans\nFactory=AircraftType\nHelipad=yes\n",
-    )).expect("factory manager fixture")
+    )
 }
 
 fn world(seed: u64) -> (Simulation, RuleSet, InternedId) {
-    let rules = manager_rules();
+    world_with(manager_rules(), seed)
+}
+
+fn world_with(rules: RuleSet, seed: u64) -> (Simulation, RuleSet, InternedId) {
     let mut sim = Simulation::with_seed(seed);
     sim.intern_rule_type_ids(&rules);
     sim.resolve_type_handles(&rules);
@@ -845,52 +852,47 @@ fn manager_factory_cancellation_finishes_graph_accounting_and_promotion() {
     }
 }
 
-/// A Slave Miner leaving its war factory starts its hunt
-/// (`UnitClass::PerCellProcess @ 0x0073A9CA..0x0073A9D9`, before the rally
-/// arm) instead of driving to the factory's rally point, which a tank from the
-/// same factory takes.
+/// A Slave Miner leaves its war factory as a tank does: ExitObject's land
+/// arm tethers it to the factory and starts no hunt. Unit PerCell starts
+/// the hunt when the miner clears the factory (`0x0073A9CA..0x0073A9D9`,
+/// `per_cell_factory_clearance_starts_a_slave_miners_hunt`).
 #[test]
-fn a_produced_slave_miner_hunts_instead_of_taking_the_rally_point() {
-    for (unit_type, hunts) in [("SMIN", true), ("MTNK", false)] {
-        let (mut sim, rules, owner) = world(0xfac7_0020);
-        sim.substrate
-            .entities
-            .get_mut(1)
-            .unwrap()
-            .set_archive_target(Some(crate::sim::combat::TargetKind::Cell(30, 30)));
-        assert!(enqueue_by_type(
-            &mut sim,
-            &rules,
-            "Americans",
-            unit_type,
-            crate::sim::world::FrameEffects::default()
-        ));
-        let produced = held_id(&sim, owner, ProductionCategory::Vehicle);
-        assert!(
-            sim.production
-                .factories
-                .test_arm_ready(owner, ProductionCategory::Vehicle)
-        );
-        let grid = crate::sim::pathfinding::PathGrid::new(64, 64);
-        sim.install_fixture_path_grid(Some(&grid));
-        assert!(dispatch_production_changes_for_tests(
-            &mut sim, &rules, None
-        ));
-        let entity = sim.substrate.entities.get(produced).unwrap();
-        assert!(!entity.lifecycle.in_limbo(), "{unit_type} delivered");
-        assert_eq!(
-            crate::sim::movement::motion_query::is_moving(&entity) == Some(true),
-            !hunts,
-            "{unit_type}: the rally move"
-        );
-        if hunts {
-            assert_eq!(
-                entity.slave_manager.as_ref().unwrap().state(),
-                crate::sim::slave_manager::ManagerState::Scanning,
-                "the hunt starts at the factory exit"
-            );
-        }
-    }
+fn a_produced_slave_miner_leaves_tethered_without_hunting_yet() {
+    let mut ini = manager_ini();
+    ini.merge(&IniFile::from_str("[GAWEAP]\nWeaponsFactory=yes\n"));
+    let (mut sim, rules, owner) = world_with(RuleSet::from_ini(&ini).unwrap(), 0xfac7_0020);
+    super::tests::install_infantry_delivery_fixture_map(&mut sim);
+    sim.substrate
+        .entities
+        .get_mut(1)
+        .unwrap()
+        .set_archive_target(Some(crate::sim::combat::TargetKind::Cell(30, 30)));
+    assert!(enqueue_by_type(
+        &mut sim,
+        &rules,
+        "Americans",
+        "SMIN",
+        crate::sim::world::FrameEffects::default()
+    ));
+    let produced = held_id(&sim, owner, ProductionCategory::Vehicle);
+    assert!(
+        sim.production
+            .factories
+            .test_arm_ready(owner, ProductionCategory::Vehicle)
+    );
+    let grid = crate::sim::pathfinding::PathGrid::new(64, 64);
+    sim.install_fixture_path_grid(Some(&grid));
+    assert!(dispatch_production_changes_for_tests(
+        &mut sim, &rules, None
+    ));
+    let entity = sim.substrate.entities.get(produced).unwrap();
+    assert!(!entity.lifecycle.in_limbo(), "SMIN delivered");
+    assert_eq!(entity.tether.partner(), Some(1));
+    assert_eq!(
+        entity.slave_manager.as_ref().unwrap().state(),
+        crate::sim::slave_manager::ManagerState::Ready,
+        "the hunt waits for the factory clearance"
+    );
 }
 
 /// Each factory keeps its own rally point (its ArchiveTarget, `+0x218`), and

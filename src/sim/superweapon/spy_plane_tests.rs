@@ -424,7 +424,8 @@ fn mission_plane(sim: &mut Simulation, rules: &RuleSet, row: &Value) -> u64 {
         .entities
         .get_mut(id)
         .unwrap()
-        .mark_mission_only();
+        .mission_only
+        .mark();
     sim.with_object_placement_scope(|sim| {
         sim.reveal_constructed_object_at_height(
             id,

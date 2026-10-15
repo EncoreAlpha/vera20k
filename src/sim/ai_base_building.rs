@@ -495,7 +495,7 @@ pub(crate) fn exit_building(
     // The prelude marks the leaving object a playfield member whatever the
     // outcome (`0x00443C81`); a placement's Unlimbo then sets it exactly.
     if let Some(object) = sim.substrate.entities.get_mut(product) {
-        object.set_in_playfield(true);
+        object.in_playfield.enter();
     }
     let game_mode_nonzero = sim.session.game_mode_nonzero;
     // `0x00444F19..0x00444F2A` (`0x0050B730`).

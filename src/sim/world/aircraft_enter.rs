@@ -71,6 +71,8 @@ impl EnterHost for WorldEnter<'_> {
             .is_some_and(|object| object.airport_bound)
     }
 
+    /// `Mission_Enter @ 0x00419C80`'s NavCom (`+0x5A4`) reads (`0x00419CA4`,
+    /// `0x00419D19`, `0x00419D37`, `0x00419D5D`); What_Am_I 6 is a Building.
     fn nav_com(&mut self) -> EnterNav {
         match self.entity().navigation.nav_com() {
             None => EnterNav::None,
@@ -160,6 +162,7 @@ impl EnterHost for WorldEnter<'_> {
         );
     }
 
+    /// Mission+0xBC as `Mission_Enter @ 0x00419C80` reads it (`0x00419DA9`).
     fn state(&mut self) -> u32 {
         self.entity().mission.handler_state()
     }
@@ -171,6 +174,7 @@ impl EnterHost for WorldEnter<'_> {
         entity.mission.set_handler_state(state);
     }
 
+    /// `+0x6D4`, `Mission_Enter @ 0x00419C80`'s stores (`0x00419DCD..0x00419FFD`).
     fn set_transition_ready(&mut self, ready: bool) {
         let entity = self.sim.substrate.entities.get_mut(self.id).unwrap();
         entity
@@ -188,6 +192,7 @@ impl EnterHost for WorldEnter<'_> {
         air_movement::fly_status(self.entity()).unwrap_or(3)
     }
 
+    /// `Mission_Enter @ 0x00419C80`'s `+0xB4 == -1` test (`0x00419E58`).
     fn nothing_queued(&mut self) -> bool {
         self.entity().mission.queued() == MissionId::NONE
     }
@@ -197,6 +202,8 @@ impl EnterHost for WorldEnter<'_> {
             .assign_aircraft_destination(self.id, None, self.rules, self.effects);
     }
 
+    /// `Mission_Enter @ 0x00419C80`'s state-7 step: NavCom `+0x5A4` (`0x00419F35`,
+    /// `0x00419F61`), clamped by 5 leptons (`0x00419F99..0x00419FC4`).
     fn step_toward_nav_com(&mut self) {
         let Some(nav) = self.entity().navigation.nav_com() else {
             return;

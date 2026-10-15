@@ -193,25 +193,6 @@ fn unit_checks_active_locomotor_and_body_rotation_not_stashed_slot_or_turret() {
     );
 }
 
-/// A pass asks each object once, keeps call order across takes, and never
-/// asks again an object it already asked.
-#[test]
-fn scatter_requests_keep_call_order_and_ask_each_object_once() {
-    let mut requests = ScatterRequests::default();
-    assert!(requests.request(4, ScatterFlags::new(true, true)));
-    assert!(requests.request(2, ScatterFlags::new(true, false)));
-    assert!(!requests.request(4, ScatterFlags::new(true, false)));
-    assert_eq!(
-        requests.take(),
-        vec![
-            (4, ScatterFlags::new(true, true)),
-            (2, ScatterFlags::new(true, false))
-        ]
-    );
-    assert!(!requests.request(2, ScatterFlags::new(true, true)));
-    assert!(requests.take().is_empty());
-}
-
 /// `UnitClass::Scatter` never asks its locomotor whether it moves, so a
 /// driving vehicle is admitted like a parked one.
 #[test]

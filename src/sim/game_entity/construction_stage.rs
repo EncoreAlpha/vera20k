@@ -22,10 +22,13 @@ impl GameEntity {
         entry.install(self, now);
     }
     /// Construction is the effective native mission, including a queued entry.
+    /// `MissionClass::Get_Mission @ 0x005B3040`: `+0xAC`, else queued `+0xB4`.
     pub fn building_up(&self) -> bool {
         self.category == crate::map::entities::EntityCategory::Structure
             && self.mission.effective().known() == Some(MissionType::Construction)
     }
+    /// Selling is `MissionClass::Get_Mission @ 0x005B3040`'s answer: `+0xAC`,
+    /// else queued `+0xB4`.
     pub fn building_down(&self) -> bool {
         self.category == crate::map::entities::EntityCategory::Structure
             && self.mission.effective().known() == Some(MissionType::Selling)
@@ -36,6 +39,8 @@ impl GameEntity {
     pub(crate) fn sale_is_undeploy_order(&self) -> bool {
         self.building_down() && self.building_sale.is_some_and(BuildingDown::undeploy_order)
     }
+    /// `BuildingClass::Mission_Selling @ 0x00449C30`'s stage visit: its `+0x6DD`
+    /// read (`0x00449C99`) and stage 0's clear (`0x0044AB61`).
     pub(crate) fn advance_building_down(&mut self, status: &mut u32) -> PackUpFrame {
         let ready = self.building_ready_latch() != 0;
         let visit = self
@@ -47,6 +52,8 @@ impl GameEntity {
         }
         visit
     }
+    /// `Mission_Selling`'s stage-1 tail (`0x0044A8A2..0x0044A8B5`): status 2,
+    /// `Begin_Mode(0)` (`0x00447780`), then `+0x6DD = 0`.
     pub(crate) fn begin_building_pack_up_stage_two(&mut self, status: &mut u32, now: i32) {
         *status = 2;
         self.begin_building_body(BuildingBodyMode::Construction, now);
@@ -64,6 +71,8 @@ impl GameEntity {
             .expect("building body requires Structure")
             .initialize_idle(&mut self.stage, now);
     }
+    /// `BuildingClass::UpdateAnimation @ 0x004509D0`'s stage step and ready
+    /// admission, which sets `+0x6DD` (`0x004511DF`, `0x00451218`).
     pub(crate) fn advance_building_body(
         &mut self,
         now: i32,

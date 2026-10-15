@@ -49,6 +49,8 @@ pub(crate) struct LightingSources {
 impl Simulation {
     /// Preserve the existing eager restore projection while resetting the
     /// outgoing timeline. Native lazy post-load reconstruction remains open.
+    /// VERA-only: the light cache, rebuilt from each alive (`+0x90`), unlimboed
+    /// (`+0x81`), Marked (`+0x74`), undying object with Health above 0.
     pub(crate) fn rebuild_lighting_sources_after_load(&mut self, rules: &RuleSet) {
         self.lighting_sources = LightingSources::default();
         let ids: Vec<_> = self

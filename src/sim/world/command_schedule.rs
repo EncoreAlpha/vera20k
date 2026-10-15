@@ -197,6 +197,8 @@ impl Simulation {
         due
     }
 
+    /// VERA-only: one command and its spawn-refresh report: a Deploy whose MCV left
+    /// the store or carries the `TerminalLifetime` dying mark counts as a spawn.
     fn apply_one_due_command(
         &mut self,
         cmd: &CommandEnvelope,
@@ -411,6 +413,8 @@ impl Simulation {
 
     /// Adjust consecutive same-target movement runs after their house's
     /// non-megamission scan, immediately before staged command execution.
+    /// The group spread `0x0064CDA0` per run (`0x0064CB0A..0x0064CB60`): each Foot
+    /// member's coordinates (Location) and source cell.
     pub(super) fn adjust_staged_megamission_destinations(
         &self,
         commands: &mut [CommandEnvelope],

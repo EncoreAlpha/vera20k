@@ -772,7 +772,7 @@ impl SuppliedFootFixture {
                         signed(&before["targeting_timer"][2]) as u32,
                     ));
                 if before["scan"] != 0 {
-                    entity.mark_stopped_cannot_fire();
+                    entity.foot_retarget_after_stop.mark_stopped_cannot_fire();
                 }
                 // Foot+68D is serialized for every concrete Foot class. This
                 // includes the supplied Unit raw-load control; it does not
@@ -1159,7 +1159,7 @@ fn original_literal_foot_rows_compare_mask_and_empty_result_lifecycle_only() {
             .as_u64()
             .unwrap() as u32;
         assert_eq!(
-            actor.coerce_foot_threat_mask(mask),
+            actor.foot_retarget_after_stop.coerce_mask(mask),
             row["greatest_threat_masks"]["greatest"][0]
                 .as_u64()
                 .unwrap() as u32,
@@ -1169,7 +1169,9 @@ fn original_literal_foot_rows_compare_mask_and_empty_result_lifecycle_only() {
         // bits and all return empty. Feed that native result to the existing
         // lifecycle owner, without claiming this executes the raw scan body.
         assert_eq!(row["returned_eax"], 0);
-        actor.finish_foot_threat_scan(row["returned_eax"] != 0);
+        actor
+            .foot_retarget_after_stop
+            .finish_scan(row["returned_eax"] != 0);
         assert_eq!(
             actor.foot_retarget_after_stop(),
             row["after"]["scan"] != 0,
@@ -1877,7 +1879,8 @@ fn original_full_retail_rescue_matches_native_scan_hit_and_empty_prefix() {
                 .entities
                 .get_mut(fixture.actor)
                 .unwrap()
-                .clear_rescue_retarget_latch();
+                .foot_retarget_after_stop
+                .clear_for_rescue();
             let actual = fixture.sim.greatest_threat_represented(
                 &rules,
                 None,

@@ -30,6 +30,7 @@ use crate::sim::pathfinding::PathGrid;
 use crate::sim::pathfinding::terrain_speed::TerrainSpeedConfig;
 #[cfg(test)]
 use crate::sim::pathfinding::zone_map::ZoneGrid;
+#[cfg(test)]
 use crate::sim::rng::SimRng;
 use crate::sim::touch_log::Touched;
 
@@ -37,13 +38,18 @@ use super::bump_crush;
 use super::locomotor::MovementLayer;
 use super::movement_path::supports_layered_bridge_pathing;
 use super::movement_step;
-use super::tube_movement;
 use super::{MovementTickStats, MoverSnapshot, PathfindingContext};
-use crate::sim::occupancy::{CellOccupationGrid, OccupancyGrid, RawCellOccupationGrid};
+#[cfg(test)]
+use crate::sim::occupancy::RawCellOccupationGrid;
+use crate::sim::occupancy::{CellOccupationGrid, OccupancyGrid};
 
 /// Build a read-only snapshot of the mover's properties before entering the
 /// inner movement loop. This avoids repeated `entities.get()` calls and keeps
 /// the data available across the mutable/immutable borrow boundary.
+///
+/// VERA-only: a per-visit copy of the mover's class, locomotor, SpeedType,
+/// MovementZone, crusher flags and bridge and playfield facts. Nothing writes
+/// it back; the entity's records stay the source of truth.
 pub(super) fn snapshot_mover(
     entities: &EntityStore,
     entity_id: u64,
@@ -86,9 +92,10 @@ struct OrdinaryMoverVisit {
     walk_retry_allowed: bool,
 }
 
-/// Synchronous Walk75B690 request. The pending pass releases the mutable
-/// mover before its live Foot+1AC query and the class-specific response.
-/// A clear answer finishes fresh-head selection in that same Process; a
+/// Synchronous Walk fresh-head request: the tube word (75B302) and then
+/// Can_Enter_Cell (75B690). The pending pass releases the mutable mover
+/// before either, since both need the whole live Foot. A tube word or a
+/// clear answer finishes fresh-head selection in that same Process; a
 /// recursive refusal reuses the retained visit through FootPathRequest.
 pub(crate) struct WalkAdmissionRequest {
     pub(crate) entity_id: u64,
@@ -146,8 +153,9 @@ pub(crate) struct FootPathRequest {
 }
 
 /// The retained no-queue request of a live Walk Foot with no paid head, whose
-/// Foot+5E0 head is empty (native -1). Drive/Ship requests are made inside
-/// their Process_Movement (`track_fresh`).
+/// Foot+5E0 head is empty (native -1): `WalkLocomotionClass::ProcessMovement`
+/// (`0x0075AEC0`), whose request is the call at `0x0075AFC5`. Drive/Ship
+/// requests are made inside their Process_Movement (`track_fresh`).
 fn no_queue_path_request(
     entity: &crate::sim::game_entity::GameEntity,
 ) -> Option<crate::sim::components::DriveCoord> {
@@ -281,11 +289,10 @@ impl FootPathRequest {
 }
 
 /// Effects accumulated until the pass tail. Keeping these together preserves
-/// crushed-victim exclusions and scatter deduplication across mover visits.
+/// crushed-victim exclusions across mover visits.
 #[derive(Default)]
 struct MovementPassEffects {
     stats: MovementTickStats,
-    scatters: super::scatter::ScatterRequests,
     native_track: Option<super::track_process::TrackInvocation>,
     walk_per_cell: Option<(u64, crate::sim::components::DriveCoord)>,
     walk_boundary: Option<(u64, crate::sim::components::DriveCoord)>,
@@ -296,7 +303,9 @@ struct MovementPassEffects {
     track_movement: Option<(u64, super::track_process::TrackFamily)>,
 }
 
-/// A Drive/Ship Unit: its Process_Movement is `track_fresh`.
+/// A Drive/Ship Unit: its Process_Movement is `track_fresh`. The active
+/// locomotor's Process decides it (`DriveLocomotionClass::Process`
+/// `0x004B0500`, `ShipLocomotionClass::Process` `0x0069FC10`).
 fn native_track_route(
     entity: &crate::sim::game_entity::GameEntity,
 ) -> Option<super::track_process::TrackFamily> {
@@ -331,9 +340,6 @@ fn advance_ordinary_mover(
     entities: &mut EntityStore,
     entity_id: u64,
     grids: PassGrids<'_>,
-    occupancy: &mut OccupancyGrid,
-    cell_occupation: &mut CellOccupationGrid,
-    raw_cell_occupation: &mut RawCellOccupationGrid,
     native_frame: u32,
     interner: &mut crate::sim::intern::StringInterner,
     rules: Option<&crate::rules::ruleset::RuleSet>,
@@ -379,7 +385,6 @@ fn advance_ordinary_mover(
                 } else {
                     super::track_process::TrackFamily::Drive
                 },
-                apply_fresh_occupation: false,
                 active_gate: true,
                 retry: false,
             });
@@ -484,41 +489,10 @@ fn advance_ordinary_mover(
         .as_ref()
         .is_some_and(|l| l.step_head().is_none())
     {
-        if let Some(tube_id) = tube_movement::pending_path_tube_id(
-            &entity.navigation.path_replay,
-            &entity.position,
-            entity.movement_layer_or_ground(),
-            resolved_terrain,
-        ) {
-            let terrain = resolved_terrain.expect("tube admission resolved terrain");
-            let category = entity.category();
-            let mut foot_occupation_enabled = entity.foot_occupation_enabled();
-            let mut cell_marked = entity.lifecycle.cell_marked();
-            let begun = tube_movement::begin_path_tube_step(
-                &mut foot_occupation_enabled,
-                &mut entity.navigation.path_replay,
-                entity_id,
-                category,
-                &mut entity.position,
-                &mut entity.locomotor,
-                &mut entity.low_bridge_tube_state,
-                &mut cell_marked,
-                tube_id,
-                terrain,
-                occupancy,
-                cell_occupation,
-                raw_cell_occupation,
-            );
-            entity.set_foot_occupation_enabled(foot_occupation_enabled);
-            entity.lifecycle.set_cell_marked(cell_marked);
-            if begun.is_ok() {
-                return;
-            }
-        }
-        //75B690 requires the whole live Foot owner. Suspending here
-        //releases this entity's mutable borrow before any admission
-        //query. Canonical Clear goes straight to75C240, never through
-        //the grid/cliff/occupancy adapters below.
+        //75B302 (the tube word) and 75B690 (Can_Enter_Cell) require the
+        //whole live Foot owner. Suspending here releases this entity's
+        //mutable borrow before either. Canonical Clear goes straight to
+        //75C240, never through the grid/cliff/occupancy adapters below.
         debug_assert!(walk_admission_request.is_none());
         *walk_admission_request = Some(WalkAdmissionRequest {
             entity_id,
@@ -761,50 +735,19 @@ impl MovementPassCache {
 }
 
 /// The visit's entry work, run once before the ordinary mover advances.
-/// Resuming after a world callback must not repeat it: it runs Tube movement
-/// and the idle Walk tail. Returns whether the object still advances as an
-/// ordinary mover.
+/// Resuming after a world callback must not repeat it: it reconciles the
+/// vehicle plane and runs the idle Walk tail. Returns whether the object
+/// still advances as an ordinary mover.
 fn prepare_movement_visit(
     entities: &mut EntityStore,
     entity_id: u64,
-    grids: PassGrids<'_>,
-    occupancy: &mut OccupancyGrid,
+    occupancy: &OccupancyGrid,
     cell_occupation: &mut CellOccupationGrid,
-    raw_cell_occupation: &mut RawCellOccupationGrid,
-    rng: &mut SimRng,
-    native_frame: u32,
-    interner: &crate::sim::intern::StringInterner,
-    rules: Option<&crate::rules::ruleset::RuleSet>,
-    stats: &mut MovementTickStats,
-    scatters: &mut super::scatter::ScatterRequests,
 ) -> bool {
     let Some(entity) = entities.get_mut(entity_id) else {
         return false;
     };
     cell_occupation.reconcile_entity(entity, occupancy);
-    // Active TubeMovement owns the entire object turn, including the visit in
-    // which its final clears the payload.
-    if entity.low_bridge_tube_state.is_some() {
-        if let Some(terrain) = grids.resolved_terrain
-            && tube_movement::tick_active_tube_object(
-                entities,
-                entity_id,
-                terrain,
-                grids.path_grid,
-                occupancy,
-                cell_occupation,
-                raw_cell_occupation,
-                rules,
-                interner,
-                rng,
-                native_frame,
-                scatters,
-            )
-        {
-            stats.movers_total = stats.movers_total.saturating_add(1);
-        }
-        return false;
-    }
     // Walk75AEC0 is the Process of every live Foot (FootClass::AI
     // 0x004DA806..0x004DA877) and branches on its own head (+0x28) and
     // destination (+0x1C): either one runs its step, neither the idle tail
@@ -920,11 +863,6 @@ impl PendingMovementPass {
         self.effects.walk_admission_request.take()
     }
 
-    /// The Scatter calls this pass's steps queued since the last take.
-    pub(crate) fn take_scatter_requests(&mut self) -> Vec<(u64, super::ScatterFlags)> {
-        self.effects.scatters.take()
-    }
-
     pub(crate) fn request_foot_path(&mut self, request: FootPathRequest) {
         debug_assert!(self.effects.foot_path_request.is_none());
         self.effects.foot_path_request = Some(request);
@@ -969,9 +907,6 @@ impl PendingMovementPass {
             &mut sim.substrate.entities,
             entity_id,
             grids,
-            &mut sim.substrate.occupancy,
-            &mut sim.substrate.cell_occupation,
-            &mut sim.substrate.raw_cell_occupation,
             sim.session.binary_frame,
             &mut sim.interner,
             rules,
@@ -1006,10 +941,8 @@ pub(crate) fn begin_movement(
     entities: &mut EntityStore,
     entity_id: u64,
     path_grid: Option<&PathGrid>,
-    occupancy: &mut OccupancyGrid,
+    occupancy: &OccupancyGrid,
     cell_occupation: &mut CellOccupationGrid,
-    raw_cell_occupation: &mut RawCellOccupationGrid,
-    rng: &mut SimRng,
     native_frame: u32,
     resolved_terrain: Option<&ResolvedTerrainGrid>,
     playfield_bounds: Option<PlayfieldBounds>,
@@ -1026,28 +959,12 @@ pub(crate) fn begin_movement(
         playfield_bounds,
     };
     let mut effects = MovementPassEffects::default();
-    let ordinary_mover = prepare_movement_visit(
-        entities,
-        entity_id,
-        grids,
-        occupancy,
-        cell_occupation,
-        raw_cell_occupation,
-        rng,
-        native_frame,
-        interner,
-        rules,
-        &mut effects.stats,
-        &mut effects.scatters,
-    );
+    let ordinary_mover = prepare_movement_visit(entities, entity_id, occupancy, cell_occupation);
     if ordinary_mover {
         advance_ordinary_mover(
             entities,
             entity_id,
             grids,
-            occupancy,
-            cell_occupation,
-            raw_cell_occupation,
             native_frame,
             interner,
             rules,

@@ -18,8 +18,12 @@ use crate::util::fixed_math::{SIM_ONE, SIM_ZERO, SimFixed};
 // --- Facing calculation tests ---
 // Computed deltas use the high byte of the active-retail 65,534-scale word.
 
+/// A Drive route through a tube: the track to the entrance ends, and the
+/// same Process's Process_Track(1) takes the tube word
+/// ([`Simulation::track_tube_head`], `0x004B1297..0x004B148E`). TubeMovement
+/// then carries the unit to the exit (`0x007359F0`), its destination: the
+/// exit's NavCom test scatters it off that Cell (`0x00736005..0x00736028`).
 #[test]
-#[ignore = "native Drive tube-word receiver (track_fresh 4B3298) not ported; only the removed lane entered tubes"]
 fn ordinary_drive_retires_selector_before_entering_an_explicit_tube() {
     use crate::map::resolved_terrain::YR_CELL_LAND_TUNNEL;
     use crate::map::tube_facts::{TubeFact, TubeId};
@@ -28,7 +32,8 @@ fn ordinary_drive_retires_selector_before_entering_an_explicit_tube() {
     let mut cells: Vec<_> = (0..6).map(|x| drivable_slope_cell(x, 0, 0)).collect();
     cells[1].yr_cell_land_type = YR_CELL_LAND_TUNNEL;
     cells[1].tube_index = Some(TubeId(0));
-    for cell in &mut cells[2..5] {
+    // (4, 0) stays open: the exit's Scatter goes there.
+    for cell in &mut cells[2..4] {
         cell.ground_walk_blocked = true;
         cell.base_ground_walk_blocked = true;
     }
@@ -105,6 +110,7 @@ fn ordinary_drive_retires_selector_before_entering_an_explicit_tube() {
             >= 0
     );
 
+    let mut entry_frame = None;
     for frame in 1..160 {
         sim.session.binary_frame = frame;
         sim.process_ground_locomotor_for_test(1, Some(&rules), Some(&grid), None)
@@ -166,7 +172,8 @@ fn ordinary_drive_retires_selector_before_entering_an_explicit_tube() {
             );
             assert!(!entity.lifecycle.cell_marked());
             assert!(!sim.substrate.occupancy.contains_entity(1, 0, 1));
-            return;
+            entry_frame = Some(frame);
+            break;
         }
         assert!(
             committed_track_head(entity).is_some(),
@@ -177,22 +184,85 @@ fn ordinary_drive_retires_selector_before_entering_an_explicit_tube() {
             "tube steps cannot become ordinary ground curves"
         );
     }
+    let Some(entry_frame) = entry_frame else {
+        let entity = sim.substrate.entities.get(1).unwrap();
+        panic!(
+            "ordinary move did not hand movement to the tube: position={:?}, track={:?}, runtime={:?}",
+            entity.position,
+            entity
+                .locomotor
+                .as_ref()
+                .and_then(|l| l.selected_drive_runtime())
+                .and_then(|r| r.retained())
+                .map(|d| d.track()),
+            entity
+                .locomotor
+                .as_ref()
+                .and_then(|l| l.selected_drive_runtime())
+                .and_then(|r| r.retained())
+                .cloned()
+        );
+    };
+
+    for frame in entry_frame + 1..entry_frame + 400 {
+        sim.session.binary_frame = frame;
+        sim.process_ground_locomotor_for_test(1, Some(&rules), Some(&grid), None)
+            .unwrap();
+        if sim
+            .substrate
+            .entities
+            .get(1)
+            .unwrap()
+            .low_bridge_tube_state
+            .is_none()
+        {
+            break;
+        }
+    }
     let entity = sim.substrate.entities.get(1).unwrap();
-    panic!(
-        "ordinary move did not hand movement to the tube: position={:?}, track={:?}, runtime={:?}",
-        entity.position,
-        entity
-            .locomotor
-            .as_ref()
-            .and_then(|l| l.selected_drive_runtime())
-            .and_then(|r| r.retained())
-            .map(|d| d.track()),
-        entity
-            .locomotor
-            .as_ref()
-            .and_then(|l| l.selected_drive_runtime())
-            .and_then(|r| r.retained())
-            .cloned()
+    assert!(
+        entity.low_bridge_tube_state.is_none(),
+        "the unit left the tube"
+    );
+    assert_eq!(
+        crate::sim::movement::ground_pose::position_world_coord(&entity.position),
+        DriveCoord::cell(5, 0, 0)
+    );
+    assert!(entity.lifecycle.cell_marked());
+    assert!(sim.substrate.occupancy.contains_entity(5, 0, 1));
+    assert_eq!(entity.foot_speed.applied_fraction(), SIM_ONE);
+    let nav_com = entity.navigation.nav_com();
+    assert!(
+        matches!(nav_com, Some(NavTargetRef::Cell { .. }))
+            && nav_com != Some(NavTargetRef::Cell { rx: 5, ry: 0 }),
+        "the Scatter gave it a nearby cell: {nav_com:?}"
+    );
+
+    // The exit leaves HeadTo at the exit centre with its valid byte set and
+    // no track selected; the next Processes drive on from there. This
+    // fixture's playfield reaches past its one-row map, so the Scatter's
+    // cell may lie off the grid: a fresh SetDestination (the setter the
+    // Scatter calls) sends the unit to (4, 0) instead.
+    sim.set_unit_destination(
+        1,
+        NavTargetRef::cell(4, 0),
+        &rules,
+        true,
+        crate::sim::world::FrameEffects::default(),
+    );
+    let exit_frame = sim.session.binary_frame;
+    let arrived = (exit_frame + 1..exit_frame + 300).any(|frame| {
+        sim.session.binary_frame = frame;
+        sim.process_ground_locomotor_for_test(1, Some(&rules), Some(&grid), None)
+            .unwrap();
+        let entity = sim.substrate.entities.get(1).unwrap();
+        (entity.position.rx(), entity.position.ry()) == (4, 0)
+    });
+    let entity = sim.substrate.entities.get(1).unwrap();
+    assert!(
+        arrived,
+        "the unit drove off the exit to (4, 0): position={:?}",
+        entity.position
     );
 }
 

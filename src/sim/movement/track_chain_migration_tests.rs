@@ -91,7 +91,6 @@ fn chain_fixture(passive: bool) -> (Simulation, RuleSet, TrackInvocation) {
         TrackInvocation {
             entity_id: MOVER,
             family: TrackFamily::Drive,
-            apply_fresh_occupation: false,
             active_gate: false,
             retry: false,
         },

@@ -10,6 +10,7 @@
 
 mod exit_cell_search;
 mod harvest_mission;
+#[cfg(test)]
 pub mod miner_dock;
 pub(crate) mod miner_system;
 pub(crate) mod ore_scan;
@@ -29,7 +30,8 @@ pub(crate) use self::exit_cell_search::find_nearby_passable_cell_with_index;
 pub(crate) use self::harvest_mission::mission_harvest;
 pub(crate) use self::miner_system::extract_bale;
 pub(crate) use self::refinery_dock::{
-    clear_unload_latch, mission_unload, pay_refinery_owner, per_cell_release_dock_contact,
+    clear_unload_anim_for_destination, clear_unload_latch, mission_unload, pay_refinery_owner,
+    per_cell_release_dock_contact,
 };
 
 use crate::rules::object_type::ObjectType;
@@ -69,8 +71,8 @@ pub enum MinerKind {
 /// The five states gamemd's Harvest handler holds keep gamemd's own cursor
 /// numbering (`UnitClass::Mission_Harvest @ 0x0073E5E0`): `0` looking, `1`
 /// cutting ore, `2` finding home, `3` the dock handoff, `4` going idle — the
-/// handler never writes a cursor above `4`. VERA's one extra cursor,
-/// [`MinerState::ForcedReturn`], is numbered above that ceiling.
+/// handler never writes a cursor above `4`. Cursors `5..=7`, retired VERA
+/// states (drive-to-ore, legacy unload, the old player return), decode as none.
 ///
 /// Residual: gamemd reaches cursor `4` from exactly one place, the bounded
 /// scan's miss. VERA also parks there when the miner can reach no refinery at
@@ -95,9 +97,6 @@ pub enum MinerState {
     /// entry into this cursor. VERA also parks here when the miner can reach
     /// no refinery (VERA-internal, gamemd equivalent UNCHECKED).
     WaitNoOre = 4,
-    /// Player issued a manual return order. VERA-internal. (Cursors 5 and 6,
-    /// the retired drive-to-ore and legacy unload states, are unused.)
-    ForcedReturn = 7,
 }
 
 impl MinerState {
@@ -118,14 +117,9 @@ impl MinerState {
             2 => Self::ReturnToRefinery,
             3 => Self::Dock,
             4 => Self::WaitNoOre,
-            7 => Self::ForcedReturn,
             _ => return None,
         })
     }
-
-    /// Highest cursor gamemd's Harvest handler ever writes. Cursors above it
-    /// are VERA-internal states with no native counterpart.
-    pub const NATIVE_CURSOR_CEILING: u32 = 4;
 }
 
 /// One discrete cargo bale carried by a miner.
@@ -204,18 +198,20 @@ impl MinerConfig {
     }
 }
 
-/// A harvester's hold and latches. `sim::miner` writes them; the return
-/// order pins a refinery ([`Self::reserve_refinery`]) and a pointer expiry
-/// drops it ([`Self::forget_refinery`]). Everyone else reads.
+/// A harvester's hold and latches. `sim::miner` writes them; everyone else
+/// reads.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Miner {
     kind: MinerKind,
     // NOTE: the FSM cursor (`state`) retired from this struct at the
     // substate-authority flip — `MissionCom::handler_state` is the cursor of
     // record. Read it via `GameEntity::miner_state()`.
-    /// The refinery a player return order (`Command::MinerReturn`) pins
-    /// Mission_Harvest state 2 to. VERA-internal: the native order is an Enter
-    /// mission on the refinery.
+    /// Retired: the refinery VERA's old player return order pinned. The
+    /// order is now gamemd's MEGAMISSION Enter on the refinery
+    /// (`Command::MinerReturn`), and nothing writes this; a save from before
+    /// may restore a stale id, which only the state hash reads. The field
+    /// keeps its place in saves and the hash until the sim-scale layout
+    /// change removes it.
     reserved_refinery: Option<u64>,
     /// Discrete cargo bales currently carried.
     cargo: Vec<CargoBale>,
@@ -274,7 +270,7 @@ impl Miner {
         self.kind
     }
 
-    /// The refinery a return order pinned.
+    /// The retired return-order refinery (see the field).
     pub fn reserved_refinery(&self) -> Option<u64> {
         self.reserved_refinery
     }
@@ -297,16 +293,6 @@ impl Miner {
     /// Unit+0x6D2, the harvest latch.
     pub fn harvesting(&self) -> bool {
         self.harvesting
-    }
-
-    /// `Command::MinerReturn`'s refinery.
-    pub(crate) fn reserve_refinery(&mut self, refinery: u64) {
-        self.reserved_refinery = Some(refinery);
-    }
-
-    /// The pinned refinery expired (`TechnoClass::PointerExpired`).
-    pub(crate) fn forget_refinery(&mut self) {
-        self.reserved_refinery = None;
     }
 
     /// Install a fixture's hold.
@@ -389,17 +375,6 @@ mod tests {
     }
 
     #[test]
-    fn vera_internal_cursors_sit_above_the_native_ceiling() {
-        {
-            let state = MinerState::ForcedReturn;
-            assert!(
-                state.cursor() > MinerState::NATIVE_CURSOR_CEILING,
-                "{state:?} must not collide with a cursor gamemd writes"
-            );
-        }
-    }
-
-    #[test]
     fn harvest_cursor_round_trips_and_rejects_out_of_vocabulary_values() {
         for state in [
             MinerState::SearchOre,
@@ -407,7 +382,6 @@ mod tests {
             MinerState::ReturnToRefinery,
             MinerState::Dock,
             MinerState::WaitNoOre,
-            MinerState::ForcedReturn,
         ] {
             assert_eq!(MinerState::from_cursor(state.cursor()), Some(state));
         }
@@ -420,6 +394,11 @@ mod tests {
             MinerState::from_cursor(6),
             None,
             "retired legacy unload cursor"
+        );
+        assert_eq!(
+            MinerState::from_cursor(7),
+            None,
+            "retired player-return cursor"
         );
         assert_eq!(MinerState::from_cursor(8), None);
         assert_eq!(MinerState::from_cursor(u32::MAX), None);

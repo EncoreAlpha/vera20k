@@ -12,10 +12,98 @@
 //! world effects: tools/spatial_oracle/locomotor_track_point_gates.{py,json,meta.json}.
 
 use super::drive_track::{self, TrackPoint, TurnTrack};
-use crate::sim::components::{DriveCoord, TrackProgress};
+use crate::sim::components::DriveCoord;
 use crate::util::native_x87::{NativeF32Bits, NativeF64Bits, X87Chop53};
 
 const POINT_COST: i32 = 7;
+
+/// One active Drive/Ship locomotor's retained track selector, signed cursor,
+/// short-track choice and residual (+58/+5C/+60/+4C). Curve geometry and a
+/// temporary Process_Track call must not own serialized copies of this state.
+/// Native evidence: tools/spatial_oracle/locomotor_track_cursor.json.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct TrackProgress {
+    turn_index: i32,
+    /// Next-to-consume cursor. Drive constructor4AF5A6/4AF5A9 and Ship
+    /// constructor69ECB6/69ECB9 initialize selector/cursor to -1;
+    /// fresh/forced acceptance and completion retirement instead store zero.
+    cursor: i32,
+    reversed: bool,
+    residual: i32,
+}
+
+impl TrackProgress {
+    /// A fixture's progress.
+    #[cfg(test)]
+    pub(crate) const fn for_test(
+        turn_index: i32,
+        cursor: i32,
+        reversed: bool,
+        residual: i32,
+    ) -> Self {
+        Self {
+            turn_index,
+            cursor,
+            reversed,
+            residual,
+        }
+    }
+
+    /// See the field.
+    pub(crate) const fn turn_index(&self) -> i32 {
+        self.turn_index
+    }
+
+    /// A fixture's selector.
+    #[cfg(test)]
+    pub(crate) fn set_turn_index(&mut self, turn_index: i32) {
+        self.turn_index = turn_index;
+    }
+
+    /// See the field.
+    pub(crate) const fn cursor(&self) -> i32 {
+        self.cursor
+    }
+
+    /// A fixture's cursor.
+    #[cfg(test)]
+    pub(crate) fn set_cursor(&mut self, cursor: i32) {
+        self.cursor = cursor;
+    }
+
+    /// See the field.
+    pub(crate) const fn reversed(&self) -> bool {
+        self.reversed
+    }
+
+    /// A fixture's reversed.
+    #[cfg(test)]
+    pub(crate) fn set_reversed(&mut self, reversed: bool) {
+        self.reversed = reversed;
+    }
+
+    /// See the field.
+    pub(crate) const fn residual(&self) -> i32 {
+        self.residual
+    }
+
+    /// A fixture's residual.
+    #[cfg(test)]
+    pub(crate) fn set_residual(&mut self, residual: i32) {
+        self.residual = residual;
+    }
+}
+
+impl Default for TrackProgress {
+    fn default() -> Self {
+        Self {
+            turn_index: -1,
+            cursor: -1,
+            reversed: false,
+            residual: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackFamily {
@@ -29,9 +117,6 @@ pub(crate) enum TrackFamily {
 pub(crate) struct TrackInvocation {
     pub entity_id: u64,
     pub family: TrackFamily,
-    /// Fresh ProcessMovement acceptance owes Apply1 before the paid loop.
-    /// This synchronous handoff never crosses a frame or snapshot boundary.
-    pub apply_fresh_occupation: bool,
     /// Called from the outer active-track gate (Drive 0x4B0576 / Ship
     /// 0x69FC86), whose false return may continue into Process_Movement in
     /// the same Process (`track_continuation`).
@@ -55,7 +140,6 @@ impl TrackInvocation {
         Self {
             entity_id,
             family,
-            apply_fresh_occupation: false,
             active_gate: false,
             retry: false,
         }
@@ -93,19 +177,21 @@ impl TrackProgress {
             turn_index < 64,
             "a fresh selector is one of the 64 from/to entries"
         );
-        self.set_turn_index(turn_index as i32);
-        self.set_reversed(false);
+        self.turn_index = turn_index as i32;
+        self.reversed = false;
     }
 
+    /// Fresh acceptance's cursor-zero write (Drive `0x004B4659`, Ship
+    /// `0x006A3C88`).
     pub(crate) fn accept_fresh(&mut self) {
-        self.set_cursor(0);
+        self.cursor = 0;
     }
 
     /// Force_Track4B0C53/4B0C56 writes these BEFORE its owner guards,
     /// including caller selector -1. It preserves short selection/residual.
     pub(crate) fn select_forced(&mut self, turn_index: i32) {
-        self.set_turn_index(turn_index);
-        self.set_cursor(0);
+        self.turn_index = turn_index;
+        self.cursor = 0;
     }
 
     /// Candidate selection is observable during the following owner callback.
@@ -125,16 +211,29 @@ impl TrackProgress {
         if raw.entry_index == 0 {
             return false;
         }
-        self.set_turn_index(turn_index);
-        self.set_cursor(i32::from(raw.entry_index) - 1);
-        self.set_reversed(false);
+        self.turn_index = turn_index;
+        self.cursor = i32::from(raw.entry_index) - 1;
+        self.reversed = false;
         true
     }
 
     /// Drive4B210E/Ship6A1751: completion preserves short and residual.
     pub(crate) fn clear_selector(&mut self) {
-        self.set_turn_index(-1);
-        self.set_cursor(0);
+        self.turn_index = -1;
+        self.cursor = 0;
+    }
+
+    /// Selector -1 with the cursor kept: Process_Movement's fresh-track
+    /// rejection (Drive `0x004B3C75`, Ship `0x006A32C4`) and its path
+    /// retirement (`0x004B2F07`, Ship `0x006A2557`).
+    pub(crate) fn retire_selector(&mut self) {
+        self.turn_index = -1;
+    }
+
+    /// Residual 0 when Process_Track's descriptor and turn gates refuse
+    /// before its scalar prefix (Drive `0x004B25F2`, Ship `0x006A1C43`).
+    pub(crate) fn clear_residual(&mut self) {
+        self.residual = 0;
     }
 
     fn selected_raw(&self, family: TrackFamily) -> Option<(u8, &'static TurnTrack)> {
@@ -483,7 +582,7 @@ impl TrackProcess {
     /// with entry-1 while the paid point's callback was running.
     pub fn finish_surviving_point(&mut self, progress: &mut TrackProgress) -> bool {
         assert_eq!(self.phase, ProcessPhase::PointCallbacks);
-        progress.set_cursor(progress.cursor().wrapping_add(1));
+        progress.cursor = progress.cursor.wrapping_add(1);
         self.phase = ProcessPhase::Ready;
         self.budget > POINT_COST
     }
@@ -513,7 +612,7 @@ impl TrackProcess {
     /// Explicit native writeback; do not put this in Drop or a callback finally
     /// path because early lifecycle exits deliberately retain the old residual.
     pub fn store_residual(&self, progress: &mut TrackProgress) {
-        progress.set_residual(self.budget);
+        progress.residual = self.budget;
     }
 }
 

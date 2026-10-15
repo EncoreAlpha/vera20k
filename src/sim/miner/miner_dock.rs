@@ -1,4 +1,4 @@
-//! Refinery dock contacts.
+//! Test fixtures for refinery dock contacts.
 //!
 //! A refinery admits up to `NumberOfDocks` miners into its `Contacts[]` list
 //! (capacity-1 for a stock refinery). The slot count `RadioClass+0xE8` starts
@@ -14,11 +14,10 @@
 //!
 //! The refinery handshake has one record, the radio state on the two objects:
 //! the refinery's `GameEntity::radio_contacts` and the miner's tether
-//! (`GameEntity::tether`, `TechnoClass+0x418`). The miner FSM uses [`radio::transmit`]. Retasking uses
-//! the shared mission event owner; refinery release uses
-//! the functions here on that same bus. (Other mechanisms write
-//! `radio_contacts` for their own links, e.g. a factory exit; none of them
-//! touches a refinery.)
+//! (`GameEntity::tether`, `TechnoClass+0x418`). The miner FSM and retasking
+//! use [`radio::transmit`], and these fixtures drive the same bus. (Other
+//! mechanisms write `radio_contacts` for their own links, e.g. a factory
+//! exit; none of them touches a refinery.)
 //!
 //! ## Dependency rules
 //! - Part of sim/ -- no dependencies outside sim/.
@@ -29,7 +28,6 @@ use crate::sim::world::FrameEffects;
 use crate::sim::world::Simulation;
 
 /// Whether the refinery's Contacts[] list holds the miner.
-#[cfg(test)]
 pub(crate) fn has_contact(sim: &Simulation, refinery_sid: u64, miner_sid: u64) -> bool {
     sim.substrate
         .entities
@@ -57,7 +55,6 @@ pub(crate) fn break_contact(
 }
 
 /// Test fixtures drive the same bus the FSM does; there is no test-only store.
-#[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
 

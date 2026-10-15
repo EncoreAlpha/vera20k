@@ -34,7 +34,7 @@ use crate::sim::house_state::HouseState;
 use crate::sim::intern::{InternedId, StringInterner};
 use crate::sim::world::FrameEffects;
 use crate::sim::world::Simulation;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::locomotor::MovementLayer;
 use super::scatter_cell::OctantJitter;
@@ -57,34 +57,6 @@ pub(crate) struct ScatterFlags {
 impl ScatterFlags {
     pub(crate) const fn new(forced: bool, no_kidding: bool) -> Self {
         Self { forced, no_kidding }
-    }
-}
-
-/// `Scatter(null, flags)` calls a movement-pass step makes while the pass
-/// holds the world split: the tube exit's blocked cell (`0x00735F55`). The
-/// object turn runs them in call order once
-/// the pass returns ([`Simulation::run_scatter_requests`]), still inside that
-/// object's Process. Each object is asked at most once per pass.
-#[derive(Debug, Default)]
-pub(crate) struct ScatterRequests {
-    asked: BTreeSet<u64>,
-    pending: Vec<(u64, ScatterFlags)>,
-}
-
-impl ScatterRequests {
-    /// Queues `Scatter(null, flags)` on `id`; false when this pass already
-    /// asked it.
-    pub(super) fn request(&mut self, id: u64, flags: ScatterFlags) -> bool {
-        let first = self.asked.insert(id);
-        if first {
-            self.pending.push((id, flags));
-        }
-        first
-    }
-
-    /// The queued calls, in call order. The pass keeps whom it asked.
-    pub(super) fn take(&mut self) -> Vec<(u64, ScatterFlags)> {
-        std::mem::take(&mut self.pending)
     }
 }
 
@@ -573,27 +545,6 @@ impl Simulation {
             },
             self.session.binary_frame,
         )
-    }
-
-    /// Runs the Scatter calls a movement pass queued ([`ScatterRequests`]).
-    /// Without rules nothing can admit a receiver, so none runs. Answers
-    /// whether an Infantry receiver's immediate Process changed bridge state.
-    pub(crate) fn run_scatter_requests(
-        &mut self,
-        requests: Vec<(u64, ScatterFlags)>,
-        rules: Option<&RuleSet>,
-        registry: Option<&OverlayTypeRegistry>,
-        frame_effects: FrameEffects<'_>,
-    ) -> Result<bool, String> {
-        let Some(rules) = rules else {
-            return Ok(false);
-        };
-        let mut bridge_state_changed = false;
-        for (id, flags) in requests {
-            bridge_state_changed |=
-                self.scatter(id, None, flags, rules, registry, frame_effects)?;
-        }
-        Ok(bridge_state_changed)
     }
 
     /// `CellClass::Scatter_Objects @ 0x00481670` on `layer`'s list (`+0xE4`

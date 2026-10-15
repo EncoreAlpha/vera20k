@@ -141,7 +141,7 @@ fn stock_lamp_loaded_by_scenario_changes_actual_terrain_pixels() {
     scenario.runtime.simulation.discard_lighting_events();
     scenario.runtime.simulation.apply_fatal_lifecycle_stage(
         rules,
-        crate::sim::combat::FatalLifecycleStage::BeforeDeathEffects,
+        crate::sim::combat::FatalLifecycleStage::BeforeDeathEffects { attacker: None },
         id,
         crate::map::entities::EntityCategory::Structure,
         crate::sim::world::UninitContext::with_rules(rules),

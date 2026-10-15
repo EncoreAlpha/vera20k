@@ -590,7 +590,7 @@ mod tests {
             {
                 let expected = out["owners"][index].as_u64().unwrap() as u32;
                 assert_eq!(
-                    raw.infantry_owner(10, 10, layer),
+                    raw.occupant_at(RawCellKey::Real(10, 10), layer).1,
                     (expected != u32::MAX).then(|| InternedId::from_index(expected)),
                     "{i}"
                 );

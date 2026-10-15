@@ -4132,8 +4132,9 @@ fn stock_infantry_fallback_unit_ready_uses_producer_getcoords() {
 }
 
 /// `BuildingClass::Exit_Object_Main @ 0x00443C60` reaches its Cloning roster
-/// loop in the InfantryType arm before the produced infantry's exit search and
-/// Unlimbo (`0x004449D9..0x00444A53`, then `0x00444C95`). This exercises the
+/// loop in the InfantryType arm after the produced infantry's GetDock and
+/// before its Unlimbo (`0x004449AF`, `0x004449D9..0x00444A53`, then
+/// `0x00444C95`). This exercises the
 /// stock Yuri barracks through the ordinary player PLACE publication/command
 /// path; each same-house `[NACLON] Cloning=yes` vat should add one E1 for its
 /// owner, even while that house is in low power.
@@ -4513,11 +4514,12 @@ fn cloning_vats_do_not_duplicate_yuri_vehicle_factory_output() {
     );
 }
 
-/// The native clone loop runs before the source infantry's dock search and
-/// Unlimbo. With the source moved outside Map::In_Bounds, its own exit has no
-/// candidate, but the vat's earlier Exit_Object attempt still succeeds.
+/// The clone loop (`0x004449D9`) follows the source's GetDock (`0x004449AF`):
+/// an empty dock Cell takes the refusal at `0x00445696` first. With the source
+/// moved outside Map::In_Bounds, no candidate Cell admits it, so no vat makes
+/// a copy.
 #[test]
-fn cloning_vat_copy_precedes_a_source_infantry_exit_failure() {
+fn cloning_vat_copies_wait_for_the_source_dock_cell() {
     let Some((mut sim, rules, registry, owner)) = stock_yuri_cloning_world() else {
         return;
     };
@@ -4553,6 +4555,15 @@ fn cloning_vat_copy_precedes_a_source_infantry_exit_failure() {
         crate::sim::world::FrameEffects::default()
     ));
     let category = ProductionCategory::Infantry;
+    let held = sim
+        .production
+        .factories
+        .view(owner, category)
+        .unwrap()
+        .object
+        .unwrap()
+        .entity_id
+        .unwrap();
     let cost = sim.cost_of(owner, rules.object("E1").unwrap(), &rules);
     sim.houses
         .get_mut(&owner)
@@ -4573,7 +4584,7 @@ fn cloning_vat_copy_precedes_a_source_infantry_exit_failure() {
     );
 
     let e1 = sim.interner.get("E1").unwrap();
-    let delivered = sim
+    let copies = sim
         .substrate
         .entities
         .values()
@@ -4581,12 +4592,12 @@ fn cloning_vat_copy_precedes_a_source_infantry_exit_failure() {
             entity.category() == EntityCategory::Infantry
                 && entity.owner() == owner
                 && entity.type_ref() == e1
-                && entity.lifecycle.cell_marked()
+                && entity.stable_id() != held
         })
         .count();
     assert_eq!(
-        delivered, 1,
-        "the vat's earlier clone attempt survives the source's later failed exit"
+        copies, 0,
+        "GetDock refuses the source before the clone loop runs"
     );
 }
 

@@ -71,8 +71,8 @@ impl Simulation {
                     "ground_list":ground,"deck_list":deck,
                     "ground_bits":self.substrate.raw_cell_occupation.ground_bits(x,y),
                     "deck_bits":self.substrate.raw_cell_occupation.deck_bits(x,y),
-                    "ground_owner":self.substrate.raw_cell_occupation.infantry_owner(x,y,Ground),
-                    "deck_owner":self.substrate.raw_cell_occupation.infantry_owner(x,y,Bridge),
+                    "ground_owner":self.substrate.raw_cell_occupation.occupant_at(crate::sim::occupancy::RawCellKey::Real(x,y),Ground).1,
+                    "deck_owner":self.substrate.raw_cell_occupation.occupant_at(crate::sim::occupancy::RawCellKey::Real(x,y),Bridge).1,
                     "full_cell_debug":format!("{c:?}"),
                 }));
             }

@@ -27,12 +27,12 @@
 //! loading, tank bunkers, DeploysInto, retaliation against the eater.
 //!
 //! RESIDUALS (each needs a mechanism VERA does not have yet):
-//! - Area Guard after a release: Enter_Idle_Mode (Infantry `0x0051CD3E..`,
-//!   Unit `0x00738B67..`) picks Area Guard for DefaultToGuardArea types
-//!   (DOG/ADOG/DRON and 8 more) and, IQ-gated, for AI houses; the shared
-//!   selector (`enter_idle_mode`) still picks Guard. Effect: a
-//!   released dog or drone guards in place instead of chasing nearby targets.
-//!   Frequency: every release. Owner: the Enter_Idle_Mode selector port.
+//! - Area Guard after a release: Unit Enter_Idle_Mode's Area Guard pick
+//!   (`0x00738B67..0x00738C98`, residual in
+//!   `Simulation::unit_enter_idle_mode`) is not ported, so a released
+//!   `DefaultToGuardArea=` vehicle takes Guard. Effect: a released drone
+//!   guards in place instead of chasing nearby targets. Frequency: every
+//!   such release. Owner: the Unit Enter_Idle_Mode selector.
 //! - Unlimbo's Can_Enter_Cell (`0x005F4F1B..0x005F4F44`) runs on the unbracketed
 //!   AttachTo-refusal and ExitUnit releases and deletes an owner it refuses
 //!   (Unit/Infantry skip occupants of the attached victim's cell,
@@ -814,7 +814,8 @@ impl Simulation {
             self.substrate
                 .entities
                 .get_mut(owner)?
-                .set_on_bridge(victim_on_bridge);
+                .on_bridge
+                .store(victim_on_bridge);
             return Some(coords);
         }
         let frame = self.session.binary_frame;
@@ -885,7 +886,8 @@ impl Simulation {
         self.substrate
             .entities
             .get_mut(owner)?
-            .set_on_bridge(on_bridge);
+            .on_bridge
+            .store(on_bridge);
         Some(coords)
     }
 
@@ -1084,7 +1086,10 @@ impl Simulation {
             (None, sub_x, sub_y)
         };
         if let Some(entity) = self.substrate.entities.get_mut(owner) {
-            entity.set_sub_cell(sub_cell);
+            match sub_cell {
+                Some(spot) => entity.sub_cell.hold(spot),
+                None => entity.sub_cell.release(),
+            }
         }
         let revealed = matches!(
             self.try_reveal_entity_with_context(

@@ -1106,7 +1106,7 @@ pub(crate) fn process_boarding_passenger(
         if let Some(pax) = sim.substrate.entities.get_mut(pax_id)
             && !(building_arm && pax.category() == EntityCategory::Infantry)
         {
-            pax.set_on_bridge(false);
+            pax.on_bridge.store(false);
         }
         //4733A0 repeats the head's virtual Limbo before its unconditional
         //prepend, after the class PerCellProcess admission prefix above.

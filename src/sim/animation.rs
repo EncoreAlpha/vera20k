@@ -329,6 +329,15 @@ impl BodyFrameCounter {
 /// feeds that raw signed value to IDIV, making zero invalid content. `IdleRate`
 /// is different — zero is its documented branch-off switch and performs no
 /// division. The counter itself is a native dword, so increment wraps.
+///
+/// RESIDUAL: `FootClass::AI`'s increment (`0x004DA886..0x004DAA01`) runs for
+/// every Foot; only its hover-attack arm asks for a Unit. VERA advances the
+/// counter for Units alone. Trigger: a moving aircraft or infantryman.
+/// Effect: an aircraft whose HVA has more than one frame stays on frame 0
+/// (`AircraftClass::Draw_It` reads `+0x538` too, `0x004145B0`); on retail only
+/// SPYP's has two. No retail InfantryType or AircraftType sets `IdleRate=` or
+/// `DeployToLand=`, so the move-sound tail sees no increment while one stands
+/// still. Frequency: each spy plane flight. Risk: the drawn frame only.
 pub(crate) fn tick_unit_body_frame_counter(
     entity: &mut crate::sim::game_entity::GameEntity,
     rules: Option<crate::sim::movement::SpeedRules<'_>>,
@@ -621,6 +630,8 @@ pub(crate) fn tick_non_dying_animations(
 /// Advance one dying object's death sequence during its own scheduler turn.
 /// Missing animation/type/sequence data takes the immediate-finish path used
 /// by the prior app-owned completion fallback.
+/// VERA-only: steps a sequence the `TerminalLifetime` dying mark keeps in the
+/// store, which native lacks (see that record); the assert checks the mark.
 pub(crate) fn tick_dying_animation(
     entity: &mut crate::sim::game_entity::GameEntity,
     sequence_set: Option<&SequenceSet>,
@@ -642,186 +653,6 @@ pub(crate) fn tick_dying_animation(
     };
     advance_animation(anim, def, game_options);
     anim.finished
-}
-
-/// Per-entity voxel HVA animation state.
-///
-/// Attached to voxel entities that cycle through HVA animation frames at runtime.
-/// Used for harvesting miners (arm/turret animation), and potentially other voxel
-/// units with multi-frame HVA files. The render loop reads `frame` to select
-/// the correct pre-rendered atlas sprite.
-///
-/// gamemd keeps no such clock: `UnitClass::DrawVoxelBody @ 0x0073B470` takes
-/// the HVA frame as `FootClass+0x538` modulo the HVA's frame count
-/// (`0x0073B4DA..0x0073B4E7`), so this one is a residual (#1593).
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct VoxelAnimation {
-    /// Current HVA frame index (0-based).
-    frame: u32,
-    /// Total number of HVA animation frames.
-    frame_count: u32,
-    /// Reached native frames accumulated since last image advance.
-    elapsed_frames: u16,
-    /// Reached native frames per image. 0 = no auto-advance.
-    frame_delay: u16,
-    /// Whether the animation is currently playing (cycling frames).
-    playing: bool,
-}
-
-impl VoxelAnimation {
-    /// Create a new VoxelAnimation in stopped state.
-    pub fn new(frame_count: u32, frame_delay: u16) -> Self {
-        Self {
-            frame: 0,
-            frame_count,
-            elapsed_frames: 0,
-            frame_delay,
-            playing: false,
-        }
-    }
-
-    /// The HVA frame to draw.
-    pub fn frame(&self) -> u32 {
-        self.frame
-    }
-
-    /// The HVA's frame count.
-    pub fn frame_count(&self) -> u32 {
-        self.frame_count
-    }
-
-    /// Reached native frames since the last image advance.
-    pub fn elapsed_frames(&self) -> u16 {
-        self.elapsed_frames
-    }
-
-    /// Reached native frames per image.
-    pub fn frame_delay(&self) -> u16 {
-        self.frame_delay
-    }
-
-    /// The animation cycles.
-    pub fn playing(&self) -> bool {
-        self.playing
-    }
-
-    /// The loaded HVA's frame count, once the unit atlas knows it. Answers
-    /// whether it changed.
-    pub(crate) fn adopt_frame_count(&mut self, frame_count: u32) -> bool {
-        let changed = self.frame_count != frame_count;
-        self.frame_count = frame_count;
-        changed
-    }
-}
-
-/// Harvest overlay animation state for the oregath.shp ore-gathering sprite.
-///
-/// Attached to harvester entities (HARV, CMIN). Shows the visual "sucking up ore"
-/// animation as an SHP overlay on top of the VXL body when actively harvesting.
-/// Uses the effect palette (anim.pal), independent of house colors.
-///
-/// gamemd keeps no such state: `UnitClass::DrawIt @ 0x0073CEC0` draws
-/// `OREGATH.SHP` frame `(FootClass+0x538 + frame) % 15` for the facing
-/// (`0x0073D25C..0x0073D273`), so this one is a residual (#1593).
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct HarvestOverlay {
-    /// Current animation frame (0..14, 15 frames per facing direction).
-    frame: u16,
-    /// Whether the overlay is currently visible and animating.
-    visible: bool,
-}
-
-impl HarvestOverlay {
-    /// A hidden overlay at frame 0, the constructor's.
-    pub(crate) const fn hidden() -> Self {
-        Self {
-            frame: 0,
-            visible: false,
-        }
-    }
-
-    /// The frame to draw.
-    pub fn frame(&self) -> u16 {
-        self.frame
-    }
-
-    /// The overlay is drawn and animating.
-    pub fn visible(&self) -> bool {
-        self.visible
-    }
-
-    /// The miner's sync: the overlay follows Unit+0x6D2 (harvesting),
-    /// restarting at frame 0 when it shows or hides.
-    pub(crate) fn follow(&mut self, harvesting: bool) {
-        if harvesting != self.visible {
-            self.visible = harvesting;
-            self.frame = 0;
-        }
-    }
-
-    /// Install a fixture's overlay.
-    #[cfg(test)]
-    pub(crate) fn for_test(frame: u16, visible: bool) -> Self {
-        Self { frame, visible }
-    }
-}
-
-/// Number of animation frames in oregath.shp per facing direction.
-const HARVEST_OVERLAY_FRAMES: u16 = 15;
-
-/// Advance all HarvestOverlay components by one reached native frame.
-///
-/// Cycles through the 15-frame oregath.shp animation for harvesters that are
-/// actively gathering ore. When not visible, the overlay is skipped.
-pub fn tick_harvest_overlays(entities: &mut crate::sim::entity_store::EntityStore) {
-    // Find the advancing overlays by reading: every mutable hand-out enters
-    // the store's touch logs, and most entities have none.
-    let advancing: Vec<u64> = entities
-        .values()
-        .filter(|entity| {
-            entity
-                .harvest_overlay
-                .as_ref()
-                .is_some_and(|overlay| overlay.visible)
-        })
-        .map(|entity| entity.stable_id())
-        .collect();
-    for id in advancing {
-        let overlay = entities
-            .get_mut(id)
-            .and_then(|entity| entity.harvest_overlay.as_mut())
-            .expect("an advancing overlay was just read");
-        overlay.frame = (overlay.frame + 1) % HARVEST_OVERLAY_FRAMES;
-    }
-}
-
-/// Advance all VoxelAnimation components by one reached native frame.
-///
-/// Cycles through HVA frames for voxel entities that have `playing == true`.
-/// Frame wraps around to 0 when reaching frame_count (looping animation).
-pub fn tick_voxel_animations(entities: &mut crate::sim::entity_store::EntityStore) {
-    // Read first, as in `tick_harvest_overlays`.
-    let advancing: Vec<u64> = entities
-        .values()
-        .filter(|entity| {
-            entity.category() != crate::map::entities::EntityCategory::Unit
-                && entity.voxel_animation.as_ref().is_some_and(|anim| {
-                    anim.playing && anim.frame_count > 1 && anim.frame_delay != 0
-                })
-        })
-        .map(|entity| entity.stable_id())
-        .collect();
-    for id in advancing {
-        let anim = entities
-            .get_mut(id)
-            .and_then(|entity| entity.voxel_animation.as_mut())
-            .expect("an advancing voxel animation was just read");
-        anim.elapsed_frames = anim.elapsed_frames.saturating_add(1);
-        while anim.elapsed_frames >= anim.frame_delay {
-            anim.elapsed_frames -= anim.frame_delay;
-            anim.frame = (anim.frame + 1) % anim.frame_count;
-        }
-    }
 }
 
 /// Map a warhead's `InfDeath=` to the death sequence, if it selects one at all.

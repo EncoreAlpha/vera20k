@@ -71,21 +71,39 @@ impl<T: Copy, const SIZE: usize> NativeHeap<T, SIZE> {
         first
     }
 
+    /// Sift the root down: at each level the item moves to the cheaper child
+    /// if that child costs less than it, the left one when they tie. The
+    /// item is held aside and written once where it stops.
     fn sift_down(&mut self, less: &impl Fn(&T, &T) -> bool) {
+        let Some(&item) = self.0.first() else {
+            return;
+        };
+        let len = self.0.len();
         let mut position = 0;
         loop {
+            let left = position * 2 + 1;
             let mut smallest = position;
-            for child in [position * 2 + 1, position * 2 + 2] {
-                if child < self.0.len() && less(&self.0[child], &self.0[smallest]) {
-                    smallest = child;
+            if left < len && less(&self.0[left], &item) {
+                smallest = left;
+            }
+            let right = left + 1;
+            if right < len {
+                let cheapest = if smallest == position {
+                    &item
+                } else {
+                    &self.0[left]
+                };
+                if less(&self.0[right], cheapest) {
+                    smallest = right;
                 }
             }
             if smallest == position {
                 break;
             }
-            self.0.swap(position, smallest);
+            self.0[position] = self.0[smallest];
             position = smallest;
         }
+        self.0[position] = item;
     }
 }
 

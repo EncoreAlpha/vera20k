@@ -2019,6 +2019,8 @@ const PASSIVE_TARGET_CLEAR_MISSIONS: [MissionType; 12] = [
 /// The off-mission clear, which runs before the AI counter: a passively
 /// acquired target is dropped the moment the object takes a job that should not
 /// be shooting (see [`PASSIVE_TARGET_CLEAR_MISSIONS`]).
+/// `TechnoClass::AI_Update @ 0x006F9E50` at `0x006FA5E8..0x006FA63B`: TarCom `+0x2B4`,
+/// the mark `+0x50C`, then the mission `+0xAC`.
 fn clear_passive_target_off_mission(sim: &mut Simulation, id: u64, rules: Option<&RuleSet>) {
     let drop = sim.substrate.entities.get(id).is_some_and(|entity| {
         entity.attack_target.target().is_some()
@@ -4839,28 +4841,6 @@ mod tests {
         assert!(held("PUP", 16, false), "a dog that is not Natural keeps it");
         assert!(held("PUP", 15, true), "a cloaked target is kept until then");
         assert!(!held("PUP", 16, true), "and dropped on CANT");
-    }
-
-    #[test]
-    fn attack_handler_clears_only_an_authoritatively_stale_entity_target() {
-        let mut sim = Simulation::with_seed(0xA773);
-        let rules = representative_foot_handler_rules();
-        let mut unit = entity_of(1, EntityCategory::Unit);
-        unit.attack_target
-            .set_for_test(Some(TargetKind::Entity(99)));
-        unit.weapon_burst.complete_shot(2);
-        update_mission_test_fixture(&mut unit.mission, |fixture| {
-            fixture.current = MissionId::from_known(MissionType::Attack);
-            fixture.dispatch_timer = MissionDispatchTimer::at_frame(0);
-        });
-        register_entity(&mut sim, unit);
-
-        sim.object_ai_visit_one(1, Some(&rules), ObjectAiCtx::default());
-
-        let unit = sim.substrate.entities.get(1).unwrap();
-        assert!(unit.attack_target.target().is_none());
-        assert_eq!(unit.weapon_burst.index(), 1);
-        assert_eq!(unit.mission.queued(), MissionId::NONE);
     }
 
     /// The heads of `FootClass::Mission_Guard` (`0x004D5076..0x004D50CD`)

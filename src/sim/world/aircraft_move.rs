@@ -131,6 +131,8 @@ impl Simulation {
 
     /// The cell of the NavCom's `vt+0x4C` coordinate (this aircraft asking),
     /// over 256 toward zero, as Mission_Move states 2 and 4 read it.
+    /// `Mission_Move @ 0x004166E0`'s NavCom (`+0x5A4`) in state 2 (`0x004167CE`) and
+    /// state 4 (`0x004169CD`).
     fn aircraft_nav_cell(&self, id: u64, rules: &RuleSet) -> Option<(i16, i16)> {
         let nav = self.substrate.entities.get(id)?.navigation.nav_com()?;
         let coord = nav_target_coordinate(
@@ -171,6 +173,8 @@ struct WorldMove<'a> {
 }
 
 impl WorldMove<'_> {
+    /// The NavCom (`+0x5A4`) that `Mission_Move @ 0x004166E0` reads (`0x004166FB`,
+    /// `0x00416769`).
     fn nav(&self) -> Option<NavTargetRef> {
         self.sim
             .substrate

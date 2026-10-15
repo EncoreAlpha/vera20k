@@ -1133,6 +1133,8 @@ where
 /// A building as the map-wall owner search measures it: its GetCoords
 /// (vt+0x48, [`object_get_coords`]) and the foundation of its distance
 /// discount.
+/// Serves the wall-owner search `0x0047D210`, which `InitCellAttributes @ 0x00568BB0`
+/// runs per cell; it also tests IsAlive (`+0x90`) and Marked (`+0x74`).
 ///
 /// [`object_get_coords`]: crate::sim::movement::ground_pose::object_get_coords
 pub(crate) fn map_wall_owner_candidate_from_building(

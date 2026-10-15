@@ -181,7 +181,8 @@ fn plane_at(sim: &mut Simulation, rules: &RuleSet, at: (u16, u16), passengers: u
         .entities
         .get_mut(id)
         .unwrap()
-        .mark_mission_only();
+        .mission_only
+        .mark();
     sim.with_object_placement_scope(|sim| {
         sim.reveal_constructed_object_at_height(
             id,

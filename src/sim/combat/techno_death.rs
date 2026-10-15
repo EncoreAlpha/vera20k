@@ -159,7 +159,11 @@ pub(crate) enum FatalLifecycleStage {
     PostMortemExactZero {
         killer_owner: Option<InternedId>,
     },
-    BeforeDeathEffects,
+    /// Before the death arm. `attacker` is the killing call's attacker, whom
+    /// a building's KillPassengers credits (`0x00441F27`).
+    BeforeDeathEffects {
+        attacker: Option<u64>,
+    },
     AfterDeathEffects,
 }
 

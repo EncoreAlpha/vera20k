@@ -235,7 +235,8 @@ impl Simulation {
             .entities
             .get_mut(plane)
             .unwrap()
-            .mark_mission_only();
+            .mission_only
+            .mark();
         let metadata = self
             .team_script_vm
             .team_type_ini
@@ -527,7 +528,8 @@ impl Simulation {
                         .entities
                         .get_mut(transport)
                         .unwrap()
-                        .mark_mission_only();
+                        .mission_only
+                        .mark();
                 }
             }
             transports.reverse();

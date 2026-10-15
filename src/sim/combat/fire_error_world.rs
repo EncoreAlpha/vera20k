@@ -780,6 +780,8 @@ impl FireQuery for WorldQuery<'_, '_> {
         self.direction()
     }
 
+    /// Building vt+0x408 (`0x004581F0`), the occupant count that
+    /// `BuildingClass::GetFireError` (`0x00447F10`) reads.
     fn occupants(&mut self) -> i32 {
         self.subject
             .firer
@@ -813,6 +815,7 @@ impl WorldQuery<'_, '_> {
 
     /// DirectionToTarget from the firer's position to the target's point; a
     /// building's is vt+0x4E8 ([`super::fire_coord::building_direction_to`]).
+    /// The base is `ObjectClass::DirectionToTarget` (`0x005F3DB0`).
     fn direction(&self) -> u16 {
         let subject = self.subject;
         let firer = subject.firer;

@@ -175,6 +175,8 @@ impl CombatStrike<'_, '_, '_> {
         self.snap.stable_id
     }
 
+    /// Target (`+0x2B4`), read live as `AircraftClass::Mission_Attack`
+    /// (`0x00417FE0`)'s strike states read it.
     fn target(&self) -> Option<TargetKind> {
         self.world
             .substrate
@@ -262,6 +264,8 @@ impl AircraftFireAt<'_, '_, '_, '_> {
 }
 
 impl FireAtHost for AircraftFireAt<'_, '_, '_, '_> {
+    /// The first passenger (`+0x118`) `AircraftClass::Fire_At` (`0x00415EE0`)
+    /// reads at `0x00415EEE`.
     fn carries_passenger(&mut self) -> bool {
         self.entity()
             .and_then(|entity| entity.passenger_role.cargo())

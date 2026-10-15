@@ -723,6 +723,14 @@ impl Simulation {
                 // below writes Guard. Ordinary Move/Attack handlers see the
                 // cleared NavCom/TarCom on their next dispatch and own the idle
                 // transition, including Temporal LetGo at that later boundary.
+                // `0x004C757D..0x004C759C`: a Foot's navigation list is
+                // emptied (twice: inline, then `0x004DA1C0`); the planning-path
+                // writes that follow have no VERA state.
+                if let Some(entity) = self.substrate.entities.get_mut(*entity_id)
+                    && entity.category() != crate::map::entities::EntityCategory::Structure
+                {
+                    entity.navigation.clear_nav_list();
+                }
                 // Event6 sends BREAK to every sparse contact (vt28065ACE0
                 // at4C75E0), before NULL destination4C75ED/target4C75F8.
                 // Unlike MEGAMISSION it never clears Foot pending-entry+500.
@@ -1157,6 +1165,15 @@ impl Simulation {
                 entity_id,
                 target_refinery_id,
             } => {
+                // A miner clicked onto its refinery: `UnitClass::What_Action`
+                // asks the refinery CAN_LOAD (`0x0F`) and, answered ROGER,
+                // gives Enter (`0x0073FD50`). `FootClass::ClickedAction`'s
+                // Enter arm (`0x004D74E0`) sends the MEGAMISSION Enter with no
+                // Target and the refinery as Destination, as for a depot.
+                let Some(rules) = rules else { return false };
+                let Some(refinery_id) = *target_refinery_id else {
+                    return false;
+                };
                 if !self.entity_owned_by_id(command_owner, *entity_id) {
                     return false;
                 }
@@ -1168,96 +1185,48 @@ impl Simulation {
                 {
                     return false;
                 }
-                let explicit_refinery = match target_refinery_id {
-                    Some(refinery_id) => {
-                        let Some(rules) = rules else { return false };
-                        if !self.valid_explicit_miner_refinery(
-                            command_owner,
-                            *entity_id,
-                            *refinery_id,
-                            rules,
-                        ) {
-                            return false;
-                        }
-                        Some(*refinery_id)
-                    }
-                    None => None,
-                };
-                // A harvester's dock is its native Enter/Unload missions: the
-                // order's MEGAMISSION radio break (`0x004C72E8`) leaves the
-                // refinery link, and because the Harvest assign below replaces
-                // Unload without its contact gate (`0x0073DEE0`), the unload
-                // latch drops here too — as for `Command::HarvestCell`.
+                if !self.valid_explicit_miner_refinery(
+                    command_owner,
+                    *entity_id,
+                    refinery_id,
+                    rules,
+                ) {
+                    return false;
+                }
+                // Native order admission (actor + Destination token).
                 if !self.order_actor_admits(*entity_id)
-                    || self
-                        .substrate
-                        .entities
-                        .get(*entity_id)
-                        .is_none_or(|e| e.miner.is_none())
+                    || !self.order_object_token_admits(refinery_id)
                 {
                     return false;
                 }
-                self.begin_megamission_retask(
+                if self.duplicate_enter_is_noop(*entity_id, refinery_id) {
+                    return true;
+                }
+                self.queue_megamission(
                     *entity_id,
                     MissionType::Enter,
                     None,
                     None,
-                    rules,
+                    Some(rules),
                     frame_effects,
                 );
-                if self
-                    .substrate
-                    .entities
-                    .get(*entity_id)
-                    .is_some_and(crate::sim::game_entity::GameEntity::is_harvester)
-                {
-                    crate::sim::miner::clear_unload_latch(self, *entity_id);
-                }
-                let previous_refinery = self
-                    .substrate
-                    .entities
-                    .get(*entity_id)
-                    .and_then(|e| e.miner.as_ref())
-                    .and_then(|m| m.reserved_refinery());
-                let explicit_refinery_changed = explicit_refinery
-                    .is_some_and(|refinery_id| previous_refinery != Some(refinery_id));
-                if explicit_refinery_changed && let Some(old_refinery) = previous_refinery {
-                    // BREAK both ends: the old refinery's slot frees for
-                    // the next miner, and this miner loses the contact
-                    // that would let it path through that refinery.
-                    crate::sim::miner::miner_dock::break_contact(
-                        self,
-                        *entity_id,
-                        old_refinery,
-                        frame_effects,
-                    );
-                }
-                // Update miner state in EntityStore.
-                let Some(e) = self.substrate.entities.get_mut(*entity_id) else {
-                    return false;
-                };
-                let Some(ref mut miner) = e.miner else {
-                    return false;
-                };
-                if let Some(refinery_id) = explicit_refinery {
-                    miner.reserve_refinery(refinery_id);
-                }
-                // Commit the Harvest mission and the ForcedReturn cursor of
-                // record. Assign resets the handler state and dispatch timer
-                // (prompt redispatch); the cursor write lands after it.
-                // UNCHECKED: the native return-order mission shape is
-                // unverified — this preserves the legacy immediate-effect
-                // command behavior.
-                let now = self.session.binary_frame;
-                let _ = self.mission_assign_exact(
+                // Event4C7467 dispatches the class target setter before Dest.
+                let _ = self.assign_target_represented(
                     *entity_id,
-                    crate::sim::mission::MissionId::from_known(MissionType::Harvest),
-                    now,
+                    None,
+                    Some(rules),
+                    overlay_registry,
+                    frame_effects,
                 );
-                if let Some(e) = self.substrate.entities.get_mut(*entity_id) {
-                    e.mission
-                        .set_handler_state(crate::sim::miner::MinerState::ForcedReturn.cursor());
-                }
+                // Event4C747C: the Unit class setter with the refinery, whose
+                // Enter and Dock arms dock or queue the miner.
+                self.set_unit_destination(
+                    *entity_id,
+                    crate::sim::components::NavTargetRef::Building { id: refinery_id },
+                    rules,
+                    true,
+                    frame_effects,
+                );
                 true
             }
             Command::RepairAtDepot {
@@ -1570,27 +1539,17 @@ impl Simulation {
                 // and Unit+0x6D2 carry on, so state 1 waits out the drive as
                 // a hop and cuts where it ends. Any other mission queues
                 // Harvest for the host's next Ready/Commence, and state 0
-                // cuts where the drive ends. VERA's ForcedReturn cursor
-                // stands for the return order's Enter mission, which Queue
-                // replaces, so that miner restarts at state 0 here.
-                // RESIDUAL: `0x004DA1C0` after the archive clear and the
-                // Assign_Target of the event's target are not represented.
+                // cuts where the drive ends.
+                // RESIDUAL: the Assign_Target of the event's target is not
+                // represented.
                 let now = self.session.binary_frame;
-                let harvest = crate::sim::mission::MissionId::from_known(MissionType::Harvest);
-                let forced_return = self.substrate.entities.get(*entity_id).is_some_and(|e| {
-                    e.miner_state() == Some(crate::sim::miner::MinerState::ForcedReturn)
-                });
-                if forced_return {
-                    let _ = self.mission_assign_exact(*entity_id, harvest, now);
-                } else {
-                    let _ = self.mission_queue_exact(
-                        *entity_id,
-                        harvest,
-                        0,
-                        now,
-                        &crate::sim::mission::authority::EntityReadyInputProvider,
-                    );
-                }
+                let _ = self.mission_queue_exact(
+                    *entity_id,
+                    crate::sim::mission::MissionId::from_known(MissionType::Harvest),
+                    0,
+                    now,
+                    &crate::sim::mission::authority::EntityReadyInputProvider,
+                );
                 // `0x004C73E1..0x004C73EA`, before the archive clear and the
                 // setter: the order takes a Slave Miner off its hunt; the
                 // Harvest it queued then sends it to the clicked field
@@ -1598,9 +1557,7 @@ impl Simulation {
                 if let Some(rules) = rules {
                     self.reset_slave_manager(*entity_id, rules, frame_effects);
                 }
-                if let Some(e) = self.substrate.entities.get_mut(*entity_id) {
-                    e.set_archive_target(None);
-                }
+                self.megamission_foot_clears(*entity_id, MissionType::Harvest);
                 // The setter's unchanged-NavCom return leaves a miner already
                 // driving to this cell alone.
                 if let Some(rules) = rules {
@@ -1981,6 +1938,8 @@ impl Simulation {
     /// new members run through `ObjectClass::Select`. This distinction matters
     /// for an already-selected Chrono unit in warp-out: warp blocks a fresh
     /// selection, but does not retroactively remove an existing one.
+    /// VERA-only: applies the local `Command::Select` snapshot, its source of truth, to
+    /// IsSelected `Object+0x83` through `Deselect @ 0x005F44A0` and `Select @ 0x005F4520`.
     fn apply_selection_snapshot(&mut self, stable_ids: &[u64], rules: Option<&RuleSet>) -> bool {
         let requested: BTreeSet<u64> = stable_ids.iter().copied().collect();
         // Deselect only omitted old members. Requested old members remain set,
@@ -2120,15 +2079,11 @@ impl Simulation {
     ///   one of those to a dying or limboed actor. Player effect: the order runs
     ///   where retail abandons it. Frequency: low per order. These gates
     ///   remain outside ordinary Unit depot servicing.
-    /// * **Duplicate-Enter is not applied to `MinerReturn`**, which is the
-    ///   fourth Enter-shaped order (right-clicking your own refinery). Same
-    ///   stall-and-re-approach the predicate exists to stop, on the one Enter
-    ///   the player repeats most.
     /// * **Mission replacement remains partly per-site.** The shared
     ///   `begin_megamission_retask` owns radio, +500 and Team removal before
     ///   Queue4C73B9. The common funnel also clears suspended target2B8 and
-    ///   Foot destination5A8; MinerReturn and HarvestCell bypass those
-    ///   post-Queue archive clears. A later Restore can resume a cancelled
+    ///   Foot destination5A8; HarvestCell bypasses those post-Queue archive
+    ///   clears. A later Restore can resume a cancelled
     ///   target or route. Their complete mission/DTO migration is separate.
     ///   Aircraft reservation teardown remains a legacy command policy.
     /// * **The manager abandon** at 0x004C73E1-0x004C73EA calls 0x006B0C80 on
@@ -2153,6 +2108,8 @@ impl Simulation {
     /// is what keeps an attacker on its previous order when the unit it was
     /// clicked onto dies in the same tick, instead of retasking it onto a
     /// corpse that is still resolvable in the store.
+    /// `EventClass::Execute @ 0x004C6CB0`'s MEGAMISSION token tests of `+0x90`, `+0x6C` != 0
+    /// and `+0x81` (target `0x004C7225..0x004C725D`, destination `0x004C7263..0x004C7299`).
     pub(crate) fn order_object_token_admits(&self, stable_id: u64) -> bool {
         self.substrate.entities.get(stable_id).is_some_and(|e| {
             e.lifecycle.object_alive() && e.health.current() != 0 && !e.lifecycle.in_limbo()
@@ -2170,6 +2127,8 @@ impl Simulation {
     ///
     /// Structures never take this branch (it is gated on the Foot bit), and the
     /// link tested is contact slot 0, the same slot the original reads.
+    /// `EventClass::Execute @ 0x004C6CB0`, MEGAMISSION `0x004C729F..0x004C72E2`: an Enter event,
+    /// `+0xAC` Enter, the Foot bit, a Building, and contact slot 0 (`+0xE4`, `0x0065AD30`).
     pub(crate) fn duplicate_enter_is_noop(&self, receiver_id: u64, destination_id: u64) -> bool {
         let Some(receiver) = self.substrate.entities.get(receiver_id) else {
             return false;
@@ -2194,6 +2153,8 @@ impl Simulation {
     }
 
     /// Validate an explicit refinery selected by a player miner-return order.
+    /// VERA-only: re-checks at execution the refinery that `UnitClass::What_Action`'s CAN_LOAD
+    /// (`0x0F`, Enter at `0x0073FD50`) admitted at click, from the store and `Refinery=`/`Dock=`.
     fn valid_explicit_miner_refinery(
         &self,
         command_owner: &str,
@@ -2515,8 +2476,6 @@ impl Simulation {
             Some(rules),
             frame_effects,
         );
-        // Foot4DA1C0 (`0x004C7453`) clears the +5AC vector, distinct from
-        // NavQueue588/598, and has no represented producer here.
         self.assign_target_represented(id, None, Some(rules), overlay_registry, frame_effects)
             .unwrap_or_else(|cause| panic!("Unload order target: {cause}"));
         self.assign_destination_represented(id, None, Some(rules), overlay_registry, frame_effects)
@@ -3531,7 +3490,7 @@ mod tests {
     }
 
     #[test]
-    fn miner_return_with_explicit_refinery_seeds_clicked_target() {
+    fn miner_return_queues_enter_and_leaves_the_old_refinery() {
         let rules = miner_return_rules();
         let mut sim = Simulation::new();
         spawn_miner(&mut sim, 1);
@@ -3551,15 +3510,14 @@ mod tests {
             now,
         )
         .unwrap();
-        {
-            let entity = sim.substrate.entities.get_mut(1).unwrap();
-            entity
-                .display_type_override
-                .set_for_test(Some(sim.interner.intern("HORV")));
-            let miner = entity.miner.as_mut().unwrap();
-            miner.set_unload_active_for_test(true);
-            entity.restart_native_stage(0, now as i32, 1);
-        }
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .miner
+            .as_mut()
+            .unwrap()
+            .set_unload_active_for_test(true);
 
         let applied = sim.apply_command(
             "Americans",
@@ -3571,26 +3529,28 @@ mod tests {
         );
 
         assert!(applied);
-        let miner_entity = sim.substrate.entities.get(1).unwrap();
-        let miner = miner_entity.miner.as_ref().unwrap();
-        assert_eq!(miner.reserved_refinery(), Some(3));
-        assert_eq!(miner_entity.miner_state(), Some(MinerState::ForcedReturn));
-        // The order's radio break leaves the old refinery on both ends and
-        // the unload latch with it; a latch left up would refuse every later
-        // Ready_To_Commence (0x007442AB) and hold the miner in place.
-        assert!(!miner.unload_active());
-        assert_eq!(miner_entity.display_type_override.image(), None);
-        assert!(!miner_entity.radio_contacts.contains(2));
-        assert_eq!(miner_entity.tether.partner(), None);
-        let refinery = sim.substrate.entities.get(2).unwrap();
-        assert!(!refinery.radio_contacts.contains(1));
-        assert_eq!(refinery.tether.partner(), None);
+        let miner = sim.substrate.entities.get(1).unwrap();
+        // MEGAMISSION queues Enter behind the running Unload, whose next
+        // dispatch drops the latch and commences.
+        assert_eq!(miner.mission.current().known(), Some(MissionType::Unload));
+        assert_eq!(miner.mission.queued().known(), Some(MissionType::Enter));
+        assert!(miner.miner.as_ref().unwrap().unload_active());
+        // Its prefix breaks the old refinery's link and tether
+        // (`0x004C72E8`, `0x004C7342`). The fixture miner has no locomotor,
+        // so the destination setter refuses it; the dock cycle tests run
+        // the setter's DOCKING.
+        assert_eq!(miner.tether.partner(), None);
+        assert!(!miner.radio_contacts.contains(2));
+        let old = sim.substrate.entities.get(2).unwrap();
+        assert!(!old.radio_contacts.contains(1));
+        assert_eq!(old.tether.partner(), None);
         spawn_miner(&mut sim, 7);
         assert!(crate::sim::miner::miner_dock::test_support::dock_test_hello(&mut sim, 2, 7));
     }
 
     #[test]
-    fn generic_miner_return_can_reselect_later_without_rules() {
+    fn miner_return_without_a_refinery_is_refused() {
+        let rules = miner_return_rules();
         let mut sim = Simulation::new();
         spawn_miner(&mut sim, 1);
 
@@ -3600,23 +3560,13 @@ mod tests {
                 entity_id: 1,
                 target_refinery_id: None,
             },
-            None,
+            Some(&rules),
         );
 
-        assert!(applied);
-        let miner = sim
-            .substrate
-            .entities
-            .get(1)
-            .unwrap()
-            .miner
-            .as_ref()
-            .unwrap();
-        assert_eq!(miner.reserved_refinery(), None);
-        assert_eq!(
-            sim.substrate.entities.get(1).unwrap().miner_state(),
-            Some(MinerState::ForcedReturn)
-        );
+        assert!(!applied);
+        let miner = sim.substrate.entities.get(1).unwrap();
+        assert_eq!(miner.mission.queued().known(), None);
+        assert_eq!(miner.miner_state(), Some(MinerState::SearchOre));
     }
 
     #[test]
@@ -3636,19 +3586,9 @@ mod tests {
         );
 
         assert!(!applied);
-        let miner = sim
-            .substrate
-            .entities
-            .get(1)
-            .unwrap()
-            .miner
-            .as_ref()
-            .unwrap();
-        assert_eq!(miner.reserved_refinery(), None);
-        assert_eq!(
-            sim.substrate.entities.get(1).unwrap().miner_state(),
-            Some(MinerState::SearchOre)
-        );
+        let miner = sim.substrate.entities.get(1).unwrap();
+        assert_eq!(miner.mission.queued().known(), None);
+        assert_eq!(miner.miner_state(), Some(MinerState::SearchOre));
     }
 
     fn bunker_rules() -> RuleSet {

@@ -357,11 +357,11 @@ fn a_second_chrono_miner_warps_in_after_the_first_leaves() {
     assert_eq!(docked[0].0, s.miner, "the nearer miner docks first");
 }
 
-/// A player refinery order (`Command::MinerReturn`) for a second Chrono Miner
-/// while the first unloads pins the busy refinery. The pin still goes
-/// through the narrow pass's free-slot gate, so the order sends no HELLO
-/// that the refinery would refuse and does not stop a driving miner; the
-/// miner warps in once the first has left.
+/// A refinery order (`Command::MinerReturn`) for a second Chrono Miner that
+/// arrives while the first unloads: the busy refinery becomes its
+/// ArchiveTarget and the Dock arm sends it near the refinery without a HELLO
+/// (`0x00742ED3..0x00742EE9`), so the refinery refuses it nothing; the miner
+/// warps in once the first has left.
 #[test]
 fn a_chrono_miner_ordered_to_a_busy_refinery_warps_in_after_it_frees() {
     let mut s = fixture_scene((14, 12));
@@ -391,7 +391,7 @@ fn a_chrono_miner_ordered_to_a_busy_refinery_warps_in_after_it_frees() {
             !transmits.iter().any(|r| r.sender_sid == second
                 && r.msg == RadioMessage::Hello.code()
                 && r.reply == Some(RadioResponse::Negatory.code())),
-            "frame {n}: the pinned bay refused a HELLO"
+            "frame {n}: the busy refinery refused a HELLO"
         );
         if first_left.is_none() && !tethered(&s, s.miner) {
             first_left = Some(n);

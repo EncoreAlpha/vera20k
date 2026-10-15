@@ -14,10 +14,13 @@ use crate::util::fixed_math::{SIM_ZERO, SimFixed};
 
 /// FootClass-style owner navigation fields, owned by this module: NavCom
 /// (`Foot+0x5A4`), its auxiliary slot (`Foot+0x5A0`), SuspendedNavCom
-/// (`Foot+0x5A8`) and the NavQueue (`Foot+0x598`). Their writers are the
-/// native operations below: the destination setter's publication, Stop_Moving,
-/// a locomotor's Move_To, the mission override's save and the clears of
-/// PointerExpired, the MEGAMISSION event and Remove_Member.
+/// (`Foot+0x5A8`), the NavQueue (`Foot+0x588`, count `+0x598`) and the
+/// navigation list (`Foot+0x5AC`, count `+0x5BC`) with its loop flag
+/// (`Foot+0x6B1`). Their writers are the native operations below: the
+/// destination setter's publication, Stop_Moving, a locomotor's Move_To, the
+/// mission override's save, the list's queue and send
+/// (`super::nav_list`), and the clears of PointerExpired, the MEGAMISSION
+/// and IDLE events and Remove_Member.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct NavigationState {
     /// Foot+55C is retained lifecycle history, not current occupancy.
@@ -41,9 +44,19 @@ pub struct NavigationState {
     /// `Foot+0x5A8`, SuspendedNavCom.
     #[serde(default)]
     suspended_nav_com: Option<NavTargetRef>,
-    /// `Foot+0x598`, the NavQueue, oldest first.
+    /// `Foot+0x588` (count `+0x598`), the NavQueue, oldest first.
     #[serde(default)]
     nav_queue: Vec<NavTargetRef>,
+    /// `Foot+0x5AC` (count `+0x5BC`), the navigation list, oldest first: the
+    /// posts Queue_Navigation_List (`0x004DA0E0`) appends, which
+    /// Handle_Navigation_List (`0x004DA030`) and Mission_Area_Guard's head
+    /// (`0x004D6B23..0x004D6B8D`) send the Foot to one at a time. The shared
+    /// Ghidra database calls this field `NavQueue`.
+    #[serde(default)]
+    nav_list: Vec<NavTargetRef>,
+    /// `Foot+0x6B1`: a sent list head is appended again, so the list loops.
+    #[serde(default)]
+    nav_list_loops: bool,
     /// A class-setter call (vt+0x480) that Rust deferred and still owes: a
     /// mission restore's `Assign_Destination(saved, 1)` (`0x004D8F99`) made
     /// where only NavCom could be written. `Simulation::complete_pending_order`
@@ -79,6 +92,8 @@ impl NavigationState {
             nav_com: None,
             suspended_nav_com: None,
             nav_queue: Vec::new(),
+            nav_list: Vec::new(),
+            nav_list_loops: false,
             pending_destination_setter: false,
             threat_avoidance_coefficient: default_threat_avoidance_coefficient(),
         }
@@ -172,7 +187,7 @@ impl NavigationState {
         self.suspended_nav_com = suspended_nav_com;
     }
 
-    /// `Foot+0x598`, the NavQueue, oldest first.
+    /// `Foot+0x588`, the NavQueue, oldest first.
     pub(crate) fn nav_queue(&self) -> &[NavTargetRef] {
         &self.nav_queue
     }
@@ -202,6 +217,62 @@ impl NavigationState {
     /// Keep only the NavQueue entries `keep` accepts.
     pub(crate) fn retain_nav_queue(&mut self, keep: impl FnMut(&NavTargetRef) -> bool) {
         self.nav_queue.retain(keep);
+    }
+
+    /// `Foot+0x5AC`, the navigation list, oldest first.
+    pub(crate) fn nav_list(&self) -> &[NavTargetRef] {
+        &self.nav_list
+    }
+
+    /// `Foot+0x6B1`, the list's loop flag.
+    pub(crate) fn nav_list_loops(&self) -> bool {
+        self.nav_list_loops
+    }
+
+    /// Queue_Navigation_List's list writes (`0x004DA0F1..0x004DA157`): the
+    /// Foot naming itself on a list that has entries makes it loop instead
+    /// of being appended; a target appended to an empty list first clears
+    /// the loop.
+    pub(crate) fn queue_nav_list(&mut self, target: NavTargetRef, names_self: bool) {
+        if names_self && !self.nav_list.is_empty() {
+            self.nav_list_loops = true;
+            return;
+        }
+        if self.nav_list.is_empty() {
+            self.nav_list_loops = false;
+        }
+        self.nav_list.push(target);
+    }
+
+    /// After the head is sent: the entry at index 0 is removed (`0x0045ADD0`,
+    /// inlined at `0x004DA068..0x004DA094`), whatever the send left there,
+    /// and a looping list appends `head` again (`0x004A7FE0`, inlined at
+    /// `0x004DA096..0x004DA0D8`).
+    pub(crate) fn rotate_nav_list(&mut self, head: NavTargetRef) {
+        if !self.nav_list.is_empty() {
+            self.nav_list.remove(0);
+        }
+        if self.nav_list_loops {
+            self.nav_list.push(head);
+        }
+    }
+
+    /// The list's DynamicVectorClass Clear (vt+0xC): `0x004DA1C0` and its
+    /// inlined copies. The loop flag stays.
+    pub(crate) fn clear_nav_list(&mut self) {
+        self.nav_list.clear();
+    }
+
+    /// Keep only the list entries `keep` accepts.
+    pub(crate) fn retain_nav_list(&mut self, keep: impl FnMut(&NavTargetRef) -> bool) {
+        self.nav_list.retain(keep);
+    }
+
+    /// A fixture's navigation list and loop flag.
+    #[cfg(test)]
+    pub(crate) fn set_nav_list_for_test(&mut self, nav_list: Vec<NavTargetRef>, loops: bool) {
+        self.nav_list = nav_list;
+        self.nav_list_loops = loops;
     }
 
     /// A deferred class-setter call is owed; see the field.
@@ -306,6 +377,7 @@ pub(crate) fn set_walk_destination_coord(
     loco.set_walk_destination(Some(coord));
 }
 
+/// The Foot's Locomotor (`+0x674`) is a `DriveLocomotionClass` (Move_To `0x004AFD40`).
 fn is_drive_locomotor(entity: &GameEntity) -> bool {
     entity
         .locomotor
@@ -313,6 +385,7 @@ fn is_drive_locomotor(entity: &GameEntity) -> bool {
         .is_some_and(|loco| matches!(loco.active_kind(), LocomotorKind::Drive))
 }
 
+/// The Foot's Locomotor (`+0x674`) is a `ShipLocomotionClass` (Move_To `0x0069F450`).
 fn is_ship_locomotor(entity: &GameEntity) -> bool {
     entity
         .locomotor

@@ -1659,7 +1659,7 @@ impl Simulation {
         if lift {
             self.foot_mark_remove(infantry, Some(rules), overlay_registry, frame_effects);
             if let Some(entity) = self.substrate.entities.get_mut(infantry) {
-                entity.set_on_bridge(true);
+                entity.on_bridge.store(true);
             }
             self.foot_mark_put(infantry, Some(rules), overlay_registry, frame_effects);
         }
@@ -4403,11 +4403,11 @@ mod tests {
         sim.apply_make_infantry_raw_occupation(on_map, AnimOccupationOperation::Mark);
         let raw = &sim.substrate.raw_cell_occupation;
         assert_eq!(raw.ground_bits(3, 3), 0x05);
-        assert_eq!(raw.infantry_owner(3, 3, ground), None);
+        assert_eq!(raw.occupant_at(RawCellKey::Real(3, 3), ground).1, None);
         sim.apply_make_infantry_raw_occupation(on_map, AnimOccupationOperation::Clear);
         let raw = &sim.substrate.raw_cell_occupation;
         assert_eq!(raw.ground_bits(3, 3), 0x04);
-        assert_eq!(raw.infantry_owner(3, 3, ground), None);
+        assert_eq!(raw.occupant_at(RawCellKey::Real(3, 3), ground).1, None);
 
         // A cell left of column 0 wraps to slot 511 of the row above: the
         // shared dummy on this map.
@@ -4426,11 +4426,11 @@ mod tests {
         sim.apply_make_infantry_raw_occupation(off_map, AnimOccupationOperation::Mark);
         let raw = &sim.substrate.raw_cell_occupation;
         assert_eq!(raw.bits_at(RawCellKey::Dummy, ground), 0x09);
-        assert_eq!(raw.owner_at(RawCellKey::Dummy, ground), None);
+        assert_eq!(raw.occupant_at(RawCellKey::Dummy, ground).1, None);
         sim.apply_make_infantry_raw_occupation(off_map, AnimOccupationOperation::Clear);
         let raw = &sim.substrate.raw_cell_occupation;
         assert_eq!(raw.bits_at(RawCellKey::Dummy, ground), 0x08);
-        assert_eq!(raw.owner_at(RawCellKey::Dummy, ground), None);
+        assert_eq!(raw.occupant_at(RawCellKey::Dummy, ground).1, None);
     }
 
     /// `AnimClass::AnimClass @ 0x00421EA0`'s `RandomRate=` pick and `Bouncer=`

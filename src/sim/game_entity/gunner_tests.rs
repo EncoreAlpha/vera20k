@@ -51,13 +51,13 @@ fn assert_selection(entity: &GameEntity, expected: &Value, context: &str) {
 
 fn replay_selector_events(entity: &mut GameEntity, object: &ObjectType, events: &Value) {
     let before_timer = entity.rearm_timer.timer();
-    let before_delay = entity.charge_turret_delay;
+    let before_delay = entity.turret_selection.charge_turret_delay;
     for event in events.as_array().unwrap() {
         assert_eq!(event["event"], "set_gunner", "unexpected native event");
         entity.set_gunner_weapon(int(event, "mode"), object);
     }
     assert_eq!(entity.rearm_timer.timer(), before_timer);
-    assert_eq!(entity.charge_turret_delay, before_delay);
+    assert_eq!(entity.turret_selection.charge_turret_delay, before_delay);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn gunner_constructor_and_selector_match_original_components() {
             "Techno constructor",
         );
         assert_eq!(
-            entity.charge_turret_delay,
+            entity.turret_selection.charge_turret_delay,
             native["charge"]["constructor_delay"].as_i64().unwrap() as i32,
         );
         replay_selector_events(&mut entity, &object, &row["initialization"]["events"]);
@@ -130,22 +130,25 @@ fn charge_turret_ai_and_restored_owner_match_original_arithmetic() {
             input["gattling"].as_bool().unwrap(),
         );
         let mut entity = GameEntity::test_default(1, "FV", "Americans", 5, 5);
-        entity.current_weapon_number = int(input, "initial_weapon");
-        entity.current_turret_index = int(input, "initial_turret");
-        entity.charge_turret_delay = int(input, "charge_delay");
+        entity.turret_selection.current_weapon_number = int(input, "initial_weapon");
+        entity.turret_selection.current_turret_index = int(input, "initial_turret");
+        entity.turret_selection.charge_turret_delay = int(input, "charge_delay");
         entity.rearm_timer.set_for_test(CdTimer::from_raw(
             int(input, "start"),
             int(input, "duration"),
         ));
         let before_timer = entity.rearm_timer.timer();
-        let before_delay = entity.charge_turret_delay;
+        let before_delay = entity.turret_selection.charge_turret_delay;
         let encoded = bincode::serialize(&entity).unwrap();
         let mut restored: GameEntity = bincode::deserialize(&encoded).unwrap();
         for entity in [&mut entity, &mut restored] {
             entity.update_charge_turret(int(input, "frame"), &object);
             assert_selection(entity, &row["after"], context);
             assert_eq!(entity.rearm_timer.timer(), before_timer, "timer: {context}");
-            assert_eq!(entity.charge_turret_delay, before_delay, "delay: {context}");
+            assert_eq!(
+                entity.turret_selection.charge_turret_delay, before_delay,
+                "delay: {context}"
+            );
         }
     }
 }
@@ -173,7 +176,7 @@ fn fireat_rearm_copy_matches_original_normal_and_disk_writers() {
         };
         entity.rearm_after_fire(int(row, "frame"), duration);
         assert_eq!(
-            entity.charge_turret_delay,
+            entity.turret_selection.charge_turret_delay,
             int(row, "charge_delay"),
             "{row}"
         );

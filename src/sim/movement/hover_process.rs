@@ -36,9 +36,12 @@
 //!   ID) relative to the objects after this one.
 //! - The vein tag (0x00486920) is not ported: the vein cell has no retail
 //!   user.
-//! - An explicit map tube word (direction 8, 0x0051503B..0x005152CE) is
-//!   answered as the invalid-tube arm: VERA's tube entry is bound to the Drive
-//!   route adapter. Trigger: a Hover route through a map `[Tubes]` tube.
+//! - Hover's own tube entry (0x0051503B..0x005152CE: Mark(UP) 0x0051508B, the
+//!   raw receiver 0x005150B9, the exit Cell's centre as head, the path shift)
+//!   is not ported, so an explicit map tube word (direction 8) takes the
+//!   invalid-tube arm. Walk, Drive and Ship enter tubes
+//!   (`Simulation::walk_tube_head`, `Simulation::track_tube_head`). Trigger: a
+//!   Hover route through a map `[Tubes]` tube.
 //!   Frequency: no retail YR map is known to author one.
 //! - Crates (0x00481A00 at 0x005153E9) run through `Simulation::pickup_crate_at`,
 //!   as in Drive; a host called without the OverlayType table answers as a
@@ -74,6 +77,7 @@ pub(crate) struct HoverProcessOutcome {
     pub(crate) bridge_state_changed: bool,
 }
 
+/// The `HoverLocomotionClass` object behind the Foot's Locomotor (`+0x674`).
 fn runtime(entity: &GameEntity) -> Option<&HoverRuntime> {
     entity.locomotor.as_ref()?.hover_runtime()
 }
@@ -416,7 +420,7 @@ impl Simulation {
         effects: FrameEffects<'_>,
     ) -> Result<Arrival, FrameAdvanceError> {
         if let Some(entity) = self.substrate.entities.get_mut(id) {
-            entity.set_foot_occupation_enabled(true);
+            entity.foot_occupation_enabled.resume();
             entity.navigation.path_runtime.set_path_blocked(false);
             if let Some(hover) = runtime_mut(entity) {
                 hover.pushed = false;
@@ -522,7 +526,7 @@ impl Simulation {
         if release {
             self.track_raw_mark_at(id, location, false);
             if let Some(entity) = self.substrate.entities.get_mut(id) {
-                entity.set_foot_occupation_enabled(false);
+                entity.foot_occupation_enabled.suspend();
                 entity.navigation.path_runtime.set_path_blocked(false);
             }
         }
@@ -570,12 +574,8 @@ impl Simulation {
                 };
             let level = cells.ground_fields(entered).0;
             if let Some(entity) = self.substrate.entities.get_mut(id) {
-                entity.set_on_bridge(on_bridge);
-                entity
-                    .position
-                    .store_level(super::super::movement_bridge::stored_level(
-                        level, on_bridge,
-                    ));
+                entity.on_bridge.store(on_bridge);
+                entity.position.store_cell_level(level, on_bridge);
             }
         }
         self.foot_mark_put(id, Some(rules), registry, effects);

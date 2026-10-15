@@ -446,7 +446,6 @@ pub(crate) fn draw_debug_panel(ctx: &egui::Context, state: &AppState) {
                         crate::sim::miner::MinerState::WaitNoOre => {
                             egui::Color32::from_rgb(180, 0, 0)
                         }
-                        _ => egui::Color32::from_rgb(80, 80, 80),
                     };
                     ui.colored_label(state_color, format!("State: {miner_state:?}"));
                     ui.label(format!(
@@ -460,14 +459,6 @@ pub(crate) fn draw_debug_panel(ctx: &egui::Context, state: &AppState) {
                         entity.native_stage().rate(),
                         miner.harvesting()
                     ));
-                    if let Some(ref_id) = miner.reserved_refinery() {
-                        let ref_type = sim
-                            .entities()
-                            .get(ref_id)
-                            .map(|e| sim.interner.resolve(e.type_ref()))
-                            .unwrap_or("?");
-                        ui.label(format!("Refinery: {} (id={})", ref_type, ref_id));
-                    }
                     if let Some(crate::sim::combat::TargetKind::Cell(x, y)) =
                         entity.archive_target()
                     {

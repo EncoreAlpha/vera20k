@@ -1706,7 +1706,7 @@ impl Simulation {
         for member in members {
             self.team_member_clear_target(member, rules);
             if let Some(entity) = self.substrate.entities.get_mut(member) {
-                entity.mark_stopped_cannot_fire();
+                entity.foot_retarget_after_stop.mark_stopped_cannot_fire();
             }
         }
     }

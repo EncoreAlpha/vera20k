@@ -176,7 +176,11 @@ impl Simulation {
             id,
             UninitContext::new(Some(rules), registry).with_effects(frame_effects),
         );
-        self.kill_passengers(id, attacker, rules, registry, frame_effects);
+        self.kill_passengers(
+            id,
+            attacker,
+            UninitContext::new(Some(rules), registry).with_effects(frame_effects),
+        );
         if category != EntityCategory::Infantry && !self.object_placement_scope_active() {
             let sideways = self.scenario_rng.next_range_i32_inclusive(0, 0x7FFF_FFFE);
             let sign = self.scenario_rng.next_range_i32_inclusive(0, 1);
@@ -631,14 +635,20 @@ impl Simulation {
     /// `FootClass::KillPassengers @ 0x00707CB0`: until the cargo is empty, the
     /// head passenger leaves its Team, is removed from the cargo, has its own
     /// passengers killed (credited to itself, `0x00707CF5`), records its kill
-    /// by `attacker` (vtable `+0xE0`) and is UnInit.
+    /// by `attacker` (vtable `+0xE0`) and is UnInit. No Health store: the
+    /// passenger keeps its Health through RecordKill and UnInit.
+    ///
+    /// Callers: `ObjectClass::UnInit` with no attacker (`0x005F660D`, every
+    /// Techno), `BuildingClass::DestructionEffects` (`0x00441F27`),
+    /// `FootClass::Crash` (`0x004DEC99`), an exploding Techno's death arm
+    /// (its loop inlined, `0x00702603..0x00702667`) and a dying unit too
+    /// high to let its passengers out (`UnitClass::ReceiveDamage`,
+    /// `0x00737FAB`).
     pub(crate) fn kill_passengers(
         &mut self,
         transport: u64,
         attacker: Option<u64>,
-        rules: &RuleSet,
-        registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
-        frame_effects: FrameEffects<'_>,
+        context: UninitContext<'_>,
     ) {
         loop {
             let Some(passenger) = self
@@ -653,14 +663,14 @@ impl Simulation {
             };
             // `0x00707CE0`: `TeamClass::Remove_Member` (in limbo, so no idle
             // order).
-            self.leave_team(passenger, false, Some(rules), frame_effects);
+            self.leave_team(passenger, false, context.rules(), context.effects());
             if let Some(entity) = self.substrate.entities.get_mut(passenger)
                 && entity.passenger_role.inside_transport_id() == Some(transport)
             {
                 entity.passenger_role.clear_carrier_relation();
             }
-            self.kill_passengers(passenger, Some(passenger), rules, registry, frame_effects);
-            self.record_kill_and_uninit(passenger, attacker, rules, registry, frame_effects);
+            self.kill_passengers(passenger, Some(passenger), context);
+            self.record_kill_and_uninit(passenger, attacker, context);
         }
     }
 
@@ -672,23 +682,15 @@ impl Simulation {
         &mut self,
         victim: u64,
         attacker: Option<u64>,
-        rules: &RuleSet,
-        registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
-        frame_effects: FrameEffects<'_>,
+        context: UninitContext<'_>,
     ) {
-        if let Some(entity) = self.substrate.entities.get_mut(victim) {
-            entity.health.set(0);
-        }
         self.record_the_kill(
             victim,
             crate::sim::combat::KillSource::Techno(attacker),
             crate::sim::combat::KillCallback::Terminal,
-            UninitContext::new(Some(rules), registry).with_effects(frame_effects),
+            context,
         );
-        self.uninit_with_context(
-            victim,
-            UninitContext::new(Some(rules), registry).with_effects(frame_effects),
-        );
+        self.uninit_with_context(victim, context);
     }
 }
 

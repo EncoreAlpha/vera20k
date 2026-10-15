@@ -374,6 +374,13 @@ fn a_transport_shot_mid_fall_kills_its_passenger_without_the_landing_force_flags
     use crate::sim::combat::{EntityDamageEvent, RAD_NO_ATTACKER, ReceiverCallFlags};
     let (mut sim, rules, _) = super::entry_test_fixture::fixture_with_rules(EXTRA);
     let (carrier, passenger) = boarded_transport(&mut sim, &rules, "TRANSPORT");
+    let health_before = sim
+        .substrate
+        .entities
+        .get(passenger)
+        .unwrap()
+        .health
+        .current();
     put_on_deck(&mut sim, &rules, carrier, false);
     remove_deck(&mut sim);
     blow_up_bridge_cell_fallout(
@@ -415,7 +422,11 @@ fn a_transport_shot_mid_fall_kills_its_passenger_without_the_landing_force_flags
     let passenger = sim.substrate.entities.get(passenger).unwrap();
     assert!(!passenger.lifecycle.object_alive());
     assert!(passenger.lifecycle.in_limbo(), "never Unlimboed to escape");
-    assert_eq!(passenger.health.current(), 0);
+    assert_eq!(
+        passenger.health.current(),
+        health_before,
+        "RecordKill and UnInit store no Health"
+    );
     assert!(
         sim.substrate
             .entities

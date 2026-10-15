@@ -517,7 +517,7 @@ fn compare_rows(json: &str, expected_count: usize, repair_projection: bool) {
         mover.set_category_for_test(EntityCategory::Unit);
         mover.set_in_playfield(flag("in_playfield"));
         if flag("mission_only") {
-            mover.mark_mission_only();
+            mover.mission_only.mark();
         }
         mover.locomotor = Some(LocomotorState::for_test_kind(LocomotorKind::Drive));
         sim.substrate.entities.insert(mover);

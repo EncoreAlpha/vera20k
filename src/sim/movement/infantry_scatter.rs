@@ -557,8 +557,8 @@ impl Simulation {
     /// The setter swaps the Jumpjet of one that is not moving for a Walk
     /// (`0x0051AE5A..0x0051B1CA`) unless `0x005221D0` says fly or the type has
     /// `HoverAttack=` (`+0x390`), ends the piggyback when it says fly, and
-    /// pushes the destination onto NavQueue's front for a walking one
-    /// (`0x0051AD1F..0x0051AE57`). `0x005221D0` says fly when airborne; on
+    /// pushes the destination onto the navigation list's front (`+0x5AC`,
+    /// `0x0051AD1F..0x0051AE57`) for a walking one. `0x005221D0` says fly when airborne; on
     /// the ground it says walk for a reachable hop of one cell, for two or
     /// three cells in the playfield whose zone cost is at most 7, and in two
     /// house and cell cases (`0x0053A130`, `0x00484AE0`). VERA flies every

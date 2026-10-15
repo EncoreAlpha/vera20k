@@ -450,7 +450,7 @@ fn what_action_on_cell(
 /// 5. Infantry boarding: selected infantry hovering friendly transport (Passengers>0).
 /// 6. Infantry garrisoning: selected Occupier infantry hovering friendly CanBeOccupied building.
 /// 7. AttackCursorOnFriendlies: selected unit attacks friendlies, treat as attack target.
-/// 8. Harvester docking: selected miner hovering friendly refinery (gamemd action 0x1A).
+/// 8. Harvester docking: selected miner hovering a friendly refinery that admits it (action 3).
 /// 9. Generic friendly/enemy/in-range/out-of-range fallback.
 pub(super) fn capability_cursor_for_hover(
     sim: &crate::sim::world::Simulation,
@@ -680,15 +680,19 @@ pub(super) fn capability_cursor_for_hover(
             return ivan_attack_feedback(kind, best_is_ivan, hovered_entity, hovered_obj);
         }
 
-        // 8. Harvester docking — selected miner hovering own/ally refinery.
-        //    Matches gamemd action 0x1A (TechnoClass dock branch). Alliance
-        //    gate comes from HoverTargetKind::FriendlyStructure; refinery
-        //    detection from RuleSet::is_refinery_type (same key used by
-        //    the click pipeline in `input::context_order`).
+        // 8. Harvester docking — selected miner hovering own/ally refinery
+        //    whose CAN_LOAD admits it: What_Action's Enter (action 3,
+        //    `Simulation::unit_building_click_action`). Refinery detection
+        //    from RuleSet::is_refinery_type, as the click pipeline in
+        //    `input::context_order` routes it.
         if sel_entity.miner.is_some()
             && matches!(hover.kind, HoverTargetKind::FriendlyStructure)
             && hovered_entity.is_some_and(|e| {
-                rules.is_some_and(|r| r.is_refinery_type(sim.interner.resolve(e.type_ref())))
+                rules.is_some_and(|r| {
+                    r.is_refinery_type(sim.interner.resolve(e.type_ref()))
+                        && sim.unit_building_click_action(best_id, hover.stable_id, r)
+                            == Some(crate::sim::world::BuildingClickAction::Enter)
+                })
             })
         {
             return CursorFeedbackKind::Enter;
@@ -1580,6 +1584,9 @@ mod tests {
         if let Some(e) = sim.entities_mut().get_mut(miner_id) {
             e.selection.set_selected_for_test(true);
         }
+        // What_Action's Enter is a human player's (House `0x0050B6F0`).
+        sim.session.game_mode_nonzero = true;
+        sim.session.current_house = Some(sim.entities().get(miner_id).unwrap().owner());
 
         let hover = HoverTargetKindWithId {
             kind: HoverTargetKind::FriendlyStructure,

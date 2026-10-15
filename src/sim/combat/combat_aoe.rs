@@ -27,9 +27,7 @@ use crate::sim::map::bridge_topology::{CellBridgeView, ListLayer};
 use crate::sim::mission::authority::restore_entity_after_target_expiry;
 use crate::sim::mission::concrete_effects::represented_assign_target;
 use crate::sim::movement::locomotor::MovementLayer;
-use crate::sim::occupancy::{
-    OccupancyGrid, air_spatial_query_bucket_order, air_spatial_tracks_entity,
-};
+use crate::sim::occupancy::{OccupancyGrid, air_spatial_query_bucket_order};
 #[cfg(test)]
 use crate::sim::overlay_grid::WallMutation;
 use crate::sim::overlay_grid::{
@@ -378,6 +376,8 @@ pub(crate) fn apply_aoe_damage_with_terrain<O: Into<AoEDamageOrigin>>(
     )
 }
 
+/// `Apply_area_damage` (`0x00489280`): collects its receiver records. Without an
+/// occupancy grid, every unlimboed, living object stands in for the cell lists.
 pub(crate) fn apply_aoe_damage_with_terrain_and_scenario<O: Into<AoEDamageOrigin>>(
     entities: &mut EntityStore,
     impact_rx: u16,
@@ -803,9 +803,10 @@ fn airborne_ids_in_spatial_order(
 ) -> Vec<u64> {
     let (map_width, map_height) = (terrain.width(), terrain.height());
     let mut buckets: BTreeMap<u16, Vec<(u64, u64)>> = BTreeMap::new();
-    for entity in entities.values().filter(|entity| {
-        entity.air_spatial_bucket().is_some() && air_spatial_tracks_entity(entity, Some(terrain))
-    }) {
+    for entity in entities
+        .values()
+        .filter(|entity| entity.air_spatial_bucket().is_some())
+    {
         buckets
             .entry(entity.air_spatial_bucket().expect("filtered above"))
             .or_default()
@@ -864,7 +865,15 @@ fn push_airborne_aoe_damage(
     let Some(entity) = entities.get(entity_id) else {
         return;
     };
-    if entity.health.current() == 0 || entity.death.is_dying() {
+    // `0x004893F2..0x00489410`: the member must be alive (`+0x90`), marked
+    // (`+0x74`) and have Health left; its layer and height are not read.
+    // VERA-only: the dying mark stands in for the IsAlive that
+    // `ObjectClass::UnInit` (`0x005F65F0`) clears at once in gamemd.
+    if !entity.lifecycle.object_alive()
+        || !entity.lifecycle.cell_marked()
+        || entity.health.current() == 0
+        || entity.death.is_dying()
+    {
         return;
     }
     let target_z = crate::sim::movement::ground_pose::object_world_z_leptons(entity, Some(terrain));
@@ -924,6 +933,8 @@ fn push_airborne_aoe_damage(
     ));
 }
 
+/// Collects one ground/deck-list receiver record for `Apply_area_damage`
+/// (`0x00489280`).
 fn push_entity_aoe_damage(
     result: &mut AoEDamageResult,
     entities: &EntityStore,
@@ -1431,6 +1442,72 @@ mod tests {
         );
     }
 
+    /// The airborne phase (`0x004893F2..0x00489410`) takes each member that
+    /// `FillCurrentVector` (`0x00412B40`) copies out of the AircraftTracker
+    /// when it is alive (`+0x90`), marked (`+0x74`) and has Health left,
+    /// whatever its layer or height. An aircraft the tracker took at takeoff
+    /// while it was still on the ground is hit, and an unmarked member is not.
+    #[test]
+    fn gsi_04_07_damage_air_phase_takes_tracker_members_by_object_state() {
+        let ini = IniFile::from_str(
+            "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n0=AIR\n[BuildingTypes]\n\
+             [Warheads]\n0=BlastWH\n\
+             [AIR]\nStrength=1000\nArmor=none\n\
+             [BlastWH]\nCellSpread=1\nPercentAtMax=.25\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n",
+        );
+        let rules = RuleSet::from_ini(&ini).expect("air phase rules");
+        let warhead = rules.warhead("BlastWH").unwrap().clone();
+        let mut entities = EntityStore::new();
+        for (stable_id, marked, layer) in [
+            (1, true, MovementLayer::Ground),
+            (2, false, MovementLayer::Air),
+        ] {
+            let mut air = GameEntity::test_default(stable_id, "AIR", "Soviet", 5, 5);
+            air.set_category_for_test(EntityCategory::Aircraft);
+            air.health.set_for_test(1000);
+            air.lifecycle.set_in_limbo_for_test(false);
+            air.lifecycle.set_cell_marked(marked);
+            air.position.set_exact_z_leptons_for_test(Some(0));
+            let mut locomotor = crate::sim::movement::locomotor::LocomotorState::from_object_type(
+                rules.object("AIR").unwrap(),
+                0,
+            );
+            locomotor.set_layer(layer);
+            air.locomotor = Some(locomotor);
+            air = air
+                .with_air_spatial_membership_for_test(Some(5 + 5 * 20), stable_id)
+                .with_air_tracker_cell_for_test((5, 5));
+            entities.insert(air);
+        }
+        let mut interner = test_interner();
+        let warhead_ref = interner.intern("BlastWH");
+        let occupancy = OccupancyGrid::new();
+        let mut terrain = crate::map::resolved_terrain::test_grid(20, 20, test_terrain_cell);
+
+        let result = apply_aoe_damage(
+            &mut entities,
+            5,
+            5,
+            100,
+            &warhead,
+            &rules,
+            &mut interner,
+            (crate::sim::combat::RAD_NO_ATTACKER, warhead_ref),
+            AoELayerContext {
+                occupancy: Some(&occupancy),
+                terrain: Some(&mut terrain),
+                air_impact: Some(AoEAirImpact {
+                    sub_x: CELL_CENTER_LEPTON,
+                    sub_y: CELL_CENTER_LEPTON,
+                    z_leptons: 1,
+                }),
+                impact_z: 0,
+                ..AoELayerContext::default()
+            },
+        );
+        assert_eq!(hit_id_distances(&result.hits), vec![(1, 1)]);
+    }
+
     #[test]
     fn gsi_04_07_damage_ground_native_distance_and_receiver_kernel() {
         let ini = IniFile::from_str(
@@ -1832,6 +1909,9 @@ mod tests {
                 let mut air = GameEntity::test_default(stable_id, "AIRBOMB", "Soviet", rx, 5);
                 air.set_category_for_test(EntityCategory::Aircraft);
                 air.lifecycle.set_in_limbo_for_test(false);
+                // On the map, so marked (`+0x74`): the airborne phase skips
+                // an unmarked member.
+                air.lifecycle.set_cell_marked(true);
                 air.health.set_for_test(hp);
                 air.position.set_z_for_test(0);
                 let mut air_locomotor =
@@ -3930,6 +4010,8 @@ mod tests {
 
         let mut air = GameEntity::test_default(10, "AIR", "Americans", 5, 5);
         air.set_category_for_test(EntityCategory::Aircraft);
+        air.lifecycle.set_in_limbo_for_test(false);
+        air.lifecycle.set_cell_marked(true);
         air.position.set_sub_x_for_test(CELL_CENTER_LEPTON);
         air.position.set_sub_y_for_test(CELL_CENTER_LEPTON);
         let mut air_locomotor = crate::sim::movement::locomotor::LocomotorState::from_object_type(

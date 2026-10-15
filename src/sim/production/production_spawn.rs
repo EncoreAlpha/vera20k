@@ -1,192 +1,114 @@
-//! Spawn cell selection for newly produced units.
-//!
-//! Determines where to place a unit after production completes, based on
-//! factory location, exit offsets, and walkability. Extracted from
-//! production_tech.rs for file-size limits.
+//! Where `BuildingClass::ExitObject_Main @ 0x00443C60` releases a produced
+//! Unit or Infantry: the arm its producer's type picks, and the Cell or
+//! coordinate each arm places it at. `production_queue::exit_produced_object`
+//! runs the arms.
 
 use crate::map::resolved_terrain::ResolvedTerrainGrid;
 use crate::rules::locomotor_type::{MovementZone, SpeedType};
-use crate::rules::object_type::ObjectCategory;
+use crate::rules::object_type::{FactoryType, ObjectType};
 use crate::rules::ruleset::RuleSet;
 use crate::sim::entity_store::EntityStore;
 use crate::sim::world::FrameEffects;
 use crate::sim::world::Simulation;
 
-use crate::sim::movement::bump_crush;
 use crate::sim::movement::locomotor::MovementLayer;
 use crate::sim::occupancy::OccupancyGrid;
 
+/// The arm of `BuildingClass::ExitObject_Main @ 0x00443C60` that releases a
+/// produced Unit or Infantry. The producer's BuildingType alone picks it
+/// (`0x0044413D..0x00444632`), whatever the product's class; only Aircraft
+/// and Building products take arms of their own, earlier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProductionSpawnSelection {
-    pub producer_id: u64,
-    pub cell: (u16, u16),
-    pub(super) delivery: ProductionDeliveryKind,
+pub(super) enum ExitArm {
+    /// `Refinery=` (`+0x16BB`) or `Weeder=` (`+0x16BC`): `0x00444DE4`.
+    Refinery,
+    /// `WeaponsFactory=` (`+0x16BD`) and `Naval=` (`+0xCCE`): `0x00444175`.
+    Naval,
+    /// `WeaponsFactory=` without `Naval=`: `0x00444492`.
+    Land,
+    /// `Factory=InfantryType` (`+0xEB8`), `Hospital=` (`+0x16C1`), `Armory=`
+    /// (`+0x16C2`) or `Cloning=` (`+0x16AC`): `0x0044498E`.
+    Infantry,
+    /// Any other producer: `0x00444638`.
+    Generic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ProductionDeliveryKind {
-    Standard,
-    /// `BuildingClass::ExitObject_Main @ 0x00443C60`'s produced-Unit
-    /// `!Refinery && !Weeder && WeaponsFactory && Naval` branch.
-    NavalUnit,
-    /// Infantry444A53..444C95 has distinct physical XY/facing and exit NavCom.
-    Infantry {
-        coordinate: crate::sim::components::DriveCoord,
-        facing: u8,
-        exit_cell: (u16, u16),
-    },
-}
-
-/// The exit cell at one producer building, `(id, cell, type)`, for an object
-/// of `produced_category` (type `produced_type_id`): the naval, exact
-/// land and legacy Unit arms, the infantry arm and the adapter of the other
-/// classes. Human House PLACE chooses its producer through the shared
-/// ObjectType5F7900 FindFactory owner, then calls the same ExitObject443C60
-/// owner as a computer's factory (`production::factory_ai`).
-pub(super) fn spawn_selection_at_producer(
-    sim: &Simulation,
-    rules: &RuleSet,
-    producer: (u64, u16, u16, &str),
-    produced_entity_id: Option<u64>,
-    produced_type_id: Option<&str>,
-    produced_category: ObjectCategory,
-    require_water: bool,
-    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
-) -> Option<ProductionSpawnSelection> {
-    let (producer_id, bx, by, structure_id) = producer;
-    let path_grid = sim.path_grid();
-    let resolved_terrain = sim.resolved_terrain.as_ref();
-    let overlay_grid = sim.overlay_grid.as_ref();
-    let zone_grid = sim.zone_grid.as_ref();
-    let map_size = sim
-        .playfield_bounds
-        .zip(sim.playfield_size_height)
-        .map(|(bounds, height)| (bounds.base, height));
-    let movement_profile =
-        spawn_movement_profile(rules, produced_type_id, produced_category, require_water);
-    let standard = |cell| ProductionSpawnSelection {
-        producer_id,
-        cell,
-        delivery: ProductionDeliveryKind::Standard,
-    };
-    let near_structure = || {
-        find_spawn_cell_near_structure(
-            bx,
-            by,
-            structure_id,
-            produced_category,
-            movement_profile,
-            rules,
-            path_grid,
-            &sim.substrate.occupancy,
-            &sim.substrate.entities,
-            resolved_terrain,
-            overlay_grid,
-            zone_grid,
-            require_water,
-            // Frame-counter input for the authoritative FNPC fallback. The
-            // counter is committed late, so during this advance it holds
-            // current frame N, which is the value the fallback must alias.
-            sim.session.binary_frame,
-            sim.playfield_bounds,
-            map_size,
-        )
-    };
-    match produced_category {
-        ObjectCategory::Vehicle => {
-            if exact_naval_vehicle_exit_factory(rules, structure_id) {
-                let producer_rally = sim
-                    .substrate
-                    .entities
-                    .get(producer_id)
-                    .and_then(|producer| producer.rally_cell());
-                let (cell, _) = find_naval_unit_delivery_cell(
-                    producer_id,
-                    bx,
-                    by,
-                    producer_rally,
-                    movement_profile,
-                    path_grid,
-                    &sim.substrate.occupancy,
-                    &sim.substrate.entities,
-                    resolved_terrain,
-                    overlay_grid,
-                    zone_grid,
-                    sim.session.binary_frame,
-                    sim.playfield_bounds,
-                    map_size,
-                );
-                return Some(ProductionSpawnSelection {
-                    producer_id,
-                    cell,
-                    delivery: ProductionDeliveryKind::NavalUnit,
-                });
-            }
-            if !require_water && exact_land_vehicle_exit_factory(rules, structure_id) {
-                let producer = sim.substrate.entities.get(producer_id)?;
-                let coord = crate::sim::movement::building_exit_coordinate(
-                    crate::sim::movement::ground_pose::position_world_coord(&producer.position),
-                    rules.object(structure_id)?,
-                    || {
-                        crate::sim::movement::ground_pose::object_get_coords(
-                            producer,
-                            resolved_terrain,
-                        )
-                    },
-                );
-                // 444565's caller owns admission. PathGrid/owner claims cannot
-                // preempt its scoped Unlimbo or choose another exit coordinate.
-                return Some(standard((
-                    crate::util::lepton::lepton_to_cell_packed(coord.x) as u16,
-                    crate::util::lepton::lepton_to_cell_packed(coord.y) as u16,
-                )));
-            }
-            // Unverified/modded produced-Unit branches retain the legacy
-            // adapter.
-            near_structure().map(standard)
+/// The [`ExitArm`] a product of `producer` leaves through.
+pub(super) fn exit_arm(producer: &ObjectType) -> ExitArm {
+    if producer.refinery || producer.weeder {
+        ExitArm::Refinery
+    } else if producer.weapons_factory {
+        if producer.naval {
+            ExitArm::Naval
+        } else {
+            ExitArm::Land
         }
-        ObjectCategory::Infantry => {
-            let mover = produced_entity_id?;
-            let exit_cell = crate::sim::docking::building_dock::building_dock_cell(
-                sim,
-                producer_id,
-                mover,
-                (0, 0),
-                rules,
-                overlay_registry,
-            )?;
-            let producer = sim.substrate.entities.get(producer_id)?;
-            let producer_type = sim.object_type(producer.type_ref(), rules)?;
-            let (coordinate, facing) = infantry_exit_coordinate_and_facing(
-                producer,
-                producer_type,
-                (exit_cell.0 as i16, exit_cell.1 as i16),
-            );
-            let cell = (
-                u16::try_from(crate::util::lepton::lepton_to_cell_packed(coordinate.x)).ok()?,
-                u16::try_from(crate::util::lepton::lepton_to_cell_packed(coordinate.y)).ok()?,
-            );
-            Some(ProductionSpawnSelection {
-                producer_id,
-                cell,
-                delivery: ProductionDeliveryKind::Infantry {
-                    coordinate,
-                    facing,
-                    exit_cell,
-                },
-            })
-        }
-        _ => near_structure().map(standard),
+    } else if producer.factory == Some(FactoryType::InfantryType)
+        || producer.hospital
+        || producer.armory()
+        || producer.cloning
+    {
+        ExitArm::Infantry
+    } else {
+        ExitArm::Generic
     }
 }
 
-/// Original Infantry Exit443C60's arithmetic444A53..444C7C. The angle
-/// uses the unshrunk dock centre and Building447AC0's foundation centre;
-/// each outside component moves one cell inward before physical Unlimbo.
-/// Exact preferred cells alone add their type's rules-side ExitCoord.
+/// Where the Infantry and generic arms place their object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DockExit {
+    /// The Unlimbo coordinate.
+    pub coordinate: crate::sim::components::DriveCoord,
+    /// The Unlimbo facing.
+    pub facing: u8,
+    /// The dock Cell, which each arm assigns as the object's destination.
+    pub cell: (u16, u16),
+}
+
+/// The placement of the Infantry and generic arms: the producer's
+/// GetDockCellForObject (vt+0x4D4, `0x0044EFB0`) for `mover`, offered the
+/// zero Cell, then [`dock_exit_coordinate_and_facing`] for that Cell. The
+/// Infantry arm's call (`0x004449AF`) offers the empty Cell (`0x0089C818`,
+/// zeroed by `0x0043B0E0`); the generic arm's (`0x0044464D`) offers
+/// ExitObject's own Cell argument, which its callers pass zero (Factory_AI
+/// `0x00450155`, Place_Production `0x004FB563`, the Cloning Vat loop
+/// `0x00444A3E`). `None` is the empty dock Cell, on which both arms answer 0
+/// (`0x00445696`).
+pub(super) fn dock_exit(
+    sim: &Simulation,
+    rules: &RuleSet,
+    producer_id: u64,
+    mover: u64,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+) -> Option<DockExit> {
+    let cell = crate::sim::docking::building_dock::building_dock_cell(
+        sim,
+        producer_id,
+        mover,
+        (0, 0),
+        rules,
+        overlay_registry,
+    )?;
+    let producer = sim.substrate.entities.get(producer_id)?;
+    let producer_type = sim.object_type(producer.type_ref(), rules)?;
+    let (coordinate, facing) =
+        dock_exit_coordinate_and_facing(producer, producer_type, (cell.0 as i16, cell.1 as i16));
+    Some(DockExit {
+        coordinate,
+        facing,
+        cell,
+    })
+}
+
+/// The Unlimbo coordinate and facing at dock Cell `dock`, which the
+/// Infantry (`0x00444A53..0x00444C7C`) and generic (`0x00444677..0x004448A7`)
+/// arms compute alike. The angle uses the unshrunk dock centre and
+/// Building447AC0's foundation centre; each outside component moves one
+/// cell inward before physical Unlimbo. Exact preferred cells alone add
+/// their type's rules-side ExitCoord.
 /// Native goldens: basic-factory-exit-geometry-research/geometry-primary.json,
 /// observation570630adeb29995ecc943d42d84f7659d19a02ae8c55ac5296b499e637ce87ba.
-fn infantry_exit_coordinate_and_facing(
+fn dock_exit_coordinate_and_facing(
     producer: &crate::sim::game_entity::GameEntity,
     producer_type: &crate::rules::object_type::ObjectType,
     dock: (i16, i16),
@@ -230,33 +152,17 @@ fn infantry_exit_coordinate_and_facing(
     }
     (coordinate, facing)
 }
-
-/// ExitObject4445D6/4445E3 calls the shared radio owners for HELLO and
-/// TETHER. Their reciprocal contacts and flags also use radio-owned cleanup.
+/// The land arm's HELLO (`0x004445D6`) and TETHER (`0x004445E3`) from the
+/// producer to its product, through the shared radio owners, which own the
+/// reciprocal contacts, flags and their cleanup. No class test precedes
+/// them, and their answers are ignored.
 pub fn mark_war_factory_spawn_contact(
     sim: &mut Simulation,
     rules: &RuleSet,
     producer_id: u64,
     produced_id: u64,
     effects: FrameEffects<'_>,
-) -> bool {
-    let valid = sim
-        .substrate
-        .entities
-        .get(producer_id)
-        .is_some_and(|producer| {
-            exact_land_vehicle_exit_factory(rules, sim.interner.resolve(producer.type_ref()))
-                && sim
-                    .substrate
-                    .entities
-                    .get(produced_id)
-                    .is_some_and(|product| {
-                        product.category() == crate::map::entities::EntityCategory::Unit
-                    })
-        });
-    if !valid {
-        return false;
-    }
+) {
     for message in [
         crate::sim::radio::RadioMessage::Hello,
         crate::sim::radio::RadioMessage::Tether,
@@ -271,20 +177,39 @@ pub fn mark_war_factory_spawn_contact(
             effects,
         );
     }
-    true
 }
 
-pub(super) fn exact_land_vehicle_exit_factory(rules: &RuleSet, structure_id: &str) -> bool {
-    rules.object(structure_id).is_some_and(|obj| {
-        // Original ExitObject44413D..44416F has no ExitCoord presence gate.
-        !obj.refinery && !obj.weeder && obj.weapons_factory && !obj.naval
-    })
-}
-
-fn exact_naval_vehicle_exit_factory(rules: &RuleSet, structure_id: &str) -> bool {
-    rules
-        .object(structure_id)
-        .is_some_and(|obj| !obj.refinery && !obj.weeder && obj.weapons_factory && obj.naval)
+/// The naval arm's Cell (`0x00444175..0x004443DC`) for a product of
+/// `speed_type`: [`find_naval_unit_delivery_cell`] from the producer.
+pub(super) fn naval_exit_cell(
+    sim: &Simulation,
+    producer_id: u64,
+    speed_type: SpeedType,
+) -> Option<(u16, u16)> {
+    let producer = sim.substrate.entities.get(producer_id)?;
+    let map_size = sim
+        .playfield_bounds
+        .zip(sim.playfield_size_height)
+        .map(|(bounds, height)| (bounds.base, height));
+    let (cell, _) = find_naval_unit_delivery_cell(
+        producer_id,
+        producer.position.rx(),
+        producer.position.ry(),
+        producer.rally_cell(),
+        speed_type,
+        sim.path_grid(),
+        &sim.substrate.occupancy,
+        &sim.substrate.entities,
+        sim.resolved_terrain.as_ref(),
+        sim.overlay_grid.as_ref(),
+        sim.zone_grid.as_ref(),
+        // The frame counter is committed late: during this advance it holds
+        // the current frame, the value FNPC's pick must alias.
+        sim.session.binary_frame,
+        sim.playfield_bounds,
+        map_size,
+    );
+    Some(cell)
 }
 
 /// Active-retail produced-Unit naval delivery owner.
@@ -299,7 +224,7 @@ fn find_naval_unit_delivery_cell(
     base_rx: u16,
     base_ry: u16,
     producer_rally: Option<(u16, u16)>,
-    movement_profile: SpawnMovementProfile,
+    speed_type: SpeedType,
     path_grid: Option<&crate::sim::pathfinding::PathGrid>,
     occupancy: &OccupancyGrid,
     entities: &EntityStore,
@@ -333,7 +258,7 @@ fn find_naval_unit_delivery_cell(
         return ((0, 0), false);
     };
     let Some(query) = nearby_query_for_naval_unit_delivery(
-        movement_profile.speed_type,
+        speed_type,
         grid,
         resolved_terrain,
         overlay_grid,
@@ -554,349 +479,6 @@ pub(super) fn unlimbo_held_naval_unit(
     )
 }
 
-fn find_spawn_cell_near_structure(
-    base_rx: u16,
-    base_ry: u16,
-    structure_id: &str,
-    produced_category: ObjectCategory,
-    movement_profile: SpawnMovementProfile,
-    rules: &RuleSet,
-    path_grid: Option<&crate::sim::pathfinding::PathGrid>,
-    occupancy: &OccupancyGrid,
-    entities: &EntityStore,
-    resolved_terrain: Option<&ResolvedTerrainGrid>,
-    overlay_grid: Option<&crate::sim::overlay_grid::OverlayGrid>,
-    zone_grid: Option<&crate::sim::pathfinding::zone_map::ZoneGrid>,
-    require_water: bool,
-    frame_counter: u32,
-    playfield_bounds: Option<crate::sim::cell_rect::PlayfieldBounds>,
-    map_size: Option<(i32, i32)>,
-) -> Option<(u16, u16)> {
-    let offsets: Vec<(i16, i16)> = preferred_exit_offsets(rules, structure_id);
-    for (ox, oy) in offsets {
-        let Some(cand) = add_cell_offset(base_rx, base_ry, ox, oy) else {
-            continue;
-        };
-        match path_grid {
-            Some(grid) => {
-                if cand.0 < grid.width()
-                    && cand.1 < grid.height()
-                    && spawn_cell_passable(grid, cand, resolved_terrain, require_water)
-                    && cell_available_for_spawn(
-                        cand,
-                        produced_category,
-                        occupancy,
-                        resolved_terrain,
-                        require_water,
-                    )
-                {
-                    return Some(cand);
-                }
-            }
-            None => {
-                if cell_available_for_spawn(
-                    cand,
-                    produced_category,
-                    occupancy,
-                    resolved_terrain,
-                    require_water,
-                ) {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-
-    let Some(grid) = path_grid else {
-        return Some((base_rx.saturating_add(2), base_ry.saturating_add(2)));
-    };
-    // AUTHORITATIVE nearby-passable-cell search: the engine's diamond-ring FNPC
-    // (frame-counter selection). The FNPC pool order + per-ring early-out +
-    // `frame_counter % pool.len()` selection are the verified engine behavior.
-    let q = nearby_query_for_spawn(
-        movement_profile,
-        grid,
-        occupancy,
-        entities,
-        resolved_terrain,
-        overlay_grid,
-        zone_grid,
-        require_water,
-        playfield_bounds,
-        map_size,
-    )?;
-    let found = crate::sim::find_nearby_cell::find_nearby_passable_cell(
-        (base_rx as i32, base_ry as i32),
-        &q,
-        frame_counter,
-    )?;
-    // FNPC's per-candidate passability/occupancy already mirrors the facade, but the
-    // spawn layer adds the naval/land terrain-type and sub-cell-availability filter
-    // (`cell_available_for_spawn`) that the engine FNPC does not encode; re-apply it so
-    // the authoritative pick still honors the land-vs-water and infantry sub-cell rules.
-    cell_available_for_spawn(
-        found,
-        produced_category,
-        occupancy,
-        resolved_terrain,
-        require_water,
-    )
-    .then_some(found)
-}
-
-/// Build the authoritative FNPC query for the spawn/exit fallback from the spawn
-/// layer's movement profile + grids. Mirrors the engine FNPC caller args: per-candidate
-/// 1x1 passability + occupancy (reservations always SKIPPED), bridges allowed (the spawn
-/// path does not forbid bridge cells), required-height `-1`, frame-counter selection
-/// (no target). `require_water` routes the movement zone so naval units search water.
-/// Live games thread the final normalized `playfield_bounds` fields into the exact
-/// isometric corner query. Missing fields reject candidates; there is no terrain-
-/// rectangle replacement for active `MapClass::IsRectInPlayfield @ 0x00578390`.
-/// Search radius comes independently from the retained signed MapClass `Size`
-/// pair; missing size authority rejects the fallback instead of reviving a
-/// caller-owned radius.
-fn nearby_query_for_spawn<'a>(
-    movement_profile: SpawnMovementProfile,
-    grid: &'a crate::sim::pathfinding::PathGrid,
-    occupancy: &'a OccupancyGrid,
-    entities: &'a EntityStore,
-    resolved_terrain: Option<&'a ResolvedTerrainGrid>,
-    overlay_grid: Option<&'a crate::sim::overlay_grid::OverlayGrid>,
-    zone_grid: Option<&'a crate::sim::pathfinding::zone_map::ZoneGrid>,
-    require_water: bool,
-    playfield_bounds: Option<crate::sim::cell_rect::PlayfieldBounds>,
-    map_size: Option<(i32, i32)>,
-) -> Option<crate::sim::find_nearby_cell::NearbyQuery<'a>> {
-    use crate::sim::find_nearby_cell::{
-        NearbyFootprint, NearbyQuery, PassabilityArgs, map_owned_radius_cap,
-    };
-    let (size_width, size_height) = map_size?;
-    let movement_zone = if require_water {
-        MovementZone::Water
-    } else {
-        movement_profile.movement_zone
-    };
-    Some(NearbyQuery {
-        native_cells: None,
-        raw_occupation: None,
-        passability: PassabilityArgs {
-            speed_type: movement_profile.speed_type,
-            required_zone_id: None,
-            movement_zone,
-            bridge_aware_zone: false,
-        },
-        footprint: NearbyFootprint::SINGLE,
-        // gamemd-derived: every FNPC candidate path calls
-        // Is_Cell_In_Playfield_CellClass(cell, 1) @ 0x00578540 immediately
-        // before CellRect passability, including production spawn/exit callers.
-        allow_bridge_cells: true,
-        check_height: false,
-        check_occupancy: true,
-        // gamemd-derived: FNPC @ 0x0056DC20 reads signed MapClass Size
-        // +0xF4/+0xF8, sums them, and clamps only values above 32.
-        radius_cap: map_owned_radius_cap(size_width, size_height),
-        target_cell: None,
-        path_grid: Some(grid),
-        resolved_terrain,
-        overlay_grid,
-        occupancy: Some(occupancy),
-        entities: Some(entities),
-        zone_grid,
-        playfield_bounds,
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SpawnMovementProfile {
-    speed_type: SpeedType,
-    movement_zone: MovementZone,
-}
-
-fn spawn_movement_profile(
-    rules: &RuleSet,
-    produced_type_id: Option<&str>,
-    produced_category: ObjectCategory,
-    require_water: bool,
-) -> SpawnMovementProfile {
-    if let Some(obj) = produced_type_id.and_then(|type_id| rules.object(type_id)) {
-        return SpawnMovementProfile {
-            speed_type: obj.speed_type,
-            movement_zone: obj.movement_zone,
-        };
-    }
-    if require_water {
-        return SpawnMovementProfile {
-            speed_type: SpeedType::Float,
-            movement_zone: MovementZone::Water,
-        };
-    }
-    match produced_category {
-        ObjectCategory::Infantry => SpawnMovementProfile {
-            speed_type: SpeedType::Foot,
-            movement_zone: MovementZone::Infantry,
-        },
-        ObjectCategory::Aircraft => SpawnMovementProfile {
-            speed_type: SpeedType::Winged,
-            movement_zone: MovementZone::Fly,
-        },
-        ObjectCategory::Vehicle | ObjectCategory::Building => SpawnMovementProfile {
-            speed_type: SpeedType::Track,
-            movement_zone: MovementZone::Normal,
-        },
-    }
-}
-
-/// Check whether a cell can accept a newly spawned unit. Infantry require a free
-/// sub-cell (max 3 per cell). Vehicles/aircraft require no existing blockers.
-/// When `require_water` is true, only water cells are accepted (naval units).
-/// When false, water cells are rejected (land units shouldn't spawn on water).
-fn cell_available_for_spawn(
-    cell: (u16, u16),
-    produced_category: ObjectCategory,
-    occupancy: &OccupancyGrid,
-    resolved_terrain: Option<&ResolvedTerrainGrid>,
-    require_water: bool,
-) -> bool {
-    // Terrain type filter: naval units need water, land units avoid water.
-    if let Some(terrain) = resolved_terrain {
-        let is_water = terrain.cell(cell.0, cell.1).is_some_and(|c| c.is_water);
-        if require_water && !is_water {
-            return false;
-        }
-        if !require_water && is_water {
-            return false;
-        }
-    }
-    let occ = occupancy.get(cell.0, cell.1);
-    match produced_category {
-        ObjectCategory::Infantry => {
-            bump_crush::cell_passable_for_infantry(occ, MovementLayer::Ground)
-        }
-        _ => {
-            // Vehicles/aircraft need no vehicle or structure already in the cell.
-            match occ {
-                Some(o) => !o.has_blockers_on(MovementLayer::Ground),
-                None => true,
-            }
-        }
-    }
-}
-
-fn spawn_cell_passable(
-    grid: &crate::sim::pathfinding::PathGrid,
-    cell: (u16, u16),
-    resolved_terrain: Option<&ResolvedTerrainGrid>,
-    require_water: bool,
-) -> bool {
-    if require_water {
-        // The reduced ZoneType matrix with the coastal-water fallback, and no
-        // wall off a bridgehead; this legacy adapter asks no Can_Enter_Cell.
-        resolved_terrain
-            .and_then(|terrain| terrain.cell(cell.0, cell.1))
-            .is_some_and(|cell| {
-                use crate::map::resolved_terrain::zone_class;
-                let surface = crate::sim::pathfinding::passability::is_passable_for_zone(
-                    cell.zone_type,
-                    MovementZone::Water,
-                ) || cell.is_water;
-                let wall = matches!(cell.zone_type, zone_class::WALL | zone_class::CRUSHABLE);
-                surface && (!wall || cell.is_bridge_transition_cell())
-            })
-    } else {
-        grid.is_walkable(cell.0, cell.1)
-    }
-}
-
-/// Determine exit cell offsets for a factory building, data-driven from rules.ini.
-///
-/// If the building has `ExitCoord=X,Y,Z` in rules.ini, converts leptons to a cell
-/// offset (256 leptons = 1 cell) and generates candidates around it. Otherwise,
-/// falls back to foundation-perimeter offsets derived from the building's Foundation=.
-fn preferred_exit_offsets(rules: &RuleSet, structure_id: &str) -> Vec<(i16, i16)> {
-    if let Some(obj) = rules.object(structure_id) {
-        // Data-driven: use ExitCoord from rules.ini if available.
-        if let Some((lx, ly, _lz)) = obj.exit_coord {
-            let primary_x: i16 = lepton_to_cell_round_nearest(lx);
-            let primary_y: i16 = lepton_to_cell_round_nearest(ly);
-            return exit_candidates_around(primary_x, primary_y);
-        }
-        // No ExitCoord: generate offsets from foundation perimeter.
-        let (w, h) = crate::rules::foundation::foundation_dimensions(&obj.foundation);
-        return foundation_perimeter_offsets(w as i16, h as i16);
-    }
-    // Unknown structure: simple default.
-    foundation_perimeter_offsets(2, 2)
-}
-
-/// Convert a lepton value to the NEAREST cell offset (256 leptons = 1 cell).
-///
-/// Deliberately round-half-away, NOT the truncating
-/// `util::lepton::lepton_to_cell` — e.g. 200 leptons is cell 1 here
-/// and cell 0 there. Renamed so the two can never be conflated.
-fn lepton_to_cell_round_nearest(leptons: i32) -> i16 {
-    // Round toward the nearest cell center. +128 for positive, -128 for negative.
-    let rounded: i32 = if leptons >= 0 {
-        (leptons + 128) / 256
-    } else {
-        (leptons - 128) / 256
-    };
-    rounded as i16
-}
-
-/// Generate exit candidate offsets around a primary exit cell.
-/// Returns the primary cell first, then its 8 neighbors, providing
-/// fallback positions if the primary cell is blocked.
-fn exit_candidates_around(cx: i16, cy: i16) -> Vec<(i16, i16)> {
-    vec![
-        (cx, cy),
-        (cx + 1, cy),
-        (cx - 1, cy),
-        (cx, cy + 1),
-        (cx, cy - 1),
-        (cx + 1, cy + 1),
-        (cx - 1, cy + 1),
-        (cx + 1, cy - 1),
-        (cx - 1, cy - 1),
-    ]
-}
-
-/// Generate exit offsets around the perimeter of a foundation.
-/// Tries bottom edge first, then right edge, then remaining sides.
-fn foundation_perimeter_offsets(w: i16, h: i16) -> Vec<(i16, i16)> {
-    let mut offsets: Vec<(i16, i16)> = Vec::with_capacity(((w + h) * 2 + 8) as usize);
-    // Bottom edge (y = h).
-    for x in 0..w {
-        offsets.push((x, h));
-    }
-    // Right edge (x = w).
-    for y in 0..h {
-        offsets.push((w, y));
-    }
-    // Top edge (y = -1).
-    for x in 0..w {
-        offsets.push((x, -1));
-    }
-    // Left edge (x = -1).
-    for y in 0..h {
-        offsets.push((-1, y));
-    }
-    // Corners just outside the foundation.
-    offsets.push((w, h));
-    offsets.push((-1, -1));
-    offsets.push((w, -1));
-    offsets.push((-1, h));
-    offsets
-}
-
-fn add_cell_offset(base_rx: u16, base_ry: u16, ox: i16, oy: i16) -> Option<(u16, u16)> {
-    let rx = base_rx as i32 + ox as i32;
-    let ry = base_ry as i32 + oy as i32;
-    if rx < 0 || ry < 0 {
-        return None;
-    }
-    Some((rx as u16, ry as u16))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn infantry_exit_coordinate_and_facing_match_original_instructions() {
+    fn dock_exit_coordinate_and_facing_match_original_instructions() {
         use crate::rules::ini_parser::IniFile;
         use crate::sim::components::DriveCoord;
         use crate::sim::game_entity::GameEntity;
@@ -976,7 +558,7 @@ mod tests {
                 row["name"]
             );
             let (coordinate, facing) =
-                infantry_exit_coordinate_and_facing(&producer, producer_type, dock);
+                dock_exit_coordinate_and_facing(&producer, producer_type, dock);
             assert_eq!(
                 [coordinate.x, coordinate.y, coordinate.z],
                 [
@@ -1187,12 +769,82 @@ mod tests {
         producer
     }
 
+    /// `0x0044413D..0x00444632` tests Refinery, Weeder, WeaponsFactory and
+    /// Naval, then Factory=InfantryType, Hospital, Armory and Cloning, each
+    /// ahead of the next; nothing else in the type picks an arm.
     #[test]
-    fn naval_dispatch_uses_direct_four_flag_predicate_and_getcoords_center() {
+    fn exit_arm_reads_the_producer_flags_in_native_order() {
+        let rules = RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
+            "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n\
+             0=REFWEAP\n1=WEEDYARD\n2=YARD\n3=WEAP\n4=WEAPBARR\n5=BARR\n6=HOSP\n\
+             7=ARMORY\n8=VATS\n9=UNITFAC\n10=AIRFAC\n11=PLAIN\n\
+             [REFWEAP]\nRefinery=yes\nWeaponsFactory=yes\n\
+             [WEEDYARD]\nWeeder=yes\nWeaponsFactory=yes\nNaval=yes\n\
+             [YARD]\nWeaponsFactory=yes\nNaval=yes\nFactory=InfantryType\n\
+             [WEAP]\nWeaponsFactory=yes\nFactory=UnitType\n\
+             [WEAPBARR]\nWeaponsFactory=yes\nFactory=InfantryType\n\
+             [BARR]\nFactory=InfantryType\nNaval=yes\n\
+             [HOSP]\nHospital=yes\n\
+             [ARMORY]\nArmory=yes\n\
+             [VATS]\nCloning=yes\n\
+             [UNITFAC]\nFactory=UnitType\nExitCoord=512,256,0\n\
+             [AIRFAC]\nFactory=AircraftType\n\
+             [PLAIN]\nGDIBarracks=yes\n",
+        ))
+        .unwrap();
+        for (producer, arm) in [
+            ("REFWEAP", ExitArm::Refinery),
+            ("WEEDYARD", ExitArm::Refinery),
+            ("YARD", ExitArm::Naval),
+            ("WEAP", ExitArm::Land),
+            ("WEAPBARR", ExitArm::Land),
+            ("BARR", ExitArm::Infantry),
+            ("HOSP", ExitArm::Infantry),
+            ("ARMORY", ExitArm::Infantry),
+            ("VATS", ExitArm::Infantry),
+            ("UNITFAC", ExitArm::Generic),
+            ("AIRFAC", ExitArm::Generic),
+            ("PLAIN", ExitArm::Generic),
+        ] {
+            assert_eq!(exit_arm(rules.object(producer).unwrap()), arm, "{producer}");
+        }
+    }
+
+    /// Through the production reader on the retail INIs, every building
+    /// that produces Units or Infantry for a house leaves them through the
+    /// land, naval or Infantry arm; none reaches the refinery or generic arm.
+    #[test]
+    fn retail_producers_take_the_land_naval_and_infantry_arms() {
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let mut arms = Vec::new();
+        for object in retail.rules.all_objects() {
+            if !matches!(
+                object.factory,
+                Some(FactoryType::UnitType | FactoryType::InfantryType)
+            ) {
+                continue;
+            }
+            let arm = exit_arm(object);
+            assert!(
+                matches!(arm, ExitArm::Naval | ExitArm::Land | ExitArm::Infantry),
+                "{}: {arm:?}",
+                object.id
+            );
+            if !arms.contains(&arm) {
+                arms.push(arm);
+            }
+        }
+        arms.sort_by_key(|arm| *arm as u8);
+        assert_eq!(arms, [ExitArm::Naval, ExitArm::Land, ExitArm::Infantry]);
+    }
+
+    #[test]
+    fn naval_exit_starts_at_the_getcoords_centre() {
         let rules = naval_delivery_rules();
         let yard = rules.object("GAYARD").unwrap();
-        assert!(!yard.refinery && !yard.weeder && yard.weapons_factory && yard.naval);
-        assert!(exact_naval_vehicle_exit_factory(&rules, "GAYARD"));
+        assert_eq!(exit_arm(yard), ExitArm::Naval);
         assert_eq!(yard.foundation, "4x4");
         let mut entities = EntityStore::new();
         entities.insert(gayard_producer());
@@ -1201,14 +853,6 @@ mod tests {
             Some((12, 12)),
             "4x4 NW (10,10) GetCoords adds 384 leptons then truncates to (12,12)"
         );
-
-        let blocked = RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
-            "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n\
-             0=YARD\n[YARD]\nFactory=UnitType\nWeaponsFactory=yes\nNaval=yes\nWeeder=yes\n",
-        ))
-        .unwrap();
-        assert!(!exact_naval_vehicle_exit_factory(&blocked, "YARD"));
-        assert!(blocked.object("YARD").unwrap().weeder);
     }
 
     #[test]
@@ -1554,10 +1198,7 @@ mod tests {
                 10,
                 10,
                 Some((20, 10)),
-                SpawnMovementProfile {
-                    speed_type: SpeedType::Float,
-                    movement_zone: MovementZone::Water,
-                },
+                SpeedType::Float,
                 Some(&grid),
                 &occupancy,
                 &entities,
@@ -1570,152 +1211,6 @@ mod tests {
             ),
             ((12, 12), false),
             "failed direct gate restarts FNPC at the original GetCoords centre"
-        );
-    }
-
-    #[test]
-    fn spawn_fnpc_radius_uses_installed_map_size_and_reaches_ring_twelve() {
-        const GRID: u16 = 40;
-        const SEED: (u16, u16) = (20, 20);
-        const RING_TWELVE: (u16, u16) = (8, 8);
-
-        let mut terrain = flat_terrain(GRID, GRID);
-        for cell in &mut terrain.cells {
-            cell.ground_walk_blocked = true;
-            cell.base_ground_walk_blocked = true;
-            cell.speed_costs.track = Some(0);
-            cell.base_speed_costs.track = Some(0);
-        }
-        let survivor = terrain
-            .cell_mut(RING_TWELVE.0, RING_TWELVE.1)
-            .expect("ring-twelve survivor");
-        survivor.ground_walk_blocked = false;
-        survivor.base_ground_walk_blocked = false;
-        survivor.speed_costs.track = Some(100);
-        survivor.base_speed_costs.track = Some(100);
-
-        let path_grid = PathGrid::from_resolved_terrain(&terrain);
-        let occupancy = OccupancyGrid::new();
-        let entities = EntityStore::new();
-        let movement_profile = SpawnMovementProfile {
-            speed_type: SpeedType::Track,
-            movement_zone: MovementZone::Normal,
-        };
-        let rules = RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
-            "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n",
-        ))
-        .expect("minimal spawn rules");
-
-        let find = |map_size| {
-            find_spawn_cell_near_structure(
-                SEED.0,
-                SEED.1,
-                "UNKNOWN",
-                ObjectCategory::Vehicle,
-                movement_profile,
-                &rules,
-                Some(&path_grid),
-                &occupancy,
-                &entities,
-                Some(&terrain),
-                None,
-                None,
-                false,
-                0,
-                Some(test_playfield_bounds()),
-                map_size,
-            )
-        };
-
-        assert_eq!(
-            find(Some((20, 20))),
-            Some(RING_TWELVE),
-            "MapClass Size sum 40 clamps to 32 and reaches ring 12"
-        );
-        assert_eq!(
-            find(Some((6, 6))),
-            None,
-            "a native cap of 12 scans only rings 0 through 11"
-        );
-        assert_eq!(
-            find(Some((-10, 10))),
-            None,
-            "a nonpositive signed Size sum performs no ring search"
-        );
-        assert_eq!(
-            find(None),
-            None,
-            "missing installed MapClass Size authority must not invent a radius"
-        );
-    }
-
-    #[test]
-    fn spawn_fnpc_anchor_gate_excludes_earlier_rectangular_candidate() {
-        const GRID: u16 = 40;
-        const SEED: (u16, u16) = (9, 4);
-        const OFF_DIAMOND: (u16, u16) = (7, 2);
-        const IN_DIAMOND: (u16, u16) = (7, 6);
-
-        let mut terrain = flat_terrain(GRID, GRID);
-        for cell in &mut terrain.cells {
-            cell.ground_walk_blocked = true;
-            cell.base_ground_walk_blocked = true;
-            cell.speed_costs.track = Some(0);
-            cell.base_speed_costs.track = Some(0);
-        }
-        for candidate in [OFF_DIAMOND, IN_DIAMOND] {
-            let cell = terrain
-                .cell_mut(candidate.0, candidate.1)
-                .expect("ring-two candidate");
-            cell.ground_walk_blocked = false;
-            cell.base_ground_walk_blocked = false;
-            cell.speed_costs.track = Some(100);
-            cell.base_speed_costs.track = Some(100);
-        }
-
-        let path_grid = PathGrid::from_resolved_terrain(&terrain);
-        let occupancy = OccupancyGrid::new();
-        let entities = EntityStore::new();
-        let movement_profile = SpawnMovementProfile {
-            speed_type: SpeedType::Track,
-            movement_zone: MovementZone::Normal,
-        };
-        // Flat-terrain diamond: 12 < x+y <= 26, x-y < 14, y-x < 6.
-        // Both candidates are valid cells inside the 40x40 terrain rectangle,
-        // but ring order visits off-diamond (7,2) before in-diamond (7,6).
-        let bounds = crate::sim::cell_rect::PlayfieldBounds {
-            base: 10,
-            off_fc: 2,
-            off_100: 1,
-            off_104: 10,
-            off_108: 6,
-        };
-        let rules = RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
-            "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n",
-        ))
-        .expect("minimal spawn rules");
-
-        assert_eq!(
-            find_spawn_cell_near_structure(
-                SEED.0,
-                SEED.1,
-                "UNKNOWN",
-                ObjectCategory::Vehicle,
-                movement_profile,
-                &rules,
-                Some(&path_grid),
-                &occupancy,
-                &entities,
-                Some(&terrain),
-                None,
-                None,
-                false,
-                0,
-                Some(bounds),
-                Some((bounds.base, 10)),
-            ),
-            Some(IN_DIAMOND),
-            "the independent anchor gate excludes the earlier off-diamond survivor"
         );
     }
 }

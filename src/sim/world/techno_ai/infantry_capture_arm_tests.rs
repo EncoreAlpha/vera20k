@@ -55,6 +55,7 @@ Locomotor={4A582744-9839-11D1-B709-00A024DDAFD1}
 Strength=125
 Speed=4
 Deployer=yes
+DeployFire=yes
 Locomotor={4A582744-9839-11D1-B709-00A024DDAFD1}
 [NAPOWR]
 Strength=750
@@ -303,13 +304,16 @@ fn a_computer_spy_holding_a_dying_building_keeps_its_mission() {
     }
 }
 
-/// A computer house's deployed infantryman hunting with no live Target (none,
-/// or one already dying) undeploys, lets a stale one go, and the arm returns
-/// 1. A human's takes the Foot body instead.
+/// A computer house's deployed infantryman hunting with no Target (none, or
+/// one whose death announcement cleared it) undeploys and the arm returns 1.
+/// A human's takes the Foot body instead. DGI sets `DeployFire=`, as
+/// rulesmd.ini's E1 and GGI do: a deployed infantryman without it refuses
+/// every Target write (`0x0051B273..0x0051B299`), the expiry's NULL
+/// (`0x00707A33`) too.
 #[test]
 fn a_deployed_computer_infantryman_hunting_without_a_target_undeploys() {
     let rules = rules();
-    for (owner, stale_target, undeploys) in [
+    for (owner, dead_target, undeploys) in [
         ("Russians", false, true),
         ("Russians", true, true),
         ("Americans", false, false),
@@ -318,21 +322,26 @@ fn a_deployed_computer_infantryman_hunting_without_a_target_undeploys() {
         let actor = spawn(&mut sim, &rules, "DGI", owner, 10, 10);
         sim.substrate.entities.get_mut(actor).unwrap().mission_leaf =
             MissionLeafState::infantry_raw_for_test(0, DO_DEPLOYED_IDLE);
-        if stale_target {
-            // A dying Target, which the native detach has already cleared.
+        if dead_target {
+            // A Target that dies: the killing hit's announcement clears it
+            // (PointerExpired's TarCom arm).
             let victim = spawn(&mut sim, &rules, "GI", "Americans", 14, 10);
-            sim.substrate
-                .entities
-                .get_mut(victim)
-                .unwrap()
-                .death
-                .set_dying_for_test(true);
             sim.substrate
                 .entities
                 .get_mut(actor)
                 .unwrap()
                 .attack_target
                 .set_for_test(Some(crate::sim::combat::TargetKind::Entity(victim)));
+            sim.substrate
+                .entities
+                .get_mut(victim)
+                .unwrap()
+                .death
+                .set_dying_for_test(true);
+            sim.object_destroy_callback(
+                victim,
+                crate::sim::world::UninitContext::with_rules(&rules),
+            );
         }
         assign(&mut sim, actor, MissionType::Hunt);
 
@@ -340,7 +349,7 @@ fn a_deployed_computer_infantryman_hunting_without_a_target_undeploys() {
 
         let entity = sim.substrate.entities.get(actor).unwrap();
         let doing = entity.mission_leaf.as_infantry().unwrap().doing();
-        let case = format!("{owner}, stale Target {stale_target}");
+        let case = format!("{owner}, dead Target {dead_target}");
         if undeploys {
             assert_eq!(doing, DO_UNDEPLOY, "{case}");
             assert_eq!(entity.mission.dispatch_timer().delay(), 1, "{case}");

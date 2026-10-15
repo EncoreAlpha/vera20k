@@ -77,7 +77,7 @@ fn deploy_voice_suppression_roundtrips_independently_of_the_audio_latch() {
     let native = crate::rules::deploy_voice_tests::native();
     let mut entity = GameEntity::test_default(1, "YAREFN", "YuriCountry", 6, 7);
     assert!(!entity.deploy_voice_suppressed());
-    entity.suppress_next_deploy_voice();
+    entity.suppress_deploy_voice.suppress();
     let bytes = bincode::serialize(&entity).unwrap();
     let mut loaded: GameEntity = bincode::deserialize(&bytes).unwrap();
     assert_eq!(
@@ -86,7 +86,7 @@ fn deploy_voice_suppression_roundtrips_independently_of_the_audio_latch() {
             .as_bool()
             .unwrap()
     );
-    loaded.clear_deploy_voice_suppression();
+    loaded.suppress_deploy_voice.clear();
     assert!(!loaded.deploy_voice_suppressed());
     assert!(
         entity.deploy_voice_suppressed(),

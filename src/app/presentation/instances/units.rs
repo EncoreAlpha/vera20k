@@ -30,7 +30,6 @@ use crate::render::unit_slope_transition_cache::{
     TransitionUnitSpriteEntry, TransitionUnitSpriteKey,
 };
 use crate::rules::house_colors::{self, HouseColorIndex};
-use crate::sim::animation::HarvestOverlay;
 #[cfg(test)]
 use crate::sim::movement::slope_transition::SLOPE_TRANSITION_FRAMES;
 use crate::sim::voxel_frame_catalog::{
@@ -603,35 +602,14 @@ pub(crate) fn build_unit_instances(
             }
         }
 
-        // Emit harvest overlay (oregath.shp) if the miner is actively harvesting.
         // OREGATH is an SHP sprite from sprite_atlas, but remains an owned piece
         // of its harvester's Ground slot so atlas identity cannot re-sort it.
-        // `UnitClass::Draw @ 0x0073CEC0` draws it from Unit+0x6D2 only
-        // while the locomotor is not moving now (`[loco+0x80]` at
-        // `0x0073D114`: Drive `0x004AFC20`, rotating or moving with speed),
-        // so a miner hopping to its next ore cell shows none. RESIDUAL:
-        // native frames it from `(Unit+0x538 + frame) % 15`; this overlay
-        // keeps its own counter.
-        let moving = crate::sim::movement::motion_query::is_moving_now(
-            entity,
-            state.rules().map(|rules| {
-                crate::sim::movement::SpeedRules::new(
-                    rules,
-                    &sim.interner,
-                    &sim.type_handles,
-                    &sim.houses,
-                )
-            }),
-            display_binary_frame,
-        );
-        if let Some(ref ho) = entity.harvest_overlay
-            && ho.visible()
-            && !moving
+        if let Some(frame) = harvest_overlay_frame(state.rules(), sim, entity, display_binary_frame)
             && let Some((page, instance)) = emit_harvest_overlay(
                 state,
                 entity,
                 body_facing,
-                ho,
+                frame,
                 center_x,
                 center_y,
                 pos.z(),
@@ -671,12 +649,13 @@ enum BodyDraw {
     Composite,
 }
 
-/// Unit DrawVoxelBody73B4DA..73B50E divides the persistent Foot+538 counter
-/// by the selected model's main HVA frame count. The object's original model
-/// may have a different count (SCHP has two frames, deployed SCHD has one).
-/// When that signed remainder is zero, the turret takes Techno+148 modulo
-/// its own HVA count. Negative remainders retain their bits in the atlas key;
-/// invalid frame indices have no sprite. Aircraft retain their body path.
+/// Unit DrawVoxelBody73B4DA..73B50E and `AircraftClass::Draw_It`
+/// (`0x004145B0..0x004145DB`) divide the persistent Foot+538 counter by the
+/// selected model's main HVA frame count. The object's original model may
+/// have a different count (SCHP has two frames, deployed SCHD has one). When
+/// that signed remainder is zero, a Unit's turret takes Techno+148 modulo its
+/// own HVA count; an aircraft draws its main voxel alone. Negative remainders
+/// retain their bits in the atlas key; invalid frame indices have no sprite.
 /// Native vectors: tools/spatial_oracle/unit_simple_deploy.json draw_frames.
 fn unit_animation_frames(
     entity: &crate::sim::game_entity::GameEntity,
@@ -684,19 +663,13 @@ fn unit_animation_frames(
     turret_index: i32,
     frame_counts: &std::collections::BTreeMap<(String, VxlLayer, i32), u32>,
 ) -> (u32, u32) {
-    let body = if entity.category() != EntityCategory::Unit {
-        entity
-            .voxel_animation
-            .map_or(0, |animation| animation.frame())
-    } else {
-        let frames = frame_counts
-            .get(&(model.to_string(), VxlLayer::Body, 0))
-            .or_else(|| frame_counts.get(&(model.to_string(), VxlLayer::Composite, 0)))
-            .copied()
-            .unwrap_or(1)
-            .max(1);
-        ((entity.body_frame_counter.get() as i32) % frames as i32) as u32
-    };
+    let frames = frame_counts
+        .get(&(model.to_string(), VxlLayer::Body, 0))
+        .or_else(|| frame_counts.get(&(model.to_string(), VxlLayer::Composite, 0)))
+        .copied()
+        .unwrap_or(1)
+        .max(1);
+    let body = ((entity.body_frame_counter.get() as i32) % frames as i32) as u32;
     let turret = if body != 0 || entity.turret_anim_frame.frame() == 0 {
         body
     } else {
@@ -1622,10 +1595,65 @@ fn emit_turret_unit_sprites(
 /// arm visually tracks the correct side of the harvester.
 const OREGATH_ARM_OFFSET_LEPTONS: f32 = 30.0;
 
-/// Emit the oregath.shp harvest overlay sprite for a mining harvester.
-///
-/// The overlay uses the sprite atlas (keyed as "OREGATH") with 15 frames × 8 facings.
-/// SHP frame index = facing_index * 15 + anim_frame.
+/// `UnitClass::DrawIt @ 0x0073CEC0`'s OREGATH.SHP frame, when it draws one: a
+/// `Harvester=` type (`+0xE0E` of the unit's own type `+0x6C4`) whose unit is
+/// harvesting (`+0x6D2`), whose locomotor is not moving now (`[loco+0x80]` at
+/// `0x0073D114`: Drive `0x004AFC20`, rotating or moving with speed), and that
+/// no Temporal weapon is warping (`+0x278`), warping out (vt+0x1D4) or warping
+/// in (vt+0x1D8) (`0x0073D0DB..0x0073D221`). So a miner hopping to its next
+/// ore cell shows none.
+fn harvest_overlay_frame(
+    rules: Option<&crate::rules::ruleset::RuleSet>,
+    sim: &crate::sim::world::Simulation,
+    entity: &crate::sim::game_entity::GameEntity,
+    display_binary_frame: u32,
+) -> Option<u16> {
+    let harvester = rules
+        .and_then(|rules| rules.object(sim.interner.resolve(entity.type_ref())))
+        .is_some_and(|object| object.harvester);
+    if !harvester
+        || !entity
+            .miner
+            .as_ref()
+            .is_some_and(|miner| miner.harvesting())
+        || entity.temporal.chain_head().is_some()
+        || entity.is_warped_out()
+        || entity.is_warping_in()
+        || crate::sim::movement::motion_query::is_moving_now(
+            entity,
+            rules.map(|rules| {
+                crate::sim::movement::SpeedRules::new(
+                    rules,
+                    &sim.interner,
+                    &sim.type_handles,
+                    &sim.houses,
+                )
+            }),
+            display_binary_frame,
+        )
+    {
+        return None;
+    }
+    let frame = sim.session.binary_frame;
+    oregath_frame(
+        entity.body_frame_counter.get(),
+        frame,
+        entity.body_facing_current(frame),
+    )
+}
+
+/// OREGATH.SHP's frame (`0x0073D1E2..0x0073D273`): `(Foot+0x538 + Frame) % 15`,
+/// a signed remainder, in the row `7 - ((((Current >> 12) + 1) >> 1) & 7)` of
+/// the body facing (`+0x388`), 15 frames to a row. A negative index draws
+/// nothing.
+fn oregath_frame(body_frame_counter: u32, frame: u32, body_facing: u16) -> Option<u16> {
+    let within = (body_frame_counter as i32).wrapping_add(frame as i32) % 15;
+    let row = 7 - ((((i32::from(body_facing) >> 12) + 1) >> 1) & 7);
+    u16::try_from(row * 15 + within).ok()
+}
+
+/// Emit the oregath.shp harvest overlay sprite at `frame`
+/// ([`harvest_overlay_frame`]), from the sprite atlas (keyed as "OREGATH").
 ///
 /// The draw position is offset from the unit center by 30 leptons rotated by body
 /// facing (verified from binary at 0x0073D12F–0x0073D1D6). This places the overlay
@@ -1634,7 +1662,7 @@ fn emit_harvest_overlay(
     state: &AppState,
     entity: &crate::sim::game_entity::GameEntity,
     body_facing: u8,
-    overlay: &HarvestOverlay,
+    frame: u16,
     center_x: f32,
     center_y: f32,
     z: u8,
@@ -1643,15 +1671,11 @@ fn emit_harvest_overlay(
     draw_state: DrawState,
 ) -> Option<(usize, SpriteInstance)> {
     let sprite_atlas = state.match_state.match_presentation.sprite_atlas.as_ref()?;
-    // Map body facing (0-255) to counter-clockwise SHP frame index (0..7).
-    // +32 offset for isometric rotation (SHP frame 0 = screen-N, not cell-N).
-    let facing_index: u16 = (8 - (body_facing.wrapping_add(32) / 32) as u16) % 8;
-    let shp_frame: u16 = facing_index * 15 + overlay.frame();
     let key = ShpSpriteKey {
         palette_context: crate::render::sprite_atlas::ShpPaletteContext::Legacy,
         type_id: "OREGATH".to_string(),
         facing: 0,
-        frame: shp_frame,
+        frame,
         house_color: HouseColorIndex::default(),
     };
     let entry = sprite_atlas.get(&key)?;
@@ -1697,7 +1721,9 @@ const VOXEL_Z_GRADIENT: u32 = pack_z_gradient(ZGradient::Vertical, false);
 /// Mirrors the binary's logic at 0x0073D12F–0x0073D1D6:
 ///   world_x = sin(angle) * 30 + base.X
 ///   world_y = base.Y - cos(angle) * 30
-/// Then isometric projection converts leptons to screen pixels.
+/// Then isometric projection converts leptons to screen pixels. RESIDUAL:
+/// native first rounds the facing to eight directions (`0x0073D134..0x0073D145`),
+/// a difference of 2 px at most.
 fn harvest_arm_screen_offset(body_facing: u8) -> (f32, f32) {
     let angle: f32 = std::f32::consts::TAU * (body_facing as f32 / 256.0);
     let (sin, cos) = angle.sin_cos();
@@ -1737,6 +1763,67 @@ mod tests {
     use crate::sim::spawn_manager::{SpawnManagerState, SpawnSlot, SpawnSlotState};
     use crate::sim::timer::CdTimer;
     use crate::sim::world::Simulation;
+
+    /// OREGATH's row rounds the body facing to eight directions, `0x1000` on
+    /// either side of each (`0x0073D1E7..0x0073D1FD`); the frame within the
+    /// row is `(Foot+0x538 + Frame) % 15`, signed (`0x0073D25C..0x0073D273`).
+    #[test]
+    fn oregath_frame_rounds_the_facing_row_and_adds_the_global_frame() {
+        assert_eq!(oregath_frame(0, 0, 0x0000), Some(105));
+        assert_eq!(oregath_frame(0, 0, 0x0FFF), Some(105));
+        assert_eq!(oregath_frame(0, 0, 0x1000), Some(90));
+        assert_eq!(oregath_frame(0, 0, 0x2FFF), Some(90));
+        assert_eq!(oregath_frame(0, 0, 0x3000), Some(75));
+        assert_eq!(oregath_frame(0, 0, 0xEFFF), Some(0));
+        assert_eq!(oregath_frame(0, 0, 0xF000), Some(105));
+        // (7 + 20) % 15 in row 6.
+        assert_eq!(oregath_frame(7, 20, 0x2000), Some(102));
+        // A negative sum leaves a negative remainder, which row 0 cannot hold.
+        assert_eq!(oregath_frame(u32::MAX - 20, 0, 0xE000), None);
+    }
+
+    /// `UnitClass::DrawIt` draws OREGATH only over a harvesting unit
+    /// (`+0x6D2`) of a `Harvester=` type at rest (`0x0073D0DB..0x0073D11C`),
+    /// at the frame its body counter and the global frame give.
+    #[test]
+    fn oregath_follows_the_harvesting_byte_and_the_body_counter() {
+        let rules =
+            crate::rules::ruleset::RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
+                "[VehicleTypes]\n0=HARV\n[HARV]\nStrength=1000\nHarvester=yes\n\
+                 Locomotor={4A582741-9839-11D1-B709-00A024DDAFD1}\n",
+            ))
+            .expect("harvester rules");
+        let mut sim = Simulation::new();
+        let owner = sim.interner.intern("Americans");
+        sim.houses.insert(
+            owner,
+            crate::sim::house_state::HouseState::new(owner, 0, None, false, 0, 10),
+        );
+        sim.session.house_order.push(owner);
+        let id = sim
+            .spawn_object_at_height("HARV", "Americans", 10, 10, 0x10, 0, &rules)
+            .expect("harvester");
+        let frame = sim.session.binary_frame;
+        let display = display_binary_frame_for_committed_session(frame);
+        let entity = sim.entities().get(id).unwrap();
+        assert_eq!(
+            harvest_overlay_frame(Some(&rules), &sim, entity, display),
+            None,
+            "not harvesting"
+        );
+        {
+            let entity = sim.substrate.entities.get_mut(id).unwrap();
+            entity.miner.as_mut().unwrap().set_harvesting_for_test(true);
+            entity.body_frame_counter.set_for_test(7);
+        }
+        let entity = sim.entities().get(id).unwrap();
+        assert_eq!(entity.body_facing_current(frame), 0x1000);
+        assert_eq!(
+            harvest_overlay_frame(Some(&rules), &sim, entity, display),
+            Some(90 + ((7 + frame) % 15) as u16),
+            "row 6"
+        );
+    }
 
     /// Each `curtain_draw_arm` row (DrawVoxelBody `0x0073BF7B..0x0073C166`
     /// run natively) whose colour arms are idle: not Berzerk, no caller

@@ -1619,10 +1619,10 @@ fn tank_crosses_lostlake_low_bridge_at_ground_height() {
 /// Matrix row T1-10 — Walk along the same span.
 ///
 /// Still separate from T1-09, but **not for the reason the ledger gives.** The
-/// row cites the `EntityCategory::{Unit, Infantry}` gate in
-/// `begin_path_tube_step` (`tube_movement.rs`) as infantry's own arm; the
-/// inventory shows no stock low-bridge cell carries a tube index, so that gate
-/// is never reached on any of these maps and cannot be what separates the rows.
+/// row cites a category gate in the tube entry as infantry's own arm. Walk's
+/// tube check (`0x0075B302`, `tube_movement.rs`) has no such gate, and the
+/// inventory shows no stock low-bridge cell carries a tube index, so no tube
+/// entry is reached on any of these maps or separates the rows.
 ///
 /// What does separate them is the same thing that separated T1-06 from T1-03:
 /// infantry take a sub-cell reservation arm no vehicle touches, and drive the

@@ -11,6 +11,40 @@ use crate::sim::mission::{MissionId, MissionType};
 use crate::sim::world::FrameEffects;
 use crate::sim::world::{SimSoundEvent, Simulation};
 
+/// Techno `+0x2A4`, a deployed infantryman's crush immunity, which the crush
+/// test reads (`movement::bump_crush`). Construction clears it. The
+/// deployment completion of an infantryman whose type is not
+/// `DeployedCrushable=` grants it after the Deployed request ([`Self::grant`],
+/// `0x00520B4E`) and revokes it after the Ready request ([`Self::revoke`],
+/// `0x00520BAD`), even when the requested sequence refuses. It is retained
+/// independently of Doing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct CrushImmunity(u8);
+
+impl CrushImmunity {
+    /// A fixture's raw byte.
+    #[cfg(test)]
+    pub(crate) const fn from_raw(raw: u8) -> Self {
+        Self(raw)
+    }
+
+    /// The raw byte.
+    pub(crate) const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// The Deployed completion's store of 1 (`0x00520B4E`).
+    pub(crate) fn grant(&mut self) {
+        self.0 = 1;
+    }
+
+    /// The Ready completion's store of 0 (`0x00520BAD`).
+    pub(crate) fn revoke(&mut self) {
+        self.0 = 0;
+    }
+}
+
 /// Event9 DEPLOY4C778A..4C7812. MCV conversion and simple deployment
 /// share this event; each concrete Mission_Unload branch owns its effects.
 pub(crate) fn issue_order(
@@ -192,11 +226,16 @@ impl Simulation {
             .ok_or("deployment completion requires the Infantry type")?
             .deployed_crushable;
         if !crushable {
-            self.substrate
+            let actor = self
+                .substrate
                 .entities
                 .get_mut(id)
-                .expect("same deployment completion receiver")
-                .set_infantry_deploy_crush_immunity(u8::from(completed_doing == 27));
+                .expect("same deployment completion receiver");
+            if completed_doing == 27 {
+                actor.native_crush_immunity.grant();
+            } else {
+                actor.native_crush_immunity.revoke();
+            }
         }
         if completed_doing == 27 {
             self.shorten_passive_scan_timer(id);

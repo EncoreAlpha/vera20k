@@ -109,12 +109,14 @@ impl JumpjetFlightHost for CruiseHost<'_> {
     fn is_object_alive(&self) -> bool {
         self.owner().is_object_alive()
     }
+    /// `Object+0x74`, Marked.
     fn marked(&self) -> bool {
         self.owner().lifecycle.cell_marked()
     }
     fn replace_marked_byte(&mut self, marked: bool) -> bool {
         self.sim.replace_foot_marked_byte(self.stable_id, marked)
     }
+    /// `Object+0x9C`, Location.
     fn location(&self) -> [i32; 3] {
         let xy = position_world_xy(&self.owner().position);
         let z =
@@ -149,6 +151,8 @@ impl JumpjetFlightHost for CruiseHost<'_> {
     fn on_bridge(&self) -> bool {
         self.owner().on_bridge()
     }
+    /// Update's grounded reset: the raw receiver at the Location, then
+    /// OnBridge cleared (`0x0054D438`).
     fn grounded_reset(&mut self) {
         let location = self.location();
         self.sim.object_raw_receiver_at(
@@ -165,7 +169,8 @@ impl JumpjetFlightHost for CruiseHost<'_> {
             .entities
             .get_mut(self.stable_id)
             .unwrap()
-            .set_on_bridge(false);
+            .on_bridge
+            .store(false);
     }
     fn floor_height(&self, xy: [i32; 2]) -> i32 {
         ground_surface_z_at(xy, false, self.terrain(), None).unwrap_or(0)
@@ -220,12 +225,15 @@ impl JumpjetFlightHost for CruiseHost<'_> {
             }
         })
     }
+    /// `TechnoTypeClass+0xD6A`, `BalloonHover=`, as the locomotor caches it.
     fn balloon_hover(&self) -> bool {
         self.owner().locomotor.as_ref().unwrap().balloon_hover()
     }
+    /// `Techno+0x2B4`, TarCom, is set.
     fn has_target(&self) -> bool {
         self.owner().attack_target.target().is_some()
     }
+    /// `Foot+0x6AD`: a Magnetron lifted the owner.
     fn piggyback_active(&self) -> bool {
         self.owner().lift.swap_active()
     }
@@ -249,6 +257,7 @@ impl JumpjetFlightHost for CruiseHost<'_> {
         self.object_type()
             .is_some_and(|object| object.deploy_to_land)
     }
+    /// `FootClass::SetSpeedFraction @ 0x004D3710` (vt+0x544).
     fn set_speed_fraction(&mut self, fraction_bits: u64) {
         self.sim
             .substrate
@@ -259,6 +268,7 @@ impl JumpjetFlightHost for CruiseHost<'_> {
             .set_speed_fraction_native_bits(fraction_bits);
     }
     fn arrival_notify(&mut self) {}
+    /// `FacingClass::UpdateFacing @ 0x004C9300` on the body facing (`+0x388`).
     fn snap_body_facing(&mut self, facing: u16) {
         self.sim
             .substrate
@@ -464,7 +474,7 @@ impl JumpjetFlightHost for CruiseHost<'_> {
         owner.drop_credit.land();
         owner.crash.lower();
         if deploy_to_land {
-            owner.set_landing_for_deploy(false);
+            owner.clear_landing_for_deploy();
         }
     }
     fn crashing(&self) -> bool {
@@ -521,6 +531,7 @@ impl JumpjetFlightHost for CruiseHost<'_> {
             .map_or(0, |(_, _, z)| z as i32);
         [x, y, z]
     }
+    /// Owner `+0x427`: a Magnetron dropped it.
     fn dropped(&self) -> bool {
         self.owner().drop_credit.being_manipulated()
     }
@@ -590,17 +601,21 @@ impl JumpjetFlightHost for CruiseHost<'_> {
             sim.assign_null_destination(id, rules, registry, frame_effects);
         });
     }
+    /// The Jumpjet crash state `0x0054CA90`'s clear of `+0x428`/`+0x42C`
+    /// (`0x0054CFEE..0x0054CFF7`).
     fn clear_drop_credit(&mut self) {
         let owner = self.sim.substrate.entities.get_mut(self.stable_id).unwrap();
         owner.drop_credit.forget();
     }
+    /// The crash's OnBridge raise (`0x0054D012`).
     fn set_on_bridge(&mut self) {
         self.sim
             .substrate
             .entities
             .get_mut(self.stable_id)
             .unwrap()
-            .set_on_bridge(true);
+            .on_bridge
+            .store(true);
     }
 }
 
@@ -1090,6 +1105,45 @@ mod tests {
             locomotor.jumpjet_runtime().map(|runtime| runtime.phase()),
             Some(STATE_DESCEND)
         );
+    }
+
+    /// AircraftTracker Update (`0x004138C0`) runs only at the entry of State 1
+    /// and State 3, after `Process` (`0x0054AEC0`) has moved the owner. A
+    /// crashing Jumpjet still slides along its facing (`0x0054D55A..D607`)
+    /// while State 5 drops it, so it can cross into another cell while its
+    /// tracker cell (`+0x560`) stays where the fall began.
+    #[test]
+    fn a_falling_jumpjet_keeps_the_tracker_cell_it_crashed_in() {
+        let mut sim = hovering_jumpjet(0x40);
+        {
+            let jumpjet = sim.substrate.entities.get_mut(1).expect("jumpjet");
+            jumpjet.lifecycle.set_in_limbo_for_test(false);
+            jumpjet.lifecycle.set_cell_marked(true);
+            jumpjet.position.set_sub_x_for_test(SimFixed::from_num(250));
+            let runtime = jumpjet
+                .locomotor
+                .as_mut()
+                .and_then(|locomotor| locomotor.jumpjet_runtime_mut())
+                .expect("runtime");
+            let mut flight = runtime.flight();
+            flight.set_current_speed_bits_for_test(14.0f64.to_bits());
+            *runtime = runtime
+                .clone()
+                .with_phase_for_test(jumpjet_flight::STATE_CRASH)
+                .with_flight_for_test(flight);
+        }
+        sim.aircraft_tracker_add(1);
+        sim.session.binary_frame = 1001;
+        let stats = sim.tick_air_movement_with_cell_lists_one(
+            1,
+            None,
+            None,
+            crate::sim::world::FrameEffects::default(),
+        );
+        assert!(!stats.impact);
+        let jumpjet = sim.substrate.entities.get(1).expect("jumpjet");
+        assert_eq!((jumpjet.position.rx(), jumpjet.position.ry()), (11, 10));
+        assert_eq!(jumpjet.air_tracker_cell(), (10, 10));
     }
 
     /// Production parity for the native `east_cruise` row, owner already facing

@@ -1003,6 +1003,8 @@ fn is_gattling(sim: &Simulation, id: u64, rules: &RuleSet) -> bool {
 /// A Gattling type's stage call with the mission's `+0xC4` count, then
 /// `+0xC4 = 0`, as both handlers make it. Answers whether the type is a
 /// Gattling one; any other makes no call and keeps the count.
+/// `BuildingClass::Mission_Guard @ 0x004496B0`'s head (`0x004496C1..0x004496DF`) and
+/// `Mission_Attack @ 0x0044ACF0`'s Gattling calls (`0x0044B1C6`, `0x0044B26C`, ...).
 fn gattling_step(
     sim: &mut Simulation,
     id: u64,
@@ -1030,6 +1032,8 @@ fn gattling_step(
 }
 
 /// `+0x148 += 1`, the voxel turret's animation counter.
+/// `BuildingClass::Mission_Attack @ 0x0044ACF0` for a non-Gattling type: the OK tail
+/// (`0x0044B6D6..0x0044B724`) and REARM (`0x0044B235..0x0044B23C`).
 fn advance_turret_anim(sim: &mut Simulation, id: u64) {
     if let Some(entity) = sim.substrate.entities.get_mut(id) {
         entity.turret_anim_frame.advance();

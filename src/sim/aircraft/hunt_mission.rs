@@ -61,7 +61,8 @@ struct HuntFacts {
 }
 
 /// What a Mission_Hunt visit does and reads live, each where the original
-/// does it.
+/// does it. It supplies the reads of `AircraftClass::Mission_Hunt`
+/// (`0x00414A80`).
 trait HuntHost {
     /// What Greatest_Threat answers.
     type Threat;
@@ -109,7 +110,8 @@ fn hunt_visit<H: HuntHost>(facts: &HuntFacts, host: &mut H) -> i32 {
 }
 
 impl Simulation {
-    /// [`hunt_visit`] on aircraft `id`.
+    /// [`hunt_visit`] on aircraft `id`: `AircraftClass::Mission_Hunt`
+    /// (`0x00414A80`), with Ammo (`+0x2FC`) and the team (`+0x5D4`) read first.
     pub(crate) fn aircraft_mission_hunt(
         &mut self,
         id: u64,

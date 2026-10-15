@@ -1473,7 +1473,21 @@ pub(crate) fn try_queue_context_order_at_screen_point(
                 })
             })
             .flatten();
-        let clicked_friendly_refinery = clicked_friendly_refinery_id.is_some();
+        // Each miner's own What_Action over the refinery
+        // (`Selection__DispatchMultiUnitOrder` object loop): Enter only when
+        // the refinery's CAN_LOAD admits it (`0x0074017E`). A busy, unpowered
+        // or selling refinery leaves Select, and the click selects.
+        let entering_miners: Vec<u64> = clicked_friendly_refinery_id.map_or_else(Vec::new, |id| {
+            selected_miner_ids
+                .iter()
+                .copied()
+                .filter(|&miner| {
+                    sim.unit_building_click_action(miner, id, &resources.rules)
+                        == Some(crate::sim::world::BuildingClickAction::Enter)
+                })
+                .collect()
+        });
+        let clicked_friendly_refinery = !entering_miners.is_empty();
 
         // Check if the clicked cell holds tiberium (ore/gems). The Unit
         // harvest arms run only over a Cell the viewer has mapped
@@ -1503,7 +1517,7 @@ pub(crate) fn try_queue_context_order_at_screen_point(
             };
 
         if clicked_friendly_refinery && only_miners_selected {
-            for stable_id in selected_miner_ids {
+            for stable_id in entering_miners {
                 queued.push(CommandEnvelope::new(
                     owner_id,
                     execute_tick,
@@ -3144,7 +3158,7 @@ mod tests {
             .set_selected_for_test(false);
 
         let loaner = sim.entities_mut().get_mut(mcv).unwrap();
-        loaner.mark_mission_only();
+        loaner.mission_only.mark();
         loaner.discovery.set_owned_by_current_house_for_test(true);
         assert_eq!(action(&sim, mcv), AttackAction::NoMove);
 

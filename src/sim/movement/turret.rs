@@ -127,9 +127,8 @@ pub(crate) struct FacingUpdate {
 /// `LEA [ESI+0x388]` = hull at `0x00736A0E`/`0x00736A66`/`0x00736BCF`). It
 /// consumes no RNG and arms no timer other than the `FacingClass` countdown.
 ///
-/// PURE READ — mutates neither the entity nor the store. Shared by the global
-/// turret sweep and the per-object Fire→Facing host so both compute identical
-/// destinations (per-entity, so id-order and live-order walks agree).
+/// PURE READ — mutates neither the entity nor the store; the per-object
+/// Fire→Facing host commits what it returns.
 ///
 /// Native order, and what each arm does here:
 ///
@@ -299,127 +298,6 @@ pub(crate) fn current_weapon_is_omni_fire(
     };
     crate::sim::combat::combat_weapon::current_weapon(entity, obj, entities, rules, interner)
         .is_some_and(|weapon| weapon.omni_fire)
-}
-
-/// The turret destination this entity's owning native path drives it toward
-/// this frame, or `None` when that path calls no `Set`.
-///
-/// Dispatches on the class that actually owns the facing in gamemd:
-/// - **Unit** — `UnitClass::Facing_Update @ 0x00736990` ([`facing_update`]).
-/// - **Structure** — none: `BuildingClass::Mission_Attack @ 0x0044ACF0` sets
-///   its turret (`+0x388`) on the non-firing error arms (`0x0044B187`/
-///   `0x0044B1DE`/`0x0044B14E`) in the building's own visit
-///   (`world::techno_ai::building_missions`). A LEA census over
-///   `BuildingClass::Update`, `Mission_Guard` and every idle path finds no
-///   other `Set`/`UpdateFacing` of `+0x388`, so **a building turret keeps its
-///   last aim** — it never swings back.
-/// - **Aircraft** — its mission/locomotor owns its secondary-facing writes.
-/// - **Infantry** — legacy target-else-body rule.
-///
-/// Aircraft initializes BOTH facings even
-/// without Turret=yes (413FD2..414015). Its self-writers belong to Mission_Attack
-/// and Fly steering/takeoff (4181BB..4185DF, 4CE680, 4CF285/4CF3C5).
-/// AI41514C instead READS its secondary facing and copies it into a Carryall
-/// passenger; FireAt416041 samples it for launch math. Neither writes its own
-/// facing. State4's two setters now run at the firing boundary. This generic
-/// sweep must not overwrite them. Other Mission_Attack and Fly secondary
-/// setters remain required residuals of those mechanisms.
-pub(crate) fn desired_turret_facing(
-    entity: &GameEntity,
-    entities: &EntityStore,
-    rules: Option<&RuleSet>,
-    interner: &crate::sim::intern::StringInterner,
-    binary_frame: u32,
-) -> Option<u16> {
-    entity.barrel_facing.as_ref()?;
-    match entity.category() {
-        crate::map::entities::EntityCategory::Unit => {
-            facing_update(entity, entities, rules, interner, binary_frame).turret_destination
-        }
-        crate::map::entities::EntityCategory::Structure
-        | crate::map::entities::EntityCategory::Aircraft => None,
-        _ => Some(
-            entity
-                .attack_target
-                .target()
-                .and_then(|attack| facing_toward_target(entity, &attack, entities))
-                .unwrap_or_else(|| entity.body_facing_current(binary_frame)),
-        ),
-    }
-}
-
-/// Per-binary-frame turret rotation for the class this sweep still owns —
-/// legacy Infantry. Unit turrets are driven per-object by the combat Phase-2
-/// read window plus `unit_post::apply_unit_facing`, and a building's by its
-/// Mission_Attack.
-///
-/// Calls `FacingClass::set`, which is a no-op when the desired facing equals the
-/// current destination — so this function is idempotent. `None` from
-/// [`desired_turret_facing`] means "native calls no `Set` this frame".
-pub fn tick_turret_rotation(
-    entities: &mut EntityStore,
-    rules: &RuleSet,
-    native_frame: u32,
-    interner: &crate::sim::intern::StringInterner,
-) {
-    struct TurretUpdate {
-        id: u64,
-        target_facing: u16,
-    }
-    let mut updates: Vec<TurretUpdate> = Vec::new();
-
-    // Phase 1: read each turreted entity's desired facing.
-    let keys: Vec<u64> = entities.keys_sorted();
-    for &id in &keys {
-        let entity = match entities.get(id) {
-            Some(e) => e,
-            None => continue,
-        };
-        // Unit barrels are committed by their own live Fire -> Facing slot.
-        if entity.category() == crate::map::entities::EntityCategory::Unit {
-            continue;
-        }
-        // A warped object's AI sets no facing; its barrel finishes the turn it
-        // was given (`GameEntity::ai_frozen`).
-        if entity.ai_frozen() {
-            continue;
-        }
-        // Skip non-turreted entities; otherwise take the per-entity desired facing
-        // from the shared helper (single source for sweep + per-object host).
-        let Some(desired_facing) =
-            desired_turret_facing(entity, entities, Some(rules), interner, native_frame)
-        else {
-            continue;
-        };
-
-        updates.push(TurretUpdate {
-            id,
-            target_facing: desired_facing,
-        });
-    }
-
-    // Phase 2: apply rotation via FacingClass::set. Idempotent — no-op when
-    // target already equals current destination.
-    for update in &updates {
-        let rot = rules
-            .object(
-                interner.resolve(
-                    entities
-                        .get(update.id)
-                        .map(|e| e.type_ref())
-                        .unwrap_or_default(),
-                ),
-            )
-            .map(|obj| obj.turret_rot)
-            .unwrap_or(5);
-        if let Some(entity) = entities.get_mut(update.id)
-            && let Some(ref mut barrel) = entity.barrel_facing
-        {
-            // Refresh ROT in case rules changed (cheap; idempotent).
-            barrel.set_rot(rot);
-            barrel.set(update.target_facing, native_frame);
-        }
-    }
 }
 
 #[cfg(test)]

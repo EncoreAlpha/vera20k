@@ -119,6 +119,54 @@ use crate::util::native_x87::{
 /// `TechnoClass::Calculate_Threat_Score`'s additive base, `DAT_007F4E90`.
 const THREAT_SCORE_BASE: f64 = 100_000.0;
 
+/// Foot `+0x688`: a stopped object that could not fire at its target narrows
+/// its next scans (`FootClass::Greatest_Threat @ 0x004D9920`). The Foot
+/// constructor clears it (`0x004D33A8`). Independent of Techno's
+/// passive-target byte `+0x50C`.
+///
+/// - [`Self::mark_stopped_cannot_fire`]: Drive (`0x004B2E9F`), Ship
+///   (`0x006A24F2`) and Hover (`0x0051684D`) stop with a target they cannot
+///   fire at, before the team's Scan_Limit and target clear; the team action
+///   (`0x006EC3BD`) also sets it after each member's class target clear.
+/// - [`Self::finish_scan`]: the Foot scan clears it after an empty completed
+///   base scan (`0x004D9951..0x004D9955`); class overrides that return before
+///   Foot's leave it.
+/// - [`Self::clear_for_rescue`]: `Mission_Rescue` resets it before its direct
+///   mask-0 scan (`0x004DE03E`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct RetargetAfterStop(bool);
+
+impl RetargetAfterStop {
+    /// Whether the next scans narrow.
+    pub(crate) const fn get(self) -> bool {
+        self.0
+    }
+
+    /// A stop with a held target it cannot fire at.
+    pub(crate) fn mark_stopped_cannot_fire(&mut self) {
+        self.0 = true;
+    }
+
+    /// The Foot scan's clear when the completed base scan found nothing.
+    pub(crate) fn finish_scan(&mut self, found: bool) {
+        if !found {
+            self.0 = false;
+        }
+    }
+
+    /// `Mission_Rescue`'s reset before its direct scan.
+    pub(crate) fn clear_for_rescue(&mut self) {
+        self.0 = false;
+    }
+
+    /// The Foot scan's mask (`0x004D9931..0x004D9933`): set, it clears bit 2
+    /// and sets bit 1, changing AL only.
+    pub(crate) const fn coerce_mask(self, mask: u32) -> u32 {
+        if self.0 { (mask & !2) | 1 } else { mask }
+    }
+}
+
 /// `TechnoClass::Evaluate_Candidate @ 0x006F7D1F`'s Verses floor, `DAT_007F4E38`
 /// — a `float` `0.02` widened to double, so the comparison is against
 /// `0.019999999552965164` and an authored `Verses=2%` (exactly `0.02` as a
@@ -1349,7 +1397,7 @@ fn scanner_mask<'r>(
         EntityCategory::Unit | EntityCategory::Infantry | EntityCategory::Aircraft
     );
     let mask = if foot_wrapper_entered {
-        scanner.coerce_foot_threat_mask(mask)
+        scanner.foot_retarget_after_stop.coerce_mask(mask)
     } else {
         mask
     };

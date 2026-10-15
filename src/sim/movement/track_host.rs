@@ -54,10 +54,12 @@ impl TrackPass {
     }
 }
 
+/// The Drive/Ship locomotor's track selector and cursor (`+0x58`/`+0x5C`).
 fn progress(entity: &GameEntity, family: TrackFamily) -> Option<TrackProgress> {
     entity.locomotor.as_ref()?.track_progress(family)
 }
 
+/// The Drive/Ship locomotor's HeadToCoord (`+0x40`), null when absent.
 fn head(entity: &GameEntity, family: TrackFamily) -> DriveCoord {
     entity
         .locomotor
@@ -72,12 +74,15 @@ fn head_or_null(entity: Option<&GameEntity>, family: TrackFamily) -> DriveCoord 
         .unwrap_or(DriveCoord { x: 0, y: 0, z: 0 })
 }
 
+/// Stores the Drive/Ship locomotor's HeadToCoord (`+0x40`).
 fn set_head(entity: &mut GameEntity, family: TrackFamily, value: Option<DriveCoord>) {
     if let Some(loco) = entity.locomotor.as_mut() {
         loco.store_track_head(family, value);
     }
 }
 
+/// Stores the Drive/Ship locomotor's `+0x63`, which Process_Drive_Track's
+/// admission reads (Drive `0x004B0F2C`, Ship `0x006A05FC`).
 fn set_track_valid(entity: &mut GameEntity, family: TrackFamily, value: bool) {
     if let Some(loco) = entity.locomotor.as_mut() {
         loco.store_track_valid(family, value);
@@ -216,9 +221,6 @@ impl Simulation {
         registry: Option<&OverlayTypeRegistry>,
         effects: FrameEffects<'_>,
     ) -> Result<TrackPass, String> {
-        if invocation.apply_fresh_occupation {
-            self.track_apply_occupation(invocation.entity_id, invocation.family, true);
-        }
         let object = self
             .substrate
             .entities
@@ -242,6 +244,17 @@ impl Simulation {
             self.resolved_terrain.as_ref(),
             current_grid,
         );
+        // Drive4B1297 / Ship6A095F: a tube word with no selected track enters
+        // the tube instead of the paid loop.
+        if self.track_tube_head(
+            invocation.entity_id,
+            invocation.family,
+            rules,
+            registry,
+            effects,
+        )? {
+            return Ok(TrackPass::default());
+        }
         self.try_run_track_points_observed(
             invocation,
             fresh_budget,
@@ -262,9 +275,6 @@ impl Simulation {
         rules: Option<&RuleSet>,
         registry: Option<&OverlayTypeRegistry>,
     ) -> u32 {
-        if invocation.apply_fresh_occupation {
-            self.track_apply_occupation(invocation.entity_id, invocation.family, true);
-        }
         self.run_track_points_observed(invocation, fresh_budget, rules, registry, &mut |_, _, _| {})
     }
 
@@ -276,6 +286,8 @@ impl Simulation {
         })
     }
 
+    /// The track (`+0x58`/`+0x5C`), HeadToCoord (`+0x40`) and owner Location (`+0x9C`)
+    /// that Process_Drive_Track (Drive `0x004B0F20`, Ship `0x006A05F0`) reads.
     fn track_state(
         &self,
         id: u64,
@@ -359,8 +371,8 @@ impl Simulation {
                 call.adjust_terminal_budget(current, stored_head);
                 // Drive4B1FEF/Ship6A1632 restore the Foot occupation enable
                 // before terminal coordinates/Mark, then retire the selector.
-                self.set_track_occupation_enabled(id, true);
                 if let Some(entity) = self.substrate.entities.get_mut(id) {
+                    entity.foot_occupation_enabled.resume();
                     entity.navigation.path_runtime.set_path_blocked(false);
                 }
                 self.track_place(
@@ -442,8 +454,10 @@ impl Simulation {
 
             if self.track_occupation_enabled(id) {
                 self.track_raw_mark(id, false);
-                self.set_track_occupation_enabled(id, false);
+                // The first paid point drops the enable (Drive `0x004B161A`,
+                // Ship `0x006A0CDA`).
                 if let Some(entity) = self.substrate.entities.get_mut(id) {
+                    entity.foot_occupation_enabled.suspend();
                     entity.navigation.path_runtime.set_path_blocked(false);
                 }
             }
@@ -500,9 +514,10 @@ impl Simulation {
             {
                 return Ok(TrackPass::paid(moved));
             }
+            // A live object's SetHeight(0) runs with Marked cleared (Drive
+            // `0x004B1A8B`/`0x004B1AA8`, Ship `0x006A10CD`/`0x006A10E7`).
+            let marked = self.replace_foot_marked_byte(id, false);
             if let Some(entity) = self.substrate.entities.get_mut(id) {
-                let marked = entity.lifecycle.cell_marked();
-                entity.lifecycle.set_cell_marked(false);
                 let on_bridge = entity.on_bridge();
                 entity.position.set_height(
                     on_bridge,
@@ -510,8 +525,8 @@ impl Simulation {
                     self.resolved_terrain.as_ref(),
                     self.path_grid.as_deref(),
                 );
-                entity.lifecycle.set_cell_marked(marked);
             }
+            self.replace_foot_marked_byte(id, marked);
             if let Some(facing) = paid_facing
                 && let Some(entity) = self.substrate.entities.get_mut(id)
             {
@@ -613,12 +628,6 @@ impl Simulation {
             .is_some_and(|entity| entity.foot_occupation_enabled())
     }
 
-    fn set_track_occupation_enabled(&mut self, id: u64, value: bool) {
-        if let Some(entity) = self.substrate.entities.get_mut(id) {
-            entity.set_foot_occupation_enabled(value);
-        }
-    }
-
     /// Unit7441B0/744210 select the raw plane from exact live XYZ; REMOVE
     /// deliberately does not require a surviving structural bridge flag.
     pub(super) fn track_raw_mark(&mut self, id: u64, put: bool) {
@@ -693,15 +702,13 @@ impl Simulation {
             self.foot_mark_remove(id, rules, registry, effects);
             observe(self, id, TrackWorldEvent::MarkRemove);
         }
-        let saved_marked = if !crossing {
-            self.substrate.entities.get_mut(id).map(|entity| {
-                let marked = entity.lifecycle.cell_marked();
-                entity.lifecycle.set_cell_marked(false);
-                marked
-            })
-        } else {
-            None
-        };
+        // A same-cell SetLocation runs with Marked cleared: the paid point
+        // (Drive `0x004B1A5D`/`0x004B1A74`, Ship `0x006A109F`/`0x006A10B6`),
+        // the residual step (`0x004B25C9`/`0x004B25E3`, Ship
+        // `0x006A1C1A`/`0x006A1C34`) and the terminal point with its
+        // SetHeight(0) (`0x004B20A2`/`0x004B20CA`, Ship
+        // `0x006A16E5`/`0x006A170D`).
+        let saved_marked = (!crossing).then(|| self.replace_foot_marked_byte(id, false));
         super::ground_pose::foot_set_location(
             &mut self.substrate.entities,
             id,
@@ -716,7 +723,7 @@ impl Simulation {
                 // Crossing uses actual current cell; this predicate instead
                 // uses the previous transformed cached point (or current at
                 // cursor0). The resolver also stores the entered cell's level.
-                let mut on_bridge = entity.on_bridge();
+                let on_bridge = entity.on_bridge();
                 let update = super::movement_bridge::resolve_cell_transition_bridge_state(
                     &mut entity.position,
                     grid,
@@ -726,10 +733,9 @@ impl Simulation {
                 );
                 super::movement_bridge::apply_bridge_layer_state(
                     &mut entity.locomotor,
-                    &mut on_bridge,
+                    &mut entity.on_bridge,
                     update,
                 );
-                entity.set_on_bridge(on_bridge);
             } else if let Some(entered) =
                 grid.and_then(|grid| grid.cell(selected_cell.0, selected_cell.1))
             {
@@ -737,10 +743,7 @@ impl Simulation {
                 // enters a new cell.
                 entity
                     .position
-                    .store_level(super::movement_bridge::stored_level(
-                        entered.ground_level,
-                        entity.on_bridge(),
-                    ));
+                    .store_cell_level(entered.ground_level, entity.on_bridge());
             }
         }
         if terminal && let Some(entity) = self.substrate.entities.get_mut(id) {
@@ -752,10 +755,8 @@ impl Simulation {
                 self.path_grid.as_deref(),
             );
         }
-        if let Some(marked) = saved_marked
-            && let Some(entity) = self.substrate.entities.get_mut(id)
-        {
-            entity.lifecycle.set_cell_marked(marked);
+        if let Some(marked) = saved_marked {
+            self.replace_foot_marked_byte(id, marked);
         }
         if crossing {
             self.foot_mark_put_observed(
@@ -1200,6 +1201,15 @@ impl Simulation {
         if entity.lift.target().is_some() {
             self.release_locomotor(id, true, rules, None, effects);
         }
+        // RESIDUAL: `0x007389C4..0x00738A27` is not ported: a Unit whose
+        // mission (vt+0x184) is Move, with no NavCom, standing exactly on its
+        // Cell's center at height 0, transmits OVER_OUT to radio contact 0
+        // (vt+0x274(3), `crate::sim::radio::transmit_to_contact`). Trigger:
+        // a Unit on Move at rest on a level-0 Cell center with a radio
+        // contact. Effect: VERA keeps the link native breaks. Frequency: not
+        // measured.
+        // `0x00738A2F`: the navigation list may send it on.
+        self.handle_navigation_list(id, rules, None, effects);
         let Some(entity) = self.substrate.entities.get_mut(id) else {
             return saved_base_return;
         };
@@ -1237,9 +1247,22 @@ impl Simulation {
         } else if miner {
             rules.and_then(|rules| harvester_idle_selection(self, id, rules, skip_human_land_check))
         } else if armed {
+            // RESIDUAL: the armed arm's Area Guard pick (`0x00738B67..
+            // 0x00738C98`: a House IQ at `[IQ] GuardArea=`, the veteran
+            // GUARD_AREA ability or `DefaultToGuardArea=`, then no team,
+            // slave link, slave manager or bunker) is not ported; the Unit
+            // takes Guard. Trigger: an idle armed vehicle that passes it.
+            // Effect: it holds its ground instead of covering an area.
+            // Frequency: not measured.
             rules.map_or(Some(MissionType::Guard), |rules| {
                 crate::sim::world::foot_enter_idle_mode_selection(
-                    rules, category, current, false, false, effective,
+                    rules,
+                    category,
+                    current,
+                    false,
+                    false,
+                    effective,
+                    MissionType::Guard,
                 )
                 .queued_mission()
             })

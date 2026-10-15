@@ -477,6 +477,8 @@ pub(super) fn postmortem_duration_for_event(
         .then(|| postmortem_delay_duration(warhead, event.distance_leptons))
 }
 
+/// The vt+0x160 `TechnoClass::IsIronCurtained` (`0x0041BF40`) test that
+/// `Apply_area_damage` (`0x00489280`) makes at `0x0048994E` and `0x00489A4F`.
 pub(super) fn has_active_area_invulnerability(entity: &GameEntity, current_tick: u64) -> bool {
     // Every GameEntity is a TechnoClass-derived object, so the native
     // AbstractFlags +0x14 bit-0 identity test is inherent in this store. The
@@ -487,6 +489,8 @@ pub(super) fn has_active_area_invulnerability(entity: &GameEntity, current_tick:
     )
 }
 
+/// `Apply_area_damage` (`0x00489280`)'s isolation pre-scan (`0x0048993E..0x00489968`):
+/// an Iron Curtained receiver under 85 leptons without the Force Shield byte arms it.
 fn event_arms_ic_isolation(
     event: &EntityDamageEvent,
     entities: &EntityStore,

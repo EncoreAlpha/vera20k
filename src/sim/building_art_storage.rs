@@ -70,6 +70,8 @@ fn active_slot(tier: i32) -> Option<u8> {
     }
 }
 impl Simulation {
+    /// `GetHealthRatio <= ConditionYellow` picks the slot's name and flag for `0x00451890`:
+    /// OnConstructionComplete `0x00446021..0x0044605A`, UpdateAnimation `0x00450D2B..0x00450D5E`.
     fn allocate_storage_slot(&mut self, id: u64, slot: u8, rules: &RuleSet) {
         let Some(entity) = self.entities().get(id) else {
             return;
@@ -84,6 +86,8 @@ impl Simulation {
         );
         self.set_building_anim_slot(id, slot, damaged, false, 0, rules);
     }
+    /// `BuildingClass::OnConstructionComplete @ 0x00445F80`, `0x00445FE4..0x00446019`: the
+    /// refinery tier, the `+0x33C` storage total times 4 over `Storage=`, into `+0x6F0`.
     pub(super) fn initialize_refinery_storage_anim(&mut self, id: u64, rules: &RuleSet) {
         let Some(entity) = self.entities().get(id) else {
             return;

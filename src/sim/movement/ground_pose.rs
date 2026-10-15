@@ -25,7 +25,8 @@ use crate::util::lepton::{
 /// module. Its writers are the gamemd Location writes: SetLocation
 /// ([`Self::put_location`], [`Self::put_world_xy`]), the in-cell offset
 /// ([`Self::put_cell_offset`]), the Z store ([`Self::put_z`]), SetHeight
-/// ([`Self::set_height`]), VERA's level cache ([`Self::store_level`]) and the
+/// ([`Self::set_height`]), VERA's level cache ([`Self::store_cell_level`],
+/// [`Self::put_location_with_level`], [`Self::copy_level_from`]) and the
 /// whole-Location copy ([`Self::copy_from`]).
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Position {
@@ -174,13 +175,34 @@ impl Position {
         }
     }
 
-    /// Store the level the object stands at (`z`), VERA's cache of its cell's
-    /// level plus the deck when OnBridge
-    /// ([`stored_level`](super::movement_bridge::stored_level)). gamemd keeps
-    /// no such field; each mover that changes cell, Unlimbo and spawn placement
-    /// write it with the Location.
-    pub(crate) fn store_level(&mut self, level: u8) {
-        self.z = level;
+    /// Store the level of the cell the object has entered, of terrain level
+    /// `cell_level` (the cell's raw signed byte):
+    /// [`stored_level`](super::movement_bridge::stored_level), that level
+    /// plus the deck when OnBridge, as `ObjectClass::SetHeight @ 0x005F5FA0`
+    /// places Z at height 0.
+    pub(crate) fn store_cell_level(&mut self, cell_level: u8, on_bridge: bool) {
+        self.z = super::movement_bridge::stored_level(cell_level, on_bridge);
+    }
+
+    /// SetLocation of `coord` ([`Self::put_location`]) with the level its Z
+    /// gives in whole levels: the constructor's zero Location and a reveal
+    /// at a coordinate.
+    pub(crate) fn put_location_with_level(&mut self, coord: DriveCoord) {
+        self.put_location(coord);
+        self.z = (coord.z / crate::util::lepton::GROUND_LEVEL_HEIGHT_LEPTONS) as u8;
+    }
+
+    /// This position moved to `coord` as [`Self::put_location_with_level`]
+    /// moves it: an Unlimbo's request, which the reveal stores.
+    pub(crate) fn at_location_with_level(mut self, coord: DriveCoord) -> Self {
+        self.put_location_with_level(coord);
+        self
+    }
+
+    /// Take `owner`'s level: a spawn launched from its owner keeps the
+    /// owner's level while it flies.
+    pub(crate) fn copy_level_from(&mut self, owner: &Position) {
+        self.z = owner.z;
     }
 
     /// Take `other` as the whole Location, its level and exact Z included: an

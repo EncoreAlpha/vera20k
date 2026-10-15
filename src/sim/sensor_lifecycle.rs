@@ -287,6 +287,8 @@ impl Simulation {
 
     /// `FootClass::Unlimbo` sensor writer. The deposit is absent for a
     /// rules-less/headless fixture and for non-Foot objects.
+    /// `FootClass::Unlimbo @ 0x004D7170`'s sensor add (vt+0x4E8 at `0x004D7318`), at
+    /// the cell of the object it took out of limbo.
     pub(crate) fn add_unit_sensor_after_unlimbo(&mut self, stable_id: u64, rules: &RuleSet) {
         let Some((owner, center, radius, in_limbo)) =
             self.substrate.entities.get(stable_id).and_then(|entity| {

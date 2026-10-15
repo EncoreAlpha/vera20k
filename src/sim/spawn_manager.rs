@@ -507,6 +507,9 @@ enum SpawnDestination {
 
 /// What the manager's bodies reach outside the manager: its owner, its
 /// children and the kamikaze tracker. Queries do not change the world.
+/// It supplies the reads of the `SpawnManagerClass` bodies: AI (`0x006B7230`), the
+/// constructor (`0x006B6C90`), PointerExpired (`0x006B7C60`), ClearAllTargets
+/// (`0x006B7BB0`) and Kill_All_Spawns (`0x006B7100`).
 trait SpawnHost {
     /// The frame counter (`0x00A8ED84`).
     fn frame(&self) -> i32;
@@ -1338,7 +1341,7 @@ impl SpawnHost for WorldSpawn<'_, '_> {
         let Some(owner) = self.sim.substrate.entities.get(self.owner_id) else {
             return;
         };
-        let owner_level = owner.position.z();
+        let owner_position = owner.position;
         // The Unlimbo direction: the owner's PrimaryFacing `Current()` rounded
         // to a DirType (`0x006B74E9..0x006B74FC`).
         let launch_dir = owner.body_facing_dir(frame);
@@ -1352,7 +1355,7 @@ impl SpawnHost for WorldSpawn<'_, '_> {
         // level stays the owner's. The original ignores its answer.
         if let Some(child) = self.sim.substrate.entities.get_mut(child) {
             child.position.put_location(launch);
-            child.position.store_level(owner_level);
+            child.position.copy_level_from(&owner_position);
             child.body_facing.snap(u16::from(launch_dir) << 8, frame);
         }
         let _ = self.sim.reveal_entity_with_rules(child, rules);

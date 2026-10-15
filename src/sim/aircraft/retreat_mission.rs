@@ -73,7 +73,8 @@ fn retreat_visit(
     RETREAT_FRAMES
 }
 
-/// One visit of aircraft `id`.
+/// One visit of aircraft `id`: `AircraftClass::Mission_Retreat`
+/// (`0x00415A50`), which reads the NavCom (`+0x5A4`) first.
 pub(super) fn retreat(
     sim: &mut Simulation,
     id: u64,

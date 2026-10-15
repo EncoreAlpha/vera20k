@@ -1,6 +1,5 @@
 //! The player's build options and production checks, asked of the one
-//! CanBuild owner ([`super::can_build`]), and factory matching and spawn
-//! cell logic.
+//! CanBuild owner ([`super::can_build`]), and factory matching.
 
 use crate::map::entities::EntityCategory;
 use crate::rules::foundation::foundation_dimensions;
@@ -189,6 +188,8 @@ pub(super) fn is_production_factory(
     }
 }
 
+/// VERA-only: the producer-focus list (the sidebar's view and `CycleProducerFocus`): the owner's
+/// structures that build `category`, less dying, limboed and constructing ones, from the store.
 pub fn producer_candidates_for_owner_category(
     entities: &EntityStore,
     rules: &RuleSet,

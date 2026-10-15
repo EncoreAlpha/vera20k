@@ -190,7 +190,8 @@ pub(crate) fn drop_payload(
 }
 
 /// Adds `delta` to the plane's Ammo (`+0x2FC`, a signed int that wraps) and
-/// returns the new count.
+/// returns the new count. `AircraftClass::Drop_Payload` (`0x00415C60`) takes
+/// one at `0x00415C7D..0x00415C8D` and gives it back at `0x00415EC7`.
 fn add_ammo(sim: &mut Simulation, id: u64, delta: i32) -> i32 {
     sim.substrate
         .entities
@@ -361,9 +362,9 @@ fn paradrop(
     if flags & BRIDGE_FLAG_STRUCTURAL != 0
         && let Some(rider) = sim.substrate.entities.get_mut(passenger)
     {
-        rider.set_on_bridge(true);
+        rider.on_bridge.store(true);
         if let Some(locomotor) = rider.locomotor.as_mut() {
-            locomotor.set_layer(MovementLayer::Bridge);
+            locomotor.store_ground_layer(true);
         }
     }
     if flags & BRIDGE_FLAG_STRUCTURAL != 0 && flags & BRIDGE_FLAG_TRANSITION == 0 {
@@ -441,7 +442,11 @@ fn paradrop(
         .entities
         .get_mut(passenger)
         .is_some_and(|rider| {
-            rider.set_sub_cell((rider.category() == EntityCategory::Infantry).then_some(spot));
+            if rider.category() == EntityCategory::Infantry {
+                rider.sub_cell.hold(spot);
+            } else {
+                rider.sub_cell.release();
+            }
             rider.passenger_role.clear_carrier_relation();
             rider.on_bridge()
         });

@@ -1024,7 +1024,10 @@ use crate::sim::world::Simulation;
 // share this integrated bincode layout and are both refused. The one House
 // tech-tree recheck stays main's authority; EntityStore indexes remain derived.
 // 354 -> 355: the path batch keeps where its next capped pass starts.
-const SNAPSHOT_VERSION: u32 = 355;
+// 355 -> 356: the Foot navigation list (`+0x5AC`) and its loop flag (`+0x6B1`).
+// 356 -> 357: the voxel HVA and OREGATH frame clocks are gone (#1593); draws
+// take both frames from Foot+0x538. Version 356 records carry them.
+const SNAPSHOT_VERSION: u32 = 357;
 
 const SNAPSHOT_PRODUCT_MAGIC: [u8; 8] = *b"VERA20K\0";
 const SNAPSHOT_ENVELOPE_VERSION: u32 = 1;
@@ -2067,6 +2070,15 @@ fn restore_object_references(
                 "navigation.nav_queue",
             )?;
         }
+        for target in entity.navigation.nav_list() {
+            validate_nav_reference(
+                target,
+                identities,
+                &entity_ids,
+                entity_id,
+                "navigation.nav_list",
+            )?;
+        }
 
         if let Some(target_id) = entity.tether.partner() {
             require_resolved_reference(
@@ -2129,20 +2141,6 @@ fn restore_object_references(
                 "EntityStore",
                 entity_id,
                 "aircraft_ammo.dock",
-                "EntityStore",
-                target_id,
-            )?;
-        }
-        if let Some(target_id) = entity
-            .miner
-            .as_ref()
-            .and_then(|miner| miner.reserved_refinery())
-        {
-            require_resolved_reference(
-                entity_ids.contains(&target_id),
-                "EntityStore",
-                entity_id,
-                "miner.reserved_refinery",
                 "EntityStore",
                 target_id,
             )?;
@@ -4388,7 +4386,9 @@ mod tests {
         // 352 -> 353: each object's infantry house-tracking latches.
         // 353 -> 354: integrated ALL01 retained Tag/ChronoScreen/House/Team state.
         // 354 -> 355: the path batch's next capped turn.
-        assert_eq!(super::SNAPSHOT_VERSION, 355);
+        // 355 -> 356: the Foot navigation list and its loop flag.
+        // 356 -> 357: no voxel HVA or OREGATH frame clock.
+        assert_eq!(super::SNAPSHOT_VERSION, 357);
     }
 
     #[test]

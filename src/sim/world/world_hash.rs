@@ -11,6 +11,7 @@ use std::hash::{Hash, Hasher};
 use super::Simulation;
 use crate::sim::game_entity::GameEntity;
 use crate::sim::overlay_grid::OverlayCell;
+use crate::sim::parallel;
 use crate::sim::state_hasher::{self, StateHasher};
 
 // Rust-only attribution of the retired global initializer's empty Super map.
@@ -43,7 +44,7 @@ mod retained_cell_hash_tests {
         let mut entity = GameEntity::test_default(1, "FV", "Test", 10, 10);
         // Every cell is deliberately unallocated. These different requested
         // coordinates retain the same process object; hashing may not stamp it.
-        for retained_field in 0..7 {
+        for retained_field in 0..8 {
             entity.attack_target.set_for_test(None);
             entity.suspended_attack_target.set_for_test(None);
             entity.set_archive_target(None);
@@ -68,6 +69,9 @@ mod retained_cell_hash_tests {
                 6 => entity
                     .navigation
                     .push_nav_queue_for_test(NavTargetRef::cell(13, 14)),
+                7 => entity
+                    .navigation
+                    .set_nav_list_for_test(vec![NavTargetRef::cell(15, 16)], false),
                 _ => unreachable!(),
             }
             sim.substrate.entities.insert(entity.clone());
@@ -78,6 +82,38 @@ mod retained_cell_hash_tests {
             assert_ne!(before, sim.state_hash(), "retained field {retained_field}");
             assert_eq!(dummy.snapshot().coord, (97, 96));
         }
+    }
+
+    #[test]
+    fn an_allocated_cell_bridge_anchor_on_the_dummy_hashes_its_live_coordinate() {
+        let mut sim = Simulation::new();
+        let mut anchored = crate::map::resolved_terrain::test_flat_cell(1, 0);
+        anchored.bridge_facts.native_anchor =
+            Some(crate::map::cell_index::NativeCellIdentity::Dummy);
+        let cells = vec![crate::map::resolved_terrain::test_flat_cell(0, 0), anchored];
+        sim.install_resolved_terrain_for_new_map(ResolvedTerrainGrid::from_cells(2, 1, cells));
+        let dummy = sim.effective_shared_cell_dummy();
+        let coordinate_hashes = |sim: &Simulation| {
+            dummy.stamp_coord(5, 6);
+            let before = sim.state_hash();
+            dummy.stamp_coord(7, 8);
+            before != sim.state_hash()
+        };
+        assert!(coordinate_hashes(&sim));
+        let terrain = sim.resolved_terrain.as_mut().expect("installed map");
+        terrain.test_set_native_allocated_cells(&[(0, 0)]);
+        assert!(
+            !coordinate_hashes(&sim),
+            "an unallocated cell retains nothing"
+        );
+        let terrain = sim.resolved_terrain.as_mut().expect("installed map");
+        terrain.test_set_native_allocated_cells(&[(0, 0), (1, 0)]);
+        let anchor = &mut terrain.cell_mut(1, 0).expect("the cell").bridge_facts;
+        anchor.native_anchor = None;
+        assert!(
+            !coordinate_hashes(&sim),
+            "a released anchor retains nothing"
+        );
     }
 }
 
@@ -519,7 +555,13 @@ impl Simulation {
         }
         [
             ("houses", digest(|h| self.hash_houses(h))),
-            ("entities", digest(|h| self.hash_entities(h))),
+            (
+                "entities",
+                digest(|h| {
+                    let entities: Vec<_> = self.substrate.entities.values().collect();
+                    Self::hash_entities(&self.entity_digests(&entities), h)
+                }),
+            ),
             (
                 "raw_occupation",
                 digest(|h| self.substrate.fold_raw_cell_occupation(h)),
@@ -556,7 +598,10 @@ impl Simulation {
                         .hash_state(self.session.binary_frame as i32, h)
                 }),
             ),
-            ("fog_alliances", digest(|h| self.hash_fog_and_alliances(h))),
+            (
+                "fog_alliances",
+                digest(|h| self.hash_fog_and_alliances(&self.fog_digests(), h)),
+            ),
             ("power", digest(|h| self.hash_power_states(h))),
             ("projectiles", digest(|h| self.hash_projectiles(h))),
         ]
@@ -573,7 +618,43 @@ impl Simulation {
     }
 
     /// Fold everything `state_hash` covers into `hasher`, in a fixed order.
+    ///
+    /// The per-House fog digests, the per-entity digests and the scans for a
+    /// cell or entity that retains the shared dummy cell do not depend on the
+    /// fold before them, so they run on the worker pool while this thread
+    /// folds the parts that come first. The fold order, and so the hash, does
+    /// not change.
     fn fold_state(&self, hasher: &mut impl Hasher) {
+        let mut fog_digests = Vec::new();
+        parallel::alongside(
+            || fog_digests = self.fog_digests(),
+            || self.fold_before_fog(hasher),
+        );
+        let entities: Vec<_> = self.substrate.entities.values().collect();
+        let mut entity_digests = Vec::new();
+        let mut cells_or_entities_retain_dummy = false;
+        parallel::alongside(
+            || {
+                entity_digests = self.entity_digests(&entities);
+                cells_or_entities_retain_dummy =
+                    self.cells_anchor_dummy() || self.entities_target_dummy(&entities);
+            },
+            || self.fold_fog_through_projectiles(&fog_digests, hasher),
+        );
+        self.hash_shared_cell_dummy(cells_or_entities_retain_dummy, hasher);
+        self.hash_waves(hasher);
+        self.hash_super_weapons(hasher);
+        Self::hash_entities(&entity_digests, hasher);
+        self.hash_anims(hasher);
+        self.hash_voxel_anims(hasher);
+        self.hash_particle_systems(hasher);
+        self.session.fold_identity(hasher);
+        self.session.pixel_conversion_bounds.hash(hasher);
+    }
+
+    /// The fold before the fog digests: clocks, RNG, identities, scripts,
+    /// object order, occupation, Houses, production and power.
+    fn fold_before_fog(&self, hasher: &mut impl Hasher) {
         self.session.tick.hash(hasher);
         self.session.binary_frame.hash(hasher);
         // ScenarioClass owns the sole saved/synchronized RNG. Main and MapGen
@@ -627,7 +708,11 @@ impl Simulation {
         self.hash_terminal_score_snapshot(hasher);
         self.hash_production(hasher);
         self.hash_power_states(hasher);
-        self.hash_fog_and_alliances(hasher);
+    }
+
+    /// The fold from the fog digests through projectiles.
+    fn fold_fog_through_projectiles(&self, fog_digests: &[u64], hasher: &mut impl Hasher) {
+        self.hash_fog_and_alliances(fog_digests, hasher);
         self.hash_bridge_state(hasher);
         // Native local graph updates retain route-selection history even
         // when the current terrain and House threat values are identical.
@@ -657,109 +742,122 @@ impl Simulation {
         self.hash_smudge_grid(hasher);
         self.hash_radiation(hasher);
         self.kamikaze.fold_hash(hasher);
+        self.hash_projectiles(hasher);
+    }
+
+    /// The shared dummy cell's state, and its live coordinate while its own
+    /// bridge anchor, a real cell's bridge anchor or an entity's target
+    /// (`cells_or_entities_retain_dummy`), or a projectile retains it.
+    fn hash_shared_cell_dummy(
+        &self,
+        cells_or_entities_retain_dummy: bool,
+        hasher: &mut impl Hasher,
+    ) {
+        let shared_dummy_handle = self.effective_shared_cell_dummy();
+        let shared_dummy = shared_dummy_handle.snapshot();
+        let gap_flags = shared_dummy_handle.retained_bridge_flags() & 0xC00;
+        let bridge_keeps_dummy = shared_dummy_handle.native_anchor()
+            == Some(crate::map::cell_index::NativeCellIdentity::Dummy);
         {
-            self.hash_projectiles(hasher);
-            let shared_dummy_handle = self.effective_shared_cell_dummy();
-            let shared_dummy = shared_dummy_handle.snapshot();
-            let gap_flags = shared_dummy_handle.retained_bridge_flags() & 0xC00;
-            let bridge_keeps_dummy = shared_dummy_handle.native_anchor()
-                == Some(crate::map::cell_index::NativeCellIdentity::Dummy)
-                || self.resolved_terrain.as_ref().is_some_and(|terrain| {
-                    terrain.iter().any(|cell| {
-                        cell.bridge_facts.native_anchor
-                            == Some(crate::map::cell_index::NativeCellIdentity::Dummy)
-                    })
-                });
-            {
-                let extra_flags = shared_dummy_handle.raw_flags()
-                    & !crate::map::bridge_facts::RETAINED_CELLCLASS_BRIDGE_FLAG_MASK;
-                let anchor = shared_dummy_handle.native_anchor();
-                if extra_flags != 0 || anchor.is_some() {
-                    b"shared-cell-dummy-bridge-publication-v1".hash(hasher);
-                    extra_flags.hash(hasher);
-                    anchor.hash(hasher);
-                }
+            let extra_flags = shared_dummy_handle.raw_flags()
+                & !crate::map::bridge_facts::RETAINED_CELLCLASS_BRIDGE_FLAG_MASK;
+            let anchor = shared_dummy_handle.native_anchor();
+            if extra_flags != 0 || anchor.is_some() {
+                b"shared-cell-dummy-bridge-publication-v1".hash(hasher);
+                extra_flags.hash(hasher);
+                anchor.hash(hasher);
             }
-            if gap_flags != 0 {
-                b"shared-cell-dummy-gap-v1".hash(hasher);
-                gap_flags.hash(hasher);
-            }
-            let shared_dummy_overlay = shared_dummy_handle.overlay_identity_state();
-            b"shared-cell-dummy-land-v1".hash(hasher);
-            shared_dummy_handle.land_type().hash(hasher);
-            if shared_dummy_handle.neighbor_count() != 0 {
-                b"shared-cell-dummy-neighbor-count-v1".hash(hasher);
-                shared_dummy_handle.neighbor_count().hash(hasher);
-            }
-            let shared_dummy_tube = shared_dummy_handle.raw_tube_index();
-            if shared_dummy_tube != -1 {
-                b"shared-cell-dummy-tube-v1".hash(hasher);
-                shared_dummy_tube.hash(hasher);
-            }
-            // Unlike the requested coordinate, native `+0x140 & 0x1180`
-            // survives ordinary lookups and changes later bridge/FNPC/target
-            // behavior even when no Bullet currently retains the dummy.
-            b"shared-cell-dummy-spark-v4".hash(hasher);
-            shared_dummy.bridge_flags_0x1180.hash(hasher);
-            shared_dummy.level.hash(hasher);
-            shared_dummy.slope_type.hash(hasher);
-            // CellClass+0x44/+0x11E can be mutated through true-dummy wall
-            // cleanup and later changes lookup-dependent wall behavior. Native
-            // Resize reconstructs the process object, so this is synchronized
-            // live-state authority rather than Scenario payload authority.
-            b"shared-cell-dummy-overlay-v1".hash(hasher);
-            shared_dummy_overlay.hash(hasher);
-            if bridge_keeps_dummy
-                || self.resolved_terrain.as_ref().is_some_and(|terrain| {
-                    use crate::map::cell_index::NativeCellIdentity;
-                    use crate::sim::combat::TargetKind;
-                    use crate::sim::components::NavTargetRef;
-                    let keeps_dummy = |target: TargetKind| {
-                        target.cell_identity(terrain) == Some(NativeCellIdentity::Dummy)
-                    };
-                    self.substrate.entities.values().any(|entity| {
-                        [
-                            entity.attack_target.target(),
-                            entity.suspended_attack_target.target(),
-                            entity.archive_target(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .any(keeps_dummy)
-                            || [
-                                entity.navigation.nav_com(),
-                                entity.navigation.nav_com_aux(),
-                                entity.navigation.suspended_nav_com(),
-                            ]
-                            .into_iter()
-                            .flatten()
-                            .chain(entity.navigation.nav_queue().iter().copied())
-                            .any(|target| match target {
-                                NavTargetRef::Cell { rx, ry } => {
-                                    keeps_dummy(TargetKind::Cell(rx, ry))
-                                }
-                                _ => false,
-                            })
-                    })
-                })
-                || self.projectiles.iter().any(|(_, projectile)| {
-                    projectile.target == crate::sim::projectile::ProjectileTarget::DummyCell
-                })
-            {
-                // Retained Cell pointers make the live coordinate affect
-                // future range, approach and projectile behavior.
-                b"shared-cell-dummy-target-v3".hash(hasher);
-                shared_dummy.coord.hash(hasher);
-            }
-            self.hash_waves(hasher);
         }
-        self.hash_super_weapons(hasher);
-        self.hash_entities(hasher);
-        self.hash_anims(hasher);
-        self.hash_voxel_anims(hasher);
-        self.hash_particle_systems(hasher);
-        self.session.fold_identity(hasher);
-        self.session.pixel_conversion_bounds.hash(hasher);
+        if gap_flags != 0 {
+            b"shared-cell-dummy-gap-v1".hash(hasher);
+            gap_flags.hash(hasher);
+        }
+        let shared_dummy_overlay = shared_dummy_handle.overlay_identity_state();
+        b"shared-cell-dummy-land-v1".hash(hasher);
+        shared_dummy_handle.land_type().hash(hasher);
+        if shared_dummy_handle.neighbor_count() != 0 {
+            b"shared-cell-dummy-neighbor-count-v1".hash(hasher);
+            shared_dummy_handle.neighbor_count().hash(hasher);
+        }
+        let shared_dummy_tube = shared_dummy_handle.raw_tube_index();
+        if shared_dummy_tube != -1 {
+            b"shared-cell-dummy-tube-v1".hash(hasher);
+            shared_dummy_tube.hash(hasher);
+        }
+        // Unlike the requested coordinate, native `+0x140 & 0x1180`
+        // survives ordinary lookups and changes later bridge/FNPC/target
+        // behavior even when no Bullet currently retains the dummy.
+        b"shared-cell-dummy-spark-v4".hash(hasher);
+        shared_dummy.bridge_flags_0x1180.hash(hasher);
+        shared_dummy.level.hash(hasher);
+        shared_dummy.slope_type.hash(hasher);
+        // CellClass+0x44/+0x11E can be mutated through true-dummy wall
+        // cleanup and later changes lookup-dependent wall behavior. Native
+        // Resize reconstructs the process object, so this is synchronized
+        // live-state authority rather than Scenario payload authority.
+        b"shared-cell-dummy-overlay-v1".hash(hasher);
+        shared_dummy_overlay.hash(hasher);
+        if bridge_keeps_dummy
+            || cells_or_entities_retain_dummy
+            || self.projectiles.iter().any(|(_, projectile)| {
+                projectile.target == crate::sim::projectile::ProjectileTarget::DummyCell
+            })
+        {
+            // Retained Cell pointers make the live coordinate affect
+            // future range, approach and projectile behavior.
+            b"shared-cell-dummy-target-v3".hash(hasher);
+            shared_dummy.coord.hash(hasher);
+        }
+    }
+
+    /// Whether an allocated real cell's bridge anchor is the shared dummy
+    /// cell.
+    fn cells_anchor_dummy(&self) -> bool {
+        self.resolved_terrain.as_ref().is_some_and(|terrain| {
+            let cells = terrain.cells();
+            parallel::any_index(cells.len(), |index| {
+                terrain.is_allocated(index)
+                    && cells[index].bridge_facts.native_anchor
+                        == Some(crate::map::cell_index::NativeCellIdentity::Dummy)
+            })
+        })
+    }
+
+    /// Whether an entity's attack, suspended, archive or navigation target is
+    /// a cell the shared dummy stands for.
+    fn entities_target_dummy(&self, entities: &[&GameEntity]) -> bool {
+        self.resolved_terrain.as_ref().is_some_and(|terrain| {
+            use crate::map::cell_index::NativeCellIdentity;
+            use crate::sim::combat::TargetKind;
+            use crate::sim::components::NavTargetRef;
+            let keeps_dummy = |target: TargetKind| {
+                target.cell_identity(terrain) == Some(NativeCellIdentity::Dummy)
+            };
+            parallel::any_index(entities.len(), |index| {
+                let entity = entities[index];
+                [
+                    entity.attack_target.target(),
+                    entity.suspended_attack_target.target(),
+                    entity.archive_target(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(keeps_dummy)
+                    || [
+                        entity.navigation.nav_com(),
+                        entity.navigation.nav_com_aux(),
+                        entity.navigation.suspended_nav_com(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .chain(entity.navigation.nav_queue().iter().copied())
+                    .chain(entity.navigation.nav_list().iter().copied())
+                    .any(|target| match target {
+                        NavTargetRef::Cell { rx, ry } => keeps_dummy(TargetKind::Cell(rx, ry)),
+                        _ => false,
+                    })
+            })
+        })
     }
 
     /// Fold mutable MapClass LocalSize authority and its immutable Size-height
@@ -1240,19 +1338,24 @@ impl Simulation {
         }
     }
 
-    /// Hash fog-of-war visibility and house alliance data.
-    fn hash_fog_and_alliances(&self, hasher: &mut impl Hasher) {
+    /// One digest per House's fog grids, in House order, spread over threads
+    /// once the grids are large (30 Houses on a 500x500 map hold millions of
+    /// cells).
+    fn fog_digests(&self) -> Vec<u64> {
+        let grids: Vec<_> = self.fog.by_owner.values().collect();
+        let cells = usize::from(self.fog.width) * usize::from(self.fog.height) * grids.len();
+        state_hasher::digests(&grids, cells >= 1 << 20, |grid, hasher| {
+            grid.hash_cells(hasher)
+        })
+    }
+
+    /// Hash fog-of-war visibility and house alliance data, each House's grids
+    /// as its digest from [`Self::fog_digests`].
+    fn hash_fog_and_alliances(&self, fog_digests: &[u64], hasher: &mut impl Hasher) {
         self.fog.width.hash(hasher);
         self.fog.height.hash(hasher);
-        // Each House's grids fold into their own digest, spread over threads
-        // once the grids are large (30 Houses on a 500x500 map hold millions
-        // of cells); the digests fold in House order.
-        let owners: Vec<_> = self.fog.by_owner.iter().collect();
-        let cells = usize::from(self.fog.width) * usize::from(self.fog.height) * owners.len();
-        let digests = state_hasher::digests(&owners, cells >= 1 << 20, |(_, fog), hasher| {
-            fog.hash_cells(hasher)
-        });
-        for ((owner, _), digest) in owners.iter().zip(digests) {
+        debug_assert_eq!(fog_digests.len(), self.fog.by_owner.len());
+        for (owner, digest) in self.fog.by_owner.keys().zip(fog_digests) {
             owner.hash(hasher);
             digest.hash(hasher);
         }
@@ -1435,18 +1538,20 @@ impl Simulation {
         }
     }
 
-    /// Hash all entity components in stable-entity-ID order.
-    /// The store iterates in stable_id order, so no manual sort needed.
-    /// Each entity folds into its own digest, spread over threads in large
-    /// worlds; the digests fold in that order.
-    fn hash_entities(&self, hasher: &mut impl Hasher) {
+    /// One digest per entity of `entities`, the stored entities in stable-ID
+    /// order (the store iterates in that order, so no sort is needed),
+    /// spread over threads in large worlds.
+    fn entity_digests(&self, entities: &[&GameEntity]) -> Vec<u64> {
         let frame = self.session.binary_frame;
-        let entities: Vec<_> = self.substrate.entities.values().collect();
-        let parallel = entities.len() >= 4096;
-        let digests = state_hasher::digests(&entities, parallel, |entity, hasher| {
+        state_hasher::digests(entities, entities.len() >= 4096, |entity, hasher| {
             hash_entity(entity, frame, hasher)
-        });
-        for digest in digests {
+        })
+    }
+
+    /// Hash all entity components in stable-entity-ID order, as the digests
+    /// from [`Self::entity_digests`].
+    fn hash_entities(entity_digests: &[u64], hasher: &mut impl Hasher) {
+        for digest in entity_digests {
             digest.hash(hasher);
         }
     }
@@ -1799,6 +1904,13 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     entity.navigation.nav_com().hash(hasher);
     entity.navigation.suspended_nav_com().hash(hasher);
     entity.navigation.nav_queue().hash(hasher);
+    // Foot+5AC/+6B1 hash only when used, so established goldens without a
+    // navigation list keep their values.
+    if !entity.navigation.nav_list().is_empty() || entity.navigation.nav_list_loops() {
+        0x5ac_u32.hash(hasher);
+        entity.navigation.nav_list().hash(hasher);
+        entity.navigation.nav_list_loops().hash(hasher);
+    }
     entity.navigation.pending_destination_setter().hash(hasher);
 
     entity.foot_speed.applied_fraction().hash(hasher);
@@ -2011,6 +2123,7 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
             // home_refinery: None.
             None::<u64>.hash(hasher);
         }
+        // The retired return-order refinery; nothing writes it.
         miner.reserved_refinery().hash(hasher);
         let native_ore_field = true;
         if !native_ore_field {
@@ -4125,6 +4238,7 @@ mod infantry_hash_tests {
             .entities
             .get_mut(1)
             .unwrap()
+            .foot_retarget_after_stop
             .mark_stopped_cannot_fire();
         let retained_hash = sim.state_hash();
         assert_ne!(retained_hash, clear_hash);
@@ -4135,10 +4249,16 @@ mod infantry_hash_tests {
         assert_eq!(loaded.state_hash(), retained_hash);
         let actor = loaded.substrate.entities.get_mut(1).unwrap();
         assert!(actor.foot_retarget_after_stop());
-        assert_eq!(actor.coerce_foot_threat_mask(input_mask), effective_mask);
-        actor.finish_foot_threat_scan(false);
+        assert_eq!(
+            actor.foot_retarget_after_stop.coerce_mask(input_mask),
+            effective_mask
+        );
+        actor.foot_retarget_after_stop.finish_scan(false);
         assert!(!actor.foot_retarget_after_stop());
-        assert_eq!(actor.coerce_foot_threat_mask(input_mask), input_mask);
+        assert_eq!(
+            actor.foot_retarget_after_stop.coerce_mask(input_mask),
+            input_mask
+        );
         assert_eq!(loaded.state_hash(), clear_hash);
     }
 

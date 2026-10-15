@@ -459,9 +459,12 @@ fn eject_head_passenger(
             let dest = strict_beyond.unwrap_or(place_cell);
 
             if let Some(passenger) = sim.substrate.entities.get_mut(pax_id) {
-                passenger.set_sub_cell(sub_cell);
+                match sub_cell {
+                    Some(spot) => passenger.sub_cell.hold(spot),
+                    None => passenger.sub_cell.release(),
+                }
                 if let Some(loco) = passenger.locomotor.as_mut() {
-                    loco.set_layer(MovementLayer::Ground);
+                    loco.store_ground_layer(false);
                 }
             }
             let z = cell_level_or(sim, place_cell, transport_z);
@@ -689,9 +692,9 @@ pub(crate) fn building_mission_unload_absorber(
             };
             let destination = strict_beyond.unwrap_or(adjacent);
             if let Some(passenger) = sim.substrate.entities.get_mut(passenger_id) {
-                passenger.set_sub_cell(Some(sub_cell));
+                passenger.sub_cell.hold(sub_cell);
                 if let Some(locomotor) = passenger.locomotor.as_mut() {
-                    locomotor.set_layer(MovementLayer::Ground);
+                    locomotor.store_ground_layer(false);
                 }
             }
             let fallback_z = sim
@@ -1151,7 +1154,7 @@ fn eject_from_aircraft(
             if let Some(passenger) = sim.substrate.entities.get_mut(pax_id)
                 && let Some(loco) = passenger.locomotor.as_mut()
             {
-                loco.set_layer(MovementLayer::Ground);
+                loco.store_ground_layer(false);
             }
             reveal_unloaded_passenger(
                 sim,

@@ -79,7 +79,7 @@ fn world(row: &Value) -> Simulation {
     });
     plane.set_in_playfield(flag(row, "in_playfield"));
     if flag(row, "mission_only") {
-        plane.mark_mission_only();
+        plane.mission_only.mark();
     }
     let mut sim = Simulation::with_seed(0);
     sim.substrate.entities.insert(plane);

@@ -44,6 +44,39 @@ use crate::sim::world::{FrameEffects, ObjectAiCtx, Simulation};
 /// What every MissionClass stub returns (`MOV EAX, 0x1C2`).
 const MISSION_STUB_FRAMES: i32 = 450;
 
+/// Techno `+0x3D4` (VERA name; the native name is unconfirmed): the object
+/// was placed for a mission rather than for its owner to command. The
+/// constructor clears it (`0x006F2F55`) and every other writer only sets it
+/// ([`Self::mark`]):
+/// - `AircraftClass::Unlimbo` (`0x004143EB`), for a type that is not
+///   `Selectable=`, not `Landable=` or whose weapon 0 is a Camera;
+/// - the reinforcement spawners, `TeamTypeClass::SpawnReinforcements`
+///   (`0x0065DBF2`, the drop pod plane) and `CreateReinforcementMembers`
+///   (`0x0065DFA1`, an air transport with an unload script);
+/// - `HouseClass::SendParadropPlanes` (`0x0065E6BE`) and `SendSpyPlanes`
+///   (`0x0065EB10`).
+///
+/// `Create_Air_Reinforcement` (`0x0065E8FF`) sets it too, but only for
+/// `AirstrikeClass`, which is not ported. Never infer the flag from the
+/// current type, mission, cargo or `+0x3D5`. The aircraft missions read it
+/// to leave the map, and the ordinary click action (`0x00692766`) reads it;
+/// forced `ObjectSelect @ 0x005F4578` has a separate vt+0xA0 prerequisite.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct MissionOnly(bool);
+
+impl MissionOnly {
+    /// Whether the object is mission-only.
+    pub(crate) const fn get(self) -> bool {
+        self.0
+    }
+
+    /// Mark the object mission-only, for the rest of its life.
+    pub(crate) fn mark(&mut self) {
+        self.0 = true;
+    }
+}
+
 /// Batch driver for fixtures that dispatch every aircraft without the live
 /// object pass. Production dispatches each aircraft in its own LogicVector
 /// slot through [`dispatch_mission`].
@@ -67,7 +100,8 @@ pub(crate) fn handler_state(entity: &GameEntity) -> u8 {
 }
 
 /// Mission_Attack's state while Attack is the current mission (`+0xAC`) of
-/// aircraft `entity`.
+/// aircraft `entity`. `TechnoClass::Assign_Target` (`0x006FCDB0`) reads both
+/// in its aircraft arm (`0x006FCE27..0x006FCE3B`).
 pub(crate) fn attack_state(entity: &GameEntity) -> Option<u8> {
     (entity.category() == EntityCategory::Aircraft
         && entity.mission.current() == MissionId::from_known(MissionType::Attack))

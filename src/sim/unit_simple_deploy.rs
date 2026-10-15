@@ -131,7 +131,7 @@ impl Simulation {
                 .entities
                 .get_mut(id)
                 .expect("same Unit")
-                .set_landing_for_deploy(true);
+                .request_landing_for_deploy();
         }
         if active && let Some(anim_id) = retained {
             let anim = self

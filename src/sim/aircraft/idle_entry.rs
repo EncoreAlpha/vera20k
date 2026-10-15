@@ -113,6 +113,7 @@ struct IdleFacts {
 
 /// What the call does and reads live, each where the original does it.
 /// The missions are read live: leaving a team re-enters idle mode first.
+/// It supplies the reads of `AircraftClass::Enter_Idle_Mode` (`0x004176F0`).
 trait IdleHost {
     /// The current mission `+0xAC`.
     fn current(&mut self) -> MissionId;
@@ -334,7 +335,8 @@ pub(crate) fn record_idle_calls_for_test<R>(run: impl FnOnce() -> R) -> (R, u32)
     (result, calls)
 }
 
-/// [`enter_idle_mode`] for aircraft `id`.
+/// [`enter_idle_mode`] for aircraft `id`: `AircraftClass::Enter_Idle_Mode`
+/// (`0x004176F0`), with the [`IdleFacts`] it reads up front.
 pub(crate) fn enter_idle_mode_for(
     sim: &mut Simulation,
     id: u64,

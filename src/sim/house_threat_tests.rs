@@ -549,7 +549,8 @@ fn retained_grid_and_initialized_zero_both_affect_simulation_hash() {
         .entities
         .get_mut(id)
         .unwrap()
-        .retain_spatial_threat(0);
+        .cached_spatial_threat
+        .withdraw();
     let initialized = sim.state_hash();
     assert_ne!(
         initial, initialized,

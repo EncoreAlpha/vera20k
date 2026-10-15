@@ -1820,6 +1820,13 @@ pub struct ObjectType {
     /// command, so he should just run towards the player". Six stock sections:
     /// `SPY`, `LCRF`, `CMIN`, `SAPC`, `YHVR`, `SMIN`.
     pub stupid_hunt: bool,
+    /// `DefaultToGuardArea=` bool — `TechnoTypeClass+0xD39`, read by
+    /// `TechnoTypeClass::ReadINI` (key string `0x00843784`, `ReadBool @
+    /// 0x005295F0` at `0x00714F53` with the field as its default); constructor
+    /// default `false` (`0x0071153C` writes the zeroed `BL`). An idle
+    /// infantryman of such a type takes Area Guard unless it is in a team
+    /// (`0x0051CD54..0x0051CD75`).
+    pub default_to_guard_area: bool,
     /// `Cyborg=` bool — gamemd's TechnoTypeClass `+0xC8F` "emits damage sparks"
     /// flag that `AI_Update` gates the per-tick damage-Spark prob-roll on.
     /// Verified: only `InfantryTypeClass::ReadINI` writes `+0xC8F` (from `Cyborg=`);
@@ -3001,6 +3008,7 @@ impl ObjectType {
                 .unwrap_or_default(),
             close_range: section.read_bool("CloseRange", false),
             stupid_hunt: section.read_bool("StupidHunt", false),
+            default_to_guard_area: section.read_bool("DefaultToGuardArea", false),
             cyborg: section.read_bool("Cyborg", false),
             destroy_particle_systems: section
                 .read_list("DestroyParticleSystems", 0x80)

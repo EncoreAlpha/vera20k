@@ -449,7 +449,9 @@ impl Simulation {
     }
 
     /// The no-queue request `id` makes now: Walk's toward its destination,
-    /// Drive/Ship's toward its track destination, at urgency 0.
+    /// Drive/Ship's toward its track destination, at urgency 0. Its calls are
+    /// `FootClass::Find_Path` (`0x004D3920`) at Walk `0x0075AFC5`, Drive
+    /// `0x004B28A3` and Ship `0x006A1EF3`.
     fn no_queue_request(&self, id: u64) -> Option<FootPathRequest> {
         let actor = self.substrate.entities.get(id)?;
         let destination = match actor.locomotor.as_ref()?.active_kind() {
@@ -469,6 +471,8 @@ impl Simulation {
     }
 
     /// The request `id`'s code-2 ladder makes now, at the ladder's urgency.
+    /// Drive's ladder is `DriveLocomotionClass::Process_Movement` (`0x004B2630`)'s
+    /// `0x004B3607..0x004B3A94`; Walk's is `0x0075B8A9..0x0075B9F9`.
     fn code2_ladder_request(&self, id: u64) -> Option<FootPathRequest> {
         let actor = self.substrate.entities.get(id)?;
         let destination = code2_ladder_destination(actor)?;
@@ -486,6 +490,8 @@ impl Simulation {
     }
 
     /// The key of `request`'s core search toward `goal` as the world stands.
+    /// VERA-only: matches a batched answer to its request; the live mover and
+    /// world are the source of truth, so an answer serves only an equal key.
     fn foot_search_key(
         &self,
         request: &FootPathRequest,

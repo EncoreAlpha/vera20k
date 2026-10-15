@@ -214,7 +214,11 @@ pub struct ObjectLifecycle {
     /// `ObjectClass+0x81`, InLimbo: Limbo sets it (`0x005F4E9E`) and Unlimbo
     /// clears it (`0x005F4F4E`). Independent of LogicVector membership.
     in_limbo: bool,
-    /// Whether Mark/cell-list insertion currently owns cell membership.
+    /// `ObjectClass+0x74`, Marked: whether Mark/cell-list insertion owns cell
+    /// membership. `ObjectClass::Mark` stores it (`0x005F58F7`, `0x005F5913`)
+    /// through `movement::foot_mark`, whose
+    /// `Simulation::replace_foot_marked_byte` also saves, clears and restores
+    /// it around the locomotors' setters.
     cell_marked: bool,
 }
 
@@ -250,10 +254,11 @@ impl ObjectLifecycle {
     }
 
     /// The constructor's facts for a newly built object: alive and in limbo
-    /// (`0x005F392A`, `0x005F3930`).
+    /// (`0x005F392A`, `0x005F3930`), and not Marked (`0x005F394B`).
     pub(crate) fn reset_constructed(&mut self) {
         self.object_alive = true;
         self.in_limbo = true;
+        self.cell_marked = false;
     }
 
     /// IsAlive set again on an object that took a lethal hit: PostMortem's
@@ -934,6 +939,8 @@ impl Simulation {
         Some(input_z.max(ground_z))
     }
 
+    /// The object's own Location (`Object+0x9C`), the coordinate a Reveal at the
+    /// current position passes on.
     fn current_reveal_position(&self, stable_id: u64) -> Option<RevealPosition> {
         self.substrate
             .entities
@@ -1238,11 +1245,8 @@ impl Simulation {
         let high_flight = self.foot_neighbors_after_unlimbo(stable_id, context.rules);
         // Foot4D72B2/+54 requires high flight, then Type ConsideredAircraft
         // (+D96) admits AirTrackerAdd4D72DB, whatever the locomotor. Mark
-        // itself never adds anything. RESIDUAL: a Reveal without rules
-        // (`try_reveal_entity`, `reveal`, spawn
-        // `unlimbo`) reads +D96 as its default, Aircraft only, so a
-        // high-flying ConsideredAircraft Unit revealed that way waits for the
-        // per-tick `sync_air_spatial_membership`.
+        // itself never adds anything. RESIDUAL: a Reveal without rules reads
+        // +D96 as its default, Aircraft only.
         if high_flight
             && self.substrate.entities.get(stable_id).is_some_and(|e| {
                 context
@@ -1752,6 +1756,8 @@ impl Simulation {
 
     /// Refresh the owning house's navigation edge from a live, map-committed
     /// structure. Launch base-center authority remains the assigned start cell.
+    /// Serves `HouseClass::DetermineEdge @ 0x0050DB00`'s building arm, which the
+    /// primary-factory selection calls (`0x00448070`, `0x00448160`).
     pub(crate) fn refresh_waypoint_edge_from_committed_structure(&mut self, stable_id: u64) {
         let Some(bounds) = self.playfield_bounds else {
             return;
@@ -2016,6 +2022,8 @@ impl Simulation {
         });
     }
 
+    /// The rectangle of the base-reservation writer `0x00455F10`: Location's cell
+    /// less `AIBaseSpacing=`, the foundation plus twice the spacing.
     fn base_reservation_writer(&self, stable_id: u64) -> Option<(InternedId, CellRect)> {
         let entity = self.substrate.entities.get(stable_id)?;
         let spacing = entity.type_facts.base_reservation_spacing()?;
@@ -2038,6 +2046,8 @@ impl Simulation {
         })
     }
 
+    /// The base-reservation clear and neighbor repair `0x004561F0` that Building
+    /// Limbo calls (`0x00445A9A`), over the same rectangle from Location's cell.
     fn clear_building_base_reservation_and_repair(
         &mut self,
         stable_id: u64,
@@ -2242,7 +2252,7 @@ impl Simulation {
             .entities
             .get_mut(stable_id)
             .expect("member remains represented");
-        entity.set_on_bridge(false);
+        entity.on_bridge.store(false);
         entity.position.put_z(world_z);
         self.submit_entity_display(stable_id, rules, None);
         if foot {
@@ -2308,8 +2318,10 @@ impl Simulation {
     }
 
     /// One air locomotor's Process visit: a Fly's (`0x004CCB40`,
-    /// [`Self::fly_process`]) or a Jumpjet's (`world::jumpjet_cruise`),
-    /// then the tracker membership of an object that left the map's lists.
+    /// [`Self::fly_process`]) or a Jumpjet's (`world::jumpjet_cruise`). Each
+    /// keeps its own AircraftTracker membership (Add `0x004134A0`, Remove
+    /// `0x004135D0`, Update `0x004138C0`), and `FootClass::Limbo` removes a
+    /// tracked object ([`Self::release_foot_air_tracker_before_limbo`]).
     pub(crate) fn tick_air_movement_with_cell_lists_one(
         &mut self,
         stable_id: u64,
@@ -2333,11 +2345,7 @@ impl Simulation {
                     })
             });
         if fly {
-            let stats = self.fly_process(stable_id, rules, registry, effects);
-            if !stats.impact {
-                self.sync_air_spatial_membership(stable_id);
-            }
-            return stats;
+            return self.fly_process(stable_id, rules, registry, effects);
         }
         let jumpjet_layer_before = self
             .substrate
@@ -2359,7 +2367,6 @@ impl Simulation {
             Some(stats) => stats,
             None => crate::sim::movement::air_movement::AirMovementTickStats::default(),
         };
-        self.sync_air_spatial_membership(stable_id);
         if let Some(before) = jumpjet_layer_before {
             self.complete_jumpjet_display_process(stable_id, before, rules);
         }
@@ -2469,7 +2476,7 @@ impl Simulation {
                         .fly_runtime_mut()
                         .unwrap()
                         .reject_landing_cell();
-                    entity.set_on_bridge(false);
+                    entity.on_bridge.store(false);
                 }
                 self.foot_mark_remove(id, rules, registry, effects);
                 let height = crate::sim::movement::air_movement::current_fly_height(
@@ -2603,6 +2610,7 @@ impl Simulation {
     /// Read the per-object `in_logic_vector` membership flag for a classified
     /// object. The flag lives on the object in its own store; this is the
     /// single dispatch the registration/removal contract reads through.
+    /// For a Techno, `Object+0x98`: RegisterObject sets it (`0x0055BAC6`).
     fn logic_membership_flag(&self, stable_id: u64, kind: ObjectKind) -> bool {
         match kind {
             ObjectKind::Smudge => false,
@@ -3390,6 +3398,8 @@ impl Simulation {
     /// UnInit, Limbo, record the destruction, or enqueue physical deletion.
     /// The kill callback ([`crate::sim::combat::record_kill::record_the_kill`])
     /// has already booked its House statistics before these Destroy callbacks.
+    /// `ObjectClass::ReceiveDamage @ 0x005F5390`'s arm for Health (`+0x6C`) exactly 0
+    /// (`0x005F5765..0x005F57AF`).
     pub(crate) fn postmortem_exact_zero_callbacks(
         &mut self,
         stable_id: u64,
@@ -3557,7 +3567,8 @@ impl Simulation {
                     effects,
                 );
                 if let Some(unit) = self.substrate.entities.get_mut(contact) {
-                    crate::sim::docking::building_dock::clear_pending_entry(unit);
+                    // `0x004425AA`, after RUN_AWAY returns.
+                    unit.pending_entry.clear();
                 }
             }
         }
@@ -3747,44 +3758,6 @@ impl Simulation {
         self.trace_lifecycle_for_test(LifecycleTestEvent::UninitClassPre { stable_id });
     }
 
-    fn uninit_carried_passengers(&mut self, carrier_id: u64, context: UninitContext<'_>) {
-        let passenger_ids = self
-            .substrate
-            .entities
-            .get_mut(carrier_id)
-            .and_then(|carrier| carrier.passenger_role.cargo_mut())
-            .map_or_else(Vec::new, |cargo| cargo.take_for_uninit());
-
-        for passenger_id in passenger_ids {
-            debug_assert_ne!(
-                passenger_id, carrier_id,
-                "transport {carrier_id} contains itself"
-            );
-            if passenger_id == carrier_id {
-                continue;
-            }
-            if let Some(passenger) = self.substrate.entities.get_mut(passenger_id) {
-                if passenger.passenger_role.inside_transport_id() == Some(carrier_id) {
-                    passenger.passenger_role.clear_carrier_relation();
-                }
-                passenger.health.set(0);
-            }
-            self.uninit_with_context(passenger_id, context);
-        }
-    }
-
-    /// TechnoClass fatal-receiver passenger rung. The native death helper
-    /// enters only after carried objects have completed their own authoritative
-    /// UnInit transactions; the carrier itself remains represented for its
-    /// DeathWeapon and category-specific UnInit that follows.
-    pub(crate) fn purge_carried_passengers_for_fatal(
-        &mut self,
-        carrier_id: u64,
-        context: UninitContext<'_>,
-    ) {
-        self.uninit_carried_passengers(carrier_id, context);
-    }
-
     fn nav_ref_targets_expired(target: &NavTargetRef, expired_id: u64) -> bool {
         Self::nav_ref_object(target) == Some(expired_id)
     }
@@ -3808,6 +3781,8 @@ impl Simulation {
     /// expiring object, names nothing expiring and returns false matches
     /// visiting it. A field or forward added to the broadcast must be added
     /// here too.
+    /// VERA-only: feeds the expiry-listener index (`ExpiryListeners`) so the
+    /// `0x007258D0` broadcast skips entities; the listener's fields are the truth.
     pub(super) fn entity_expiry_holds(listener: &GameEntity, mut name: impl FnMut(u64)) -> bool {
         for target in [
             listener.attack_target.target(),
@@ -3828,6 +3803,7 @@ impl Simulation {
             .iter()
             .chain(navigation.nav_com().iter())
             .chain(navigation.nav_queue().iter())
+            .chain(navigation.nav_list().iter())
             .filter_map(Self::nav_ref_object)
             .for_each(&mut name);
         [
@@ -3837,10 +3813,6 @@ impl Simulation {
             listener.spawn_owner_id.owner(),
             listener.damage_smoke_system_id.system(),
             listener.aircraft_ammo.as_ref().and_then(|ammo| ammo.dock()),
-            listener
-                .miner
-                .as_ref()
-                .and_then(|miner| miner.reserved_refinery()),
             listener
                 .pending_c4_detonation
                 .pending()
@@ -4055,6 +4027,7 @@ impl Simulation {
     }
 
     /// Match the retained target identity, preserving Cell/Techno distinction.
+    /// The detach sweep `0x0070D4A0`'s TarCom test `CMP [ESI+0x2B4]` (`0x0070D539`).
     fn listener_targets(&self, listener_id: u64, target: TargetKind) -> bool {
         self.substrate
             .entities
@@ -4333,6 +4306,13 @@ impl Simulation {
             .nav_queue()
             .iter()
             .any(|target| Self::nav_ref_targets_expired(target, expired_id));
+        // `0x004D9B43..0x004D9B95`: every navigation list entry naming the
+        // expiring object goes, before the NavQueue's.
+        let prune_nav_list = listener
+            .navigation
+            .nav_list()
+            .iter()
+            .any(|target| Self::nav_ref_targets_expired(target, expired_id));
 
         // Techno707AE7..707AF5 clears private pending+500 only on control1.
         // Non-destructive DetachAll(false) retains this independent entry;
@@ -4345,10 +4325,6 @@ impl Simulation {
             .aircraft_ammo
             .as_ref()
             .is_some_and(|ammo| ammo.dock() == Some(expired_id));
-        let clear_refinery = listener
-            .miner
-            .as_ref()
-            .is_some_and(|miner| miner.reserved_refinery() == Some(expired_id));
 
         // Steam gamemd3e81a617, TechnoPointerExpired7078B2..7078DB:
         // Transporter+11C survives a live hull's ordinary Limbo announcement,
@@ -4375,10 +4351,10 @@ impl Simulation {
             || clear_archive_target
             || clear_suspended_nav_com
             || clear_nav_com
+            || prune_nav_list
             || prune_nav_queue
             || clear_dock
             || clear_airfield
-            || clear_refinery
             || clear_passenger_role
             || clear_c4_source
             || expire_mega_pointer)
@@ -4406,19 +4382,22 @@ impl Simulation {
         if clear_nav_com {
             listener.navigation.expire_nav_com();
         }
+        if prune_nav_list {
+            listener
+                .navigation
+                .retain_nav_list(|target| !Self::nav_ref_targets_expired(target, expired_id));
+        }
         if prune_nav_queue {
             listener
                 .navigation
                 .retain_nav_queue(|target| !Self::nav_ref_targets_expired(target, expired_id));
         }
         if clear_dock {
-            crate::sim::docking::building_dock::expire_reference(listener, expired_id);
+            // `0x00707AF5`.
+            listener.pending_entry.expire(expired_id);
         }
         if clear_airfield && let Some(ammo) = listener.aircraft_ammo.as_mut() {
             ammo.set_dock(None);
-        }
-        if clear_refinery && let Some(miner) = listener.miner.as_mut() {
-            miner.forget_refinery();
         }
         if clear_passenger_role {
             listener.passenger_role.clear_carrier_relation();
@@ -4983,7 +4962,9 @@ impl Simulation {
         }
 
         self.run_represented_uninit_pre_hook(stable_id);
-        self.uninit_carried_passengers(stable_id, context);
+        // `ObjectClass::UnInit` kills a Techno's passengers with no attacker
+        // (`0x005F660D`).
+        self.kill_passengers(stable_id, None, context);
 
         #[cfg(test)]
         {

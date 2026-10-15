@@ -257,6 +257,8 @@ pub(crate) fn break_bunker_link(
 /// Emit the positional wall sound event (`up` = walls rising on install,
 /// `false` = walls falling on a teardown). The app layer resolves the actual
 /// sound id and skips it when the rules key is empty.
+/// Played by `BuildingClass::UpdateBunker` (`0x00458E50`) state 5 (`0x0045936F`), and on
+/// teardown by `EmptyBunker` (`0x004595C0`) and `ClearBunker` (`0x00459470`).
 pub(crate) fn emit_bunker_wall_sound(sim: &mut Simulation, building_id: u64, up: bool) {
     let Some(b) = sim.substrate.entities.get(building_id) else {
         return;
@@ -495,6 +497,8 @@ pub(crate) fn clear_bunker(
 /// expiry drops both ways, is cleared the same way: a bunker gone while a unit
 /// drives to it releases that unit, and a unit gone on its way frees the
 /// bunker.
+/// `TechnoClass::PointerExpired` (`0x007077C0`) clears a `+0x2E4` link naming the expired
+/// object (`0x00707849..0x00707859`); `RadioClass::PointerExpired` (`0x0065AAC0`) the contact.
 pub fn break_links_on_despawn(sim: &mut Simulation, id: u64) {
     let Some(e) = sim.substrate.entities.get(id) else {
         return;
@@ -538,7 +542,9 @@ pub fn break_links_on_despawn(sim: &mut Simulation, id: u64) {
 
 /// Reset the bunker runtime to empty/idle. The building's `mission` is never
 /// used to track install in this model (`bunker_runtime.state` is the machine),
-/// so only the runtime needs resetting on release.
+/// so only the runtime needs resetting on release. Native zeroes the state
+/// (`+0x718`) in `BuildingClass::EmptyBunker` (`0x004596C2`, `0x0045981A`) and
+/// `ClearBunker` (`0x0045959C`).
 fn reset_bunker_idle(sim: &mut Simulation, building_id: u64) {
     if let Some(b) = sim.substrate.entities.get_mut(building_id)
         && let Some(rt) = b.bunker_runtime.as_mut()
@@ -549,7 +555,8 @@ fn reset_bunker_idle(sim: &mut Simulation, building_id: u64) {
 
 /// gamemd exit anchor for the normal release: building NW corner + (-1 west,
 /// +1 south), then the nearest passable cell (modulo-spread pick). Falls back to
-/// the anchor cell when no path grid is available (headless tests).
+/// the anchor cell when no path grid is available (headless tests). The anchor
+/// is `BuildingClass::EmptyBunker` (`0x004595C0`)'s `0x0045977E..0x00459794`.
 fn bunker_exit_cell(sim: &Simulation, building_id: u64) -> Option<(u16, u16)> {
     let b = sim.substrate.entities.get(building_id)?;
     let ax = b.position.rx() as i32 - 1;

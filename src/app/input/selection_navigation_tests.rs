@@ -1826,7 +1826,7 @@ fn fixture(inputs: &Inputs, selected: &[u64]) -> (Simulation, RuleSet) {
         }
         entity.lift.set_swap_active_for_test(actor.locomotor_swap);
         if actor.mission_only {
-            entity.mark_mission_only();
+            entity.mission_only.mark();
         }
         if actor.virtual_1d4 {
             entity.temporal = crate::sim::temporal::TemporalState::warped_by_for_test(999);

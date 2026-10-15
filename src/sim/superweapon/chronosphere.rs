@@ -407,7 +407,7 @@ fn arm_chrono_warp(
         );
         sim.object_raw_receiver_at(id, destination, false);
         if let Some(entity) = sim.substrate.entities.get_mut(id) {
-            entity.set_foot_occupation_enabled(true);
+            entity.foot_occupation_enabled.resume();
         }
     }
     let frame = sim.session.binary_frame;

@@ -13,17 +13,8 @@ use serde::{Deserialize, Serialize};
 /// - `EventClass::Execute @ 0x004C6CB0`'s MegaMission clears it after the
 ///   BREAK to a `Refinery=` contact (`0x004C7342`, `mission::retask`);
 /// - `BuildingClass::ChangeOwner @ 0x00448260` sets it on both ends of each
-///   docked object it takes along (`0x004492B7`, `0x004492C3`).
-///
-/// RESIDUAL: VERA's change of owner (`Simulation::change_owner_with_rules`)
-/// does not port ChangeOwner's docked-object block
-/// (`0x004485AA..0x004486C8`, `0x00449289..0x004492D7`): a contact that
-/// answers radio `0x13` within `0x40` leptons changes owner with the
-/// building and is re-linked and re-tethered, and the others get RunAway and
-/// BREAK. Trigger: capturing a building while a unit is docked or in radio
-/// contact with it, such as a refinery with its harvester. Effect: the
-/// docked unit keeps its old owner, its links and its tether. Frequency:
-/// occasional in play. Risk: the unit stays docked at an enemy building.
+///   docked object it takes along (`0x004492B7`, `0x004492C3`), when that
+///   object held it before.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tether {
     partner: Option<u64>,
@@ -35,7 +26,8 @@ impl Tether {
         self.partner
     }
 
-    /// TETHER's set (`0x006F4B72`).
+    /// TETHER's set (`0x006F4B72`), and `BuildingClass::ChangeOwner`'s on
+    /// both ends of an object it takes along (`0x004492B7`, `0x004492C3`).
     pub(crate) fn attach(&mut self, partner: u64) {
         self.partner = Some(partner);
     }

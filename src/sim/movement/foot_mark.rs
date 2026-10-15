@@ -71,6 +71,92 @@ use crate::sim::world::FrameEffects;
 use crate::sim::world::LifecycleTestEvent;
 use crate::sim::world::Simulation;
 
+/// The spot an infantryman holds in its cell (0–4), which Mark puts into the
+/// cell's lists and the occupancy index projects. gamemd keeps no such field:
+/// `CellClass::PlaceInfantryInCell` (`0x00481180`) picks the spot as it
+/// places the coordinate, and the coordinate's in-cell offset carries it from
+/// then on. VERA caches the spot at each placement: Unlimbo, the walk
+/// boundary, and the crew, passenger, paradrop, parasite, tube and unload
+/// placements. `None` on every non-infantry object, and on an infantryman
+/// built in limbo until its Unlimbo places it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct InfantrySpot(Option<u8>);
+
+impl InfantrySpot {
+    /// The spot an object starts with, before any placement.
+    pub(crate) const fn new(spot: Option<u8>) -> Self {
+        Self(spot)
+    }
+
+    /// The held spot.
+    pub(crate) const fn get(self) -> Option<u8> {
+        self.0
+    }
+
+    /// Hold `spot`, the one a placement chose: PlaceInfantryInCell's search or
+    /// preference (`0x00481180`), or a map entry's authored spot.
+    pub(crate) fn hold(&mut self, spot: u8) {
+        self.0 = Some(spot);
+    }
+
+    /// Hold the spot of the in-cell offset `(sub_x, sub_y)` that an
+    /// infantryman was put at without a search: the offset's quadrant, as
+    /// PlaceInfantryInCell's priority placement returns it
+    /// ([`priority_sub_cell`](super::bump_crush::priority_sub_cell)).
+    pub(crate) fn hold_offset(
+        &mut self,
+        sub_x: crate::util::fixed_math::SimFixed,
+        sub_y: crate::util::fixed_math::SimFixed,
+    ) {
+        self.0 = Some(super::bump_crush::priority_sub_cell(sub_x, sub_y));
+    }
+
+    /// Hold no spot: a non-infantry object, or an infantryman built in limbo
+    /// whose Unlimbo has not placed it yet.
+    pub(crate) fn release(&mut self) {
+        self.0 = None;
+    }
+}
+
+/// The Foot occupation enable (`Foot+0x6B6`, read through vt+0xC0
+/// `0x0041C070`): while it holds, Mark's Remove/AddContent write the object's
+/// raw occupation. The Foot constructor sets it (`0x004D344A`). A mover
+/// suspends it while it carries the object off its cell and resumes it on
+/// arrival; a Chrono warp, a superweapon's launch and a new locomotor resume
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct OccupationEnable(bool);
+
+impl OccupationEnable {
+    /// The Foot constructor's enable (`0x004D344A`).
+    pub(crate) const fn constructed() -> Self {
+        Self(true)
+    }
+
+    /// Whether Mark writes the object's raw occupation.
+    pub(crate) const fn get(self) -> bool {
+        self.0
+    }
+
+    /// Stop Mark writing the raw occupation while a mover carries the object
+    /// off its cell: a Drive track's first paid point (`0x004B161A`, Ship
+    /// `0x006A0CDA`) and Hover's first translating frame (`0x005147D5`).
+    pub(crate) fn suspend(&mut self) {
+        self.0 = false;
+    }
+
+    /// Let Mark write the raw occupation again: a Drive track's terminal point
+    /// (`0x004B1FEF`, Ship `0x006A1632`), Hover's arrival (`0x0051451E`),
+    /// `FootClass::ChronoWarpTo` (`0x004DF93F`) and Infantry's (`0x0052307C`),
+    /// `SuperClass::Launch` (`0x006CCAB4`) and
+    /// `TechnoClass::ImbueLocomotor` (`0x007101CF`).
+    pub(crate) fn resume(&mut self) {
+        self.0 = true;
+    }
+}
+
 /// The raw occupation plane an object receiver writes at the stored
 /// Location `coord` (Unit `0x007441B0`/`0x00744210`, Infantry
 /// `0x005217C0`/`0x00521850`, Object `0x005F60A0`/`0x005F6120`): its Cell,
@@ -105,7 +191,9 @@ pub(super) fn raw_occupation_plane(
 
 impl Simulation {
     /// Save/clear/restore Object+74 without changing cell lists. Locomotors
-    /// use this around setters (Jumpjet54D0FF/54D6B4 and54C189/54C1A3).
+    /// use this around setters (Jumpjet54D0FF/54D6B4 and54C189/54C1A3, and
+    /// the Drive/Ship track's SetLocation and SetHeight(0) in
+    /// `track_host`).
     /// This is distinct from Mark4D3780, whose pickup/place callbacks run
     /// only when the native caller actually invokes Mark.
     pub(crate) fn replace_foot_marked_byte(&mut self, id: u64, marked: bool) -> bool {
@@ -222,7 +310,8 @@ impl Simulation {
     }
 
     /// Mark(DOWN). `receive` runs after the list link, where AddContent's
-    /// discovery sits.
+    /// discovery sits. `ObjectClass::Mark` (`0x005F5850`) refuses a Limbo
+    /// (`+0x81`) or marked (`+0x74`) object, then stores `+0x74` (`0x005F58F7`).
     pub(super) fn foot_mark_put_observed(
         &mut self,
         id: u64,

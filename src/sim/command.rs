@@ -654,13 +654,13 @@ pub enum Command {
     SellBuilding { entity_id: u64 },
     /// Toggle repair mode on a building (spend credits to heal over time).
     ToggleRepair { entity_id: u64 },
-    /// Force a miner to return to its refinery (right-click on own refinery or 'D' key).
-    /// Both kinds run the Harvest return; a Chrono Miner warps onto the pad
-    /// from within `ChronoHarvTooFarDistance`.
+    /// A miner clicked onto a friendly refinery: the native Enter order
+    /// (`UnitClass::What_Action` `0x0073FD50`, `FootClass::ClickedAction`
+    /// `0x004D74E0`), whose Unit destination arms dock or queue it.
     MinerReturn {
         entity_id: u64,
-        /// Explicit refinery clicked by the player. Keyboard/generic forced
-        /// return leaves this empty and lets the miner choose a refinery.
+        /// The clicked refinery. A command without one is refused; the
+        /// option keeps the saved command encoding.
         target_refinery_id: Option<u64>,
     },
     /// Send a unit to a repair depot for repairs.

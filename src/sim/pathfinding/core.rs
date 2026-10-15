@@ -509,9 +509,10 @@ fn explicit_tube_edge(
     Some(tube.exit)
 }
 
-///429E19..429E21 tests the actual Cell pointer before layer, zone or +1AC
-/// semantics, for compass and tube candidates alike. This lookup must not
-/// stamp shared Dummy. Native controls: astar_structural_height.json.
+/// gamemd tests the actual Cell pointer (`0x00429E19..0x00429E21`) before
+/// its layer, zone and +1AC tests, for compass and tube candidates alike;
+/// `astar_search` asks its closed lists first. This lookup must not stamp the
+/// shared Dummy. Native controls: astar_structural_height.json.
 fn search_cell_allocated(terrain: Option<&ResolvedTerrainGrid>, coord: (u16, u16)) -> bool {
     terrain.is_none_or(|terrain| {
         terrain
@@ -838,9 +839,6 @@ pub fn astar_search(
                 }
                 let nx = nx_i as u16;
                 let ny = ny_i as u16;
-                if !search_cell_allocated(options.resolved_terrain, (nx, ny)) {
-                    continue;
-                }
                 let n_idx = ny as usize * w + nx as usize;
                 let neighbor_cell = grid.cell(nx, ny).unwrap_or(&DEFAULT_BLOCKED_CELL);
 
@@ -848,6 +846,23 @@ pub fn astar_search(
                 // against the candidate. Foot+1AC's own 0x004D9C60 list choice
                 // stays local to the class.
                 let neighbor_use_bridge = is_at_bridge_level(current.height, neighbor_cell);
+                let closed = if neighbor_use_bridge {
+                    bridge.get(n_idx)
+                } else {
+                    ground.get(n_idx)
+                };
+                // A closed cell other than the goal never gets a node or ends
+                // the route here (the retry below only re-asks gamemd's class
+                // and edge cost, a recorded residual), and every test gamemd
+                // makes before its closed test only passes a candidate over,
+                // so such a cell is passed over first. Most candidates are
+                // closed.
+                if closed.is_some() && (nx, ny) != goal {
+                    continue;
+                }
+                if !search_cell_allocated(options.resolved_terrain, (nx, ny)) {
+                    continue;
+                }
 
                 // Compute what height the NEW node carries forward (separate computation)
                 let neighbor_height =
@@ -866,30 +881,26 @@ pub fn astar_search(
                     continue;
                 }
 
-                // A closed candidate (`0x00429EC7..0x00429F31`) is passed over
-                // unless its node's g is at least the current g plus 1.009.
-                // Then the class and edge cost are asked, but a closed cell
-                // never gets a second node (`0x00429FF3..0x0042A018`), so here
-                // only the goal is asked again, for the blocked-goal tail below.
-                // Residual: gamemd also asks Foot+1AC (`0x00429F54`) and the
-                // edge cost (`0x00429F8A`, whose class-2 chain walk looks cells
-                // up) about any other retried cell and discards both answers.
-                // Their only lasting effect is the shared Dummy cell's
-                // coordinate words, which a lookup of an off-map cell stamps.
-                // Trigger: a retried closed candidate whose Foot+1AC or chain
-                // walk reads an off-map cell. Effect: the Dummy keeps an older
-                // stamp. Frequency: only near map edges, the only place a
-                // lookup leaves the map. Downstream risk: only a later read of
-                // the Dummy's coordinates
-                // without its own lookup, as recorded for the batched searches
+                // A closed candidate (`0x00429EC7..0x00429F31`), by now only the
+                // goal, is passed over unless its node's g is at least the
+                // current g plus 1.009. Then the class and edge cost are asked,
+                // but a closed cell never gets a second node
+                // (`0x00429FF3..0x0042A018`), so the goal is asked again only
+                // for the blocked-goal tail below. Residual: gamemd asks
+                // Foot+1AC (`0x00429F54`) and the edge cost (`0x00429F8A`, whose
+                // class-2 chain walk looks cells up) about every retried cell
+                // and keeps only a refused goal's class. Here only the goal is
+                // asked, and only Foot+1AC. The discarded answers' only lasting
+                // effect is the shared Dummy cell's coordinate words, which a
+                // lookup of an off-map cell stamps. Trigger: a retried closed
+                // candidate whose Foot+1AC or chain walk reads an off-map cell.
+                // Effect: the Dummy keeps an older stamp. Frequency: only near
+                // map edges, the only place a lookup leaves the map. Downstream
+                // risk: only a later read of the Dummy's coordinates without its
+                // own lookup, as recorded for the batched searches
                 // (`movement::path_batch`).
-                let closed = if neighbor_use_bridge {
-                    bridge.get(n_idx)
-                } else {
-                    ground.get(n_idx)
-                };
                 if closed.is_some_and(|descriptor| {
-                    (nx, ny) != goal || !closed_candidate_retried(descriptor.g, current.g_cost)
+                    !closed_candidate_retried(descriptor.g, current.g_cost)
                 }) {
                     continue;
                 }

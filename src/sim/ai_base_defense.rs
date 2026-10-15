@@ -328,6 +328,8 @@ pub(crate) struct DefensePick<'r> {
 
 impl<'r> DefenseChoice<'r> {
     /// The inputs of house `owner` for its node at `index`.
+    /// `AI_ChooseNextProduction @ 0x00506EF0` reads each building's cell through
+    /// `vt+0x1B8` in its coverage pass (`0x005070D5..0x0050722F`).
     fn of_house(
         sim: &Simulation,
         rules: &'r RuleSet,

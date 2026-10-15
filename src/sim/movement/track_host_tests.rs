@@ -62,7 +62,6 @@ fn fixture(family: TrackFamily, budget: i32) -> (Simulation, TrackInvocation, i3
         TrackInvocation {
             entity_id: 1,
             family,
-            apply_fresh_occupation: false,
             active_gate: false,
             retry: false,
         },
@@ -1498,6 +1497,161 @@ fn per_cell_factory_clearance_keeps_reason_mission_rtti_and_ground_building_gate
     }
 }
 
+/// 73A9CA..73A9D9: a Unit holding a SlaveManager (+2D8) starts its hunt
+/// (6B0CC0) at the factory clearance, where another Unit takes its archive
+/// as its destination.
+#[test]
+fn per_cell_factory_clearance_starts_a_slave_miners_hunt() {
+    use crate::sim::combat::TargetKind;
+    use crate::sim::slave_manager::{ManagerState, SlaveManager};
+
+    let (mut sim, rules) = factory_per_cell_fixture(true, false, "");
+    let slave_type = sim.intern("SLAV");
+    let unit = sim.substrate.entities.get_mut(1).unwrap();
+    unit.set_archive_target(Some(TargetKind::Cell(12, 10)));
+    unit.slave_manager = Some(SlaveManager::new(slave_type, [None; 0], 0, 0, 0));
+    sim.per_cell_process(
+        1,
+        super::super::PerCellReason::Arrival,
+        Some(&rules),
+        None,
+        crate::sim::world::FrameEffects::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::sim::radio::take_transmit_log()
+            .first()
+            .map(|send| send.msg),
+        Some(8)
+    );
+    let unit = sim.substrate.entities.get(1).unwrap();
+    assert_eq!(
+        unit.slave_manager.as_ref().unwrap().state(),
+        ManagerState::Scanning
+    );
+    assert_eq!(unit.navigation.nav_com(), None, "no archive destination");
+}
+
+/// A computer House's tank as a 5x3 war factory clears it: on the factory's
+/// Move with nothing queued, standing on the foundation at location +(4,1)
+/// where the exit track ends, HeadTo empty, NavCom null, an archive of its own.
+fn computer_product_at_factory_exit() -> (Simulation, RuleSet) {
+    use crate::sim::mission::state::MissionTestFixture;
+    use crate::sim::mission::{MissionDispatchTimer, MissionId, MissionType};
+
+    let (mut sim, rules) = factory_per_cell_fixture(true, false, "");
+    let owner = sim.intern("Americans");
+    let mut house = crate::sim::house_state::HouseState::new(owner, 0, None, false, 0, 10);
+    house.base_center = Some((20, 20));
+    sim.houses.insert(owner, house);
+    let producer = sim.substrate.entities.get_mut(2).unwrap();
+    producer.type_facts.set_foundation_for_test("5x3".into());
+    producer.position.put_location(DriveCoord::cell(6, 9, 0));
+    sim.substrate.occupancy =
+        crate::sim::occupancy::OccupancyGrid::rebuild(&sim.substrate.entities);
+    let unit = sim.substrate.entities.get_mut(1).unwrap();
+    unit.mission.apply_test_fixture(MissionTestFixture {
+        current: MissionId::from_known(MissionType::Move),
+        suspended: MissionId::NONE,
+        queued: MissionId::NONE,
+        movement_bypass_latch: 0,
+        handler_state: 4,
+        mission_start_frame: 3,
+        ai_counter: 11,
+        dispatch_timer: MissionDispatchTimer::from_raw(3, 90),
+    });
+    unit.set_archive_target(Some(crate::sim::combat::TargetKind::Cell(12, 10)));
+    (sim, rules)
+}
+
+/// 73AA0D..73AA9C: the computer House's tank takes its House500200 post,
+/// not its archive, and the following Ready/Commence (73ACC2/73ACD1)
+/// commences the queued AreaGuard at once: the unit is not moving there,
+/// as in the native factory-unload trace.
+#[test]
+fn per_cell_factory_clearance_sends_a_computer_unit_to_its_post() {
+    use crate::sim::combat::TargetKind;
+    use crate::sim::components::NavTargetRef;
+    use crate::sim::mission::{MissionId, MissionType};
+
+    let world = || {
+        let (mut sim, rules) = computer_product_at_factory_exit();
+        crate::sim::arena_fixture::flat_ground(&mut sim, &rules);
+        (sim, rules)
+    };
+    let (mut twin, _) = world();
+    let owner = twin.substrate.entities.get(1).unwrap().owner();
+    let post = twin
+        .house_return_cell(owner, 1)
+        .expect("a post near the base");
+    let (mut sim, rules) = world();
+    sim.per_cell_process(
+        1,
+        super::super::PerCellReason::Arrival,
+        Some(&rules),
+        None,
+        crate::sim::world::FrameEffects::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::sim::radio::take_transmit_log()
+            .first()
+            .map(|send| (send.msg, send.reply)),
+        Some((8, Some(23)))
+    );
+    let unit = sim.substrate.entities.get(1).unwrap();
+    assert_eq!(unit.mission.current().known(), Some(MissionType::AreaGuard));
+    assert_eq!(unit.mission.queued(), MissionId::NONE);
+    assert_eq!(unit.mission.mission_start_frame(), 57);
+    assert_eq!(unit.mission.handler_state(), 0);
+    assert_eq!(
+        unit.navigation.nav_com(),
+        Some(NavTargetRef::cell(post.0, post.1))
+    );
+    assert_eq!(
+        unit.archive_target(),
+        Some(TargetKind::Cell(post.0, post.1))
+    );
+    assert_eq!(
+        sim.rng_state(),
+        twin.rng_state(),
+        "House500200's draws only"
+    );
+}
+
+/// 73AB43: without a post the archive clears and nothing is queued or
+/// assigned. Mapless, House500200 has no map authority and answers no post
+/// before drawing; native's zero post follows both draws.
+#[test]
+fn per_cell_factory_clearance_without_a_post_clears_the_archive() {
+    use crate::sim::components::NavTargetRef;
+
+    let (mut sim, rules) = computer_product_at_factory_exit();
+    let mission = sim.substrate.entities.get(1).unwrap().mission;
+    sim.per_cell_process(
+        1,
+        super::super::PerCellReason::Arrival,
+        Some(&rules),
+        None,
+        crate::sim::world::FrameEffects::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::sim::radio::take_transmit_log()
+            .first()
+            .map(|send| send.msg),
+        Some(8)
+    );
+    let unit = sim.substrate.entities.get(1).unwrap();
+    assert_eq!(unit.archive_target(), None);
+    assert_ne!(
+        unit.navigation.nav_com(),
+        Some(NavTargetRef::cell(12, 10)),
+        "no archive destination"
+    );
+    assert_eq!(unit.mission, mission);
+}
+
 #[test]
 fn per_cell_factory_clearance_reads_unit_archive_through_the_shared_setter() {
     use crate::sim::combat::TargetKind;
@@ -2103,7 +2257,6 @@ fn native_depot_arrival_uses_the_original_terminal_handoff() {
                     TrackInvocation {
                         entity_id: tank,
                         family: TrackFamily::Drive,
-                        apply_fresh_occupation: false,
                         active_gate: false,
                         retry: false,
                     },

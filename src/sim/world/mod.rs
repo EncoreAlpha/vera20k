@@ -72,6 +72,8 @@ mod move_sound;
 mod object_sound;
 mod turret_rotate_sound;
 pub(crate) use move_sound::MoveSoundState;
+pub(crate) use playfield_membership::PlayfieldMembership;
+pub(crate) use selection_voice::DeployVoiceSuppression;
 pub(crate) use turret_rotate_sound::TurretRotateLatch;
 #[cfg(test)]
 mod main_sound_identity_tests;
@@ -81,9 +83,12 @@ mod move_sound_tests;
 mod native_cell_input_test_fixture;
 mod navigation;
 mod object_turn;
+mod playfield_membership;
 mod rally_cell_input;
 mod rocket_flight;
 pub use frame_error::FrameAdvanceError;
+pub(crate) use world_orders::BuildingClickAction;
+pub(crate) use world_orders::CapturedInfantryType;
 pub(crate) use world_orders::EngineerBuildingAction;
 pub(crate) use world_orders::UnitRepairAction;
 mod shroud_refresh;
@@ -204,7 +209,6 @@ use crate::sim::intern::{InternedId, StringInterner};
 use crate::sim::lifecycle_request::LifecycleRequest;
 use crate::sim::movement;
 use crate::sim::movement::locomotor::MovementLayer;
-use crate::sim::movement::turret;
 use crate::sim::occupancy::OccupancyGrid;
 use crate::sim::overlay_grid::{
     WallDamageEvent, WallDamageTransactionHost, WallDirtyStep, WallPointerTarget,
@@ -1835,7 +1839,7 @@ impl Simulation {
             crate::sim::combat::FatalLifecycleStage::PostMortemExactZero { killer_owner } => {
                 self.postmortem_exact_zero_callbacks(stable_id, killer_owner, uninit_context);
             }
-            crate::sim::combat::FatalLifecycleStage::BeforeDeathEffects => {
+            crate::sim::combat::FatalLifecycleStage::BeforeDeathEffects { attacker } => {
                 // A building's occupants. A unit's passengers stay for its own
                 // arms: an exploding unit kills them before its death weapon
                 // (`world_receiver::handle_death`), and the rest leave or die
@@ -1878,8 +1882,9 @@ impl Simulation {
                     )
                 });
                 // An absorbing building's passengers leave through
-                // SpawnSurvivors' Phase A; its KillPassengers (`0x00441F27`)
-                // runs after that and finds the list empty.
+                // SpawnSurvivors' Phase A; its KillPassengers (`0x00441F27`,
+                // crediting the attacker) runs after that and finds the list
+                // empty.
                 let absorbs = self
                     .substrate
                     .entities
@@ -1897,7 +1902,7 @@ impl Simulation {
                         uninit_context,
                     );
                 } else if !absorbs {
-                    self.purge_carried_passengers_for_fatal(stable_id, uninit_context);
+                    self.kill_passengers(stable_id, attacker, uninit_context);
                 }
                 //44264C precedes the recursive destruction effects.
                 self.set_building_light_active(stable_id, false);
@@ -2045,7 +2050,6 @@ impl Simulation {
             // The receiver already committed these inline before returning.
             damage_events: _,
             remove_attack: _,
-            ammo_deduct: _,
             unit_facing: _,
             spawn_target_updates: _,
             drain_links: _,
@@ -2262,6 +2266,7 @@ impl Simulation {
     /// Walk one Wave damage request in recorded-cell and current Cell-list
     /// order. Each receiver commits before the next occupant is selected, so
     /// fatal UnInit and nested effects are visible to the remaining walk.
+    /// This is the receiver walk of `WaveClass::DamageArea` (`0x0075F330`).
     fn commit_logic_wave_damage_request(
         &mut self,
         rules: &RuleSet,
@@ -2284,6 +2289,8 @@ impl Simulation {
 
         use crate::sim::occupancy::CellObjectMember as CellObject;
 
+        /// The cell's object list `WaveClass::DamageArea @ 0x0075F330` walks (the
+        /// bridge layer's when its height test picks it), in its current order.
         fn current_order(
             occupancy: &crate::sim::occupancy::OccupancyGrid,
             terrain_cells: &BTreeMap<(u16, u16), u64>,
@@ -3659,6 +3666,7 @@ impl Simulation {
 
     /// The object's coordinate for its sounds. Sound owners hold no terrain,
     /// so an object without an exact coordinate uses its stored level.
+    /// The object's Location (`Object+0x9C`), where its sounds play.
     pub(crate) fn movement_sound_world(
         entity: &crate::sim::game_entity::GameEntity,
     ) -> crate::sim::anim_class::AnimWorldCoord {
@@ -3946,9 +3954,10 @@ impl Simulation {
                 Some((stable_id, member, reveal))
             })
             .collect::<Vec<_>>();
+        // Set_Clipped_LocalSize's exact store (`0x0056730E`).
         for &(stable_id, member, _) in &membership_updates {
             if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
-                entity.set_in_playfield(member);
+                entity.in_playfield.store(member);
             }
         }
         // FUN_006E21E0's false->true callback is the Techno reveal/update
@@ -3991,44 +4000,6 @@ impl Simulation {
         true
     }
 
-    /// Exact mode-one query for the stored TechnoClass+0x3D5 writer family.
-    /// Absence means there is no live MapClass authority, not rectangular or
-    /// permissive fallback authority.
-    fn entity_playfield_membership_mode_one(
-        &self,
-        stable_id: u64,
-        terrain: Option<&ResolvedTerrainGrid>,
-    ) -> Option<bool> {
-        let bounds = self.playfield_bounds?;
-        let entity = self.substrate.entities.get(stable_id)?;
-        Some(crate::sim::cell_rect::cell_is_in_playfield_height_aware(
-            (
-                i32::from(entity.position.rx()),
-                i32::from(entity.position.ry()),
-            ),
-            Some(bounds),
-            terrain,
-        ))
-    }
-
-    /// Unlimbo's exact establishment writer (`TechnoClass::Unlimbo @
-    /// 0x006F6CFE`).
-    fn establish_entity_playfield_membership_on_unlimbo(
-        &mut self,
-        stable_id: u64,
-        context: UninitContext<'_>,
-    ) {
-        let Some(member) = self.entity_playfield_membership_mode_one(
-            stable_id,
-            context.terrain().or(self.resolved_terrain.as_ref()),
-        ) else {
-            return;
-        };
-        if let Some(entity) = self.substrate.entities.get_mut(stable_id) {
-            entity.set_in_playfield(member);
-        }
-    }
-
     /// Acknowledge one completed radar-terrain presentation update.
     ///
     /// Active `RadarClass` dirty processing at `0x00655250` drains and clears
@@ -4044,26 +4015,6 @@ impl Simulation {
         }
         self.radar_terrain_dirty_cells.clear();
         true
-    }
-
-    /// Ordinary per-cell movement writer (`0x006F511A..0x006F5139`): only
-    /// promote 0 -> 1. A unit that walks back outside retains membership until
-    /// an exact writer (teleport or Set_Clipped_LocalSize) clears it.
-    pub(crate) fn promote_entity_playfield_membership_after_move(&mut self, stable_id: u64) {
-        if self
-            .substrate
-            .entities
-            .get(stable_id)
-            .is_none_or(|entity| entity.in_playfield())
-        {
-            return;
-        }
-        if self.entity_playfield_membership_mode_one(stable_id, self.resolved_terrain.as_ref())
-            == Some(true)
-            && let Some(entity) = self.substrate.entities.get_mut(stable_id)
-        {
-            entity.set_in_playfield(true);
-        }
     }
 
     fn poll_triggers_for_master_frame(
@@ -5035,6 +4986,14 @@ impl Simulation {
         }
         // Building4484AF precedes the delegated Techno owner transfer.
         self.enable_building_after_owner_change(stable_id, rules);
+        // `0x00448559..0x004486C8`: the objects docked at a building go along
+        // with it or are sent off. A rules-less transfer (tests only) cannot
+        // read the type and keeps every link.
+        let taken_along = match rules {
+            Some(rules) if category == EntityCategory::Structure => self
+                .take_docked_along_on_owner_change(stable_id, new_owner, rules, registry, effects),
+            _ => Vec::new(),
+        };
         // `0x004486DF..0x00448701`: the building's own factory is abandoned
         // for its old owner.
         if category == EntityCategory::Structure {
@@ -5282,10 +5241,181 @@ impl Simulation {
         if let Some(rules) = rules {
             self.reapply_building_gap_after_owner_change(stable_id, rules);
         }
+        if let Some(rules) = rules {
+            self.relink_docked_after_owner_change(stable_id, &taken_along, rules, effects);
+        }
+        // RESIDUAL: the computer's sale of a captured building
+        // (`0x004492D7..0x0044936E`) is unported, since VERA keeps no
+        // InitialOwner. Outside campaign (GameMode != 0), a new owner no human
+        // controls sells a building whose InitialOwner is another house that
+        // is not `MultiplayPassive`: each upgrade is refunded in full to it
+        // (`GetRefund`, type vt+0xB8) and removed (`RemoveLastUpgrade`), then
+        // `Sell_Back(1)` (vt+0x1A0). Trigger: an AI engineer captures another
+        // side's building in skirmish. Effect: the AI keeps the building.
+        // Frequency: each such capture. Risk: the AI gains its factory, power
+        // or prerequisites.
         //44936E/449379: both houses' retained1FC asks their next House tail.
         if category == EntityCategory::Structure {
             self.request_house_tech_tree_recheck(old_owner);
             self.request_house_tech_tree_recheck(new_owner);
+        }
+    }
+
+    /// `BuildingClass::ChangeOwner @ 0x00448260`'s docked objects
+    /// (`0x00448559..0x004486C8`), before the building's own owner swap. Each
+    /// radio slot is read afresh, since the transmits on the way change them.
+    ///
+    /// A Foot (`AbstractFlags & 4`, `0x004485A2`) that answers NEED_TO_MOVE
+    /// (`0x13`) with ROGER changes owner first (vt+0x3D4, `0x00448663`) when
+    /// the building is a `WeaponsFactory=` or the Foot is at its dock
+    /// ([`Self::docked_at_dock_coord`]). Its tether (`+0x418`) is kept for
+    /// [`Self::relink_docked_after_owner_change`].
+    ///
+    /// Any other contact gets RUN_AWAY (`0x17`), then OVER_OUT (`3`). A
+    /// contact that is not a Foot is sent both as a null target
+    /// (`0x004485A8`), which the transmit resolves to the building's first
+    /// contact on each send.
+    ///
+    /// A refinery's dock coordinate is the cell beside its pad
+    /// ([`crate::sim::movement::navcom::building_dock_cell`]), so a miner
+    /// unloading on the pad is sent off.
+    fn take_docked_along_on_owner_change(
+        &mut self,
+        building: u64,
+        new_owner: InternedId,
+        rules: &RuleSet,
+        registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+        effects: FrameEffects<'_>,
+    ) -> Vec<(u64, bool)> {
+        use crate::sim::radio::{RadioMessage, RadioPayload, RadioResponse, transmit};
+        let mut taken = Vec::new();
+        let Some((capacity, weapons_factory)) =
+            self.substrate.entities.get(building).map(|entity| {
+                (
+                    entity.radio_contacts.capacity(),
+                    self.object_type(entity.type_ref(), rules)
+                        .is_some_and(|object| object.weapons_factory),
+                )
+            })
+        else {
+            return taken;
+        };
+        for slot in 0..capacity {
+            let Some(contact) = self
+                .substrate
+                .entities
+                .get(building)
+                .and_then(|entity| entity.radio_contacts.slot(slot))
+            else {
+                continue;
+            };
+            let Some(foot) = self
+                .substrate
+                .entities
+                .get(contact)
+                .map(|entity| entity.category() != EntityCategory::Structure)
+            else {
+                continue;
+            };
+            if !foot {
+                for message in [RadioMessage::RunAway, RadioMessage::Break] {
+                    crate::sim::radio::transmit_to_contact(
+                        self,
+                        building,
+                        message,
+                        Some(rules),
+                        effects,
+                    );
+                }
+                continue;
+            }
+            let roger = transmit(
+                self,
+                building,
+                contact,
+                RadioMessage::NeedToMove,
+                RadioPayload::default(),
+                Some(rules),
+                effects,
+            ) == RadioResponse::Roger;
+            if roger && (weapons_factory || self.docked_at_dock_coord(building, contact, rules)) {
+                let tethered = self
+                    .substrate
+                    .entities
+                    .get(contact)
+                    .is_some_and(|entity| entity.tether.partner().is_some());
+                self.change_owner_impl(contact, new_owner, Some(rules), registry, effects);
+                taken.push((contact, tethered));
+            } else {
+                for message in [RadioMessage::RunAway, RadioMessage::Break] {
+                    transmit(
+                        self,
+                        building,
+                        contact,
+                        message,
+                        RadioPayload::default(),
+                        Some(rules),
+                        effects,
+                    );
+                }
+            }
+        }
+        taken
+    }
+
+    /// Whether `contact`'s coordinate (vt+0x48, `0x00448606`) lies within
+    /// `0x3F` leptons (Distance3D, `0x00448644`) of `building`'s dock
+    /// coordinate for it (GetDockCoord vt+0xA8, `0x004485F5`).
+    fn docked_at_dock_coord(&self, building: u64, contact: u64, rules: &RuleSet) -> bool {
+        let terrain = self.resolved_terrain.as_ref();
+        let Some(dock) = crate::sim::movement::navcom::building_dock_coordinate(
+            &self.substrate.entities,
+            building,
+            Some(contact),
+            terrain,
+            rules,
+            &self.interner,
+        ) else {
+            return false;
+        };
+        self.substrate.entities.get(contact).is_some_and(|entity| {
+            let at = crate::sim::movement::ground_pose::object_get_coords(entity, terrain);
+            crate::util::native_x87::distance_3d_leptons(
+                [at.x, at.y, at.z],
+                [dock.x, dock.y, dock.z],
+            ) <= 0x3F
+        })
+    }
+
+    /// `BuildingClass::ChangeOwner`'s re-link (`0x00449289..0x004492D7`),
+    /// after the owner swap: HELLO (`2`) to each object taken along, then,
+    /// when that object was tethered, the tether set on the building
+    /// (`0x004492B7`) and on the object (`0x004492C3`).
+    fn relink_docked_after_owner_change(
+        &mut self,
+        building: u64,
+        taken: &[(u64, bool)],
+        rules: &RuleSet,
+        effects: FrameEffects<'_>,
+    ) {
+        for &(contact, tethered) in taken {
+            crate::sim::radio::transmit(
+                self,
+                building,
+                contact,
+                crate::sim::radio::RadioMessage::Hello,
+                crate::sim::radio::RadioPayload::default(),
+                Some(rules),
+                effects,
+            );
+            if tethered {
+                if let Some(entity) = self.substrate.entities.get_mut(building) {
+                    entity.tether.attach(contact);
+                }
+                if let Some(entity) = self.substrate.entities.get_mut(contact) {
+                    entity.tether.attach(building);
+                }
+            }
         }
     }
 
@@ -5316,9 +5446,8 @@ impl Simulation {
     ///     nothing while in radio contact (a miner docked at its refinery) or
     ///     while the Guard above is still only queued (a miner caught
     ///     mid-track);
-    ///   - any other Unit or Infantry takes VERA's Foot selector in place of
-    ///     the Unit `0x00738970` and Infantry `0x0051CBA0` leaves (residual
-    ///     below);
+    ///   - any other Unit or Infantry takes its class leaf, Unit
+    ///     `0x00738970` or Infantry `0x0051CBA0` (residual below);
     ///   - a Building (`0x0044D6A0` with `initial = 0`) calls `0x00447780(1)`
     ///     and `Queue_Mission(Guard, 0)`.
     ///
@@ -5336,13 +5465,11 @@ impl Simulation {
     /// CMIN and SMIN are `ImmuneToPsionics=yes`.
     ///
     /// RESIDUALS:
-    /// - The Foot leaves also pick AreaGuard (a human house with the
-    ///   GUARD_AREA option, or `DefaultToGuardArea=`; the AI IQ, Team and
-    ///   SlaveOwner arms), Harvest or Unload, and read TarCom first; VERA's
-    ///   selector returns Guard, Move or nothing. Trigger: a captured or
-    ///   released Foot of such a type. Effect: Guard instead of AreaGuard.
-    ///   Frequency: nil in stock (every `DefaultToGuardArea=` type is
-    ///   psionic-immune and no stock house sets GUARD_AREA).
+    /// - The Unit leaf's Area Guard pick and unarmed Unload arm are not
+    ///   ported (residuals in `Simulation::unit_enter_idle_mode` and
+    ///   [`techno_unlimbo_idle_mode`]). Trigger: a captured or released
+    ///   vehicle whose Guard above is still only queued. Effect: Guard
+    ///   instead of Area Guard or Unload.
     /// - No stock aircraft can be captured, so the Aircraft Enter_Idle_Mode
     ///   (`0x004176F0`) here is dormant; the trailing `+0x423`-gated
     ///   `vt+0x498`/`vt+0x494` and `vt+0x488(0, 0, 0, 0, 0)` calls are
@@ -5350,18 +5477,20 @@ impl Simulation {
     ///
     /// `+0x484` census (`search_instructions CALL [+0x484]`), the sites a
     /// miner can reach besides Move arrival, this owner change and the depot
-    /// exit, with their gates; none is run by VERA today:
+    /// exit, with their gates:
     /// - `DriveLocomotionClass::Stop_And_Scatter @ 0x004B48BE` → `+0x484(0,1)`
-    ///   after `Stop_Moving` when the NavQueue is non-empty. VERA scatter is
-    ///   UNCHECKED; natively a human-parked Guard miner scattered on ore
-    ///   would re-queue Harvest through this call.
-    /// - `FootClass::Enter_Destination @ 0x004DA1A6` (call at 0x004DA1C0;
-    ///   callers `EventClass::Execute` 0x004C7453/0x004C759C and
-    ///   `UnitClass::Receive_Radio` 0x00737546) → `+0x484(0,1)` when
-    ///   NavCom == 0, current == Guard and no WeaponsFactory contact.
+    ///   after `Stop_Moving` when the NavQueue is non-empty. Not run by VERA:
+    ///   VERA scatter is UNCHECKED; natively a human-parked Guard miner
+    ///   scattered on ore would re-queue Harvest through this call.
+    /// - `FootClass::Queue_Navigation_List @ 0x004DA0E0` → `+0x484(0,1)` at
+    ///   `0x004DA1A6` when NavCom == 0, Get_Mission == Guard and contact 0 is
+    ///   not a WeaponsFactory building ([`Simulation::queue_navigation_list`]).
+    ///   Its callers are ExitObject's Infantry post (`0x00444DAC`) and the
+    ///   Unit WeaponsFactory destination arm (`0x00742E28`, not ported).
     /// - `FootClass::Check_Destination_Is_UnitRepair_Dock @ 0x004DBA15` →
     ///   `+0x484(0, !depot-contact)` when NavCom == 0 && TarCom == 0
-    ///   (virtual slot; miner reachability unestablished).
+    ///   (virtual slot; miner reachability unestablished; VERA's
+    ///   `track_navigation_gate`).
     /// - `FootClass::ReceiveDamage @ 0x004D74C7`, gated on
     ///   `MissionControl[current].NoThreat && !Zombie` (retail `[Harmless]`)
     ///   for a teamless Foot hit by a source; the damage receiver
@@ -6107,6 +6236,8 @@ impl Simulation {
         }
     }
 
+    /// VERA-only: the per-frame fog recompute from the store; its position reads
+    /// feed only the first tick's diagnostic log of each owner's cell span.
     fn refresh_fog(&mut self, config: &vision::VisionConfig, rules: Option<&RuleSet>) {
         // Recompute visibility in place: end last frame's sight (preserving
         // FLAG_REVEALED) and reconcile each source's sight with its position.
@@ -6782,7 +6913,6 @@ impl Simulation {
             // Buildings, Units and Infantry fired in their own live slots.
             // Units also committed Facing_Update after paid movement. This
             // tail hosts the remaining classes;
-            // tick_turret_rotation excludes Units whose facing is already owned.
             // PRODUCES: damage, deaths, bridge damage, fire events. Ordered
             // ReceiveDamage retaliation is committed inline.
             // Engineer repair, capture and consumption, and a C4 plant, occur
@@ -6815,12 +6945,6 @@ impl Simulation {
             self.admit_projectile_spawns(combat_result.projectile_spawns.iter().copied(), rules);
             bridge_state_changed |=
                 self.visit_combat_tail(first_tail_id, rules, overlay_registry, effects);
-            turret::tick_turret_rotation(
-                &mut self.substrate.entities,
-                rules,
-                self.session.binary_frame,
-                &self.interner,
-            );
             // Unit facing already committed immediately after that Unit's
             // FireAt, before this frame's next live Logic object. Each
             // SpawnManager ran in its owner's TechnoClass::AI slot.
@@ -6946,27 +7070,23 @@ impl Simulation {
         #[cfg(debug_assertions)]
         self.debug_assert_factory_invariants();
 
-        // Living sprite/voxel/harvest animation state belongs to the committed
-        // simulation frame. Keep it inside the authoritative frame transaction
-        // so hashed side effects and every snapshot observe the same state.
-        // Dying animation advancement remains in the live-object scheduler,
-        // which owns the single pending-delete drain above.
+        // Living sprite animation state belongs to the committed simulation
+        // frame. Keep it inside the authoritative frame transaction so hashed
+        // side effects and every snapshot observe the same state. Dying
+        // animation advancement remains in the live-object scheduler, which
+        // owns the single pending-delete drain above.
         if frame_committed && let Some(animation_sequences) = animation_sequences {
             let game_options = self.session.game_options.clone();
             let binary_frame = self.session.binary_frame;
-            {
-                let (entities, interner) = self.entities_mut_and_interner();
-                animation::tick_non_dying_animations(
-                    entities,
-                    animation_sequences,
-                    rules,
-                    &game_options,
-                    interner,
-                    binary_frame,
-                )
-            };
-            animation::tick_voxel_animations(self.entities_mut());
-            animation::tick_harvest_overlays(self.entities_mut());
+            let (entities, interner) = self.entities_mut_and_interner();
+            animation::tick_non_dying_animations(
+                entities,
+                animation_sequences,
+                rules,
+                &game_options,
+                interner,
+                binary_frame,
+            );
         }
         building_anim::finalize(self);
         #[cfg(debug_assertions)]
@@ -7134,7 +7254,7 @@ pub(crate) fn wake_anchor_for(
     {
         return None;
     }
-    if entity.is_on_bridge_layer() {
+    if entity.on_bridge() {
         return None;
     }
     let cell = terrain?.cell(entity.position.rx(), entity.position.ry())?;

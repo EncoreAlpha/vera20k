@@ -222,7 +222,8 @@ impl Simulation {
                     .entities
                     .get_mut(id)
                     .unwrap()
-                    .set_on_bridge(true);
+                    .on_bridge
+                    .store(true);
             }
         }
         self.set_object_height(id, base, rules, registry, frame_effects);
@@ -821,7 +822,7 @@ mod tests {
             e.discovery
                 .set_owned_by_current_house_for_test(input["owned"].as_bool().unwrap_or(true));
             if input["mission_only"].as_bool().unwrap_or(false) {
-                e.mark_mission_only();
+                e.mission_only.mark();
             }
             let owner = e.owner();
             let visibility = serde_json::to_value(OwnerVisibility::new(128, 128)).unwrap();

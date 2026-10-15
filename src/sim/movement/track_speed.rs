@@ -129,6 +129,8 @@ fn braking_distance(
 
 /// One TrackProcess invocation consumes its retained class target, even when
 /// callbacks have changed the path, terrain, health, or destination request.
+/// Process_Drive_Track's speed prefix: Drive `0x004B0F20..0x004B1295`, Ship
+/// `0x006A05F0..0x006A095D`.
 pub(super) fn advance(
     entity: &mut GameEntity,
     object: Option<&ObjectType>,

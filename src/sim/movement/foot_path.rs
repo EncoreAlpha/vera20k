@@ -850,11 +850,11 @@ impl Simulation {
         //`Find_Passable_Cell_Near_Unit` 0x500200 (House 0x501AC0 variants over
         //the House+5498 radius, base-or-starting cell, RNG and the sin/cos
         //tables) through SetDestination(cell, 1). Residual, deliberately
-        //non-stopping: the actor stays in place under AreaGuard. Trigger: an AI
-        //or neutral House Foot whose core search fails in skirmish.
-        //Effect: no relocation walk. Frequency: rare without AI production.
-        //Downstream: the House base projection (house_base.rs) is the pending
-        //input of that owner.
+        //non-stopping: the actor stays in place under AreaGuard. The owner is
+        //`Simulation::house_return_cell`; this caller is not ported. Trigger:
+        //an AI or neutral House Foot whose core search fails in skirmish.
+        //Effect: no relocation walk and none of House500200's two Scenario
+        //draws. Frequency: not measured.
         let _ = human;
         Ok(())
     }

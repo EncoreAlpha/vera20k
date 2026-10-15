@@ -181,7 +181,7 @@ fn fixture(input: &serde_json::Value) -> (Simulation, RuleSet) {
             _ => None,
         });
     if flag(input, "loaner", false) {
-        entity.mark_mission_only();
+        entity.mission_only.mark();
     }
     entity.set_in_playfield(flag(input, "in_playfield", true));
     entity
@@ -608,7 +608,7 @@ fn fly_map_edge_gate_matches_native_rows() {
             dispatch_timer: MissionDispatchTimer::at_frame(0),
         });
         if flag(input, "mission_only", true) {
-            entity.mark_mission_only();
+            entity.mission_only.mark();
         }
         entity.set_in_playfield(flag(input, "in_playfield", true));
         if flag(input, "target", false) {

@@ -19,6 +19,40 @@ use crate::sim::game_entity::GameEntity;
 use crate::sim::intern::InternedId;
 use crate::util::native_x87::MaskedX87Value;
 
+/// Building `+0x544`, the actual health `BuildingClass::AI` last sampled
+/// for its House's power. The constructor (`0x0043B78F`) and a successful
+/// ordinary Unlimbo (`0x00440D2D`) reset it to zero ([`Self::reset`]). The
+/// sample (`0x00440042..0x00440074`, [`Self::sample`]) stores a changed
+/// health and has the owning House reassess its power. A repair changes
+/// actual health without invalidating the House; the next sample does, and
+/// any other native dirty writer can expose that live health through an
+/// earlier House assessment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct PowerHealthSample(i32);
+
+impl PowerHealthSample {
+    /// The sampled health.
+    pub(crate) const fn get(self) -> i32 {
+        self.0
+    }
+
+    /// Sample `current`: answers whether it changed, which invalidates the
+    /// owning House's power.
+    pub(crate) fn sample(&mut self, current: i32) -> bool {
+        if self.0 == current {
+            return false;
+        }
+        self.0 = current;
+        true
+    }
+
+    /// The constructor's and Unlimbo's reset to zero.
+    pub(crate) fn reset(&mut self) {
+        self.0 = 0;
+    }
+}
+
 /// Per-House power totals retained until native House+5778 is invalidated.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PowerState {

@@ -127,7 +127,10 @@ impl Simulation {
 
     /// The Teleport Process of an owner whose Teleport holds a Chronosphere
     /// warp: the state it is in (module docs). Answers whether state 5's
-    /// `Per_Cell_Process(2)` changed a bridge's state.
+    /// `Per_Cell_Process(2)` changed a bridge's state. Each state is
+    /// `TeleportLocomotionClass::Process @ 0x007192F0`'s own
+    /// (`0x007197CC..0x00719BE2`), which stores the warp's state (`+0x38`),
+    /// its timer and the Techno bytes.
     pub(crate) fn process_chrono_warp(
         &mut self,
         id: u64,
@@ -162,9 +165,10 @@ impl Simulation {
                 self.foot_mark_remove(id, Some(rules), registry, ctx.effects);
                 self.teleport_warp_sound(id, WarpSound::Out, rules);
                 if let Some(entity) = self.substrate.entities.get_mut(id) {
-                    entity.set_on_bridge(false);
+                    // The warp-out's OnBridge clear (`0x007198FA`).
+                    entity.on_bridge.store(false);
                     if let Some(locomotor) = entity.locomotor.as_mut() {
-                        locomotor.set_layer(MovementLayer::Ground);
+                        locomotor.store_ground_layer(false);
                     }
                 }
                 if let Some(warp) = self.chrono_warp_mut(id) {
@@ -195,7 +199,9 @@ impl Simulation {
                     warp.set_state(4);
                 }
                 if let Some(entity) = self.substrate.entities.get_mut(id) {
-                    entity.set_chrono_warp_delay(rules.general.chrono_delay);
+                    entity
+                        .chrono_warp_delay
+                        .store_chrono_delay(rules.general.chrono_delay);
                 }
             }
             4 => {
@@ -312,7 +318,7 @@ impl Simulation {
             self.resolved_terrain.as_ref(),
         ) && let Some(entity) = self.substrate.entities.get_mut(id)
         {
-            entity.set_in_playfield(false);
+            entity.in_playfield.leave();
         }
     }
 
@@ -380,7 +386,7 @@ impl Simulation {
                 return false;
             };
             let on_bridge = bridge && !entity.on_bridge();
-            entity.set_on_bridge(on_bridge);
+            entity.on_bridge.store(on_bridge);
             let z = if on_bridge {
                 ground.wrapping_add(crate::util::lepton::BRIDGE_DECK_HEIGHT_LEPTONS)
             } else {
@@ -392,11 +398,7 @@ impl Simulation {
                 z,
             };
             if let Some(locomotor) = entity.locomotor.as_mut() {
-                locomotor.set_layer(if on_bridge {
-                    MovementLayer::Bridge
-                } else {
-                    MovementLayer::Ground
-                });
+                locomotor.store_ground_layer(on_bridge);
                 if let Some(runtime) = locomotor.teleport_runtime_mut() {
                     runtime.set_resolved_destination(marked);
                 }

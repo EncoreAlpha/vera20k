@@ -10,11 +10,10 @@ use crate::rules::locomotor_type::LocomotorKind;
 use crate::rules::object_type::{FactoryType, ObjectType};
 use crate::rules::ruleset::RuleSet;
 use crate::sim::animation::{Animation, SequenceKind};
-use crate::sim::animation::{HarvestOverlay, VoxelAnimation};
 use crate::sim::combat::Health;
 use crate::sim::game_entity::{GameEntity, TechnoConstructorInit};
 use crate::sim::miner::{Miner, MinerConfig, miner_kind_for_object};
-use crate::sim::movement::locomotor::{LocomotorState, MovementLayer};
+use crate::sim::movement::locomotor::LocomotorState;
 use crate::sim::vision::MAX_SIGHT_RANGE;
 use crate::sim::world::Simulation;
 
@@ -126,13 +125,10 @@ impl Simulation {
             }
             ge.barrel_facing = Some(secondary);
         }
-        if uses_voxel && category != EntityCategory::Unit {
-            ge.voxel_animation = Some(VoxelAnimation::new(1, 1));
-        }
         if category == EntityCategory::Infantry {
             match origin {
                 ComponentOrigin::Authored { sub_cell, .. } => {
-                    ge.set_sub_cell(Some(sub_cell));
+                    ge.sub_cell.hold(sub_cell);
                     let (lx, ly) = crate::util::lepton::subcell_lepton_offset(ge.sub_cell());
                     ge.position.put_cell_offset(lx, ly);
                 }
@@ -141,7 +137,7 @@ impl Simulation {
                     // the caller's actual XY/Z and live occupation bytes.
                     // Constructor-held objects reserve no spot and retain
                     // their requested XY until the shared placement boundary.
-                    ge.set_sub_cell(None);
+                    ge.sub_cell.release();
                 }
             }
         }
@@ -234,7 +230,6 @@ impl Simulation {
             let mcfg: MinerConfig = rules.map(MinerConfig::from_rules).unwrap_or_default();
             let storage = obj.storage.max(0) as u16;
             ge.miner = Some(Miner::new(kind, &mcfg, storage));
-            ge.harvest_overlay = Some(HarvestOverlay::hidden());
         }
         // Passenger cargo for transports and garrisonable buildings.
         if obj.passengers > 0 {
@@ -293,10 +288,12 @@ fn install_authored_bridge(ge: &mut GameEntity, origin: ComponentOrigin) {
         ..
     } = origin
     {
+        // A map Unit's or Infantry's OnBridge (`UnitClass::Read_INI`
+        // `0x007434F3`, `InfantryClass::Read_INI` `0x0051FDB2`).
         if let Some(loco) = &mut ge.locomotor {
-            loco.set_layer(MovementLayer::Bridge);
+            loco.store_ground_layer(true);
         }
-        ge.set_on_bridge(true);
+        ge.on_bridge.store(true);
     }
 }
 

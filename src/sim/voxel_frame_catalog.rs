@@ -1,17 +1,13 @@
 //! GPU-independent HVA frame-count catalog (F09).
 //!
-//! Voxel animation frame counts are authoritative sim metadata — the
-//! `VoxelAnimation` component advances by them — but were historically read
-//! back from the renderer's unit atlas after texture building. This module
-//! owns the assets/rules half with no GPU involvement: it resolves each voxel
-//! type's model variants and layers exactly as the atlas seeding does and
-//! parses `.hva` frame counts directly. The GPU-free construction path (app
-//! and headless) and the renderer's atlas seeding consume the same functions,
-//! so presentation and simulation cannot disagree on a frame count.
+//! It resolves each voxel type's model variants and layers and parses `.hva`
+//! frame counts directly, with no GPU involvement. The renderer's atlas
+//! seeding and the draw's frame selection consume the same functions, so they
+//! cannot disagree on a frame count. Draws take an HVA frame as `Foot+0x538`
+//! modulo that count (`UnitClass::DrawVoxelBody @ 0x0073B470`,
+//! `AircraftClass::Draw_It @ 0x004144B0`); the simulation keeps no HVA clock.
 //!
-//! Depends on `assets/`, `rules/`, and sim component/store types only.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! Depends on `assets/`, `rules/`, and sim component types only.
 
 use crate::assets::asset_manager::AssetManager;
 use crate::assets::hva_file::HvaFile;
@@ -235,36 +231,4 @@ pub(crate) fn detect_hva_frame_count(
         .map(|h| h.frame_count)
         .unwrap_or(1);
     frame_count.max(1)
-}
-
-/// Build the frame-count catalog for every voxel entity in the store, keyed
-/// by `(type_id, layer, turret_index)` — the same enumeration (variants, then layers) the
-/// unit-atlas seeding walks, minus the sprite keys.
-pub(crate) fn build_voxel_frame_catalog(
-    entities: &crate::sim::entity_store::EntityStore,
-    interner: &crate::sim::intern::StringInterner,
-    asset_manager: &AssetManager,
-    rules: Option<&RuleSet>,
-) -> BTreeMap<(String, VxlLayer, i32), u32> {
-    let mut frame_counts: BTreeMap<(String, VxlLayer, i32), u32> = BTreeMap::new();
-    let mut seen = BTreeSet::new();
-    for entity in entities.values() {
-        let type_str = interner.resolve(entity.type_ref());
-        if !entity.is_voxel() && building_voxel_names(type_str, rules).is_none() {
-            continue;
-        }
-        for variant in unit_atlas_variants(type_str, rules) {
-            if !seen.insert(variant.clone()) {
-                continue;
-            }
-            for (layer, index) in seed_layers_for(asset_manager, &variant, rules) {
-                frame_counts
-                    .entry((variant.clone(), layer, index))
-                    .or_insert_with(|| {
-                        detect_hva_frame_count(asset_manager, &variant, layer, index, rules)
-                    });
-            }
-        }
-    }
-    frame_counts
 }

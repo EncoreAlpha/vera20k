@@ -448,6 +448,8 @@ pub(crate) fn finish_initial_attempt(sim: &mut Simulation, id: u64) {
     }
 }
 
+/// `UnitClass::Mission_Unload @ 0x0073D630`'s state-2 retry (`0x0073DD5D..0x0073DD76`):
+/// a refused `Deploy` with a NavCom (`+0x5A4`) clears `+0x68C`.
 pub(crate) fn finish_retry(sim: &mut Simulation, id: u64, accepted: bool) {
     if !accepted
         && let Some(e) = sim.substrate.entities.get_mut(id)

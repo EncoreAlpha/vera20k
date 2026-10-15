@@ -81,24 +81,14 @@ impl TarCom {
     ///   early-out and admission (`represented_assign_target_admitted`);
     /// - `FootClass::Arrival_Target_Handler @ 0x004DF3A0`, which stores NULL
     ///   and its MegaTarget without the setter, so the passive flag, burst
-    ///   index and SpawnManager keep their state;
-    /// - the mission dispatch's stale-handle cleanup, which drops a target
-    ///   whose object is gone or dying. Native PointerExpired
-    ///   (`0x007077C0`) has already cleared that target through the setter
-    ///   when the object died ([`target_present`]).
+    ///   index and SpawnManager keep their state.
     ///
-    /// RESIDUAL: the stale cleanup is a raw store. Native's clear is
-    /// PointerExpired's TarCom arm: unless `allowClear` or the same-owner
-    /// test exempts it, it re-arms the targeting timer (`+0x180/+0x188`) from
-    /// a Scenario `RandomRanged(4, 8)` (`0x00707A0D`) when more than 10 frames
-    /// remain, then calls the setter (`vt+0x3C8(NULL)`, `0x00707A33`). VERA
-    /// runs that arm in the killing hit's announcement
-    /// (`Simulation::object_destroy_callback`) and UnInit's. Trigger: an
-    /// attacker still holds an object that is gone or dying without that
-    /// announcement having cleared it. Effect: no draw, no timer re-arm and
-    /// none of the setter's resets. Frequency: no production path is known to
-    /// leave such a handle. Risk: if one does, the Scenario stream skips a
-    /// draw.
+    /// An object that dies or is UnInit is dropped by its attackers:
+    /// PointerExpired's TarCom arm (`0x007077C0`) calls the class setter with
+    /// NULL (`0x00707A33`) in the killing hit's announcement
+    /// (`Simulation::object_destroy_callback`) and in UnInit's. An
+    /// infantryman deployed without `DeployFire=` refuses that write
+    /// (`0x0051B273..0x0051B299`) and keeps the target.
     pub(crate) fn set(&mut self, target: Option<TargetKind>) {
         self.target = target;
     }

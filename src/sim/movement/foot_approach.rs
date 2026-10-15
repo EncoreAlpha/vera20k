@@ -109,7 +109,8 @@ impl Simulation {
     /// The facts [`ApproachCrush`] tests for Unit `id` and the object it
     /// targets, with that object; None where neither arm can take the call:
     /// another actor, a Cell Target (neither Techno nor Object) or a unit
-    /// that crushes nothing. Every represented object is a Techno.
+    /// that crushes nothing. Every represented object is a Techno. The arms are
+    /// `UnitClass::Approach_Target` (`0x007414E0`)'s `0x007414E4..0x0074165D`.
     fn approach_crush(&self, id: u64, rules: &RuleSet) -> Option<(ApproachCrush, u64)> {
         let actor = self.substrate.entities.get(id)?;
         let TargetKind::Entity(target) = actor.attack_target.target()? else {

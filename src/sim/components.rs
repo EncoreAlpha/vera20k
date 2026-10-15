@@ -499,89 +499,7 @@ impl FootSpeedState {
     }
 }
 
-/// One active Drive/Ship locomotor's retained track selector, signed cursor,
-/// short-track choice and residual (+58/+5C/+60/+4C). Curve geometry and a
-/// temporary Process_Track call must not own serialized copies of this state.
-/// Native evidence: tools/spatial_oracle/locomotor_track_cursor.json.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct TrackProgress {
-    turn_index: i32,
-    /// Next-to-consume cursor. Drive constructor4AF5A6/4AF5A9 and Ship
-    /// constructor69ECB6/69ECB9 initialize selector/cursor to -1;
-    /// fresh/forced acceptance and completion retirement instead store zero.
-    cursor: i32,
-    reversed: bool,
-    residual: i32,
-}
-
-impl TrackProgress {
-    /// A fixture's progress.
-    #[cfg(test)]
-    pub(crate) const fn for_test(
-        turn_index: i32,
-        cursor: i32,
-        reversed: bool,
-        residual: i32,
-    ) -> Self {
-        Self {
-            turn_index,
-            cursor,
-            reversed,
-            residual,
-        }
-    }
-
-    /// See the field.
-    pub(crate) const fn turn_index(&self) -> i32 {
-        self.turn_index
-    }
-
-    /// Store the field.
-    pub(crate) fn set_turn_index(&mut self, turn_index: i32) {
-        self.turn_index = turn_index;
-    }
-
-    /// See the field.
-    pub(crate) const fn cursor(&self) -> i32 {
-        self.cursor
-    }
-
-    /// Store the field.
-    pub(crate) fn set_cursor(&mut self, cursor: i32) {
-        self.cursor = cursor;
-    }
-
-    /// See the field.
-    pub(crate) const fn reversed(&self) -> bool {
-        self.reversed
-    }
-
-    /// Store the field.
-    pub(crate) fn set_reversed(&mut self, reversed: bool) {
-        self.reversed = reversed;
-    }
-
-    /// See the field.
-    pub(crate) const fn residual(&self) -> i32 {
-        self.residual
-    }
-
-    /// Store the field.
-    pub(crate) fn set_residual(&mut self, residual: i32) {
-        self.residual = residual;
-    }
-}
-
-impl Default for TrackProgress {
-    fn default() -> Self {
-        Self {
-            turn_index: -1,
-            cursor: -1,
-            reversed: false,
-            residual: 0,
-        }
-    }
-}
+pub use crate::sim::movement::track_process::TrackProgress;
 
 /// Drive-owned occupation mark installed ahead of the live object-list cell.
 ///
@@ -750,8 +668,6 @@ mod tests {
         assert_send_sync::<Position>();
         assert_send_sync::<crate::sim::combat::Health>();
         assert_send_sync::<BuildingUp>();
-        assert_send_sync::<crate::sim::animation::VoxelAnimation>();
-        assert_send_sync::<crate::sim::animation::HarvestOverlay>();
         assert_send_sync::<crate::sim::movement::locomotor::LocomotorState>();
         assert_send_sync::<NavigationState>();
         assert_send_sync::<DriveLocomotionRuntime>();
@@ -783,14 +699,14 @@ mod tests {
         let navigation = NavigationState::default();
         assert!(navigation.path_replay.directions.is_empty());
         assert_eq!(navigation.path_replay.cursor, 0);
-        assert_eq!(drive.track().turn_index, -1);
-        assert_eq!(drive.track().cursor, -1);
+        assert_eq!(drive.track().turn_index(), -1);
+        assert_eq!(drive.track().cursor(), -1);
         assert!(!drive.track_valid());
-        assert!(!drive.track().reversed);
+        assert!(!drive.track().reversed());
         assert_eq!(drive.target_speed_fraction(), SIM_ZERO);
         let owner_speed = FootSpeedState::default();
         assert_eq!(owner_speed.applied_fraction, SIM_ZERO);
-        assert_eq!(drive.track().residual, 0);
+        assert_eq!(drive.track().residual(), 0);
     }
 
     /// `FootClass::SetSpeedFraction @ 0x004D3710` executed on the original
@@ -849,10 +765,7 @@ mod tests {
         let drive_a = DriveLocomotionRuntime::default();
         let drive_b = DriveLocomotionRuntime::default()
             .with_destination_for_test(Some(DriveCoord::cell(45, 40, 0)))
-            .with_track_for_test(TrackProgress {
-                residual: 6,
-                ..Default::default()
-            });
+            .with_track_for_test(TrackProgress::for_test(-1, -1, false, 6));
 
         assert_ne!(hash_drive(&drive_a), hash_drive(&drive_b));
     }

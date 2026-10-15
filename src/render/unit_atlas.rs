@@ -238,7 +238,7 @@ pub struct UnitAtlas {
     /// Lookup: (type_id, facing, frame) → UV rectangle + offset data.
     entries: HashMap<UnitSpriteKey, UnitSpriteEntry>,
     /// HVA frame counts per (type_id, layer, turret_index). Missing entries have 1 frame.
-    /// Used at spawn time to initialize VoxelAnimation components.
+    /// A draw takes its HVA frame as `Foot+0x538` modulo the model's count.
     pub frame_counts: BTreeMap<(String, VxlLayer, i32), u32>,
     /// Palette indices of every resident sprite; native shadow masks are
     /// composed from them.

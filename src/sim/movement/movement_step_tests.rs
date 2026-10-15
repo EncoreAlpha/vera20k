@@ -145,7 +145,6 @@ fn native_track_fixture(kind: LocomotorKind, budget: i32) -> (Simulation, TrackI
             } else {
                 TrackFamily::Ship
             },
-            apply_fresh_occupation: false,
             active_gate: false,
             retry: false,
         },

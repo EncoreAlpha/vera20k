@@ -516,7 +516,7 @@ fn assert_state(sim: &Simulation, id: u64, owner: InternedId, native: &Value, co
             let native_owner = cell["owners"][plane].as_u64().unwrap();
             assert!(native_owner == 0 || native_owner == u64::from(u32::MAX));
             assert_eq!(
-                sim.substrate.raw_cell_occupation.owner_at(key, layer),
+                sim.substrate.raw_cell_occupation.occupant_at(key, layer).1,
                 (native_owner == 0).then_some(owner),
                 "{context}: raw owner {x},{y} {layer:?}"
             );

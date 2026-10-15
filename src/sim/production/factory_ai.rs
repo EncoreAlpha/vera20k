@@ -44,13 +44,9 @@
 //!   have no `Factory=`.
 //! - The try-later branch also copies an uninitialised stack word into the
 //!   timer's middle field (`+0x554`, `0x004501F1`), which no reader uses.
-//! - Mobile products share `Exit_Object443C60` through
-//!   [`exit_produced_object`], including radio capacity and Infantry GetDockCell,
-//!   Unlimbo and reciprocal tethering. The specialized refinery/weeder/naval/
-//!   war-factory arms retain their existing adapters; computer Infantry's
-//!   `House500200` order-selection arm and specialized Archive behavior remain
-//!   residuals. Trigger: those computer/specialized products. Effect: their
-//!   later mission selection can differ despite sharing admission and placement.
+//! - Mobile products leave through [`exit_produced_object`], the same
+//!   `Exit_Object` arms a human's placement takes. Its residuals: the
+//!   refinery arm and the Infantry arm's Cloning Vat copies.
 
 use crate::rules::object_type::{FactoryType, ObjectCategory};
 use crate::rules::overlay_types::OverlayTypeRegistry;

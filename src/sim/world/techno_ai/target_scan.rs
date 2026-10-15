@@ -698,6 +698,7 @@ impl<'r> ScanHost for WorldScan<'_, 'r> {
         }
     }
 
+    /// `Retaliate_And_Scan @ 0x00709820`'s test `+0xAC == 0xB` (`0x0070983A`).
     fn committed_area_guard(&self) -> bool {
         self.entity().mission.current().raw() == AREA_GUARD_MISSION
     }
@@ -721,6 +722,7 @@ impl<'r> ScanHost for WorldScan<'_, 'r> {
         }
     }
 
+    /// TarCom `+0x2B4`, as `Retaliate_And_Scan @ 0x00709820` reads it.
     fn target(&self) -> Option<TargetKind> {
         self.entity().attack_target.target()
     }
@@ -737,6 +739,7 @@ impl<'r> ScanHost for WorldScan<'_, 'r> {
         fire_error_at(self.sim, self.rules, self.id, target, weapon, true)
     }
 
+    /// The SpawnManager `+0x2D0` that `Retaliate_And_Scan @ 0x00709820` tests.
     fn has_spawn_manager(&self) -> bool {
         self.entity().spawn_manager.is_some()
     }
@@ -838,6 +841,8 @@ impl Simulation {
     /// `id`'s concrete Greatest_Threat against the live world. The immutable
     /// selector reports whether Foot was reached; this adapter commits its empty
     /// result latch write before the caller performs any target assignment.
+    /// Per-class Greatest_Threat (vtable `+0x3C4`); the latch write is
+    /// `FootClass::Greatest_Threat @ 0x004D9920`'s `+0x688` clear (`0x004D9951..0x004D9955`).
     pub(crate) fn greatest_threat_represented(
         &mut self,
         rules: &RuleSet,
@@ -869,7 +874,9 @@ impl Simulation {
         if result.foot_wrapper_entered()
             && let Some(entity) = self.substrate.entities.get_mut(id)
         {
-            entity.finish_foot_threat_scan(result.target().is_some());
+            entity
+                .foot_retarget_after_stop
+                .finish_scan(result.target().is_some());
         }
         result.target()
     }

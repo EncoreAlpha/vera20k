@@ -125,12 +125,16 @@ fn foot_equivalent(category: EntityCategory) -> bool {
     )
 }
 
+/// The active Drive/Ship locomotor's slope state, as `DriveLocomotionClass::Draw_Matrix`
+/// (`0x004AFF60`) and `ShipLocomotionClass::Draw_Matrix` (`0x0069F670`) read it.
 pub(crate) fn state_for_entity(entity: &GameEntity) -> Option<&SlopeTransitionState> {
     foot_equivalent(entity.category())
         .then_some(())
         .and_then(|()| entity.locomotor.as_ref()?.active_slope_transition())
 }
 
+/// The same state for its writers: the Process samples (Drive `0x004B050B`, Ship
+/// `0x0069FC1B`) and `FootClass::Unlimbo`'s force-slope slot (`0x004D71A9`).
 fn state_for_entity_mut(entity: &mut GameEntity) -> Option<&mut SlopeTransitionState> {
     foot_equivalent(entity.category())
         .then_some(())

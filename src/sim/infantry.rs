@@ -156,6 +156,8 @@ const REPEATED_YELLOW_ADD: u16 = 25;
 const REPEATED_GREEN_ADD: u16 = 12;
 const PRONE_THRESHOLD: u16 = 50;
 
+/// `InfantryClass::ReceiveDamage @ 0x00517FA0`'s fear gate: InfantryType `+0xEBC`
+/// Fearless, then `HasWeaponAbility(0xD)` (`0x0070D0D0`; `0x00518CC8..0x00518CE3`).
 pub fn is_fear_application_blocked(obj: &ObjectType, entity: &GameEntity) -> bool {
     obj.fearless || has_weapon_ability(entity.veterancy.rank_kind(), obj, Ability::Fearless)
 }
@@ -173,6 +175,8 @@ pub fn apply_panic_force(obj: &ObjectType, entity: &mut GameEntity) {
     }
 }
 
+/// `InfantryClass::ReceiveDamage @ 0x00517FA0`'s fear write to `+0x6D4`
+/// (`0x00518C5C..0x00518D40`): the latch, else the ConditionRed/Yellow ladder.
 pub fn apply_fear_from_damage(
     obj: &ObjectType,
     entity: &mut GameEntity,

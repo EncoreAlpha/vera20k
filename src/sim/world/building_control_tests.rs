@@ -137,7 +137,8 @@ fn building_mission_only_selection_uses_native_virtual_control_admission() {
                     .entities
                     .get_mut(ACTOR)
                     .unwrap()
-                    .mark_mission_only();
+                    .mission_only
+                    .mark();
             }
             let key = if mission_only { "true" } else { "false" };
             assert_eq!(

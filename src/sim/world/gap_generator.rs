@@ -128,6 +128,8 @@ impl Simulation {
             })
     }
 
+    /// The gap add `0x006FB170`'s inputs: the operational recheck (vt+0x350,
+    /// `0x004555D0`) and the type's signed radius (`+0xCD2`) it caches in `+0x26C`.
     pub(super) fn gap_operational_state(&self, id: u64, rules: &RuleSet) -> Option<(bool, i32)> {
         let entity = self.substrate.entities.get(id)?;
         if !entity.lifecycle.object_alive() || entity.lifecycle.in_limbo() {
@@ -203,6 +205,8 @@ impl Simulation {
             .operational = operational;
     }
 
+    /// One viewer's gap add `0x006FB170` or removal `0x006FB470` (latch `+0x269`,
+    /// radius `+0x26C`) around the cell of the building's Location.
     fn set_building_gap_for_viewer(
         &mut self,
         id: u64,

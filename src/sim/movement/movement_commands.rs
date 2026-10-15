@@ -13,18 +13,16 @@ use crate::rules::locomotor_type::LocomotorKind;
 use crate::sim::entity_store::EntityStore;
 use crate::sim::game_entity::GameEntity;
 
-/// Check if an entity can accept a new movement destination.
+/// Whether the Unit setter takes a destination for `entity`: not while it
+/// carries the `TerminalLifetime` dying mark.
 ///
-/// Prevents destination changes during special states: dying, deploying,
-/// undeploying and falling.
+/// VERA-only: `UnitClass::Set_Destination` (`0x00741970`) has no such gate.
+/// gamemd needs none, because `ObjectClass::UnInit` (`0x005F65F0`) expires
+/// every pointer to the object and limboes it at once, so no caller can
+/// reach it to order it. VERA keeps a dying object in the store until the
+/// drain, where callers that walk the store can still reach it.
 pub(crate) fn can_accept_destination(entity: &GameEntity) -> bool {
-    if entity.death.is_dying() {
-        return false;
-    }
-    if entity.building_up() || entity.building_down() {
-        return false;
-    }
-    true
+    !entity.death.is_dying()
 }
 
 /// Read the movement goal for diagnostics without retaining another copy,

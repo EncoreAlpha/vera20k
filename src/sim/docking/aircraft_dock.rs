@@ -74,14 +74,6 @@ impl AircraftAmmo {
         self.current
     }
 
-    /// `TechnoClass::DecreaseAmmo`, called by FireAt after a burst
-    /// (`0x006FF656`): one round off while any is left.
-    pub(crate) fn decrease(&mut self) {
-        if self.current > 0 {
-            self.current -= 1;
-        }
-    }
-
     /// RELOAD, radio `0x1F` (`0x006F4C9C`): one round more. The receiver has
     /// already refused a full aircraft.
     pub(crate) fn reload_round(&mut self) {

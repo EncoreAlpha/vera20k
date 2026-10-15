@@ -54,11 +54,10 @@
 //!   path word with Find_Path's append form (`0x4B3F07`), which keeps the
 //!   queue and appends at most 24 - prefix words (`0x4D3E82`). VERA's route
 //!   install replaces the queue, so a train takes the ordinary request.
-//! - A tube word at the path head (`0x4B3298`, and `0x4B2F45` after a found
-//!   route) returns to a tube receiver VERA does not port. Trigger: a Drive
-//!   route whose Find_Path result holds a tube step. Effect: the Unit stalls
-//!   at the tube entrance instead of entering. Frequency: maps with tunnels.
-//!   Risk: tube travel for vehicles is missing until that receiver lands.
+//!
+//! A tube word at the path head returns here (`0x4B3298`, and `0x4B2F45`
+//! after a found route); the Process_Track after it enters the tube
+//! ([`Simulation::track_tube_head`]).
 
 use super::foot_path::{FindPathResult, FootPathOutcome, coord_cell};
 use super::ground_pose;
@@ -338,7 +337,7 @@ impl Simulation {
     fn track_fresh_arm(&mut self, call: &FreshCall<'_>, direction: u8) -> Result<bool, String> {
         let id = call.id;
         let rules = call.rules;
-        //4B3298: a tube word returns to the tube receiver (unported; see residual).
+        //4B3298: a tube word returns; Process_Track's tube arm enters the tube.
         if direction == TUBE_STEP_DIRECTION {
             return Ok(false);
         }
@@ -1100,7 +1099,7 @@ impl Simulation {
             && let Some(family) = TrackFamily::from_kind(loco.active_kind())
             && let Some(mut progress) = loco.track_progress(family)
         {
-            progress.set_turn_index(-1);
+            progress.retire_selector();
             loco.store_track_progress(family, progress);
         }
     }

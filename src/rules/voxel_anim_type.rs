@@ -4,8 +4,7 @@
 //! gamemd-derived: `VoxelAnimTypeClass::Constructor @ 0x0074AD80` and
 //! `VoxelAnimTypeClass::ReadINI @ 0x0074B050`. This is a different class from
 //! `AnimClass`: `AnimClass` draws SHP sprites, `VoxelAnimClass` draws a VXL
-//! model carried by a `BounceClass` physics body. `sim::components::
-//! VoxelAnimation` is a third, unrelated thing — a per-entity HVA frame cursor.
+//! model carried by a `BounceClass` physics body.
 //!
 //! ## Dependency rules
 //! - Part of rules/ — depends only on the INI layer and util/.

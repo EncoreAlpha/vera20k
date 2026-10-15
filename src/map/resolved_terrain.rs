@@ -1026,15 +1026,7 @@ impl ResolvedTerrainGrid {
     pub fn index(&self, rx: u16, ry: u16) -> Option<usize> {
         if rx < self.width && ry < self.height {
             let index = ry as usize * self.width as usize + rx as usize;
-            if self
-                .native_allocated
-                .as_ref()
-                .is_some_and(|mask| !mask.get(index).copied().unwrap_or(false))
-            {
-                None
-            } else {
-                Some(index)
-            }
+            self.is_allocated(index).then_some(index)
         } else {
             None
         }
@@ -1121,12 +1113,18 @@ impl ResolvedTerrainGrid {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ResolvedTerrainCell> {
-        self.cells.iter().enumerate().filter_map(|(index, cell)| {
-            self.native_allocated
-                .as_ref()
-                .is_none_or(|mask| mask.get(index).copied().unwrap_or(false))
-                .then_some(cell)
-        })
+        self.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| self.is_allocated(index).then_some(cell))
+    }
+
+    /// Whether the cell at storage `index` is allocated, one [`Self::iter`]
+    /// yields.
+    pub(crate) fn is_allocated(&self, index: usize) -> bool {
+        self.native_allocated
+            .as_ref()
+            .is_none_or(|mask| mask.get(index).copied().unwrap_or(false))
     }
 
     /// Return the cell's zero-based slot in the first sixteen tiles of either

@@ -18,6 +18,8 @@ fn members(sim: &Simulation, rx: u16, ry: u16) -> impl Iterator<Item = CellObjec
     sim.cell_objects((rx, ry), MovementLayer::Ground)
 }
 
+/// `CellClass::BlowUpBridge @ 0x0047DD70`'s ground loop: each member's ReceiveDamage
+/// with its own Health (`+0x6C`) and the C4 warhead, the next link taken first.
 pub(super) fn apply(
     sim: &mut Simulation,
     rules: &RuleSet,

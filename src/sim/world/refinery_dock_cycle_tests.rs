@@ -287,9 +287,13 @@ fn mixed_cargo_dumps_ore_then_gems_fifteen_frames_apart() {
     assert_eq!(paid[1].0 - paid[0].0, 15);
 }
 
-/// A player refinery order in the middle of an unload (`Command::MinerReturn`)
-/// leaves the dock and the unload latch; the miner docks again and pays the
-/// load it still carries, and the refinery's slot ends free.
+/// A player refinery order in the middle of an unload (`Command::MinerReturn`):
+/// the MEGAMISSION breaks the link and tether (`0x004C72E8..0x004C7342`), and
+/// the Enter arm's DOCKING (`0x00741DDA`) links the refinery again, whose pad
+/// arm finds the miner already there and tethers it (`0x0043CA71..`). The
+/// unload latch stays up until Mission_Unload sees the new order
+/// (`0x0073E539`). The miner docks again and pays the load it still
+/// carries, and the refinery's slot ends free.
 #[test]
 fn a_refinery_order_mid_unload_redocks_and_pays() {
     let mut s = returning_scene();
@@ -303,7 +307,8 @@ fn a_refinery_order_mid_unload_redocks_and_pays() {
         Some(&s.rules),
     ));
     let after_order = sample(&s, s.miner);
-    assert!(!after_order.unloading && !after_order.tethered);
+    assert!(after_order.unloading && after_order.tethered);
+    assert_eq!(after_order.contact, Some(s.refinery));
     let mut paid = 0;
     for _ in 0..1500 {
         paid = frame(&mut s);
@@ -315,6 +320,118 @@ fn a_refinery_order_mid_unload_redocks_and_pays() {
     let refinery = s.sim.substrate.entities.get(s.refinery).unwrap();
     assert!(refinery.radio_contacts.is_empty());
     assert_eq!(refinery.tether.partner(), None);
+}
+
+/// A refinery's single dock held by one miner refuses a second miner's
+/// CAN_LOAD, so the click's What_Action leaves Select (`0x0074017E`) and no
+/// order goes out; the docked miner's own slot still admits it.
+#[test]
+fn a_busy_refinery_leaves_a_second_miners_click_on_select() {
+    let mut s = returning_scene();
+    run_until_unloading(&mut s);
+    let second = spawn_returning_miner(&mut s, (15, 15));
+    // What_Action admits only a human player's Unit (House `0x0050B6F0`).
+    s.sim.session.game_mode_nonzero = true;
+    s.sim.session.current_house = Some(s.sim.substrate.entities.get(s.miner).unwrap().owner());
+    assert_eq!(
+        s.sim
+            .unit_building_click_action(second, s.refinery, &s.rules),
+        None
+    );
+    assert_eq!(
+        s.sim
+            .unit_building_click_action(s.miner, s.refinery, &s.rules),
+        Some(crate::sim::world::BuildingClickAction::Enter)
+    );
+}
+
+/// An idle miner's refinery order that arrives after another miner docked
+/// (the slot filled between the click and the event): the busy refinery
+/// becomes its ArchiveTarget (`0x00741D41..0x00741D44`) and the Dock arm sends
+/// it to a passable cell near the refinery (`0x00742FE9..0x00743123`).
+/// Mission_Enter's probe of the ArchiveTarget (`0x004D929F`) docks it, still
+/// on Enter, once the first has left.
+#[test]
+fn an_order_to_a_busy_refinery_waits_nearby_and_docks_on_enter_after_it_frees() {
+    let mut s = returning_scene();
+    run_until_unloading(&mut s);
+    let second = spawn_returning_miner(&mut s, (15, 15));
+    // Idle, so Harvest's own return cannot be what brings it home.
+    let now = s.sim.session.binary_frame;
+    s.sim
+        .mission_assign_exact(second, MissionId::from_known(MissionType::Guard), now)
+        .unwrap();
+    assert!(s.sim.apply_command(
+        "Americans",
+        &crate::sim::command::Command::MinerReturn {
+            entity_id: second,
+            target_refinery_id: Some(s.refinery),
+        },
+        Some(&s.rules),
+    ));
+    let waiter = s.sim.substrate.entities.get(second).unwrap();
+    assert_eq!(waiter.mission.queued().known(), Some(MissionType::Enter));
+    assert_eq!(
+        waiter.archive_target(),
+        Some(crate::sim::combat::TargetKind::Entity(s.refinery))
+    );
+    // A cell outside the refinery's 4x3 foundation at NW (6, 9).
+    let Some(crate::sim::components::NavTargetRef::Cell { rx, ry }) = waiter.navigation.nav_com()
+    else {
+        panic!(
+            "the Dock arm's nearby cell: {:?}",
+            waiter.navigation.nav_com()
+        );
+    };
+    assert!(!((6..=9).contains(&rx) && (9..=11).contains(&ry)));
+    let mut first_left = None;
+    let mut docked = None;
+    for n in 0..3000 {
+        frame(&mut s);
+        if first_left.is_none() && !sample(&s, s.miner).tethered {
+            first_left = Some(n);
+        }
+        let now = sample(&s, second);
+        if docked.is_none() && now.tethered {
+            docked = Some((n, now.mission));
+        }
+        if docked.is_some() && now.ore == 0 && !now.tethered {
+            break;
+        }
+    }
+    let first_left = first_left.expect("the first miner leaves");
+    let (docked_at, docked_on) = docked.expect("the ordered miner docks");
+    assert!(first_left <= docked_at);
+    assert_eq!(docked_on, MissionId::from_known(MissionType::Enter));
+    assert_eq!(
+        sample(&s, second).ore,
+        0,
+        "the ordered miner unloads its load"
+    );
+}
+
+/// The Unit setter's Dock arm (`0x00742E47..0x0074312A`) for a guarding miner
+/// sent to a free refinery of its `Dock=` list: the refinery takes its HELLO
+/// (`0x00742EF7`), so it queues Enter (`0x00742F37`) and the destination
+/// becomes NULL.
+#[test]
+fn a_guarding_miner_sent_to_a_free_refinery_queues_enter_without_a_destination() {
+    let mut s = returning_scene();
+    let now = s.sim.session.binary_frame;
+    s.sim
+        .mission_assign_exact(s.miner, MissionId::from_known(MissionType::Guard), now)
+        .unwrap();
+    s.sim.set_unit_destination(
+        s.miner,
+        crate::sim::components::NavTargetRef::Building { id: s.refinery },
+        &s.rules,
+        true,
+        crate::sim::world::FrameEffects::default(),
+    );
+    let miner = s.sim.substrate.entities.get(s.miner).unwrap();
+    assert_eq!(miner.radio_contacts.slot(0), Some(s.refinery));
+    assert_eq!(miner.mission.queued().known(), Some(MissionType::Enter));
+    assert_eq!(miner.navigation.nav_com(), None);
 }
 
 /// Selling the refinery under an unloading miner: the sale's stage-0 visit,
@@ -382,6 +499,44 @@ fn selling_the_refinery_mid_unload_hands_the_miner_to_harvest() {
     assert!(!after.tethered, "OVER_OUT released the miner");
     assert_eq!(after.contact, None);
     assert_eq!(after.ore, 40);
+}
+
+/// A refinery captured under an unloading miner: `BuildingClass::ChangeOwner`
+/// takes along only contacts at their dock coordinate
+/// (`0x00448559..0x004486C8`), and a refinery's is the cell beside the pad
+/// the miner stands on. So the miner keeps its owner, RUN_AWAY drops its
+/// unload latch and OVER_OUT releases it.
+#[test]
+fn capturing_the_refinery_mid_unload_sends_the_miner_off() {
+    let mut s = returning_scene();
+    run_until_unloading(&mut s);
+    let owner = s.sim.substrate.entities.get(s.miner).unwrap().owner();
+    let russians = s.sim.interner.intern("Russians");
+    s.sim.houses.insert(
+        russians,
+        crate::sim::house_state::HouseState::new(russians, 1, None, false, 0, 10),
+    );
+    s.sim.session.house_order.push(russians);
+    s.sim.change_owner_with_rules(
+        s.refinery,
+        russians,
+        &s.rules,
+        None,
+        crate::sim::world::FrameEffects::default(),
+    );
+    let refinery = s.sim.substrate.entities.get(s.refinery).unwrap();
+    assert_eq!(refinery.owner(), russians);
+    assert!(refinery.radio_contacts.is_empty());
+    assert_eq!(refinery.tether.partner(), None);
+    let after = sample(&s, s.miner);
+    assert_eq!(
+        s.sim.substrate.entities.get(s.miner).unwrap().owner(),
+        owner
+    );
+    assert!(!after.unloading, "RUN_AWAY dropped the latch");
+    assert!(!after.tethered, "OVER_OUT released the miner");
+    assert_eq!(after.contact, None);
+    assert_eq!(after.ore, 40, "nothing was dumped");
 }
 
 /// A refinery destroyed under an unloading miner: the NowDead contact loop

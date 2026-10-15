@@ -282,7 +282,10 @@ impl Simulation {
             }
         }
         if repair {
-            crate::sim::docking::building_dock::set_pending_entry(self, id, Some(building));
+            // `0x0041ABC4`.
+            if let Some(entity) = self.substrate.entities.get_mut(id) {
+                entity.pending_entry.install(building);
+            }
             destination = None;
         }
         ControlFlow::Continue(destination)

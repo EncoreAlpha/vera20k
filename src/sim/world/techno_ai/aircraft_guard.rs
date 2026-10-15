@@ -171,6 +171,8 @@ impl WorldGuard<'_> {
             .expect("aircraft dispatch")
     }
 
+    /// The mission `+0xAC` that `MissionClass::Get_MissionControl @ 0x005B3A00`
+    /// indexes for the Rate.
     fn current(&self) -> MissionType {
         self.entity()
             .mission
@@ -181,6 +183,7 @@ impl WorldGuard<'_> {
 }
 
 impl GuardHost for WorldGuard<'_> {
+    /// `+0x6D4 = 1`, `Mission_Guard @ 0x0041A5C0`'s stores (`0x0041A605`, `0x0041A69F`).
     fn set_transition_ready(&mut self) {
         let entity = self.sim.substrate.entities.get_mut(self.id).unwrap();
         entity.mission_leaf.set_aircraft_transition_ready(1);
@@ -257,6 +260,8 @@ impl GuardHost for WorldGuard<'_> {
             .expect("aircraft dispatch");
     }
 
+    /// `Mission_Guard @ 0x0041A5C0`'s contact 0: a Building whose type is
+    /// `UnitReload=` (`+0x16AA`, `0x0041A73F`).
     fn contact_reloads(&mut self) -> bool {
         let Some(contact) = self.entity().radio_contacts.slot(0) else {
             return false;
@@ -270,6 +275,7 @@ impl GuardHost for WorldGuard<'_> {
             .is_some_and(|object| object.unit_reload)
     }
 
+    /// TarCom `+0x2B4`, as `Mission_Guard @ 0x0041A5C0` reads it (`0x0041A822`).
     fn target(&mut self) -> bool {
         crate::sim::combat::target_present(
             self.entity().attack_target.target(),

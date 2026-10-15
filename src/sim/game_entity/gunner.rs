@@ -4,13 +4,40 @@
 use super::GameEntity;
 use crate::rules::object_type::{ObjectType, WEAPON_SLOT_COUNT};
 
+/// The current weapon (`TechnoClass+0x138`) and turret (`+0x124`), and the
+/// charge turret's saved rearm duration (`+0x2F8`). The Techno constructor
+/// stores 0, -1 and 0 (`0x006F2B99..0x006F2BCA`, `0x006F2E98`).
+///
+/// Only this module's operations write it: `SetGunnerWeapon` the pair
+/// ([`GameEntity::set_gunner_weapon`]), FireAt the duration
+/// ([`GameEntity::rearm_after_fire`]) and the charge AI the turret
+/// ([`GameEntity::update_charge_turret`]). Combat selection and turret facing
+/// read the weapon; indexed voxel drawing reads the turret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TurretSelection {
+    current_weapon_number: i32,
+    current_turret_index: i32,
+    charge_turret_delay: i32,
+}
+
+impl TurretSelection {
+    /// The Techno constructor's values.
+    pub(crate) const fn constructed() -> Self {
+        Self {
+            current_weapon_number: 0,
+            current_turret_index: -1,
+            charge_turret_delay: 0,
+        }
+    }
+}
+
 impl GameEntity {
     pub fn current_weapon_number(&self) -> i32 {
-        self.current_weapon_number
+        self.turret_selection.current_weapon_number
     }
 
     pub fn current_turret_index(&self) -> i32 {
-        self.current_turret_index
+        self.turret_selection.current_turret_index
     }
 
     /// TechnoClass::SetGunnerWeapon70DC70 -> TechnoType7178B0.
@@ -25,14 +52,14 @@ impl GameEntity {
         } else {
             0
         };
-        self.current_weapon_number = mode;
-        self.current_turret_index = object.gunner_turrets.turret_for_weapon(mode);
+        self.turret_selection.current_weapon_number = mode;
+        self.turret_selection.current_turret_index = object.gunner_turrets.turret_for_weapon(mode);
     }
 
     /// FireAt6FE4A4/6FF29E retains GetROF's final duration in +2F8 as well
     /// as starting +2EC. Other rearm writers do not change this saved word.
     pub(crate) fn rearm_after_fire(&mut self, frame: i32, duration: i32) {
-        self.charge_turret_delay = duration;
+        self.turret_selection.charge_turret_delay = duration;
         self.rearm_timer.start(frame, duration);
     }
 
@@ -46,13 +73,14 @@ impl GameEntity {
         {
             return;
         }
-        self.current_turret_index = if self.charge_turret_delay <= 0 {
+        let selection = &mut self.turret_selection;
+        selection.current_turret_index = if selection.charge_turret_delay <= 0 {
             0
         } else {
             (object
                 .turret_count
                 .wrapping_mul(self.rearm_timer.remaining(frame))
-                / self.charge_turret_delay)
+                / selection.charge_turret_delay)
                 .clamp(0, object.turret_count - 1)
         };
     }
@@ -61,8 +89,8 @@ impl GameEntity {
     /// constructor, SetGunnerWeapon and charge AI above.
     #[cfg(test)]
     pub(crate) fn set_gunner_selection_for_test(&mut self, weapon: i32, turret: i32) {
-        self.current_weapon_number = weapon;
-        self.current_turret_index = turret;
+        self.turret_selection.current_weapon_number = weapon;
+        self.turret_selection.current_turret_index = turret;
     }
 }
 

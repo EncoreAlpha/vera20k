@@ -505,24 +505,6 @@ where
     )
 }
 
-/// Attach app-only, GPU-free metadata after staged gameplay construction.
-pub(crate) fn bind_staged_app_scenario_metadata(
-    sim: &mut Simulation,
-    asset_manager: &AssetManager,
-    rules: Option<&RuleSet>,
-) {
-    // F09: HVA frame counts are sim metadata — parse them through the GPU-free
-    // catalog before any atlas exists, so the renderer never writes into the
-    // simulation. Atlas seeding derives its own copy from the same functions.
-    let frame_catalog = crate::sim::voxel_frame_catalog::build_voxel_frame_catalog(
-        sim.entities(),
-        &sim.interner,
-        asset_manager,
-        rules,
-    );
-    sim.update_voxel_anim_frame_counts(&frame_catalog);
-}
-
 /// Build the voxel and SHP sprite atlases, and the palette set, for a fully
 /// constructed simulation. A load builds them once; sprites the world needs
 /// later go onto the atlases' growth pages.

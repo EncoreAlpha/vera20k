@@ -184,7 +184,8 @@ pub(crate) fn write_fly_target_speed(loco: &mut LocomotorState, facts: &FlySpeed
 }
 
 /// The facts [`write_fly_target_speed`] reads from a live mover. Ammo is
-/// represented on Aircraft only; no stock non-aircraft owner flies.
+/// represented on Aircraft only; no stock non-aircraft owner flies. Native reads
+/// them in `FlyLocomotionClass::UpdateFlightMotion` (`0x004CD600`), `0x004CE145..0x004CE2DB`.
 pub(crate) fn fly_speed_facts(
     entity: &crate::sim::game_entity::GameEntity,
     distance: i32,
@@ -480,7 +481,7 @@ pub(crate) fn update_fly_height(
             flight_level,
         });
     entity.position.put_z(output.world_z);
-    entity.set_on_bridge(output.on_bridge);
+    entity.on_bridge.store(output.on_bridge);
     output
 }
 

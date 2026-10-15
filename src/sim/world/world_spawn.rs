@@ -1070,6 +1070,8 @@ impl Simulation {
 
     /// Retain the caller's exact native coordinate until admission succeeds.
     /// Both coordinate and height-level callers use the same Unlimbo body.
+    /// `ObjectClass::Unlimbo @ 0x005F4EC0`'s coordinate, put over Location `+0x9C` as the
+    /// request its SetLocation (vt+0x1B4 at `0x005F4FA8`) stores.
     pub(crate) fn reveal_constructed_object_at_coord_with_overlay_context(
         &mut self,
         stable_id: u64,
@@ -1080,9 +1082,12 @@ impl Simulation {
         overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
         frame_effects: FrameEffects<'_>,
     ) -> Option<u64> {
-        let mut position = self.substrate.entities.get(stable_id)?.position;
-        position.put_location(coord);
-        position.store_level((coord.z / crate::util::lepton::GROUND_LEVEL_HEIGHT_LEPTONS) as u8);
+        let position = self
+            .substrate
+            .entities
+            .get(stable_id)?
+            .position
+            .at_location_with_level(coord);
         self.reveal_constructed_object(
             stable_id,
             position,
@@ -1166,11 +1171,6 @@ impl Simulation {
             return None;
         }
 
-        if let Some(entity) = self.substrate.entities.get_mut(stable_id)
-            && is_infantry
-        {
-            entity.set_on_bridge(false);
-        }
         let outcome = self.try_reveal_entity_with_context(
             stable_id,
             RevealRequest {
@@ -1485,13 +1485,11 @@ impl Simulation {
         // before this store; later placement or launch supplies its own pose.
         // Evidence: anytown_damage/unit_unlimbo.{json,meta.json,md}.
         ge.position
-            .put_location(crate::sim::components::DriveCoord { x: 0, y: 0, z: 0 });
-        ge.position.store_level(0);
+            .put_location_with_level(crate::sim::components::DriveCoord { x: 0, y: 0, z: 0 });
 
         // This boundary receives newly constructed objects. Make those constructor
         // facts explicit so storage can never imply cell or logic presence.
         ge.lifecycle.reset_constructed();
-        ge.lifecycle.set_cell_marked(false);
         // ObjectClass's constructor clears IsInLogic (`0x005F398D`).
         ge.in_logic_vector.mark(false);
         ge.kill_record.reset_constructed();
@@ -1764,10 +1762,9 @@ impl Simulation {
             && placement != PlacementEvidence::RejectedEarly
             && let Some(entity) = self.substrate.entities.get_mut(stable_id)
         {
-            entity.set_sub_cell(Some(crate::sim::movement::bump_crush::priority_sub_cell(
-                position.sub_x(),
-                position.sub_y(),
-            )));
+            entity
+                .sub_cell
+                .hold_offset(position.sub_x(), position.sub_y());
         }
         Some((position, placement))
     }
@@ -1854,6 +1851,8 @@ impl Simulation {
     /// Materialize constructor-owned Technos in native manager order. The
     /// parent has already consumed its own constructor word; every child uses
     /// the same FreshScenario funnel and remains a stable limbo identity.
+    /// `TechnoClass::Init_Managers @ 0x006F3F40` stores SpawnManager `+0x2D0` (`0x006F3FFD`),
+    /// then SlaveManager `+0x2D8` (`0x006F4077`), and never reads `+0x2D8` first.
     fn commit_constructor_owned_techno_children(
         &mut self,
         parent_id: u64,
@@ -1861,15 +1860,6 @@ impl Simulation {
         frame_effects: FrameEffects<'_>,
     ) {
         crate::sim::spawn_manager::commit_spawn_manager_pool(self, parent_id, rules, frame_effects);
-
-        if self
-            .substrate
-            .entities
-            .get(parent_id)
-            .is_some_and(|parent| parent.slave_manager.is_some())
-        {
-            return;
-        }
         self.create_slave_manager(parent_id, rules, frame_effects);
     }
 
@@ -1908,55 +1898,6 @@ impl Simulation {
                 &mut entity.cloak,
                 frame,
                 fully_cloaked,
-            );
-        }
-    }
-
-    /// Update VoxelAnimation frame_counts for all voxel entities from atlas data.
-    ///
-    /// Called after the unit atlas is built, since frame counts are only known after
-    /// loading HVA files.
-    pub fn update_voxel_anim_frame_counts(
-        &mut self,
-        frame_counts: &std::collections::BTreeMap<
-            (String, crate::sim::components::VxlLayer, i32),
-            u32,
-        >,
-    ) {
-        use crate::sim::components::VxlLayer;
-
-        let keys = self.substrate.entities.keys_sorted();
-        let mut updated: u32 = 0;
-        for &sid in &keys {
-            let Some(entity) = self.substrate.entities.get_mut(sid) else {
-                continue;
-            };
-            let type_ref = entity.type_ref();
-            let Some(ref mut va) = entity.voxel_animation else {
-                continue;
-            };
-            let max_fc: u32 = [
-                VxlLayer::Composite,
-                VxlLayer::Body,
-                VxlLayer::Turret,
-                VxlLayer::Barrel,
-            ]
-            .iter()
-            .filter_map(|layer| {
-                frame_counts.get(&(self.interner.resolve(type_ref).to_string(), *layer, 0))
-            })
-            .copied()
-            .max()
-            .unwrap_or(1);
-
-            if max_fc > 1 && va.adopt_frame_count(max_fc) {
-                updated += 1;
-            }
-        }
-        if updated > 0 {
-            log::info!(
-                "Updated VoxelAnimation frame_count for {} entities",
-                updated
             );
         }
     }

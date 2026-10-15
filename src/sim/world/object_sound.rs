@@ -249,6 +249,8 @@ impl Simulation {
 
     /// `Location` (`+0x9C`) of a Techno, or of a Terrain object while it is
     /// not in Limbo. `None` also stands for a Techno in Limbo.
+    /// `ObjectClass::AI @ 0x005F3E70`'s InLimbo (`+0x81`) gate and PlayAt coordinate
+    /// (`0x005F3E78..0x005F3F0C`).
     fn object_sound_location(&self, id: u64) -> Option<AnimWorldCoord> {
         if let Some(entity) = self.substrate.entities.get(id) {
             return (!entity.lifecycle.in_limbo()).then(|| Self::movement_sound_world(entity));

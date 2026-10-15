@@ -75,12 +75,6 @@
 //!   refinery (or Construction Yard). Effect: no move order. Frequency:
 //!   occasional. Downstream: VERA's rally click archives a cell only on
 //!   rally-line factories, so a refinery never holds a player's archive.
-//! - The factory-exit hunt start runs at production: VERA hands a produced
-//!   unit its rally point there rather than at the factory exit
-//!   (`production_queue.rs`), so the Slave Miner's hunt begins a few frames
-//!   before native's, whose exit drive precedes it. Trigger: every Slave
-//!   Miner built. Effect: the first scan comes a few frames early.
-//!   Frequency: every build. Downstream: none beyond timing.
 //! - Two recall sites have no VERA anchor: FootClass::Mission_Hunt's reset
 //!   when it picks a destination (`0x004D553D..0x004D5547`; VERA's Hunt port
 //!   has no destination step) and FootClass::Mission_AreaGuard's hunt start
@@ -348,7 +342,10 @@ impl SlaveLink {
     }
 }
 
-/// The manager's owner's cell (`vt+0x1B8`): its coordinate's cell.
+/// The manager's owner's cell (`vt+0x1B8`): its coordinate's cell, as
+/// `SlaveManagerClass::GetDeployCenter` (`0x006B0690`), `FindDeployCell`
+/// (`0x006B0300`) and `Update_State`'s relocation check
+/// (`0x006B0062..0x006B01F5`) read it.
 pub(crate) fn owner_cell(owner: &GameEntity) -> (i16, i16) {
     let coord = crate::sim::movement::ground_pose::position_world_coord(&owner.position);
     ((coord.x / 256) as i16, (coord.y / 256) as i16)
@@ -910,7 +907,7 @@ impl Simulation {
         let Some(owner) = self.substrate.entities.get_mut(master) else {
             return;
         };
-        owner.suppress_next_deploy_voice();
+        owner.suppress_deploy_voice.suppress();
         let (x, y) = owner_cell(owner);
         owner.set_archive_target(Some(crate::sim::combat::TargetKind::Cell(
             x as u16, y as u16,
@@ -1014,36 +1011,6 @@ impl Simulation {
             .is_some();
         }
         false
-    }
-
-    /// `UnitClass::PerCellProcess @ 0x0073A98C..0x0073A9D9`: a unit leaving
-    /// its war factory (radio 8 answered 0x17) without a destination of its
-    /// own, neither a Harvester= nor a Weeder= type, that holds a slave
-    /// manager starts the hunt (`0x006B0CC0`) where another unit takes the
-    /// rally point or its computer house's base defence (`0x0073A9DE..`).
-    /// VERA hands a produced unit its rally point at production rather than
-    /// at the factory exit, so production asks this there. Answers whether
-    /// the rally move is skipped.
-    pub(crate) fn slave_master_leaves_factory(
-        &mut self,
-        id: u64,
-        rules: &RuleSet,
-        frame_effects: FrameEffects<'_>,
-    ) -> bool {
-        let Some(entity) = self.substrate.entities.get(id) else {
-            return false;
-        };
-        if entity.slave_manager.is_none() {
-            return false;
-        }
-        if self
-            .object_type(entity.type_ref(), rules)
-            .is_none_or(|object| object.harvester || object.weeder)
-        {
-            return false;
-        }
-        self.begin_slave_hunt(id, rules, frame_effects);
-        true
     }
 
     /// `0x006B0CC0`: an idle manager (state 0) starts its owner's hunt for a
@@ -1426,11 +1393,6 @@ impl Simulation {
         ) else {
             return false;
         };
-        if placement != PlacementEvidence::RejectedEarly
-            && let Some(entity) = self.substrate.entities.get_mut(slave)
-        {
-            entity.set_on_bridge(false);
-        }
         let outcome = self.try_reveal_entity_with_context(
             slave,
             RevealRequest {
@@ -1918,6 +1880,41 @@ mod tests {
         assert_eq!(entity.body_facing.current(0), 0);
         assert_eq!(sim.scenario_rng.logical_state(), before);
         assert!(!sim.object_placement_scope_active());
+    }
+
+    /// `InfantryClass::Unlimbo @ 0x0051DFF0` and the Foot, Techno and Object
+    /// Unlimbo it reaches store no OnBridge (`Object+0x8C`), so a slave that
+    /// left a bridge deck for its miner keeps the flag when it deploys again.
+    #[test]
+    fn slave_unlimbo_keeps_on_bridge() {
+        let (mut sim, rules, _) = crate::sim::world::entry_test_fixture::fixture();
+        let slave = sim
+            .construct_object_limbo_at_height(
+                "ENGINEER",
+                "Americans",
+                15,
+                15,
+                0,
+                0,
+                &rules,
+                crate::sim::world::FrameEffects::default(),
+            )
+            .unwrap();
+        sim.substrate
+            .entities
+            .get_mut(slave)
+            .unwrap()
+            .set_on_bridge(true);
+        let centre = crate::util::lepton::CELL_CENTER_LEPTON;
+        assert!(sim.with_object_placement_scope(|sim| sim.unlimbo_slave(
+            slave,
+            (15, 15),
+            (centre, centre),
+            &rules,
+            None,
+            crate::sim::world::FrameEffects::default()
+        )));
+        assert!(sim.substrate.entities.get(slave).unwrap().on_bridge());
     }
 
     #[test]

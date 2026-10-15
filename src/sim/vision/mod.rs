@@ -2188,6 +2188,8 @@ enum SightRelease {
     Forget,
 }
 
+/// VERA-only: fog bounds for fixture sims built without a map descriptor; the
+/// path grid, else the farthest unlimboed entity cell, is the source of truth.
 fn resolve_bounds(entities: &EntityStore, path_grid: Option<&PathGrid>) -> (u16, u16) {
     if let Some(grid) = path_grid {
         return (grid.width(), grid.height());

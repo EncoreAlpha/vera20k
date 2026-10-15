@@ -426,8 +426,8 @@ fn compare(row: &Value) {
         "ground": raw.bits_at(key, MovementLayer::Ground),
         "deck": raw.bits_at(key, MovementLayer::Bridge),
         "owners": [
-            house_index(&sim, raw.owner_at(key, MovementLayer::Ground)),
-            house_index(&sim, raw.owner_at(key, MovementLayer::Bridge)),
+            house_index(&sim, raw.occupant_at(key, MovementLayer::Ground).1),
+            house_index(&sim, raw.occupant_at(key, MovementLayer::Bridge).1),
         ],
     });
     assert_eq!(occupation, native["occupation"], "{context}: occupation");

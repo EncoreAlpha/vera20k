@@ -375,6 +375,8 @@ impl Simulation {
         }
     }
 
+    /// `TechnoClass::EngineerRepair @ 0x00701410` passes `GetHealthRatio <= ConditionYellow`
+    /// to `0x00451EE0`; `ReceiveDamage` tests the same ratio at `0x00442AA3..0x00442AC4`.
     pub(crate) fn refresh_building_damage_state(&mut self, id: u64, rules: &RuleSet) {
         let Some(entity) = self.substrate.entities.get(id) else {
             return;
@@ -670,6 +672,8 @@ impl Simulation {
     }
 
     /// Rebuild an index, never infer slot selection from HP or animation names.
+    /// VERA-only: the Anims' load-time reverse slot indexes, from Building+55C
+    /// and the damage-fire slots (+5C8), their source of truth.
     pub(crate) fn rebuild_building_anim_slot_indices(&mut self) {
         for anim in self.substrate.anims.values_mut() {
             anim.building_slot = None;

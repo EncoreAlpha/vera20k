@@ -7,7 +7,7 @@
 
 use super::GameEntity;
 use crate::map::entities::EntityCategory;
-use crate::sim::occupancy::{air_spatial_bucket_index, air_spatial_tracks_entity};
+use crate::sim::occupancy::air_spatial_bucket_index;
 use crate::sim::world::Simulation;
 
 const NATIVE_NULL_CELL: (i16, i16) = (0, 0);
@@ -137,46 +137,6 @@ impl Simulation {
         entity.foot_air.air_spatial_enter_order = order;
     }
 
-    /// Reconcile represented air-vector membership after a physical step.
-    /// Fly, Jumpjet and Rocket enter/leave through their native callbacks;
-    /// marking a grounded instance cannot create a new tracker registration.
-    /// Other represented air categories retain their existing admission
-    /// predicate.
-    pub(crate) fn sync_air_spatial_membership(&mut self, id: u64) {
-        let Some(entity) = self.substrate.entities.get(id) else {
-            return;
-        };
-        let tracked = entity.foot_air.air_spatial_bucket.is_some();
-        let explicit_membership = entity.locomotor.as_ref().is_some_and(|locomotor| {
-            locomotor.fly_runtime().is_some()
-                || locomotor.jumpjet_runtime().is_some()
-                || locomotor.rocket_runtime().is_some()
-        });
-        let desired = entity.lifecycle.object_alive()
-            && !entity.lifecycle.in_limbo()
-            && entity.lifecycle.cell_marked()
-            && !entity.passenger_role.is_inside_transport()
-            && if explicit_membership {
-                tracked
-            } else {
-                air_spatial_tracks_entity(entity, self.resolved_terrain.as_ref())
-            };
-        let cell = (entity.position.rx() as i16, entity.position.ry() as i16);
-        // Fly Process follows a cell change itself, at its next visit
-        // (`0x004CD60E..0x004CD65F`).
-        let fly = entity
-            .locomotor
-            .as_ref()
-            .is_some_and(|locomotor| locomotor.fly_runtime().is_some());
-        match (tracked, desired) {
-            (false, false) => {}
-            (false, true) => self.aircraft_tracker_add(id),
-            (true, false) => self.aircraft_tracker_remove(id),
-            (true, true) if !fly => self.aircraft_tracker_update_cell(id, cell),
-            (true, true) => {}
-        }
-    }
-
     /// CellClass::SetAltObject487D70. A foreign claim returns AL0 unchanged.
     /// A successful claim writes Cell+E0 at487DC8, then directly notifies the
     /// Foot at487DD9. Release notifies the prior Foot at487DA5 before clearing
@@ -261,8 +221,6 @@ impl Simulation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::locomotor_type::LocomotorKind;
-    use crate::sim::movement::locomotor::LocomotorState;
 
     fn native_control_world() -> Simulation {
         let mut sim = Simulation::new();
@@ -380,47 +338,6 @@ mod tests {
         assert_eq!(actor.air_slot_cell(), NATIVE_NULL_CELL);
         assert_eq!(actor.air_tracker_cell(), (10, 10));
         assert_eq!(actor.air_spatial_bucket(), Some(105));
-    }
-
-    #[test]
-    fn a_marked_grounded_jumpjet_requires_explicit_tracker_entry() {
-        let mut sim = native_control_world();
-        let actor = sim.substrate.entities.get_mut(1).unwrap();
-        actor.lifecycle.set_in_limbo_for_test(false);
-        actor.lifecycle.set_cell_marked(true);
-        actor.locomotor = Some(LocomotorState::for_test_kind(LocomotorKind::Jumpjet));
-        sim.sync_air_spatial_membership(1);
-        assert_eq!(
-            sim.substrate.entities.get(1).unwrap().air_spatial_bucket(),
-            None
-        );
-        assert_eq!(
-            sim.substrate.entities.get(1).unwrap().air_tracker_cell(),
-            NATIVE_NULL_CELL
-        );
-        sim.aircraft_tracker_add(1);
-        let order = sim
-            .substrate
-            .entities
-            .get(1)
-            .unwrap()
-            .air_spatial_enter_order();
-        sim.substrate
-            .entities
-            .get_mut(1)
-            .unwrap()
-            .position
-            .set_rx_for_test(11);
-        sim.sync_air_spatial_membership(1);
-        let actor = sim.substrate.entities.get(1).unwrap();
-        assert_eq!(actor.air_tracker_cell(), (11, 10));
-        assert_eq!(actor.air_spatial_enter_order(), order);
-        sim.aircraft_tracker_remove(1);
-        sim.sync_air_spatial_membership(1);
-        assert_eq!(
-            sim.substrate.entities.get(1).unwrap().air_spatial_bucket(),
-            None
-        );
     }
 
     /// Actual active-game UnInit followed by the selected original destructor

@@ -232,6 +232,8 @@ fn set_state(sim: &mut Simulation, building_id: u64, state: BunkerState, unit: O
 }
 
 /// Turn the unit's body (`+0x388` `Set`) toward the complete native facing word.
+/// `BuildingClass::UpdateBunker` (`0x00458E50`) states 1 and 3 call
+/// `FacingClass::Set_Desired` (`0x004C9220`) at `0x004590EA` and `0x00459228`.
 fn turn_unit(sim: &mut Simulation, unit_id: u64, facing: u16) {
     let frame = sim.session.binary_frame;
     if let Some(u) = sim.substrate.entities.get_mut(unit_id) {
@@ -239,6 +241,8 @@ fn turn_unit(sim: &mut Simulation, unit_id: u64, facing: u16) {
     }
 }
 
+/// `FacingClass::Is_Rotating` (`0x004C9480`) on the unit's body (`+0x388`), which
+/// `BuildingClass::UpdateBunker` states 2 and 4 wait on (`0x00459109`, `0x00459245`).
 fn is_turning(sim: &Simulation, unit_id: u64) -> bool {
     let frame = sim.session.binary_frame;
     sim.substrate
@@ -263,6 +267,8 @@ fn arrived_and_stopped(sim: &Simulation, building_id: u64, unit_id: u64) -> bool
 }
 
 /// No live vehicle/infantry other than the candidate stands on the footprint.
+/// It stands in for `BuildingClass::UpdateBunker` (`0x00458E50`) state 1's
+/// occupy-list `Find_Nearest_Object` scan (`0x00458FB3..0x00459049`).
 fn footprint_clear_of_others(sim: &Simulation, building_id: u64, unit_id: u64) -> bool {
     let Some(building) = sim.substrate.entities.get(building_id) else {
         return true;

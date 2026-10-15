@@ -60,7 +60,7 @@ mod cell_contact;
 mod drive_locomotion;
 mod foot_approach;
 mod foot_coordinate;
-mod foot_mark;
+pub(crate) mod foot_mark;
 mod foot_path;
 pub(crate) use drive_locomotion::drive_do_turn;
 #[cfg(test)]
@@ -84,6 +84,7 @@ mod movement_commands;
 mod movement_path;
 mod movement_step;
 pub(crate) mod movement_tick;
+mod nav_list;
 pub(crate) mod navcom;
 #[cfg(test)]
 pub(crate) use navcom::set_walk_destination_coord;

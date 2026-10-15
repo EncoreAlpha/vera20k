@@ -3,12 +3,8 @@
 //! Extracted from production_placement.rs for file-size limits.
 
 use crate::map::entities::EntityCategory;
-use crate::rules::locomotor_type::SpeedType;
 use crate::rules::ruleset::RuleSet;
-use crate::sim::find_nearby_cell::{
-    NearbyFootprint, NearbyQuery, NearbySearchOptions, PassabilityArgs,
-    find_nearby_passable_cell_with_options, map_owned_radius_cap,
-};
+use crate::sim::find_nearby_cell::NearbySearchOptions;
 use crate::sim::world::FrameEffects;
 use crate::sim::world::{PlacementEvidence, Simulation};
 
@@ -281,16 +277,10 @@ fn primary_free_unit_cell(
     ))
 }
 
-/// One of the two ordered nearby-cell searches for a refused FreeUnit placement,
-/// with the arguments OnConstructionComplete pushes (`0x00446BF4..0x00446CCD`,
-/// `0x00446D42..0x00446E10`): the building's Location cell (`+0x9C`, its
-/// north-west footprint cell) as the seed; SpeedType 2 (Wheel), whatever the
-/// free unit's own; the zone `MapClass::GetZoneID @ 0x0056D230` gives the seed
-/// for the free unit's MovementZone (`Type+0x5B4`) without the bridge lookup,
-/// and that MovementZone; not bridge-aware; 1x1; the overlay rejection
-/// `options` carries; the height gate on; no obstacle gate; bridge cells
-/// refused; a zero target cell, so selection is the frame-counter modulo and
-/// draws no RNG; no quadrant skip; no final occupancy check.
+/// One of the two ordered nearby-cell searches for a refused FreeUnit placement
+/// (`0x00446BF4..0x00446CCD`, `0x00446D42..0x00446E10`): seeded at the building's
+/// Location cell (`+0x9C`, its north-west footprint cell) for the free unit's
+/// MovementZone, with the overlay rejection `options` carries.
 ///
 /// The seed is under the building, but Cell Recalc's zone class ignores
 /// buildings, except a FirestormWall one (`0x00483D8E`; none in retail), so
@@ -303,45 +293,7 @@ fn find_free_unit_nearby_cell(
     options: NearbySearchOptions,
 ) -> Option<(u16, u16)> {
     let free_unit = rules.object(free_unit_type)?;
-    let (width, height) = sim.map_size_diamond()?;
-    let zone = sim
-        .zone_grid
-        .as_ref()
-        .zip(sim.resolved_terrain.as_ref())
-        .and_then(|(zones, terrain)| {
-            zones.get_zone_id_native(terrain, seed, free_unit.movement_zone, false)
-        });
-    let query = NearbyQuery {
-        native_cells: None,
-        raw_occupation: Some(&sim.substrate.raw_cell_occupation),
-        passability: PassabilityArgs {
-            speed_type: SpeedType::Wheel,
-            required_zone_id: zone,
-            movement_zone: free_unit.movement_zone,
-            bridge_aware_zone: false,
-        },
-        footprint: NearbyFootprint::SINGLE,
-        allow_bridge_cells: false,
-        check_height: true,
-        check_occupancy: false,
-        radius_cap: map_owned_radius_cap(width, height),
-        target_cell: None,
-        path_grid: sim.path_grid(),
-        resolved_terrain: sim.resolved_terrain.as_ref(),
-        overlay_grid: sim.overlay_grid.as_ref(),
-        occupancy: Some(&sim.substrate.occupancy),
-        entities: Some(&sim.substrate.entities),
-        zone_grid: sim.zone_grid.as_ref(),
-        playfield_bounds: sim.playfield_bounds,
-    };
-    find_nearby_passable_cell_with_options(
-        (i32::from(seed.0), i32::from(seed.1)),
-        &query,
-        options,
-        // The frame counter is committed late, so during this advance it still holds
-        // the current frame — the value the selection modulo must alias.
-        sim.session.binary_frame,
-    )
+    sim.nearby_wheel_cell(seed, free_unit.movement_zone, options)
 }
 
 #[cfg(test)]

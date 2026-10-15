@@ -356,6 +356,30 @@ pub(crate) fn clear_unload_latch(sim: &mut Simulation, id: u64) -> bool {
     was_set
 }
 
+/// The Unit setter's unload step (`UnitClass::Set_Destination`
+/// `0x00741BC7..0x00741C4A`), run for every destination but NULL: while the
+/// Unit's mission (vt+0x184) or MissionQueue (`+0xB4`) is Unload, a
+/// `Harvester=` type (`+0xE0E`) has the building west of it
+/// ([`unload_building`]) delete its Special animation (slot 10,
+/// `ClearAnimSlot @ 0x00451E40`), the one the unload gate starts.
+pub(crate) fn clear_unload_anim_for_destination(sim: &mut Simulation, rules: &RuleSet, id: u64) {
+    let unload = MissionId::from_known(MissionType::Unload);
+    let Some(entity) = sim.substrate.entities.get(id) else {
+        return;
+    };
+    if entity.mission.effective() != unload && entity.mission.queued() != unload {
+        return;
+    }
+    let harvester = sim
+        .object_type(entity.type_ref(), rules)
+        .is_some_and(|object| object.harvester);
+    if let Some(building) = unload_building(sim, id)
+        && harvester
+    {
+        sim.clear_building_anim_slot(building, 10);
+    }
+}
+
 /// The building `0x0047C520` finds in the cell west of the miner
 /// (`AdjacentCell[W]`, `0x0089F6A0`): the refinery for a miner on its pad.
 fn unload_building(sim: &Simulation, id: u64) -> Option<u64> {
