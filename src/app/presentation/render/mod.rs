@@ -452,6 +452,21 @@ fn upload_to_gpu(
         "status_unit_fill",
         &ui.unit_status_fill,
     );
+    pool.upload(
+        &state.renderer.gpu,
+        "control_group_status_bg",
+        &ui.control_group_status_bg,
+    );
+    pool.upload(
+        &state.renderer.gpu,
+        "control_group_status_outline",
+        &ui.control_group_status_outline,
+    );
+    pool.upload(
+        &state.renderer.gpu,
+        "control_group_status",
+        &ui.control_group_status,
+    );
     pool.upload(&state.renderer.gpu, "self_heal_pips", &ui.self_heal_pip);
     pool.upload(&state.renderer.gpu, "cargo_pips", &ui.cargo_pip);
     pool.upload(&state.renderer.gpu, "software_cursor", &ui.software_cursor);

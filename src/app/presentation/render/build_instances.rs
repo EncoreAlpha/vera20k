@@ -17,7 +17,8 @@ use crate::app::presentation::sidebar_render::{
 };
 use crate::app::presentation::ui_overlays::{
     build_bomb_clock_instances, build_building_radius_ring_instances,
-    build_building_status_instances, build_cargo_pip_instances, build_occupant_pip_instances,
+    build_building_status_instances, build_cargo_pip_instances,
+    build_control_group_status_instances, build_occupant_pip_instances,
     build_repair_wrench_instances, build_self_heal_pip_instances, build_software_cursor_instances,
     build_unit_status_bg_instances, build_unit_status_fill_instances,
 };
@@ -73,6 +74,9 @@ pub(super) struct UiInstances {
     pub occupant_pip: Vec<SpriteInstance>,
     pub unit_status_bg: Vec<SpriteInstance>,
     pub unit_status_fill: Vec<SpriteInstance>,
+    pub control_group_status_bg: Vec<SpriteInstance>,
+    pub control_group_status_outline: Vec<SpriteInstance>,
+    pub control_group_status: Vec<SpriteInstance>,
     pub self_heal_pip: Vec<SpriteInstance>,
     pub cargo_pip: Vec<SpriteInstance>,
     pub software_cursor: Vec<SpriteInstance>,
@@ -569,6 +573,7 @@ pub(super) fn build_ui_instances(state: &AppState, sw: f32, sh: f32) -> UiInstan
     let occupant_pip = build_occupant_pip_instances(state, sw, sh);
     let unit_status_bg = build_unit_status_bg_instances(state, sw, sh);
     let unit_status_fill = build_unit_status_fill_instances(state, sw, sh);
+    let control_group_status = build_control_group_status_instances(state, sw, sh);
     let self_heal_pip = build_self_heal_pip_instances(state, sw, sh);
     let cargo_pip = build_cargo_pip_instances(state, sw, sh);
     let software_cursor = build_software_cursor_instances(state);
@@ -666,6 +671,9 @@ pub(super) fn build_ui_instances(state: &AppState, sw: f32, sh: f32) -> UiInstan
         occupant_pip,
         unit_status_bg,
         unit_status_fill,
+        control_group_status_bg: control_group_status.background,
+        control_group_status_outline: control_group_status.outline,
+        control_group_status: control_group_status.text,
         self_heal_pip,
         cargo_pip,
         software_cursor,

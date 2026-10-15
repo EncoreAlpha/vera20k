@@ -3632,6 +3632,972 @@ mod control_group_tests {
     }
 
     #[test]
+    fn registered_group_assignment_projects_a_selected_building_status_badge() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let owner = sim.interner.intern("Americans");
+        let building_type = sim.interner.intern("YAPOWR");
+        let mut building = GameEntity::new_at_frame_zero_for_test(
+            27,
+            12,
+            10,
+            0,
+            0,
+            owner,
+            Health::new(1000),
+            building_type,
+            EntityCategory::Structure,
+            0,
+            5,
+            false,
+        );
+        building.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(building);
+        assert!(matches!(
+            sim.reveal(27),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        assert!(
+            crate::app::presentation::instances::tactical_entity_encounter_order(&sim)
+                .contains(&27)
+        );
+
+        let create_one_slot = crate::app::input::hotkeys::catalog::registered_commands()
+            .iter()
+            .find(|metadata| metadata.ini_name == "TeamCreate_1")
+            .map(|metadata| metadata.command)
+            .expect("registered TeamCreate_1 command");
+        let crate::app::input::hotkeys::HotkeyCommand::TeamCreate(slot) = create_one_slot else {
+            panic!("TeamCreate_1 must remain the existing group assignment command");
+        };
+        let mut groups = vec![Vec::new(); 10];
+        assign_control_group(&mut groups, slot, vec![27]);
+
+        assert_eq!(
+            crate::app::presentation::ui_overlays::control_group_status_labels(
+                &sim,
+                &groups,
+                None,
+                Some(owner),
+                false,
+            ),
+            vec![(27, '1')],
+            "a retained, selected YAPOWR follows the same live group projection"
+        );
+    }
+
+    #[test]
+    fn registered_aircraft_group_badge_uses_shared_screen_height_and_visibility() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let owner = sim.interner.intern("Americans");
+        let mut aircraft = GameEntity::new_at_frame_zero_for_test(
+            27,
+            12,
+            10,
+            0,
+            0,
+            owner,
+            Health::new(100),
+            sim.interner.intern("ORCA"),
+            EntityCategory::Aircraft,
+            0,
+            5,
+            true,
+        );
+        aircraft.position.set_exact_z_leptons_for_test(Some(0));
+        aircraft.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(aircraft);
+        assert!(matches!(
+            sim.reveal(27),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        assert!(
+            crate::app::presentation::instances::tactical_entity_encounter_order(&sim)
+                .contains(&27)
+        );
+
+        let registered_slot = |name: &str| {
+            let command = crate::app::input::hotkeys::catalog::registered_commands()
+                .iter()
+                .find(|metadata| metadata.ini_name == name)
+                .unwrap_or_else(|| panic!("missing registered hotkey {name}"))
+                .command;
+            match command {
+                crate::app::input::hotkeys::HotkeyCommand::TeamCreate(slot) => slot,
+                command => panic!("unexpected command for {name}: {command:?}"),
+            }
+        };
+        let mut groups = vec![Vec::new(); 10];
+        assign_control_group(&mut groups, registered_slot("TeamCreate_1"), vec![27]);
+
+        let font = crate::render::bit_font::tests::make_test_font(
+            &[(b'0' as u16, 6), (b'1' as u16, 5)],
+            4,
+        );
+        let house_colors = crate::map::houses::HouseColorMap::new();
+        let house_color_ramps = crate::rules::house_colors::HouseColorRamps::default();
+        let render = |sim: &Simulation, groups: &[Vec<u64>], hovered| {
+            crate::app::presentation::ui_overlays::build_control_group_status_render_instances(
+                sim,
+                groups,
+                hovered,
+                Some(owner),
+                false,
+                &house_colors,
+                &house_color_ramps,
+                &font,
+                [0.0, 0.0],
+                1600.0,
+                1200.0,
+                [0, 0, 1600, 1200],
+            )
+        };
+
+        let ground_anchor =
+            crate::app::presentation::instances::interpolated_screen_position_entity(
+                sim.entities().get(27).expect("retained ORCA"),
+            );
+        let selected_ground = render(&sim, &groups, None);
+        assert_eq!(selected_ground.text.len(), 1);
+        assert_eq!(selected_ground.background.len(), 1);
+        assert_eq!(selected_ground.outline.len(), 4);
+        let ground_text_position = selected_ground.text[0].position;
+
+        {
+            let aircraft = sim.entities_mut().get_mut(27).expect("retained ORCA");
+            aircraft.selection.set_selected_for_test(false);
+            aircraft.position.set_exact_z_leptons_for_test(Some(1500));
+        }
+        let airborne_anchor =
+            crate::app::presentation::instances::interpolated_screen_position_entity(
+                sim.entities().get(27).expect("retained ORCA"),
+            );
+        let hovered_airborne = render(&sim, &groups, Some(27));
+        assert_eq!(hovered_airborne.text.len(), 1);
+        let airborne_text_position = hovered_airborne.text[0].position;
+        assert_eq!(airborne_text_position[0], ground_text_position[0]);
+        assert!(airborne_text_position[1] < ground_text_position[1]);
+        assert!(
+            ((airborne_text_position[1] - ground_text_position[1])
+                - (airborne_anchor.1 - ground_anchor.1))
+                .abs()
+                < 0.001,
+            "Aircraft badge follows the shared exact-Z screen-position lift"
+        );
+
+        assign_control_group(&mut groups, registered_slot("TeamCreate_10"), vec![27]);
+        assert_eq!(
+            crate::app::presentation::ui_overlays::control_group_status_labels(
+                &sim,
+                &groups,
+                Some(27),
+                Some(owner),
+                false,
+            ),
+            vec![(27, '0')]
+        );
+        assert_eq!(render(&sim, &groups, Some(27)).text.len(), 1);
+
+        sim.entities_mut()
+            .get_mut(27)
+            .expect("retained ORCA")
+            .selection
+            .set_selected_for_test(false);
+        assert!(render(&sim, &groups, None).text.is_empty());
+        assign_control_group(&mut groups, registered_slot("TeamCreate_10"), Vec::new());
+        sim.entities_mut()
+            .get_mut(27)
+            .expect("retained ORCA")
+            .selection
+            .set_selected_for_test(true);
+        assert!(render(&sim, &groups, None).text.is_empty());
+    }
+
+    #[test]
+    fn building_group_badges_follow_registered_slots_visibility_and_removal() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let current_house = sim.interner.intern("Americans");
+        let allied_house = sim.interner.intern("French");
+        let gap_house = sim.interner.intern("Russians");
+        let alliances = crate::map::houses::HouseAllianceMap::from([
+            (
+                "AMERICANS".to_owned(),
+                std::collections::BTreeSet::from(["FRENCH".to_owned()]),
+            ),
+            (
+                "FRENCH".to_owned(),
+                std::collections::BTreeSet::from(["AMERICANS".to_owned()]),
+            ),
+        ]);
+        sim.house_alliances = alliances.clone();
+        sim.fog.alliances = alliances;
+
+        let mut building = GameEntity::new_at_frame_zero_for_test(
+            27,
+            12,
+            10,
+            0,
+            0,
+            allied_house,
+            Health::new(1000),
+            sim.interner.intern("YAPOWR"),
+            EntityCategory::Structure,
+            0,
+            5,
+            false,
+        );
+        building
+            .type_facts
+            .set_foundation_for_test("2x2".to_owned());
+        building.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(building);
+        assert!(matches!(
+            sim.reveal(27),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+
+        let registered_slot = |name: &str| {
+            let command = crate::app::input::hotkeys::catalog::registered_commands()
+                .iter()
+                .find(|metadata| metadata.ini_name == name)
+                .unwrap_or_else(|| panic!("missing registered hotkey {name}"))
+                .command;
+            match command {
+                crate::app::input::hotkeys::HotkeyCommand::TeamCreate(slot) => slot,
+                command => panic!("unexpected command for {name}: {command:?}"),
+            }
+        };
+        let mut groups = vec![Vec::new(); 10];
+        assign_control_group(&mut groups, registered_slot("TeamCreate_1"), vec![27]);
+
+        fn labels(
+            sim: &Simulation,
+            groups: &[Vec<u64>],
+            current_house: crate::sim::intern::InternedId,
+            hovered: Option<u64>,
+            ignore_visibility: bool,
+        ) -> Vec<(u64, char)> {
+            crate::app::presentation::ui_overlays::control_group_status_labels(
+                sim,
+                groups,
+                hovered,
+                Some(current_house),
+                ignore_visibility,
+            )
+        }
+        assert!(labels(&sim, &groups, current_house, None, false).is_empty());
+        sim.fog.mark_visible_for_owner(current_house, 12, 10);
+        assert_eq!(
+            labels(&sim, &groups, current_house, None, false),
+            vec![(27, '1')]
+        );
+
+        sim.entities_mut()
+            .get_mut(27)
+            .expect("retained building")
+            .selection
+            .set_selected_for_test(false);
+        assert!(labels(&sim, &groups, current_house, None, false).is_empty());
+        assert_eq!(
+            labels(&sim, &groups, current_house, Some(27), false),
+            vec![(27, '1')]
+        );
+
+        crate::sim::vision::apply_gap_generators(
+            &mut sim.fog,
+            &[(gap_house, 12, 10, 5)],
+            &sim.interner,
+        );
+        assert!(labels(&sim, &groups, current_house, Some(27), false).is_empty());
+        assert_eq!(
+            labels(&sim, &groups, current_house, Some(27), true),
+            vec![(27, '1')]
+        );
+
+        sim.entities_mut()
+            .get_mut(27)
+            .expect("retained building")
+            .selection
+            .set_selected_for_test(true);
+        assign_control_group(&mut groups, registered_slot("TeamCreate_10"), vec![27]);
+        assert_eq!(
+            labels(&sim, &groups, current_house, None, true),
+            vec![(27, '0')]
+        );
+        assign_control_group(&mut groups, 0, Vec::new());
+        assert!(labels(&sim, &groups, current_house, None, true).is_empty());
+
+        assign_control_group(&mut groups, 1, vec![27]);
+        sim.entities_mut().remove(27);
+        assert!(labels(&sim, &groups, current_house, None, true).is_empty());
+    }
+
+    #[test]
+    fn assignment_reassignment_and_ungrouping_drive_status_group_projection() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let owner = sim.interner.intern("Americans");
+        let enemy_owner = sim.interner.intern("Russians");
+        let unit_type = sim.interner.intern("MTNK");
+        let mut unit = GameEntity::new_at_frame_zero_for_test(
+            17,
+            10,
+            10,
+            0,
+            0,
+            owner,
+            Health::new(100),
+            unit_type,
+            EntityCategory::Unit,
+            0,
+            5,
+            false,
+        );
+        unit.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(unit);
+        assert!(matches!(
+            sim.reveal(17),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        let unselected_unit = GameEntity::new_at_frame_zero_for_test(
+            18,
+            11,
+            10,
+            0,
+            0,
+            owner,
+            Health::new(100),
+            unit_type,
+            EntityCategory::Unit,
+            0,
+            5,
+            false,
+        );
+        sim.entities_mut().insert(unselected_unit);
+        assert!(matches!(
+            sim.reveal(18),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        let mut enemy = GameEntity::new_at_frame_zero_for_test(
+            19,
+            12,
+            10,
+            0,
+            0,
+            enemy_owner,
+            Health::new(100),
+            unit_type,
+            EntityCategory::Unit,
+            0,
+            5,
+            false,
+        );
+        enemy.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(enemy);
+        assert!(matches!(
+            sim.reveal(19),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        // The native pip tail admits non-allies only through Techno+0x210.
+        // That bit is not modeled; a shroud-revealed enemy still does not take
+        // the common CurrentPlayer-allied path implemented here.
+        sim.fog.mark_visible_for_owner(owner, 12, 10);
+        let display_order =
+            crate::app::presentation::instances::tactical_entity_encounter_order(&sim);
+        for id in [17, 18, 19] {
+            assert!(
+                display_order.contains(&id),
+                "fixture {id} must use the retained production Display list"
+            );
+        }
+
+        // MatchInputState holds ten control-group slots. Keep this test on the
+        // public command/projection path rather than reaching through the
+        // private input-state owner for its storage constant.
+        let mut groups = vec![Vec::new(); 10];
+        let projected_with_visibility =
+            |groups: &[Vec<u64>], hovered_unit_id, ignore_visibility| {
+                crate::app::presentation::ui_overlays::control_group_status_labels(
+                    &sim,
+                    groups,
+                    hovered_unit_id,
+                    Some(owner),
+                    ignore_visibility,
+                )
+            };
+        let projected = |groups: &[Vec<u64>], hovered_unit_id| {
+            projected_with_visibility(groups, hovered_unit_id, false)
+        };
+        let font = crate::render::bit_font::tests::make_test_font(
+            &[(b'0' as u16, 6), (b'1' as u16, 5), (b'2' as u16, 7)],
+            4,
+        );
+        let house_colors = crate::map::houses::HouseColorMap::new();
+        let house_color_ramps = crate::rules::house_colors::HouseColorRamps::default();
+        let group_member_anchor =
+            crate::app::presentation::instances::interpolated_screen_position_entity(
+                sim.entities().get(17).expect("assigned test unit"),
+            );
+        let fixture_clip = [
+            group_member_anchor.0.floor() as i32 - 100,
+            group_member_anchor.1.floor() as i32 - 100,
+            200,
+            200,
+        ];
+        let status_text_left = group_member_anchor.0 - 14.0 - 3.0;
+        let status_text_top = group_member_anchor.1 - 0x1A as f32 + 2.0;
+        assert!(
+            status_text_left >= fixture_clip[0] as f32
+                && status_text_left + 12.0 <= (fixture_clip[0] + fixture_clip[2]) as f32
+                && status_text_top >= fixture_clip[1] as f32
+                && status_text_top + 13.0 <= (fixture_clip[1] + fixture_clip[3]) as f32,
+            "the synthetic render clip contains the projected unit's whole status frame"
+        );
+        let group_overlay = |groups: &[Vec<u64>], hovered_unit_id| {
+            crate::app::presentation::ui_overlays::build_control_group_status_render_instances(
+                &sim,
+                groups,
+                hovered_unit_id,
+                Some(owner),
+                false,
+                &house_colors,
+                &house_color_ramps,
+                &font,
+                [0.0, 0.0],
+                800.0,
+                600.0,
+                fixture_clip,
+            )
+        };
+        let group_glyphs =
+            |groups: &[Vec<u64>], hovered_unit_id| group_overlay(groups, hovered_unit_id).text;
+        let registered_create_slot = |name: &str| {
+            let command = crate::app::input::hotkeys::catalog::registered_commands()
+                .iter()
+                .find(|metadata| metadata.ini_name == name)
+                .unwrap_or_else(|| panic!("missing registered hotkey {name}"))
+                .command;
+            match command {
+                crate::app::input::hotkeys::HotkeyCommand::TeamCreate(slot) => slot,
+                command => panic!("unexpected command for {name}: {command:?}"),
+            }
+        };
+
+        let create_one_slot = registered_create_slot("TeamCreate_1");
+        assert_eq!(create_one_slot, 1);
+        assign_control_group(&mut groups, create_one_slot, vec![17, 18, 19]);
+        assert_eq!(projected(&groups, None), vec![(17, '1')]);
+        let group_one = group_overlay(&groups, None);
+        assert_eq!(group_one.text.len(), 1);
+        assert_eq!(group_one.background.len(), 1);
+        assert_eq!(group_one.outline.len(), 4);
+        assert_eq!(projected(&groups, Some(17)), vec![(17, '1')]);
+        let first_glyph = group_glyphs(&groups, Some(17));
+        assert_eq!(first_glyph.len(), 1);
+        let hovered_labels = projected(&groups, Some(18));
+        assert!(hovered_labels.contains(&(17, '1')));
+        assert!(hovered_labels.contains(&(18, '1')));
+        assert_eq!(group_glyphs(&groups, Some(18)).len(), 2);
+        assert_eq!(
+            projected(&groups, Some(19)),
+            vec![(17, '1')],
+            "the pip-only allied gate excludes a revealed non-allied unit"
+        );
+
+        assign_control_group(&mut groups, 2, vec![17, 18, 19]);
+        assert_eq!(projected(&groups, None), vec![(17, '2')]);
+        let group_two = group_overlay(&groups, None);
+        assert_eq!(group_two.text.len(), 1);
+        assert_eq!(group_two.background.len(), 1);
+        assert_eq!(group_two.outline.len(), 4);
+
+        let create_zero_slot = registered_create_slot("TeamCreate_10");
+        assert_eq!(create_zero_slot, 0);
+        assign_control_group(&mut groups, create_zero_slot, vec![17]);
+        assert_eq!(projected(&groups, None), vec![(17, '0')]);
+        let group_zero = group_overlay(&groups, None);
+        assert_eq!(group_zero.text.len(), 1);
+        assert_eq!(group_zero.background.len(), 1);
+        assert_eq!(group_zero.outline.len(), 4);
+
+        assign_control_group(&mut groups, 0, Vec::new());
+        assert!(projected(&groups, None).is_empty());
+        let no_group_overlay = group_overlay(&groups, None);
+        assert!(no_group_overlay.text.is_empty());
+        assert!(no_group_overlay.background.is_empty());
+        assert!(no_group_overlay.outline.is_empty());
+
+        assign_control_group(&mut groups, 0, vec![17]);
+        sim.entities_mut().remove(17);
+        assert!(
+            crate::app::presentation::ui_overlays::control_group_status_labels(
+                &sim,
+                &groups,
+                None,
+                Some(owner),
+                false,
+            )
+            .is_empty()
+        );
+        assert!(
+            crate::app::presentation::ui_overlays::build_control_group_status_render_instances(
+                &sim,
+                &groups,
+                None,
+                Some(owner),
+                false,
+                &house_colors,
+                &house_color_ramps,
+                &font,
+                [0.0, 0.0],
+                800.0,
+                600.0,
+                [0, 0, 800, 600],
+            )
+            .text
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn allied_control_group_labels_follow_fog_gap_and_sandbox_visibility() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        fn labels(
+            sim: &Simulation,
+            groups: &[Vec<u64>],
+            current_house: crate::sim::intern::InternedId,
+            ignore_visibility: bool,
+        ) -> Vec<(u64, char)> {
+            crate::app::presentation::ui_overlays::control_group_status_labels(
+                sim,
+                groups,
+                None,
+                Some(current_house),
+                ignore_visibility,
+            )
+        }
+
+        let mut sim = Simulation::new();
+        let current_house = sim.interner.intern("Americans");
+        let ally = sim.interner.intern("French");
+        let gap_owner = sim.interner.intern("Russians");
+        let allies = crate::map::houses::HouseAllianceMap::from([
+            (
+                "AMERICANS".to_owned(),
+                std::collections::BTreeSet::from(["FRENCH".to_owned()]),
+            ),
+            (
+                "FRENCH".to_owned(),
+                std::collections::BTreeSet::from(["AMERICANS".to_owned()]),
+            ),
+        ]);
+        sim.house_alliances = allies.clone();
+        sim.fog.alliances = allies;
+
+        let mut unit = GameEntity::new_at_frame_zero_for_test(
+            80,
+            10,
+            10,
+            0,
+            0,
+            ally,
+            Health::new(100),
+            sim.interner.intern("MTNK"),
+            EntityCategory::Unit,
+            0,
+            5,
+            false,
+        );
+        unit.selection.set_selected_for_test(true);
+        sim.entities_mut().insert(unit);
+        assert!(matches!(
+            sim.reveal(80),
+            crate::sim::world::RevealOutcome::Revealed { .. }
+        ));
+        let mut groups = vec![Vec::new(); 10];
+        assign_control_group(&mut groups, 1, vec![80]);
+        assert!(
+            crate::app::presentation::instances::tactical_entity_encounter_order(&sim)
+                .contains(&80),
+            "the allied unit remains in the retained Display projection"
+        );
+
+        assert!(labels(&sim, &groups, current_house, false).is_empty());
+        assert_eq!(
+            labels(&sim, &groups, current_house, true),
+            vec![(80, '1')],
+            "sandbox full visibility bypasses fog while preserving the pip alliance gate"
+        );
+
+        sim.fog.mark_visible_for_owner(current_house, 10, 10);
+        assert!(sim.fog.is_cell_revealed(current_house, 10, 10));
+        assert_eq!(labels(&sim, &groups, current_house, false), vec![(80, '1')]);
+
+        crate::sim::vision::apply_gap_generators(
+            &mut sim.fog,
+            &[(gap_owner, 10, 10, 5)],
+            &sim.interner,
+        );
+        assert!(sim.fog.is_cell_gap_covered(current_house, 10, 10));
+        assert!(!sim.fog.is_cell_revealed(current_house, 10, 10));
+        assert!(
+            labels(&sim, &groups, current_house, false).is_empty(),
+            "an allied label is hidden by the same Gap policy as the status bar"
+        );
+        assert_eq!(labels(&sim, &groups, current_house, true), vec![(80, '1')]);
+    }
+
+    #[test]
+    fn native_tail_corpus_matches_control_group_production_text_builder() {
+        use crate::map::entities::EntityCategory;
+        use crate::sim::combat::Health;
+        use crate::sim::game_entity::GameEntity;
+        use crate::sim::world::Simulation;
+
+        let corpus: serde_json::Value = serde_json::from_str(crate::test_fixture::text(
+            "tools/control_group_text_native.json",
+        ))
+        .expect("native control-group text corpus is valid JSON");
+        assert_eq!(
+            corpus["schema"], "control-group-tail-native-v1",
+            "the Rust consumer is tied to the original bounded draw-tail corpus"
+        );
+
+        let metrics = corpus["native_font_initialization"]["digit_metrics"]
+            .as_array()
+            .expect("native digit metrics");
+        let glyph_widths: Vec<(u16, u32)> = metrics
+            .iter()
+            .map(|metric| {
+                (
+                    b'0' as u16 + metric["digit"].as_u64().expect("digit") as u16,
+                    metric["glyph_width"].as_u64().expect("glyph width") as u32,
+                )
+            })
+            .collect();
+        let font = crate::render::bit_font::tests::make_test_font(&glyph_widths, 4);
+        let bitmap_rows = corpus["native_font_initialization"]["runtime_fields"]["bitmap_rows"]
+            .as_u64()
+            .expect("native bitmap rows") as f32;
+        let house_rgb: [u8; 3] = corpus["provenance"]["house_rgb_input"]
+            .as_array()
+            .expect("native House+0x56F9 RGB input")
+            .iter()
+            .map(|channel| channel.as_u64().expect("house RGB byte") as u8)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("three House RGB channels");
+        let house_color_native: serde_json::Value = serde_json::from_str(
+            crate::test_fixture::text("tools/procedural_drawing_oracle/house_color.json"),
+        )
+        .expect("native house-color corpus is valid JSON");
+        let house_entries = house_color_native["colors"]
+            .as_array()
+            .expect("native house colors");
+        let schemes: Vec<crate::rules::color_scheme::ColorSchemeEntry> = house_entries
+            .iter()
+            .map(|entry| crate::rules::color_scheme::ColorSchemeEntry {
+                name: entry["name"].as_str().expect("house color name").into(),
+                hsv: entry["hsv"]
+                    .as_array()
+                    .expect("house color HSV")
+                    .iter()
+                    .map(|value| value.as_u64().expect("HSV byte") as u8)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .expect("three HSV components"),
+            })
+            .collect();
+        let gold_index = house_entries
+            .iter()
+            .position(|entry| entry["name"] == "Gold")
+            .expect("stock Gold scheme");
+        let native_gold_rgb: [u8; 3] = house_entries[gold_index]["modes"]["scalar"]["rgb"]
+            .as_array()
+            .expect("native Gold House RGB")
+            .iter()
+            .map(|value| value.as_u64().expect("RGB byte") as u8)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("three native RGB channels");
+        assert_eq!(house_rgb, native_gold_rgb);
+        let house_color_index = crate::rules::house_colors::HouseColorIndex(gold_index as u8);
+        let house_color_ramps = crate::rules::house_colors::HouseColorRamps::from_schemes(&schemes);
+        let house_colors =
+            crate::map::houses::HouseColorMap::from([("Americans".to_owned(), house_color_index)]);
+        assert_eq!(
+            crate::render::palette_light::house_color_rgb(&house_color_ramps, house_color_index),
+            house_rgb,
+            "the shared house-color owner resolves native Gold House+0x56F9"
+        );
+
+        for row in corpus["cases"].as_array().expect("native cases") {
+            let case = &row["case"];
+            let label = case["label"].as_str().expect("case label");
+            let native_slot = case["slot"].as_u64().expect("native Techno slot") as usize;
+            let kind = case["kind"].as_u64().expect("native WhatAmI");
+            let digit = row["text"].as_str().expect("native digit");
+            let digit_index = digit
+                .as_bytes()
+                .first()
+                .and_then(|value| value.checked_sub(b'0'))
+                .expect("native digit index") as usize;
+            assert_eq!(
+                digit_index,
+                if native_slot == 9 { 0 } else { native_slot + 1 },
+                "native Techno index maps to the registered Rust digit slot"
+            );
+            let packed_rgb = row["text_submission"]["packed_owner_rgb"]
+                .as_str()
+                .expect("native packed house RGB")
+                .strip_prefix("0x")
+                .and_then(|value| u16::from_str_radix(value, 16).ok())
+                .expect("packed RGB565 word");
+            assert_eq!(
+                crate::render::native_surface_format::RGB565.pack_rgb8(house_rgb),
+                packed_rgb,
+                "native case {label} packs the direct House+0x56F9 RGB"
+            );
+            let native_caller_point = case["caller_point"].as_array().expect("caller point");
+            let native_x = native_caller_point[0].as_i64().expect("caller x") as f32;
+            let native_y = native_caller_point[1].as_i64().expect("caller y") as f32;
+
+            let mut sim = Simulation::new();
+            let owner = sim.interner.intern("Americans");
+            let category = match kind {
+                0xF => EntityCategory::Infantry,
+                2 => EntityCategory::Aircraft,
+                6 => EntityCategory::Structure,
+                _ => EntityCategory::Unit,
+            };
+            let type_name = case["type_name"].as_str().unwrap_or(match category {
+                EntityCategory::Aircraft => "ORCA",
+                EntityCategory::Infantry => "E1",
+                EntityCategory::Structure => "YAPOWR",
+                _ => "MTNK",
+            });
+            let mut entity = GameEntity::new_at_frame_zero_for_test(
+                1,
+                10,
+                10,
+                0,
+                0,
+                owner,
+                Health::new(100),
+                sim.interner.intern(type_name),
+                category,
+                0,
+                5,
+                category == EntityCategory::Aircraft,
+            );
+            if let Some(foundation) = case["foundation"].as_str() {
+                entity
+                    .type_facts
+                    .set_foundation_for_test(foundation.to_owned());
+            }
+            entity.selection.set_selected_for_test(true);
+            sim.entities_mut().insert(entity);
+            assert!(matches!(
+                sim.reveal(1),
+                crate::sim::world::RevealOutcome::Revealed { .. }
+            ));
+            let mut groups = vec![Vec::new(); 10];
+            assign_control_group(&mut groups, digit_index, vec![1]);
+            assert_eq!(
+                crate::app::presentation::ui_overlays::control_group_status_labels(
+                    &sim,
+                    &groups,
+                    None,
+                    Some(owner),
+                    false,
+                ),
+                vec![(1, digit.chars().next().expect("one native digit"))],
+                "the assignment reaches the same live production projection"
+            );
+
+            let anchor = crate::app::presentation::instances::interpolated_screen_position_entity(
+                sim.entities().get(1).expect("retained live entity"),
+            );
+            // Align the production entity's Rust screen anchor to the native
+            // caller fixture. The comparison then exercises the real text
+            // builder's anchor, font measurement, glyph and viewport-cull path.
+            let camera = [anchor.0 - native_x, anchor.1 - native_y];
+            let (sw, sh) = if label == "outside" {
+                (100.0, 100.0)
+            } else {
+                (640.0, 480.0)
+            };
+            let overlay_instances =
+                crate::app::presentation::ui_overlays::build_control_group_status_render_instances(
+                    &sim,
+                    &groups,
+                    None,
+                    Some(owner),
+                    false,
+                    &house_colors,
+                    &house_color_ramps,
+                    &font,
+                    camera,
+                    sw,
+                    sh,
+                    case["clip"]
+                        .as_array()
+                        .expect("native clip xywh")
+                        .iter()
+                        .map(|value| value.as_i64().expect("clip coordinate") as i32)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .expect("native clip has four xywh values"),
+                );
+            let glyphs = &overlay_instances.text;
+            if label == "outside" {
+                assert!(glyphs.is_empty(), "the off-viewport native case is culled");
+                assert!(
+                    overlay_instances.background.is_empty(),
+                    "the off-viewport native case does not draw its black fill"
+                );
+                assert!(
+                    overlay_instances.outline.is_empty(),
+                    "the off-viewport native case does not draw its colored outline"
+                );
+                continue;
+            }
+
+            assert_eq!(glyphs.len(), 1, "native case {label} emits one digit quad");
+            assert_eq!(
+                overlay_instances.background.len(),
+                1,
+                "native case {label} emits the black fill before its outline and glyph"
+            );
+            let native_fill = &overlay_instances.background[0];
+            assert_eq!(
+                native_fill.tint, [0.0; 3],
+                "native background_fill color_arg 0 is rendered as black"
+            );
+            assert_eq!(native_fill.alpha, 1.0);
+            let native_fill_record = &row["background_fill"];
+            let expected_fill = native_fill_record["rect"]
+                .as_array()
+                .expect("native clipped fill rectangle")
+                .iter()
+                .map(|value| value.as_i64().expect("fill coordinate") as f32)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                native_fill_record["color_arg"].as_u64(),
+                Some(0),
+                "the original fill call uses color_arg 0"
+            );
+            let native_outline_record = &row["surface_draw"];
+            assert_eq!(
+                native_outline_record["color_arg"].as_u64(),
+                Some(u64::from(packed_rgb)),
+                "the original four-line outline uses the packed House RGB"
+            );
+            for (axis, value) in [
+                (0, native_fill.position[0] - camera[0]),
+                (1, native_fill.position[1] - camera[1]),
+                (2, native_fill.size[0]),
+                (3, native_fill.size[1]),
+            ] {
+                assert_eq!(
+                    value, expected_fill[axis],
+                    "native case {label} background fill axis {axis}"
+                );
+            }
+            assert_eq!(overlay_instances.outline.len(), 4);
+            let expected_outline = [
+                (
+                    [expected_fill[0], expected_fill[1]],
+                    [expected_fill[2], 1.0],
+                ),
+                (
+                    [expected_fill[0], expected_fill[1] + expected_fill[3] - 1.0],
+                    [expected_fill[2], 1.0],
+                ),
+                (
+                    [expected_fill[0], expected_fill[1] + 1.0],
+                    [1.0, expected_fill[3] - 2.0],
+                ),
+                (
+                    [
+                        expected_fill[0] + expected_fill[2] - 1.0,
+                        expected_fill[1] + 1.0,
+                    ],
+                    [1.0, expected_fill[3] - 2.0],
+                ),
+            ];
+            for (line, (expected_position, expected_size)) in
+                overlay_instances.outline.iter().zip(expected_outline)
+            {
+                assert_eq!(
+                    [line.position[0] - camera[0], line.position[1] - camera[1],],
+                    expected_position,
+                    "native case {label} outline line position"
+                );
+                assert_eq!(line.size, expected_size, "native case {label} outline size");
+                assert_eq!(
+                    line.tint,
+                    house_rgb.map(|channel| f32::from(channel) / 255.0),
+                    "native case {label} outline uses direct House+0x56F9 RGB"
+                );
+            }
+            let expected_width = metrics[digit_index]["glyph_width"]
+                .as_u64()
+                .expect("native glyph width") as f32;
+            assert_eq!(
+                glyphs[0].size,
+                [expected_width, bitmap_rows],
+                "native case {label} uses the pinned GAME.FNT glyph metrics"
+            );
+            assert_eq!(
+                glyphs[0].tint,
+                house_rgb.map(|channel| f32::from(channel) / 255.0),
+                "native case {label} uses House+0x56F9 through the existing RGB owner"
+            );
+            assert_eq!(
+                font.text_width(digit),
+                row["font_measure"].as_u64().expect("native text measure") as u32,
+                "native case {label} measurement follows the shared BitFont owner"
+            );
+            let expected = row["text_submission"]["position"]
+                .as_array()
+                .expect("native text submission position");
+            for (axis, value) in [
+                (0, glyphs[0].position[0] - camera[0]),
+                (1, glyphs[0].position[1] - camera[1]),
+            ] {
+                let expected = expected[axis].as_i64().expect("native text coordinate") as f32;
+                assert!(
+                    (value - expected).abs() < 0.01,
+                    "native case {label} axis {axis}: Rust {value} != native {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn assigning_an_empty_selection_empties_the_slot() {
         let mut groups = vec![vec![1u64, 2], Vec::new()];
         assign_control_group(&mut groups, 0, Vec::new());

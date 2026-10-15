@@ -577,6 +577,38 @@ pub(super) fn dispatch_draw_passes(
         self_heal_pip_tex,
         "self_heal_pips",
     );
+    // DrawPipScalePips fills the black backing, draws its one-pixel House-color
+    // outline, then submits the GAME.FNT glyph. Keep those layers under the
+    // same tactical camera/scissor and between self-heal and cargo pips.
+    let control_group_bg_tex = state
+        .match_state
+        .match_presentation
+        .selection_overlay
+        .as_ref()
+        .map(|overlay| overlay.white_texture());
+    draw_pooled_no_depth(
+        &mut pass,
+        &state.renderer.batch_renderer,
+        pool,
+        control_group_bg_tex,
+        "control_group_status_bg",
+    );
+    draw_pooled_no_depth(
+        &mut pass,
+        &state.renderer.batch_renderer,
+        pool,
+        control_group_bg_tex,
+        "control_group_status_outline",
+    );
+    // Control-group digits are the GAME.FNT tail of DrawPipScalePips, after
+    // the native backing and outline and before cargo/spawn count pips.
+    draw_pooled_no_depth(
+        &mut pass,
+        &state.renderer.batch_renderer,
+        pool,
+        Some(state.renderer.bit_font.atlas()),
+        "control_group_status",
+    );
     // Tiberium cargo pips for harvesters (pips2.shp frames 0, 2, 5).
     let cargo_pip_tex = state
         .match_state

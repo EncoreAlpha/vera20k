@@ -10,10 +10,14 @@ use crate::app::input::cursor::{
 use crate::app::presentation::instances::in_view;
 use crate::app::types::{CursorId, HoverTargetKind, SoftwareCursorSequence};
 use crate::map::entities::EntityCategory;
+use crate::map::houses::HouseColorMap;
 use crate::render::batch::{BatchTexture, SpriteInstance};
+use crate::render::bit_font::BitFont;
+use crate::rules::house_colors::{HouseColorRamps, NO_REMAP};
 use crate::rules::object_type::ObjectType;
 use crate::rules::ruleset::RuleSet;
 use crate::sim::components::Position;
+use std::collections::HashMap;
 /// Authentic pip counts for unit health bars.
 const UNIT_PIPS_VEHICLE: u32 = 17; // vehicles + aircraft
 const UNIT_PIPS_INFANTRY: u32 = 8;
@@ -119,7 +123,7 @@ fn unit_health_hover_target(state: &AppState, local_owner: Option<&str>) -> Opti
     })
 }
 
-/// Whether a non-building draws its bracket background and its health pips.
+/// Whether a status-producing object draws its bracket background and pips.
 ///
 /// Two separate rules in the original, and damage is not part of either. The
 /// health bar itself is drawn when the object is selected *or* hovered, while
@@ -128,7 +132,7 @@ fn unit_health_hover_target(state: &AppState, local_owner: Option<&str>) -> Opti
 /// unselected, unhovered unit shows nothing however badly damaged it is.
 ///
 /// Returns `(draw_bracket_background, draw_health_pips)`.
-pub(crate) fn unit_status_visibility(selected: bool, hovered: bool) -> (bool, bool) {
+pub(crate) fn status_visibility(selected: bool, hovered: bool) -> (bool, bool) {
     (selected, selected || hovered)
 }
 
@@ -141,7 +145,7 @@ fn unit_status_drawable(
     local_owner_id: Option<crate::sim::intern::InternedId>,
     ignore_visibility: bool,
 ) -> bool {
-    let (_, draw_pips) = unit_status_visibility(
+    let (_, draw_pips) = status_visibility(
         entity.selection.is_selected(),
         hovered_unit_id == Some(entity.stable_id()),
     );
@@ -153,6 +157,312 @@ fn unit_status_drawable(
             entity.owner(),
             ignore_visibility,
         )
+}
+
+/// Native `DrawHealthBar @0x006F64A0` guards its class `vt+0x450` pip/status
+/// tail after the health strip. It admits CurrentPlayer's allies directly; the
+/// other arm tests the object's current-player display bit at Techno+0x210.
+/// That bit has no Rust owner yet, so this covers the common current-owned /-
+/// allied path and leaves the non-allied display-bit arm as a bounded residual.
+/// Keep this gate separate from health-strip admission.
+fn entity_status_pips_drawable(
+    sim: &crate::sim::world::Simulation,
+    entity: &crate::sim::game_entity::GameEntity,
+    hovered_entity_id: Option<u64>,
+    current_house_id: Option<crate::sim::intern::InternedId>,
+) -> bool {
+    let (_, draw_pips) = status_visibility(
+        entity.selection.is_selected(),
+        hovered_entity_id == Some(entity.stable_id()),
+    );
+    let Some(current_house_id) = current_house_id else {
+        return false;
+    };
+    draw_pips
+        && crate::map::houses::is_allied_with(
+            &sim.house_alliances,
+            sim.interner.resolve(current_house_id),
+            sim.interner.resolve(entity.owner()),
+        )
+}
+
+/// Project the input-owned control-group membership onto the live objects that
+/// reach the status-pip draw. The membership remains owned by
+/// `MatchInputState`; this transient index only makes each frame's lookup
+/// linear in the retained Display list plus the ten group lists.
+///
+/// Native `DrawHealthBar @0x006F64A0` calls the class pip-scale slot
+/// (`vtable +0x450`), whose tail reads Techno `+0x214` at
+/// `DrawPipScalePips @0x00709A90`. Native `+0x214` is a zero-based slot; Rust's
+/// input-owned control groups are indexed by the registered hotkey digit
+/// (`TeamCreate_1` stores slot 1 and `TeamCreate_10` stores slot 0), so the
+/// displayed digit is the Rust slot itself. The native caller's selected/hovered
+/// admission is shared with the health strip for units, infantry, and buildings.
+/// The extra allied gate is pip-only;
+/// the same plain visibility owner gates fog and Gap, with sandbox
+/// full-visibility passed through explicitly. Stale stable IDs naturally
+/// produce no label.
+pub(crate) fn control_group_status_labels(
+    sim: &crate::sim::world::Simulation,
+    control_groups: &[Vec<u64>],
+    hovered_entity_id: Option<u64>,
+    current_house_id: Option<crate::sim::intern::InternedId>,
+    ignore_visibility: bool,
+) -> Vec<(u64, char)> {
+    let mut slot_by_id = HashMap::new();
+    for (slot, members) in control_groups.iter().take(10).enumerate() {
+        for &stable_id in members {
+            // Match the single native Techno field if malformed/restored input
+            // ever contains duplicate membership: the last slot is the one
+            // whose live assignment most recently wins.
+            slot_by_id.insert(stable_id, slot);
+        }
+    }
+
+    crate::app::presentation::instances::tactical_entity_encounter_order(sim)
+        .into_iter()
+        .filter_map(|stable_id| {
+            let entity = sim.entities().get(stable_id)?;
+            if entity.sinking.is_active()
+                || entity.passenger_role.is_inside_transport()
+                || !entity_status_pips_drawable(sim, entity, hovered_entity_id, current_house_id)
+                || !status_entity_visible_plain(
+                    current_house_id,
+                    &sim.fog,
+                    &entity.position,
+                    entity.owner(),
+                    ignore_visibility,
+                )
+            {
+                return None;
+            }
+            let slot = *slot_by_id.get(&stable_id)?;
+            let digit = char::from(b'0' + slot as u8);
+            Some((stable_id, digit))
+        })
+        .collect()
+}
+
+/// Paired background and glyph instances for the native control-group label.
+/// The background is emitted in its own earlier layer so the glyph renderer
+/// remains on the existing GAME.FNT atlas/pass.
+pub(crate) struct ControlGroupStatusOverlayInstances {
+    pub background: Vec<SpriteInstance>,
+    pub outline: Vec<SpriteInstance>,
+    pub text: Vec<SpriteInstance>,
+}
+
+/// Native `DrawHealthBar @0x006F64A0` adds the projected building-foundation
+/// offset before calling the shared pip/status slot at `+0x450`.
+/// `BuildingTypeClass::Dimension2 @0x00464AF0` supplies the foundation width
+/// and height in 256-lepton cells; the caller halves each with signed
+/// truncation, negates X, and uses the shared native coordinate projection.
+fn building_control_group_status_anchor_offset(
+    entity: &crate::sim::game_entity::GameEntity,
+) -> (i32, i32) {
+    let (width, height) =
+        crate::rules::foundation::foundation_dimensions(entity.type_facts.foundation());
+    let width_leptons = i32::from(width) * crate::util::lepton::LEPTONS_PER_CELL_I32;
+    let height_leptons = i32::from(height) * crate::util::lepton::LEPTONS_PER_CELL_I32;
+    let half_width = width_leptons / 2;
+    let half_height = height_leptons / 2;
+    crate::util::lepton::project_absolute_lepton_xy(
+        -(width_leptons - half_width),
+        height_leptons - half_height,
+    )
+}
+
+/// Emit the selected/hovered unit's control-group digit with the shared GAME.FNT
+/// atlas. Membership is read from the input owner; the per-frame output is only
+/// draw data.
+///
+/// For the regular non-building call at native `DrawPipScalePips @ 0x00709A90`,
+/// `DrawHealthBar @ 0x006F64A0` passes the screen point after `x-10,y+10` at
+/// `0x006F6AAB`. The group tail then uses `x-4,y-0x27` only for Infantry
+/// (`WhatAmI()==0xF`), and `x-4,y-0x24` for other classes. Relative to the
+/// `0x006F6AB0` caller's input point, the final text origins are Unit
+/// `(-14,-0x1A)` and Infantry `(-14,-0x1D)`. Native builds that point from the type vtable `+0x7C`
+/// coordinate through `0x0041C230` and `0x006D1F10`; Rust uses the shared
+/// tactical entity screen-position owner. Buildings enter the same slot with
+/// the plain screen point plus the projected half-foundation offset from
+/// `Dimension2`; the non-Infantry tail then applies `(-4,-0x24)`. The
+/// selection-bracket delta is not part of the native group-number tail.
+pub(crate) fn build_control_group_status_render_instances(
+    sim: &crate::sim::world::Simulation,
+    control_groups: &[Vec<u64>],
+    hovered_entity_id: Option<u64>,
+    current_house_id: Option<crate::sim::intern::InternedId>,
+    ignore_visibility: bool,
+    house_color_map: &HouseColorMap,
+    house_color_ramps: &HouseColorRamps,
+    font: &BitFont,
+    camera: [f32; 2],
+    sw: f32,
+    sh: f32,
+    tactical_clip: [i32; 4],
+) -> ControlGroupStatusOverlayInstances {
+    let labels = control_group_status_labels(
+        sim,
+        control_groups,
+        hovered_entity_id,
+        current_house_id,
+        ignore_visibility,
+    );
+    let mut background = Vec::with_capacity(labels.len());
+    let mut outline = Vec::with_capacity(labels.len() * 4);
+    let mut text_instances = Vec::with_capacity(labels.len());
+    for (stable_id, digit) in labels {
+        let Some(entity) = sim.entities().get(stable_id) else {
+            continue;
+        };
+        let (mut screen_x, mut screen_y) =
+            crate::app::presentation::instances::interpolated_screen_position_entity(entity);
+        let building = entity.category() == EntityCategory::Structure;
+        if building {
+            let (foundation_x, foundation_y) = building_control_group_status_anchor_offset(entity);
+            screen_x += foundation_x as f32;
+            screen_y += foundation_y as f32;
+        }
+        // `DrawHealthBar` pre-adjusts non-buildings by (-10,+10); the shared
+        // tail subtracts X=4 and only gives Infantry its additional -3 Y.
+        let (caller_offset_x, caller_offset_y) = if building { (0.0, 0.0) } else { (-10.0, 10.0) };
+        let tail_offset_y = if entity.category() == EntityCategory::Infantry {
+            -0x27 as f32
+        } else {
+            -0x24 as f32
+        };
+        let text = digit.to_string();
+        let (x, y) = (
+            screen_x + caller_offset_x - 4.0,
+            screen_y + caller_offset_y + tail_offset_y,
+        );
+        let width = font.text_width(&text) as f32;
+        let height = font.glyph_height();
+        if !in_view(x, y, width, height, camera[0], camera[1], sw, sh, 48.0) {
+            continue;
+        }
+        let owner = sim.interner.resolve(entity.owner());
+        let color = house_color_map.get(owner).copied().unwrap_or(NO_REMAP);
+        // Native `DrawPipScalePips @0x00709A90` reads House+0x56F9 directly.
+        let tint = crate::render::palette_light::house_color_rgb(house_color_ramps, color)
+            .map(|channel| f32::from(channel) / 255.0);
+        // The original measures the text rectangle, clips it to the tactical
+        // surface, then expands the clipped result one pixel to the left for
+        // its opaque black fill and House-color outline. All rectangles here
+        // use the shared xywh owner; the GPU scissor remains the final clip.
+        let measure_rect = [
+            (x - camera[0]).round() as i32 - 2,
+            (y - camera[1]).round() as i32 + 2,
+            font.text_width(&text) as i32 + 4,
+            13,
+        ];
+        let clipped = crate::util::rect::clip_rect(measure_rect, tactical_clip);
+        if clipped[2] > 0 && clipped[3] > 0 {
+            let rect_x = clipped[0] - 1;
+            let rect_y = clipped[1];
+            let rect_width = clipped[2] + 1;
+            let rect_height = clipped[3];
+            let rect_x = rect_x as f32 + camera[0];
+            let rect_y = rect_y as f32 + camera[1];
+            let rect_width = rect_width as f32;
+            let rect_height = rect_height as f32;
+            background.push(SpriteInstance {
+                position: [rect_x, rect_y],
+                size: [rect_width, rect_height],
+                uv_origin: [0.0, 0.0],
+                uv_size: [1.0, 1.0],
+                tint: [0.0, 0.0, 0.0],
+                alpha: 1.0,
+                ..Default::default()
+            });
+            // Native 0x7BADC0 draws inclusive endpoints (origin+size-1).
+            // Avoid zero-area quads when clipping leaves a one-pixel edge.
+            let mut edges = vec![
+                ([rect_x, rect_y], [rect_width, 1.0]),
+                ([rect_x, rect_y + rect_height - 1.0], [rect_width, 1.0]),
+            ];
+            if rect_height > 2.0 {
+                edges.extend([
+                    ([rect_x, rect_y + 1.0], [1.0, rect_height - 2.0]),
+                    (
+                        [rect_x + rect_width - 1.0, rect_y + 1.0],
+                        [1.0, rect_height - 2.0],
+                    ),
+                ]);
+            }
+            outline.extend(edges.into_iter().map(|(position, size)| SpriteInstance {
+                position,
+                size,
+                uv_origin: [0.0, 0.0],
+                uv_size: [1.0, 1.0],
+                tint,
+                alpha: 1.0,
+                ..Default::default()
+            }));
+        }
+        // These are world-pixel coordinates; the tactical surface camera
+        // applies the camera offset at draw time, like the neighboring pips.
+        text_instances.extend(font.build_text(&text, x, y, 1.0, 0.0, tint, [0.0, 0.0]));
+    }
+    ControlGroupStatusOverlayInstances {
+        background,
+        outline,
+        text: text_instances,
+    }
+}
+
+/// AppState adapter for the production tactical UI build.
+pub(crate) fn build_control_group_status_instances(
+    state: &AppState,
+    sw: f32,
+    sh: f32,
+) -> ControlGroupStatusOverlayInstances {
+    let (Some(sim), Some(rules)) = (
+        state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map(|runtime| &runtime.simulation),
+        state.rules(),
+    ) else {
+        return ControlGroupStatusOverlayInstances {
+            background: Vec::new(),
+            outline: Vec::new(),
+            text: Vec::new(),
+        };
+    };
+    let local_owner = preferred_local_owner_name(state);
+    let local_owner_id = local_owner
+        .as_deref()
+        .and_then(|name| sim.interner.get(name));
+    let hovered_entity_id =
+        health_bar_hover_target(state, local_owner.as_deref()).map(|(stable_id, _)| stable_id);
+    let (tactical_width, tactical_height) =
+        crate::app::input::camera::tactical_viewport_size(state);
+    let zoom = state.match_state.input.zoom_level;
+    let tactical_clip = [
+        0,
+        0,
+        (tactical_width as f32 / zoom).round() as i32,
+        (tactical_height as f32 / zoom).round() as i32,
+    ];
+    build_control_group_status_render_instances(
+        sim,
+        &state.match_state.input.control_groups,
+        hovered_entity_id,
+        local_owner_id,
+        state.match_state.sandbox_full_visibility,
+        &state.match_state.match_presentation.house_color_map,
+        &rules.house_color_ramps,
+        &state.renderer.bit_font,
+        [
+            state.match_state.input.camera_x,
+            state.match_state.input.camera_y,
+        ],
+        sw,
+        sh,
+        tactical_clip,
+    )
 }
 
 /// Which PIPS.SHP frame a self-healing non-building's health strip carries.
@@ -228,15 +538,12 @@ pub(crate) fn self_heal_pip(
 //   transport. Player effect: no passenger or ammo readout at all. Frequency:
 //   common — transports are ordinary play. Downstream risk: none.
 //
-// * **Control-group number and spawn pips**, both in the tail of
-//   `DrawPipScalePips`: the group index from `param_1[0x85]` drawn as text at
-//   `param_2 + (-4, -0x27)` for units and `(-4, -0x24)` for infantry; spawn pips
-//   from `TypeClass+0xD5C` via `SpawnManagerClass__CountDockedSpawns`. Trigger:
-//   for the group number, every recall of a control group. Player effect: a
-//   selected group shows no number, so the player cannot tell which group is up.
-//   Frequency: common. Downstream risk: none. The spawn pips are rarer
-//   (Kirov/carrier spawns). The tail's third member, the self-heal status pip,
-//   is ported by `build_self_heal_pip_instances` below.
+// * **Spawn pips**, from `TypeClass+0xD5C` via
+//   `SpawnManagerClass__CountDockedSpawns`. Trigger: a selected Kirov/carrier
+//   with docked spawns. Player effect: spawned aircraft count is absent.
+//   Frequency: rare. Downstream risk: none. The group-number tail is projected
+//   through the live input membership in `build_control_group_status_instances`
+//   above; the self-heal status pip is ported below.
 //
 /// Building health: discrete pips from pips.shp along the isometric NW foundation edge.
 ///
@@ -867,7 +1174,7 @@ pub(crate) fn build_unit_status_bg_instances(
         if e.passenger_role.is_inside_transport() {
             continue;
         }
-        let (draw_background, _) = unit_status_visibility(
+        let (draw_background, _) = status_visibility(
             e.selection.is_selected(),
             hovered_unit_id == Some(e.stable_id()),
         );
@@ -1637,8 +1944,8 @@ mod tests {
     /// A selected object draws both halves — bracket and pips.
     #[test]
     fn selected_unit_draws_bracket_and_pips() {
-        assert_eq!(unit_status_visibility(true, false), (true, true));
-        assert_eq!(unit_status_visibility(true, true), (true, true));
+        assert_eq!(status_visibility(true, false), (true, true));
+        assert_eq!(status_visibility(true, true), (true, true));
     }
 
     /// The hover arm draws the pip strip with no bracket behind it: the
@@ -1646,7 +1953,7 @@ mod tests {
     /// routine, while the pips do not.
     #[test]
     fn hovered_unselected_unit_draws_pips_without_the_bracket() {
-        assert_eq!(unit_status_visibility(false, true), (false, true));
+        assert_eq!(status_visibility(false, true), (false, true));
     }
 
     /// The clause the old damage gate broke: an unselected, unhovered object
@@ -1654,7 +1961,7 @@ mod tests {
     /// reaches the health-bar slot only through the selected and hover arms.
     #[test]
     fn unselected_unhovered_unit_draws_nothing_regardless_of_damage() {
-        assert_eq!(unit_status_visibility(false, false), (false, false));
+        assert_eq!(status_visibility(false, false), (false, false));
     }
 
     /// The arm table `DrawPipScalePips` walks at `0x0070A50C..0x0070A5E4`:

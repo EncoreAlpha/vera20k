@@ -15,7 +15,8 @@ PRODUCERS = tuple('tools.projectile_oracle.' + name for name in (
      'tools.anim_oracle.boundary', 'tools.palette_oracle.oracle',
      'tools.ramp_height_oracle', 'tools.render_depth_oracle',
      'tools.ai_base_building_oracle', 'tools.ai_base_defense_oracle',
-     'tools.ai_strategy_oracle', 'tools.ai_team_oracle')
+     'tools.ai_strategy_oracle', 'tools.ai_team_oracle',
+     'tools.control_group_text_oracle')
 HELPERS = ('tools.native_slope', 'tools.projectile_oracle.collision_fixture',
            'tools.palette_oracle.check')
 
@@ -45,6 +46,17 @@ with ExitStack() as stack:
               for owner, name in ((native_oracle, 'image_bytes'),
                                   (native_oracle, 'run_checked'),
                                   (Path, 'write_text'), (Path, 'write_bytes'))]
+    if module == 'tools.control_group_text_oracle':
+        original_import = __import__
+        def reject_optional_runtime(name, *args, **kwargs):
+            if (name == 'tools.ai_base_building_oracle' or name == 'tools.native_oracle'
+                    or name == 'unicorn' or name.startswith('unicorn.')):
+                raise RuntimeError('forbidden optional runtime import: ' + name)
+            return original_import(name, *args, **kwargs)
+        stack.enter_context(patch('builtins.__import__', side_effect=reject_optional_runtime))
+        guards.extend(stack.enter_context(patch.object(Path, name,
+                      side_effect=RuntimeError('forbidden lifecycle operation: ' + name)))
+                      for name in ('read_bytes', 'read_text'))
     if operation == 'import':
         importlib.import_module(module)
     else:
@@ -69,7 +81,10 @@ class OracleLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         if operation == 'help':
-            for option in ('--check', '--write', '--output'):
+            options = (('--font', '--check', '--write')
+                       if module == 'tools.control_group_text_oracle'
+                       else ('--check', '--write', '--output'))
+            for option in options:
                 self.assertIn(option, result.stdout)
 
     def test_imports_are_inert_without_retail_in_normal_and_optimized_python(self):
