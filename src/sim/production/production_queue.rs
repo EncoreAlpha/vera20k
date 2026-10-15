@@ -275,9 +275,10 @@ pub(in crate::sim) fn exit_produced_object(
         {
             // BuildingClass::Exit_Object_Main's 4449D9..4A53 loop runs in the
             // InfantryType branch before its exit-cell search and Unlimbo
-            // (444C95). House+FC/+108 is the Cloning roster; House+68 keeps
-            // its registration order as a filtered subsequence. The native
-            // loop creates one fresh object per vat, calls that vat's same
+            // (444C95). The native loop reads House+FC/+108 (CloningVats);
+            // Rust filters House+68 by Cloning=yes, with exact relative
+            // order versus the native roster still unproven. It creates one
+            // fresh object per vat, calls that vat's same
             // Exit_Object_Main with packed CellStruct{0,0}, and ignores the
             // return. Consequently a refused clone remains in limbo, and a
             // later source retry makes another attempt. The +16AC guard on
