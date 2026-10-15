@@ -270,6 +270,28 @@ pub(in crate::sim) fn exit_produced_object(
         if let Some(entity) = sim.substrate.entities.get_mut(stable_id) {
             entity.set_archive_target(archive);
         }
+        if producer_type.factory == Some(crate::rules::object_type::FactoryType::InfantryType)
+            && !producer_type.cloning
+        {
+            // BuildingClass::Exit_Object_Main's 4449D9..4A53 loop runs in the
+            // InfantryType branch before its exit-cell search and Unlimbo
+            // (444C95). House+FC/+108 is the Cloning roster; House+68 keeps
+            // its registration order as a filtered subsequence. The native
+            // loop creates one fresh object per vat, calls that vat's same
+            // Exit_Object_Main with packed CellStruct{0,0}, and ignores the
+            // return. Consequently a refused clone remains in limbo, and a
+            // later source retry makes another attempt. The +16AC guard on
+            // the nested exit reads the producer type's Cloning (+0x16AC)
+            // flag and skips starting another house-wide cloning pass.
+            exit_cloning_vat_copies(
+                sim,
+                rules,
+                producer_id,
+                product_type.id.as_str(),
+                overlay_registry,
+                effects,
+            );
+        }
     }
     if kind == UnitChoiceKind::Aircraft {
         let airport_bound = product_type.airport_bound;
@@ -634,6 +656,69 @@ pub(in crate::sim) fn exit_produced_object(
         }
     }
     BuildingExit::Placed
+}
+
+/// `BuildingClass::Exit_Object_Main @ 0x00443C60`'s InfantryType cloning
+/// loop (`0x004449D9..0x00444A53`): the source owner's Cloning roster is
+/// visited in registration order before the source infantry's own exit-cell
+/// search and Unlimbo. A fresh constructor-owned object is handed to the
+/// existing exit owner for each vat; that call's result is deliberately
+/// ignored, matching the native caller.
+fn exit_cloning_vat_copies(
+    sim: &mut Simulation,
+    rules: &RuleSet,
+    source_producer_id: u64,
+    product_type_name: &str,
+    overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+    effects: FrameEffects<'_>,
+) {
+    let Some(source_owner) = sim
+        .substrate
+        .entities
+        .get(source_producer_id)
+        .map(|producer| producer.owner())
+    else {
+        return;
+    };
+    // The native loop reads House+FC/+108 (CloningVats). This model does not
+    // retain that separate roster, so filter House+68 by the type's Cloning
+    // flag. Membership follows the same placed-building lifecycle; exact
+    // relative order versus the native CloningVats vector remains unproven.
+    let vat_ids = sim
+        .houses
+        .get(&source_owner)
+        .map(|house| house.base_projection.buildings().to_vec())
+        .unwrap_or_default();
+    for vat_id in vat_ids {
+        let Some((vat_owner, is_cloning_vat)) =
+            sim.substrate.entities.get(vat_id).and_then(|vat| {
+                let object = sim.object_type(vat.type_ref(), rules)?;
+                Some((vat.owner(), object.cloning))
+            })
+        else {
+            continue;
+        };
+        if !is_cloning_vat {
+            continue;
+        }
+        let vat_owner_name = sim.interner.resolve(vat_owner).to_owned();
+        // TypeClass::Create_Object is called with only the vat House at
+        // 444A1F..2B. Its new Techno begins in limbo at the zero coordinate;
+        // the vat's ordinary exit immediately supplies the attempted cell.
+        let Some(clone_id) = sim.construct_object_limbo_at_height(
+            product_type_name,
+            &vat_owner_name,
+            0,
+            0,
+            0,
+            0,
+            rules,
+            effects,
+        ) else {
+            continue;
+        };
+        let _ = exit_produced_object(sim, rules, vat_id, clone_id, overlay_registry, effects);
+    }
 }
 
 /// The aircraft arm of `BuildingClass::ExitObject_Main @ 0x00443C60`

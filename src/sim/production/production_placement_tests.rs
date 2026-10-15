@@ -4131,6 +4131,465 @@ fn stock_infantry_fallback_unit_ready_uses_producer_getcoords() {
     assert_eq!(notifications, [(owner, RadarEventType::UnitReady, 15, 15)]);
 }
 
+/// `BuildingClass::Exit_Object_Main @ 0x00443C60` reaches its Cloning roster
+/// loop in the InfantryType arm before the produced infantry's exit search and
+/// Unlimbo (`0x004449D9..0x00444A53`, then `0x00444C95`). This exercises the
+/// stock Yuri barracks through the ordinary player PLACE publication/command
+/// path; each same-house `[NACLON] Cloning=yes` vat should add one E1 for its
+/// owner, even while that house is in low power.
+fn stock_yuri_cloning_world() -> Option<(
+    Simulation,
+    RuleSet,
+    OverlayTypeRegistry,
+    crate::sim::intern::InternedId,
+)> {
+    stock_yuri_cloning_world_with_scenario(IniFile::empty())
+}
+
+fn stock_yuri_cloning_world_with_scenario(
+    scenario: IniFile,
+) -> Option<(
+    Simulation,
+    RuleSet,
+    OverlayTypeRegistry,
+    crate::sim::intern::InternedId,
+)> {
+    use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+
+    // These production-reader layers cover stock Battle type data without
+    // depending on an installed map archive. The simulation below supplies
+    // its own flat delivery map and empty scenario Rules pass; the relevant
+    // type fields come through retail RULESMD, optional LANGRULE, and the
+    // selected MPBattleMD layer.
+    let rules_ini = crate::rules::retail_ini_fixture::retail_ini("rulesmd.ini")?;
+    let fixed_art = crate::rules::retail_ini_fixture::retail_ini("artmd.ini")?;
+    let mode_ini = crate::rules::retail_ini_fixture::retail_ini("MPBattleMD.ini")?;
+    let mut layers = RulesLayerStack::new(rules_ini);
+    let ini_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ini");
+    let langrule_name = std::fs::read_dir(&ini_dir)
+        .expect("retail INI directory")
+        .filter_map(Result::ok)
+        .find_map(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("langrule.ini")
+                .then(|| entry.file_name())
+        });
+    if let Some(langrule_name) = langrule_name {
+        let langrule =
+            crate::rules::retail_ini_fixture::retail_ini(&langrule_name.to_string_lossy())
+                .expect("present LANGRULE.INI parses");
+        layers.push(RulesLayerKind::LangRule, langrule);
+    }
+    layers.push(RulesLayerKind::GameMode, mode_ini);
+    layers.push(RulesLayerKind::Scenario, scenario);
+    let processed = layers
+        .process_with_fixed_art(&fixed_art)
+        .expect("stock Yuri Battle rules layers");
+    let registry = OverlayTypeRegistry::from_ini(processed.ini(), Some(&fixed_art));
+    let mut rules = RuleSet::from_processed_rules(&processed).expect("stock Yuri Battle rules");
+    rules.install_art_data(crate::rules::art_data::ArtRegistry::from_ini(&fixed_art));
+    rules.bind_animation_sequences(
+        &crate::rules::infantry_sequence::parse_infantry_sequence_registry(&fixed_art),
+    );
+    let mut sim = Simulation::with_seed(2);
+    sim.intern_rule_type_ids(&rules);
+    sim.resolve_type_handles(&rules);
+    super::tests::install_infantry_delivery_fixture_map(&mut sim);
+
+    let owner = sim.interner.intern("YuriCountry");
+    let mut house =
+        crate::sim::house_state::HouseState::new(owner, 0, Some(owner), true, 10_000, 10);
+    house.difficulty = crate::sim::house_state::HouseDifficulty::Hard;
+    house.project_country_mults(&rules, &sim.interner);
+    sim.houses.insert(owner, house);
+    sim.session.house_order.push(owner);
+    sim.session.current_house = Some(owner);
+    sim.session.game_mode_nonzero = true;
+    sim.session.game_options.game_speed = 3;
+    Some((sim, rules, registry, owner))
+}
+
+#[test]
+fn stock_yuri_cloning_vat_duplicates_a_successfully_placed_infantry() {
+    let Some((mut sim, rules, registry, owner)) = stock_yuri_cloning_world() else {
+        return;
+    };
+
+    let other_owner = sim.interner.intern("Americans");
+    let mut other_house = crate::sim::house_state::HouseState::new(
+        other_owner,
+        1,
+        Some(other_owner),
+        true,
+        10_000,
+        10,
+    );
+    other_house.project_country_mults(&rules, &sim.interner);
+    sim.houses.insert(other_owner, other_house);
+    sim.session.house_order.push(other_owner);
+
+    sim.spawn_object_at_height_with_overlay_registry(
+        "YABRCK",
+        "YuriCountry",
+        14,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("stock Yuri barracks enters through its constructor and Unlimbo");
+    sim.spawn_object_at_height_with_overlay_registry(
+        "NACLON",
+        "YuriCountry",
+        22,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("stock Yuri Cloning Vats enters through its constructor and Unlimbo");
+    sim.spawn_object_at_height_with_overlay_registry(
+        "NACLON",
+        "YuriCountry",
+        30,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("a second same-house vat preserves its own native roster entry");
+    sim.spawn_object_at_height_with_overlay_registry(
+        "NACLON",
+        "Americans",
+        46,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("the other house's vat is registered to that house only");
+
+    assert!(super::enqueue_by_type(
+        &mut sim,
+        &rules,
+        "YuriCountry",
+        "E1",
+        crate::sim::world::FrameEffects::default()
+    ));
+    let category = ProductionCategory::Infantry;
+    let held = sim
+        .production
+        .factories
+        .view(owner, category)
+        .unwrap()
+        .object
+        .unwrap()
+        .entity_id
+        .unwrap();
+    let cost = sim.cost_of(owner, rules.object("E1").unwrap(), &rules);
+    assert!(sim.houses.get(&owner).unwrap().economy.available_money() >= cost);
+    sim.houses
+        .get_mut(&owner)
+        .unwrap()
+        .economy
+        .spend_money(cost);
+    assert!(sim.production.factories.test_arm_ready(owner, category));
+    let mut low_power = crate::sim::power_system::PowerState::default();
+    low_power.is_low_power = true;
+    sim.power_states.insert(owner, low_power);
+
+    assert!(super::dispatch_production_changes_for_tests(
+        &mut sim,
+        &rules,
+        Some(&registry),
+    ));
+
+    assert!(
+        sim.substrate
+            .entities
+            .get(held)
+            .unwrap()
+            .lifecycle
+            .cell_marked()
+    );
+    let e1 = sim.interner.get("E1").unwrap();
+    let infantry_count = sim
+        .substrate
+        .entities
+        .values()
+        .filter(|entity| {
+            entity.category() == EntityCategory::Infantry
+                && entity.owner() == owner
+                && entity.type_ref() == e1
+        })
+        .count();
+    assert_eq!(
+        infantry_count, 3,
+        "the infantry producer's house should receive the original plus one copy per same-house vat"
+    );
+    assert_eq!(
+        sim.substrate
+            .entities
+            .values()
+            .filter(|entity| {
+                entity.category() == EntityCategory::Infantry
+                    && entity.owner() == other_owner
+                    && entity.type_ref() == e1
+            })
+            .count(),
+        0,
+        "a vat outside the producer house's native Cloning roster receives no copy"
+    );
+}
+
+/// The native clone caller ignores each vat's Exit_Object return. The scenario
+/// pass also makes the Cloning=yes vat an InfantryType factory, exercising the
+/// nested-exit guard from its type flag. The shared `FreeRadio @ 0x0065ADC0`
+/// admission rejects the full vat before candidate selection, but the created
+/// infantry remains in limbo rather than being deleted or refunded.
+#[test]
+fn cloning_vat_keeps_a_refused_copy_in_limbo() {
+    let scenario = IniFile::from_str("[NACLON]\nFactory=InfantryType\n");
+    let Some((mut sim, rules, registry, owner)) = stock_yuri_cloning_world_with_scenario(scenario)
+    else {
+        return;
+    };
+    let barracks = sim
+        .spawn_object_at_height_with_overlay_registry(
+            "YABRCK",
+            "YuriCountry",
+            14,
+            14,
+            64,
+            0,
+            &rules,
+            &registry,
+        )
+        .expect("stock Yuri barracks");
+    let vat = sim
+        .spawn_object_at_height_with_overlay_registry(
+            "NACLON",
+            "YuriCountry",
+            22,
+            14,
+            64,
+            0,
+            &rules,
+            &registry,
+        )
+        .expect("stock Yuri Cloning Vats");
+    sim.substrate
+        .entities
+        .get_mut(vat)
+        .unwrap()
+        .radio_contacts
+        .set_slot(0, barracks);
+
+    assert!(super::enqueue_by_type(
+        &mut sim,
+        &rules,
+        "YuriCountry",
+        "E1",
+        crate::sim::world::FrameEffects::default()
+    ));
+    let category = ProductionCategory::Infantry;
+    let held = sim
+        .production
+        .factories
+        .view(owner, category)
+        .unwrap()
+        .object
+        .unwrap()
+        .entity_id
+        .unwrap();
+    let cost = sim.cost_of(owner, rules.object("E1").unwrap(), &rules);
+    sim.houses
+        .get_mut(&owner)
+        .unwrap()
+        .economy
+        .spend_money(cost);
+    assert!(sim.production.factories.test_arm_ready(owner, category));
+
+    assert!(super::dispatch_production_changes_for_tests(
+        &mut sim,
+        &rules,
+        Some(&registry),
+    ));
+
+    assert!(
+        sim.substrate
+            .entities
+            .get(held)
+            .unwrap()
+            .lifecycle
+            .cell_marked()
+    );
+    let e1 = sim.interner.get("E1").unwrap();
+    let copies: Vec<_> = sim
+        .substrate
+        .entities
+        .values()
+        .filter(|entity| {
+            entity.category() == EntityCategory::Infantry
+                && entity.owner() == owner
+                && entity.type_ref() == e1
+                && entity.stable_id() != held
+        })
+        .collect();
+    assert_eq!(copies.len(), 1, "the native vat attempt creates one copy");
+    assert!(
+        !copies[0].lifecycle.cell_marked(),
+        "a rejected clone remains present in limbo because the native caller ignores the exit result"
+    );
+}
+
+/// The native clone-list helper is reached from the Infantry output arm;
+/// stock `YTNK` follows the vehicle output arm and is not duplicated.
+#[test]
+fn cloning_vats_do_not_duplicate_yuri_vehicle_factory_output() {
+    let Some((mut sim, rules, registry, owner)) = stock_yuri_cloning_world() else {
+        return;
+    };
+    sim.spawn_object_at_height_with_overlay_registry(
+        "YAWEAP",
+        "YuriCountry",
+        14,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("stock Yuri war factory");
+    sim.spawn_object_at_height_with_overlay_registry(
+        "NACLON",
+        "YuriCountry",
+        22,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("stock Yuri Cloning Vats");
+
+    assert!(super::enqueue_by_type(
+        &mut sim,
+        &rules,
+        "YuriCountry",
+        "YTNK",
+        crate::sim::world::FrameEffects::default()
+    ));
+    let category = ProductionCategory::Vehicle;
+    let cost = sim.cost_of(owner, rules.object("YTNK").unwrap(), &rules);
+    sim.houses
+        .get_mut(&owner)
+        .unwrap()
+        .economy
+        .spend_money(cost);
+    assert!(sim.production.factories.test_arm_ready(owner, category));
+
+    assert!(super::dispatch_production_changes_for_tests(
+        &mut sim,
+        &rules,
+        Some(&registry),
+    ));
+
+    let ytnk = sim.interner.get("YTNK").unwrap();
+    assert_eq!(
+        sim.substrate
+            .entities
+            .values()
+            .filter(|entity| entity.owner() == owner && entity.type_ref() == ytnk)
+            .count(),
+        1,
+        "only the original vehicle is produced"
+    );
+}
+
+/// The native clone loop runs before the source infantry's dock search and
+/// Unlimbo. With the source moved outside Map::In_Bounds, its own exit has no
+/// candidate, but the vat's earlier Exit_Object attempt still succeeds.
+#[test]
+fn cloning_vat_copy_precedes_a_source_infantry_exit_failure() {
+    let Some((mut sim, rules, registry, owner)) = stock_yuri_cloning_world() else {
+        return;
+    };
+    let barracks = sim
+        .spawn_object_at_height_with_overlay_registry(
+            "YABRCK",
+            "YuriCountry",
+            14,
+            14,
+            64,
+            0,
+            &rules,
+            &registry,
+        )
+        .expect("stock Yuri barracks");
+    sim.spawn_object_at_height_with_overlay_registry(
+        "NACLON",
+        "YuriCountry",
+        22,
+        14,
+        64,
+        0,
+        &rules,
+        &registry,
+    )
+    .expect("stock Yuri Cloning Vats");
+
+    assert!(super::enqueue_by_type(
+        &mut sim,
+        &rules,
+        "YuriCountry",
+        "E1",
+        crate::sim::world::FrameEffects::default()
+    ));
+    let category = ProductionCategory::Infantry;
+    let cost = sim.cost_of(owner, rules.object("E1").unwrap(), &rules);
+    sim.houses
+        .get_mut(&owner)
+        .unwrap()
+        .economy
+        .spend_money(cost);
+    assert!(sim.production.factories.test_arm_ready(owner, category));
+
+    // Keep the producer's registration and contacts intact while making all
+    // cells around its stored Location fail the existing Map::In_Bounds gate.
+    let source = sim.substrate.entities.get_mut(barracks).unwrap();
+    source.position.set_rx_for_test(0);
+    source.position.set_ry_for_test(0);
+
+    assert!(
+        !super::dispatch_production_changes_for_tests(&mut sim, &rules, Some(&registry),),
+        "the source Infantry cannot be delivered from outside the map diamond"
+    );
+
+    let e1 = sim.interner.get("E1").unwrap();
+    let delivered = sim
+        .substrate
+        .entities
+        .values()
+        .filter(|entity| {
+            entity.category() == EntityCategory::Infantry
+                && entity.owner() == owner
+                && entity.type_ref() == e1
+                && entity.lifecycle.cell_marked()
+        })
+        .count();
+    assert_eq!(
+        delivered, 1,
+        "the vat's earlier clone attempt survives the source's later failed exit"
+    );
+}
+
 fn building_placed_owners(sim: &Simulation) -> Vec<crate::sim::intern::InternedId> {
     sim.sound_events
         .iter()
