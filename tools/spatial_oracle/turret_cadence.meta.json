@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "native_sha256": "1cdd1180e49024fbda8ad568caac2e86e856063ff67ab38f62b7d2c7bb84298c",
+  "native_sha256": "3e81a61775d2745d1dabe397325ef663cd994ffc194da4e998e3bf5d2d308600",
   "unicorn_binding": "2.1.4",
   "unicorn_core": [
     2,
@@ -26,5 +26,6 @@
     "set_rot": "0x004C9680",
     "constructor": "0x004C91C0"
   },
-  "payload_sha256": "57af2a40ffd4d7026d450f26d1672f40aa5ee73e844e5d9ff3eb0af50bc19e0c"
+  "replay_command": "python -m tools.spatial_oracle.turret_cadence",
+  "payload_sha256": "e1106370ddd5c472f9336b9f2df0860778676e1b6ba2ef38543c7860ae305c8c"
 }

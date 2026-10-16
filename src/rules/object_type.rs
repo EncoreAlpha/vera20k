@@ -694,6 +694,12 @@ pub struct ObjectType {
     /// Whether this unit has an independently rotating turret.
     /// Parsed from rules.ini `Turret=yes`. Only meaningful for vehicles/aircraft.
     pub has_turret: bool,
+    /// TechnoType+0xD21: `TurretSpins=` makes `UnitClass::Facing_Update`
+    /// replace its ordinary idle/target decision with a per-frame turret Set.
+    /// TechnoType construction writes false at `0x007114C4`; ReadINI reads the
+    /// exact `TurretSpins` key (`0x0084412C`) through `ReadBool @ 0x005295F0`,
+    /// using the current field as its default (`0x00713357`..`0x00713371`).
+    pub turret_spins: bool,
     /// Turret rotation speed in RA2 "ROT" units (degrees per game frame at 15fps).
     /// Higher = faster turret rotation. Only meaningful when `has_turret` is true.
     /// Typical values: 5 (War Miner), 7 (Grizzly/Rhino).
@@ -2574,10 +2580,11 @@ impl ObjectType {
                 .map(str::to_owned),
             chrono_in_sound: section.read_name("ChronoInSound", 0x80).map(str::to_owned),
             chrono_out_sound: section.read_name("ChronoOutSound", 0x80).map(str::to_owned),
-            // Native relative order: ManualReload713352, then
+            // Native relative order: ManualReload713352, TurretSpins713357,
             // TiltCrashJumpjet713386, then Turret. The shared bool reader
             // retains earlier-layer values when a later token is malformed.
             manual_reload: section.read_bool("ManualReload", false),
+            turret_spins: section.read_bool("TurretSpins", false),
             tilt_crash_jumpjet: section.read_bool("TiltCrashJumpjet", false),
             has_turret: section.read_bool("Turret", false),
             // gamemd writes a separate UnitType +0x398=10 for Harvester/Weeder,
@@ -5354,6 +5361,52 @@ mod tests {
             )
             .no_shadow
         );
+    }
+
+    #[test]
+    fn turret_spins_reads_constructor_default_and_rule_layer_overrides() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[VehicleTypes]\n0=DISK\n[DISK]\nTurret=yes\n",
+        ));
+        assert!(
+            !RuleSet::from_rules_layers(&layers)
+                .unwrap()
+                .object("DISK")
+                .unwrap()
+                .turret_spins
+        );
+
+        for (kind, patch, expected) in [
+            (RulesLayerKind::LangRule, "TurretSpins=yes", true),
+            (RulesLayerKind::GameMode, "TurretSpins=malformed", true),
+            (RulesLayerKind::Scenario, "TurretSpins=no", false),
+            (RulesLayerKind::Scenario, "TurretSpins=yes", true),
+        ] {
+            layers.push(kind, IniFile::from_str(&format!("[DISK]\n{patch}\n")));
+            let rules = RuleSet::from_rules_layers(&layers).unwrap();
+            assert_eq!(
+                rules.object("DISK").unwrap().turret_spins,
+                expected,
+                "{patch}"
+            );
+        }
+    }
+
+    /// The production rules reader on the stock battle source stack. DISK is
+    /// the authored `TurretSpins=yes` type; an ordinary tank remains the
+    /// default-false control.
+    #[test]
+    fn retail_flying_disk_turret_spins_reads_from_battle_rules_layers() {
+        let Some(retail) =
+            crate::rules::retail_ini_fixture::retail_battle_rules_for_map("XMP03T4.MAP")
+        else {
+            return;
+        };
+        assert!(retail.rules.object("DISK").unwrap().turret_spins);
+        assert!(!retail.rules.object("MTNK").unwrap().turret_spins);
     }
 
     /// The production reader on retail `rulesmd.ini`: `CrateBeneath=` and

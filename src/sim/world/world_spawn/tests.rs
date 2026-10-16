@@ -699,6 +699,7 @@ fn signed_rot_reaches_spawn_combat_turn_and_snapshot_restore() {
             &[UnitFacingUpdate {
                 entity_id: id,
                 turret_destination: Some(0xC000),
+                turret_spins: false,
                 hull_destination: Some(0xC000),
                 turret_destination_is_idle_return: false,
             }],

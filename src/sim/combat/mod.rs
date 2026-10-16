@@ -254,6 +254,9 @@ pub struct UnitFacingUpdate {
     /// turret this frame — the difference between holding an aim and swinging
     /// back to the hull.
     pub turret_destination: Option<u16>,
+    /// Apply the native `TurretSpins` arm after the optional arm-A aim Set.
+    /// The writer samples the barrel's Current and performs this second Set.
+    pub turret_spins: bool,
     /// Hull (`+0x388`) destination. Set by `Fire_At_Target` case 2 when a
     /// TURRETLESS vehicle is refused for facing while stationary, and by the
     /// `Facing_Update` arm-A mid-arc pin.
@@ -273,6 +276,7 @@ impl UnitFacingUpdate {
         Self {
             entity_id,
             turret_destination: update.turret_destination,
+            turret_spins: update.turret_spins,
             hull_destination: update.hull_destination,
             turret_destination_is_idle_return: update.turret_destination_is_idle_return,
         }

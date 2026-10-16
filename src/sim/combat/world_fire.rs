@@ -2055,6 +2055,7 @@ pub(crate) fn visit_fire(
                     emit.unit_facing.push(UnitFacingUpdate {
                         entity_id: id,
                         turret_destination: None,
+                        turret_spins: false,
                         hull_destination: None,
                         turret_destination_is_idle_return: false,
                     });
