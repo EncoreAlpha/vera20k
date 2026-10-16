@@ -289,6 +289,21 @@ impl Simulation {
         }
     }
 
+    /// Native TeamAssign731060 and TeamRecall7311C0 eligibility. The assignment
+    /// path reads House+0x1ED (`PlayerControl`) directly in mode zero, while a
+    /// nonzero mode calls House::IsHumanPlayer50B6F0 (current-house identity).
+    /// Keep this distinct from `house_is_human_player`: its mode-zero branch
+    /// also admits the separate `IsHuman` flag.
+    pub(crate) fn house_is_control_group_eligible(&self, owner: InternedId) -> bool {
+        if self.session.game_mode_nonzero {
+            self.house_is_human_player(owner)
+        } else {
+            self.houses
+                .get(&owner)
+                .is_some_and(|house| house.player_control)
+        }
+    }
+
     /// Virtual+A0: Building44F5C0 or Unit/Infantry/Aircraft Techno700C40.
     /// This is producer-side control admission; Event/lifecycle admission is separate.
     /// House50B6F0, bunker link, Spawned, paralysis, warp, slave ownership and
