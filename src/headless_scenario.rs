@@ -2100,6 +2100,7 @@ mod retail_construction_tests {
                             yard,
                             (x, y),
                             None,
+                            None,
                         )
                     })
                 })

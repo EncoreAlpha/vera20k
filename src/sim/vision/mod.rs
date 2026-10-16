@@ -1360,7 +1360,7 @@ impl FogState {
     /// `0x08`/`0x10` in [`GROUND_VISIBLE`]/[`GROUND_OPEN`], and its `0x08` as
     /// the mapped knowledge that [`cell_ground_mapped`] reads.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn set_ground_bits_for_test(
+    pub fn set_ground_bits_for_test(
         &mut self,
         owner: InternedId,
         rx: u16,

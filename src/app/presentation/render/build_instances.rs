@@ -86,8 +86,7 @@ pub(super) struct UiInstances {
     pub scale_pip: Vec<SpriteInstance>,
     pub software_cursor: Vec<SpriteInstance>,
     pub drag: Vec<SpriteInstance>,
-    pub placement_valid: Vec<SpriteInstance>,
-    pub placement_invalid: Vec<SpriteInstance>,
+    pub placement: Vec<SpriteInstance>,
     pub target_line: Vec<SpriteInstance>,
     pub factory_rally_first: Vec<SpriteInstance>,
     pub factory_rally_second: Vec<SpriteInstance>,
@@ -601,7 +600,7 @@ pub(super) fn build_ui_instances(state: &AppState, sw: f32, sh: f32) -> UiInstan
         None => Vec::new(),
     };
 
-    let (placement_valid, placement_invalid) = build_placement_preview(state);
+    let placement = build_placement_preview(state);
 
     let input = &state.match_state.input;
     let camera = [input.camera_x.round() as i32, input.camera_y.round() as i32];
@@ -698,41 +697,32 @@ pub(super) fn build_ui_instances(state: &AppState, sw: f32, sh: f32) -> UiInstan
         scale_pip,
         software_cursor,
         drag,
-        placement_valid,
-        placement_invalid,
+        placement,
         target_line,
         factory_rally_first,
         factory_rally_second,
     }
 }
 
-/// Build the building placement cells, split into placeable and blocked: the
-/// foundation's cells and, for a wall, its auto-fill cells.
-///
-/// Native placement draws PLACE.SHP cells and never the building being placed:
-/// `Tactical::BuildingPlacement_OverlayRenderer` (`0x006D5030`) draws it only while
-/// `g_IsMapEditor` (`0x00A8ED6B`) is set, which `Parse_Command_Line` (`0x0052F620`) clears and
-/// only the random-map GALITE pass (`0x005A91E0`) sets, restoring it before returning.
-///
-/// Residual: the cells are PLACE.SHP frames 0 and 1 tinted green and red, and auto-fill cells
-/// draw even when the wall is blocked. Native `CellClass::BuildingPlacement_per_cell_draw`
-/// (`0x0047EC90`) draws a blocked cell with frame slope index + 2 (frame 1 marks pending cells),
-/// and the renderer draws auto-fill cells only when every foundation cell is clear (`0x006D53CB`).
-fn build_placement_preview(state: &AppState) -> (Vec<SpriteInstance>, Vec<SpriteInstance>) {
-    let (Some(o), Some(preview)) = (
-        &state.match_state.match_presentation.selection_overlay,
+/// Active PLACE cells. Tactical6D5030 suppresses the building ghost outside
+/// the map editor; Cell47EC90 supplies frame0 or slope+2. Keep one ordered
+/// stream rather than regrouping overlapping cells by admitted color.
+fn build_placement_preview(state: &AppState) -> Vec<SpriteInstance> {
+    let (Some(shape), Some(preview)) = (
+        state
+            .match_state
+            .match_presentation
+            .selection_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.placement_shape()),
         &state.match_state.input.building_placement_preview,
     ) else {
-        return (Vec::new(), Vec::new());
+        return Vec::new();
     };
-    let height_map = state.height_map();
-    let (mut valid, mut invalid) = o.build_building_preview(preview, height_map);
-    // The producer fills auto-fill cells for walls only.
-    let (autofill_valid, autofill_invalid) =
-        o.build_wall_autofill_diamonds(&preview.wall_autofill_cells, preview.valid, height_map);
-    valid.extend(autofill_valid);
-    invalid.extend(autofill_invalid);
-    (valid, invalid)
+    // Residual: native6D53CB suppresses auto-fill when the wall is blocked;
+    // the production list still includes those cells. The ordinary2x2 path
+    // has no filler cells and shares one current-cell presentation transport.
+    shape.build_building_preview(preview)
 }
 
 // ---------------------------------------------------------------------------

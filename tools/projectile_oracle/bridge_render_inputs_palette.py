@@ -19,7 +19,7 @@ class PaletteReader(module.BulletReader):
    self.ret(self.alloc(self.read32(u.reg_read(UC_X86_REG_ESP)+4)));return
   super().hook(u,p,n,d)
 
-def initialize(m, *, ordinary=False):
+def initialize(m, *, ordinary=False, early_temperat=False):
  u=m.u;surface=m.alloc(0x40);vtable=m.alloc(0x100)
  u.mem_write(surface,dwords(vtable));u.mem_write(surface+0x10,dwords(2))
  u.mem_write(vtable+0x70,dwords(0x411630));u.mem_write(0x887308,dwords(surface))
@@ -31,6 +31,12 @@ def initialize(m, *, ordinary=False):
   u.mem_write(addr,dwords(value))
  u.mem_write(0x8a0de8,struct.pack('<2H',0x7bef,0xf7de))
  u.reg_write(UC_X86_REG_ESP,SP);u.reg_write(UC_X86_REG_EBX,0)
+ if early_temperat:
+  # Placement87F6C4 needs Init_Game's actual destination palette before its
+  # constructor. Historical modes retain their allocation and startup order.
+  run_checked(u,0x52BC49,0x52BCBB,
+   required_addresses=(0x52BC55,0x52BCA1))
+  u.reg_write(UC_X86_REG_ESP,SP);u.reg_write(UC_X86_REG_EBX,0)
  # Full original calls, not injected Convert fields or shade tables.
  run_checked(u,0x52be61,0x52bfce,count=100000000,timeout_us=120000000,
   required_addresses=(0x52be6d,0x52bf26,0x48e740,0x48ebf0,0x4bbb00))

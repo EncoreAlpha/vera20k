@@ -733,6 +733,7 @@ fn the_mechanism_runs_on_a_real_map() {
                         hospital,
                         (rx, ry),
                         Some(owner),
+                        None,
                     )
             })
             .expect("a placeable hospital site on the retail map")

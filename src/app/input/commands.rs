@@ -351,30 +351,42 @@ pub(crate) fn place_ready_building_at_cursor(state: &mut AppState, type_id: &str
     else {
         return;
     };
-    // Use the preview's stored (rx, ry) so the placed building exactly matches
-    // the cells the player saw, avoiding any cursor-movement drift between frames.
-    let (rx, ry) =
-        if let Some(preview) = state.match_state.input.building_placement_preview.as_ref() {
-            log::info!(
-                "Click placement: using preview ({},{}) size={}x{} type={}",
-                preview.rx,
-                preview.ry,
-                preview.width,
-                preview.height,
-                type_id,
-            );
-            (preview.rx, preview.ry)
-        } else {
-            crate::app::match_runtime::sim_tick::screen_point_to_world_cell(
-                state,
-                state.match_state.input.cursor_x,
-                state.match_state.input.cursor_y,
-            )
-        };
-    if let Some(preview) = state.match_state.input.building_placement_preview.as_ref()
-        && !preview.valid
-    {
-        if let Some(reason) = &preview.reason {
+    // LeftUp4ABA16..4ABA59 uses its supplied clicked Cell and recomputes
+    // proximity, rather than latching the previous draw's coordinate/result.
+    // GAPOWR2x2's executed SetActive4A8BF0 offset is(0,0). Nonzero centering
+    // offsets of larger foundations remain outside this ordinary2x2 chain.
+    let (rx, ry) = crate::app::match_runtime::sim_tick::screen_point_to_world_cell(
+        state,
+        state.match_state.input.cursor_x,
+        state.match_state.input.cursor_y,
+    );
+    let in_build_area = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .is_some_and(|runtime| {
+            let sim = &runtime.simulation;
+            let rules = &runtime.resources.rules;
+            rules.object(type_id).is_some_and(|object| {
+                crate::sim::production::is_within_build_area(sim, rules, &owner, object, rx, ry)
+            })
+        });
+    // Visibility1181 is latched by UpdateFoundationCenter4A94DA. LeftUp
+    // checks it after the freshly recomputed proximity1180(4ABAA4/4ABAB2).
+    let visible = state
+        .match_state
+        .input
+        .building_placement_preview
+        .as_ref()
+        .is_none_or(|preview| preview.foundation_visible);
+    if !in_build_area || !visible {
+        if let Some(reason) = state
+            .match_state
+            .input
+            .building_placement_preview
+            .as_ref()
+            .and_then(|preview| preview.reason.as_ref())
+        {
             log::warn!(
                 "Ready building placement rejected locally: owner={} type={} cell=({}, {}) reason={}",
                 owner,
@@ -384,12 +396,13 @@ pub(crate) fn place_ready_building_at_cursor(state: &mut AppState, type_id: &str
                 reason.label()
             );
         }
-        // `DisplayClass::BandBox_LeftUp 0x004ABAAC/0x004ABABA`: a
-        // placement click whose pending building is not placeable
-        // (`+0x1180` clear, `BuildingClass 0x00452670` refused the cell)
-        // or not adjacent (`+0x1181` clear) goes to `0x004ABC76..
-        // 0x004ABC80 PlayEVA("EVA_CannotDeployHere", -1)` on the clicking
-        // machine, before any event is queued.
+        // LeftUp4ABAA4/4ABAB2 checks independent proximity/visibility
+        // bytes1180/1181, not the Cell draw's IsClearToBuild result. Failure
+        // reaches4ABC76 local CannotDeployHere before queuing. Near red terrain
+        // still emits PLACE; House4FB0E0/Unlimbo refuses it and restores the
+        // saved ready product through the existing input lifecycle owner.
+        // Native: cameo_order local_invalid_site_retains_then_valid_place;
+        // placement_render documents the Cell draw/admission boundary.
         crate::app::input::dispatch::push_local_eva(
             state,
             crate::app::input::sidebar_eva::EVA_CANNOT_DEPLOY_HERE,

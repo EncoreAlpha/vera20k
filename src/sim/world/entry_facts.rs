@@ -131,7 +131,7 @@ impl CellFacts {
             in_playfield: crate::sim::cell_rect::retained_cell_is_in_playfield(
                 cell,
                 sim.playfield_bounds,
-                terrain,
+                &crate::map::resolved_terrain::NativeCellQuery::canonical(terrain),
             ),
             overlay: sim.cell_overlay(cell),
             terrain_object: terrain_object.is_some(),

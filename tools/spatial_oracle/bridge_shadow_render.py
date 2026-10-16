@@ -41,7 +41,7 @@ def ints(u, address, count):
     return list(struct.unpack('<' + 'i' * count, u.mem_read(address, count * 4)))
 
 
-def physical_assets(*, body=False, ore=False, tile=False):
+def physical_assets(*, body=False, ore=False, tile=False, placement=False):
     root = configured_gamemd().parent
     sources, assets = [], {}
     containers = (
@@ -70,6 +70,13 @@ def physical_assets(*, body=False, ore=False, tile=False):
             ('ra2md.mix', {'localmd.mix': ('temperatmd.ini',)}),
             ('multimd.mix', {None: ('XMP03T4.MAP',)}),
         )
+    if placement:
+        containers = (
+            ('ra2.mix', {'conquer.mix': ('PLACE.SHP',),
+                         'cache.mix': ('palette.pal', 'anim.pal', 'temperat.pal'),
+                         'isourb.mix': ('rmpfx03.urb', 'clat03.urb', 'clat04.urb', 'proad02.urb')}),
+            ('ra2md.mix', {'localmd.mix': ('ARTMD.INI', 'MPBattleMD.ini', 'URBANMD.INI')}),
+        )
     for outer_name, children in containers:
         outer_raw = (root / outer_name).read_bytes()
         outer = mix(outer_raw)
@@ -85,7 +92,7 @@ def physical_assets(*, body=False, ore=False, tile=False):
                                     outer_sha256=hashlib.sha256(outer_raw).hexdigest(),
                                     inner_sha256=hashlib.sha256(inner_raw).hexdigest(),
                                     sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)))
-    if ore:
+    if ore or placement:
         # Active retail's expansion archive overrides the base RULESMD.
         raw = (root / 'expandmd01.mix').read_bytes()
         rules = mix(raw)[mix_hash('RULESMD.INI')]
@@ -100,9 +107,9 @@ def physical_assets(*, body=False, ore=False, tile=False):
     return assets, sources
 
 
-def prepare(*, body=False, ore=False):
-    assert not (body and ore)
-    assets, sources = physical_assets(body=body, ore=ore)
+def prepare(*, body=False, ore=False, placement=False):
+    assert sum((body, ore, placement)) <= 1
+    assets, sources = physical_assets(body=body, ore=ore, placement=placement)
     shadow_bytes, shape_aliases = {}, []
     for name, raw in assets.items():
         image_name = name.split('.')[0]
@@ -124,20 +131,24 @@ def prepare(*, body=False, ore=False):
                                    shadow_frames_sha256=hashlib.sha256(normalized).hexdigest()))
     assert all(len(images) == 6 and all(raw == images[0] for raw in images)
                for images in shadow_bytes.values())
-    selected_types = ORE_TYPES if ore else BRIDGE_TYPES
+    selected_types = ('GAPOWR',) if placement else ORE_TYPES if ore else BRIDGE_TYPES
     art, art_lines = lexical(assets['ARTMD.INI'], set(selected_types)
                              | (set() if ore else {'BRIDGE', 'BRIDGB'}))
     m = PaletteReader(art)
     m.assets.update(assets)
-    initialize(m, ordinary=ore)
+    initialize(m, ordinary=ore, early_temperat=placement)
     u = m.u
     u.mem_map(MEM, 0x200000)
+    if placement:
+        # Same native RGB565/Z/A surface owner; selected type construction is
+        # the placement module's BuildingType reader, not OverlayType.
+        selected_types = ()
     # Existing registry constructor, then actual physical registry-prefix names.
     u.reg_write(UC_X86_REG_ESP, SP)
     run_checked(u, 0x4E71E0, 0x4E7216)
     declared, _ = lexical(assets['RULESMD.INI'], {'OverlayTypes'})
     names = list(declared['OverlayTypes'].values())
-    names = names[:1 + max(names.index(name) for name in selected_types)]
+    names = names[:1 + max(names.index(name) for name in selected_types)] if selected_types else []
     types = {}
     for name in names:
         typ = m.alloc(0x300)
@@ -835,7 +846,13 @@ if __name__ == '__main__':
     modes.add_argument('--body', action='store_true')
     modes.add_argument('--ore', action='store_true')
     modes.add_argument('--tile', action='store_true')
+    modes.add_argument('--placement', action='store_true')
     selected, remaining = parser.parse_known_args()
+    if selected.placement:
+        from tools.spatial_oracle.placement_render import generate as generate_placement, metadata as placement_metadata
+        finish_vectors(generate_placement, Path(__file__).with_name('placement_render.json'),
+                       provenance=placement_metadata, argv=remaining)
+        raise SystemExit(0)
     if selected.tile:
         from tools.spatial_oracle.tmp_clear_render import generate as generate_tile, metadata as tile_metadata
         finish_vectors(generate_tile, Path(__file__).with_name('tmp_clear_render.json'),

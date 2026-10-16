@@ -2014,7 +2014,9 @@ impl Simulation {
         self.locomotor_mark_all_occupation_bits(stable_id, false);
         let yard = rules.object(&yard_type);
         let placeable = yard.is_some_and(|yard| {
-            crate::sim::build_site::can_place_building_at(self, rules, registry, yard, origin, None)
+            crate::sim::build_site::can_place_building_at(
+                self, rules, registry, yard, origin, None, None,
+            )
         });
         // `0x0073950F..0x00739536`: refused for an owner no human controls,
         // the site is cleared for that house while the unit is still lifted

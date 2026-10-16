@@ -121,6 +121,7 @@ pub(super) fn retail_dustbowl_rocketeer()
                     plant_type,
                     (px as i16, py as i16),
                     Some(owner_id),
+                    None,
                 )
                 .then(|| sim.spawn_object(plant, owner, px, py, 0, &resources.rules))
                 .flatten()

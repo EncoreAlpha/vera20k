@@ -44,7 +44,7 @@ pub use self::factory_lifecycle::{cancel_by_type_for_owner, enqueue_by_type};
 pub use self::production_economy::is_harvester_type;
 pub(crate) use self::production_placement::place_production_with_overlays;
 pub use self::production_placement::{
-    active_producer_for_owner_category, cycle_active_producer_for_owner_category,
+    active_producer_for_owner_category, cycle_active_producer_for_owner_category, is_within_build_area,
     placement_preview_for_owner_with_overlays,
 };
 #[cfg(any(test, feature = "test-support"))]

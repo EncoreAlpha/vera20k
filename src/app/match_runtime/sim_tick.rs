@@ -1399,7 +1399,8 @@ pub(crate) fn update_building_placement_preview(state: &mut AppState) {
         state.match_state.input.building_placement_preview = None;
         return;
     };
-    // Offset so the foundation shadow centers on the cursor, not top-left corner.
+    // GAPOWR2x2 SetActive4A8BF0 has native cursor offset(0,0).
+    // Larger foundations' nonzero centering offsets remain a separate path.
     let (fw, fh, foundation_str) = rules
         .object(type_id)
         .map(|obj| {

@@ -21,6 +21,8 @@
 
 #[cfg(test)]
 mod bridge_shadow_gpu_tests;
+#[cfg(test)]
+mod placement_gpu_tests;
 mod build_instances;
 mod draw_passes;
 #[cfg(test)]
@@ -468,12 +470,7 @@ fn upload_to_gpu(
     pool.upload(&state.renderer.gpu, "self_heal_pips", &ui.self_heal_pip);
     pool.upload(&state.renderer.gpu, "scale_pips", &ui.scale_pip);
     pool.upload(&state.renderer.gpu, "software_cursor", &ui.software_cursor);
-    pool.upload(&state.renderer.gpu, "placement_valid", &ui.placement_valid);
-    pool.upload(
-        &state.renderer.gpu,
-        "placement_invalid",
-        &ui.placement_invalid,
-    );
+    pool.upload(&state.renderer.gpu, "placement", &ui.placement);
     pool.upload(
         &state.renderer.gpu,
         "factory_rally_first",

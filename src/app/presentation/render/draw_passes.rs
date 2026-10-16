@@ -706,33 +706,25 @@ pub(super) fn dispatch_draw_passes(
         bracket_tex,
         "building_radius_rings",
     );
-    // Placement cells — world-space, uses world camera (zoom).
-    let valid_tex = state
-        .match_state
-        .match_presentation
-        .selection_overlay
-        .as_ref()
-        .map(|o| o.preview_valid_texture());
-    draw_pooled_no_depth(
-        &mut pass,
-        &state.renderer.batch_renderer,
-        pool,
-        valid_tex,
-        "placement_valid",
-    );
-    let invalid_tex = state
-        .match_state
-        .match_presentation
-        .selection_overlay
-        .as_ref()
-        .map(|o| o.preview_invalid_texture());
-    draw_pooled_no_depth(
-        &mut pass,
-        &state.renderer.batch_renderer,
-        pool,
-        invalid_tex,
-        "placement_invalid",
-    );
+    // Cell47EC90 flags20600 -> plain Convert/RLE4960A0: opaque stores,
+    // world camera, neither A nor Z reads/writes. The shared neutral-A surface
+    // binding and passthrough pipeline implement that material directly.
+    if let (Some(shape), Some((buffer, count))) = (
+        state
+            .match_state
+            .match_presentation
+            .selection_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.placement_shape()),
+        pool.get("placement"),
+    ) {
+        state.renderer.batch_renderer.draw_with_buffer_passthrough(
+            &mut pass,
+            shape.texture(),
+            buffer,
+            count,
+        );
+    }
 
     // --- Step 10.5: PixelFX water/ore sparkles ---
     // gamemd writes these opaque one-pixel effects at the tactical tail, after
@@ -1180,7 +1172,7 @@ mod tests {
         let second_rally = source_offset("\"factory_rally_second\"");
         let target_lines = source_offset("\"target_lines\"");
         let status = source_offset("\"status_unit_fill\"");
-        let placement = source_offset("\"placement_invalid\"");
+        let placement = source_offset("pool.get(\"placement\")");
         let sparkle = source_offset("pool.get(\"cell_sparkles\")");
         let timer_fill = source_offset("\"super_timer_fill\"");
         let timer_text = source_offset("\"super_timer_text\"");

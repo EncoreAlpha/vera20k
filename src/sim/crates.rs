@@ -607,6 +607,7 @@ fn validate_and_stamp_candidate_inner(
                     Some(SpeedType::Track),
                     None,
                     None,
+                    None,
                 )
             })
         });
