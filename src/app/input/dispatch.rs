@@ -1684,17 +1684,18 @@ fn place_ready_building_for_tab(state: &mut AppState, tab: SidebarTab) {
                     owner_id,
                     ready.type_id,
                 )?;
-                let builder =
-                    crate::sim::production::object_find_factory(sim, rules, held, false, false)?;
+                // Native hands Manual_Place4FB840 the object's Factory
+                // 5F5C20(0,0), and 4FB840 refuses a null one. VERA's placement
+                // owner takes no factory, so this lookup is admission only.
+                crate::sim::production::object_find_factory(sim, rules, held, false, false)?;
                 Some((
                     owner_id,
                     held,
                     sim.interner.resolve(ready.type_id).to_string(),
-                    builder,
                 ))
             })
     };
-    let Some((owner_id, held, held_type, _builder)) = ready_target else {
+    let Some((owner_id, held, held_type)) = ready_target else {
         return;
     };
     if state

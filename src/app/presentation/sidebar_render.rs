@@ -98,22 +98,21 @@ pub(crate) fn advance_sidebar_credits_after_frame(
 /// `StripClass::HasEntries` gate, see `SidebarProjectionState::selectable_tab`).
 /// No strip populated leaves the active tab alone.
 fn apply_cameo_transitions(
-    state: &mut AppState,
     transitions: crate::ui::sidebar::cameo_order::CameoTransitions,
+    first_populated: Option<sidebar::SidebarTab>,
+    active_tab: &mut sidebar::SidebarTab,
+    gadgets: &mut crate::ui::sidebar::gadget_flash::SidebarGadgetState,
 ) {
-    let presentation = &mut state.match_state.match_presentation;
     for tab in sidebar::SidebarTab::all() {
         if let Some(disabled) = transitions.tab_button_disabled(tab) {
-            presentation
-                .sidebar_gadget_state
-                .set_tab_disabled(tab.tab_index(), disabled);
+            gadgets.set_tab_disabled(tab.tab_index(), disabled);
         }
     }
-    if transitions.relocates_active_tab()
-        && let Some(first) = presentation.sidebar_projection.first_populated_tab()
-        && first != presentation.active_sidebar_tab
+    if let Some(first) = first_populated
+        && transitions.relocates_active_tab()
+        && first != *active_tab
     {
-        presentation.active_sidebar_tab = first;
+        *active_tab = first;
     }
 }
 
@@ -221,7 +220,20 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
         .match_presentation
         .sidebar_projection
         .reconcile_factory_links(sim, owner);
-    apply_cameo_transitions(state, reconciled.transitions());
+    let first_populated = state
+        .match_state
+        .match_presentation
+        .sidebar_projection
+        .first_populated_tab();
+    {
+        let presentation = &mut state.match_state.match_presentation;
+        apply_cameo_transitions(
+            reconciled.transitions(),
+            first_populated,
+            &mut presentation.active_sidebar_tab,
+            &mut presentation.sidebar_gadget_state,
+        );
+    }
     if reconciled.build_inserted() {
         crate::app::input::dispatch::push_local_eva(
             state,
@@ -774,7 +786,92 @@ pub(crate) fn begin_main_load_pass<'a>(
 #[cfg(test)]
 mod tests {
     use super::shows_alt_cameo;
+    use crate::sim::intern::StringInterner;
     use crate::sim::house_state::HouseState;
+    use crate::ui::sidebar::SidebarTab;
+    use crate::ui::sidebar::cameo_order::{Cameo, CameoId, CameoKey, CameoStrips};
+    use crate::ui::sidebar::gadget_flash::SidebarGadgetState;
+
+    /// The two native relocation transitions, applied to the retained tab.
+    ///
+    /// Recalculate 6A68AF..6A6930 and AddCameo 6A6432 both scan strips 0..3,
+    /// disable the button of the strip that just emptied and move ActiveTab only
+    /// when the first populated strip is not already active — a strip that was
+    /// already empty reports neither transition.
+    #[test]
+    fn native_tab_relocation_follows_the_first_populated_strip() {
+        let mut interner = StringInterner::new();
+        let infantry = interner.intern("TESTSOLDIER");
+        let building = interner.intern("TESTYARD");
+        let cameo = |id, tab| Cameo {
+            id: CameoId::Object(id),
+            tab,
+            available: true,
+            key: CameoKey::Techno {
+                own_side: true,
+                considered_aircraft: false,
+                naval: false,
+                tech_level: 1,
+                cost: 100,
+                name: "Test Type".to_string(),
+            },
+        };
+        let mut strips = CameoStrips::default();
+        let mut active = SidebarTab::Building;
+        let mut gadgets = SidebarGadgetState::default();
+        let reconcile = |strips: &mut CameoStrips,
+                             candidates: &[Cameo],
+                             active: &mut SidebarTab,
+                             gadgets: &mut SidebarGadgetState| {
+            let reconciled = strips.reconcile(candidates, 3);
+            super::apply_cameo_transitions(
+                reconciled.transitions(),
+                strips.first_populated_tab(),
+                active,
+                gadgets,
+            );
+        };
+
+        // An entry arriving into an empty sidebar selects its own strip.
+        reconcile(
+            &mut strips,
+            &[cameo(infantry, SidebarTab::Infantry)],
+            &mut active,
+            &mut gadgets,
+        );
+        assert_eq!(active, SidebarTab::Infantry);
+        assert!(!gadgets.tab_disabled[SidebarTab::Infantry.tab_index()]);
+
+        // A later addition into a populated sidebar moves nothing.
+        reconcile(
+            &mut strips,
+            &[
+                cameo(infantry, SidebarTab::Infantry),
+                cameo(building, SidebarTab::Building),
+            ],
+            &mut active,
+            &mut gadgets,
+        );
+        assert_eq!(active, SidebarTab::Infantry);
+
+        // Dropping the infantry entry empties its strip: the button disables and
+        // the active tab follows the first populated strip.
+        let mut pruned = vec![
+            cameo(infantry, SidebarTab::Infantry),
+            cameo(building, SidebarTab::Building),
+        ];
+        pruned[0].available = false;
+        reconcile(&mut strips, &pruned, &mut active, &mut gadgets);
+        assert_eq!(active, SidebarTab::Building);
+        assert!(gadgets.tab_disabled[SidebarTab::Infantry.tab_index()]);
+
+        // Nothing populated: the disabled button stays, the tab does not move.
+        let mut emptied = pruned.clone();
+        emptied[1].available = false;
+        reconcile(&mut strips, &emptied, &mut active, &mut gadgets);
+        assert_eq!(active, SidebarTab::Building);
+        assert!(gadgets.tab_disabled[SidebarTab::Building.tab_index()]);
+    }
 
     /// Retail rules and art: whose cameo `TechnoTypeClass::GetCameo`
     /// switches after each factory infiltration, and the image section the
