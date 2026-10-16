@@ -89,6 +89,34 @@ pub(crate) fn advance_sidebar_credits_after_frame(
         .push(crate::audio::events::GameSoundEvent::CreditTick { sound_id });
 }
 
+/// Apply one reconcile pass's native tab transitions.
+///
+/// AddCameo 6A6472 enables the button of the strip that just accepted an
+/// entry; Recalculate 6AA6xx disables the button of the strip it emptied, and
+/// both then hand the active tab to the first populated strip when that is not
+/// already the active one (the same scan is used by the trigger action's
+/// `StripClass::HasEntries` gate, see `SidebarProjectionState::selectable_tab`).
+/// No strip populated leaves the active tab alone.
+fn apply_cameo_transitions(
+    state: &mut AppState,
+    transitions: crate::ui::sidebar::cameo_order::CameoTransitions,
+) {
+    let presentation = &mut state.match_state.match_presentation;
+    for tab in sidebar::SidebarTab::all() {
+        if let Some(disabled) = transitions.tab_button_disabled(tab) {
+            presentation
+                .sidebar_gadget_state
+                .set_tab_disabled(tab.tab_index(), disabled);
+        }
+    }
+    if transitions.relocates_active_tab()
+        && let Some(first) = presentation.sidebar_projection.first_populated_tab()
+        && first != presentation.active_sidebar_tab
+    {
+        presentation.active_sidebar_tab = first;
+    }
+}
+
 /// Reconcile state-derived sidebar inputs and replace the retained immutable
 /// projection. This is called only from explicit simulation/input/lifecycle
 /// transitions, never from a view consumer.
@@ -178,7 +206,7 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
         &ready_buildings,
         &sw_views,
     );
-    let inserted = state
+    let reconciled = state
         .match_state
         .match_presentation
         .sidebar_projection
@@ -193,7 +221,8 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
         .match_presentation
         .sidebar_projection
         .reconcile_factory_links(sim, owner);
-    if inserted {
+    apply_cameo_transitions(state, reconciled.transitions());
+    if reconciled.build_inserted() {
         crate::app::input::dispatch::push_local_eva(
             state,
             crate::app::input::sidebar_eva::EVA_NEW_CONSTRUCTION_OPTIONS,
@@ -293,12 +322,9 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
             .sidebar_projection
             .cameo_strips(),
     );
-    if let Some(selected) = view.tabs.iter().find(|tab| tab.active) {
-        crate::app::input::dispatch::apply_sidebar_action(
-            state,
-            sidebar::SidebarAction::SelectTab(selected.tab),
-        );
-    }
+    // The view never substitutes another tab, so the retained active tab needs
+    // no write-back: `apply_cameo_transitions` (and the switch itself) is the
+    // only writer.
     state
         .match_state
         .match_presentation
@@ -307,13 +333,6 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
             state.match_state.match_presentation.active_sidebar_tab,
             view.scroll_rows,
         );
-    // Publish the same strip-derived state to input and Flash_AI. Native
-    //6A6472 enables after Add;6A6820 disables after the last entry is removed.
-    for tab in &view.tabs {
-        let gadgets = &mut state.match_state.match_presentation.sidebar_gadget_state;
-        gadgets.tab_disabled[tab.tab.tab_index()] = tab.disabled;
-        gadgets.tab_flashes[tab.tab.tab_index()].disabled = tab.disabled;
-    }
     if let Some(atlas) = state
         .match_state
         .match_presentation

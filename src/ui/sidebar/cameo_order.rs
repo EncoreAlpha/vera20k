@@ -136,6 +136,78 @@ pub(crate) struct CameoStrips {
     frame: i32,
 }
 
+/// The tab-state consequences of one reconcile pass.
+///
+/// Native flips a tab button and moves ActiveTab only on these transitions:
+/// `AddCameo` 6A6300 enables the added strip's button and, when no strip held
+/// any entry before the insertion, switches ActiveTab to the first populated
+/// strip; `Recalculate` 6AA600 disables the button of the strip it just
+/// emptied and then switches ActiveTab to the first populated strip when that
+/// is not already the active one. Nothing re-derives the buttons or the active
+/// tab from the current strip contents.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CameoTransitions {
+    build_entered: [bool; 4],
+    emptied: [bool; 4],
+    super_entered: [bool; 4],
+    entered_into_empty_sidebar: bool,
+}
+
+impl CameoTransitions {
+    /// The tab-button state this pass left for `tab`, or `None` when the pass
+    /// did not touch that button. One strip can see several native events, so
+    /// they apply in their native order: AddCameo enables, Recalculate
+    /// disables, and a super granted afterwards enables again.
+    pub(crate) fn tab_button_disabled(&self, tab: SidebarTab) -> Option<bool> {
+        let index = tab.tab_index();
+        if self.super_entered[index] {
+            Some(false)
+        } else if self.emptied[index] {
+            Some(true)
+        } else if self.build_entered[index] {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn any_emptied(&self) -> bool {
+        self.emptied.iter().any(|emptied| *emptied)
+    }
+
+    /// True when a transition above must re-check the active tab: either a
+    /// strip just emptied, or an entry arrived while the sidebar was empty
+    /// (AddCameo's 6A6432 scan finds no populated strip before the insertion).
+    pub(crate) fn relocates_active_tab(&self) -> bool {
+        self.any_emptied() || self.entered_into_empty_sidebar
+    }
+}
+
+/// One `AddCameo`/`Recalculate` pass: the construction-options line's insertion
+/// flag plus the tab transitions the pass produced.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CameoReconcile {
+    build_inserted: bool,
+    transitions: CameoTransitions,
+}
+
+impl CameoReconcile {
+    pub(crate) fn build_inserted(&self) -> bool {
+        self.build_inserted
+    }
+
+    pub(crate) fn transitions(&self) -> CameoTransitions {
+        self.transitions
+    }
+
+    /// The scenario's first projection is not an insertion for the
+    /// construction-options line, but its tab transitions still happen.
+    pub(crate) fn without_build_insertion(mut self) -> Self {
+        self.build_inserted = false;
+        self
+    }
+}
+
 impl CameoStrips {
     /// Restore validated identities in their saved order; never reinsert or sort.
     /// MouseClass Load 5BDF70 and NoInit 6A4F20 preserve these records.
@@ -305,28 +377,68 @@ impl CameoStrips {
     /// House4F927C..4F92FD adds ordinary cameos before recalculating the
     /// strips, then grants Supers. Visibility still comes from the existing
     /// production admission owner; this projection does not invent CanBuild.
-    pub(crate) fn reconcile(&mut self, candidates: &[Cameo], visible_rows: usize) -> bool {
+    ///
+    /// The reported transitions follow the same pass: the ordinary additions
+    /// run first, `retain` prunes (Recalculate 6AA600), and only then do newly
+    /// granted supers enter — so a super granted into a sidebar the prune had
+    /// just emptied still counts as an insertion into an empty sidebar.
+    pub(crate) fn reconcile(&mut self, candidates: &[Cameo], visible_rows: usize) -> CameoReconcile {
         self.refresh_keys(candidates);
-        let mut inserted_build = false;
+        let mut build_entered = [false; 4];
+        let mut build_inserted = false;
+        let empty_before_builds = self.sidebar_empty();
         for candidate in candidates
             .iter()
             .filter(|item| item.available && matches!(item.id, CameoId::Object(_)))
         {
-            inserted_build |= self.insert(candidate);
+            let accepted = self.insert(candidate);
+            build_entered[candidate.tab.tab_index()] |= accepted;
+            build_inserted |= accepted;
         }
+        let counted: [usize; 4] = std::array::from_fn(|index| self.strips[index].len());
         let available: std::collections::HashSet<_> = candidates
             .iter()
             .filter(|item| item.available)
             .map(|item| item.id)
             .collect();
         self.retain(visible_rows, |id| available.contains(&id));
+        let emptied = std::array::from_fn(|index| {
+            counted[index] > 0 && self.strips[index].is_empty()
+        });
+        let empty_before_supers = self.sidebar_empty();
+        let mut super_entered = [false; 4];
+        let mut super_inserted = false;
         for candidate in candidates
             .iter()
             .filter(|item| item.available && matches!(item.id, CameoId::SuperWeapon(_)))
         {
-            self.insert(candidate);
+            let accepted = self.insert(candidate);
+            super_entered[candidate.tab.tab_index()] |= accepted;
+            super_inserted |= accepted;
         }
-        inserted_build
+        let entered_into_empty_sidebar =
+            (empty_before_builds && build_inserted) || (empty_before_supers && super_inserted);
+        CameoReconcile {
+            build_inserted,
+            transitions: CameoTransitions {
+                build_entered,
+                emptied,
+                super_entered,
+                entered_into_empty_sidebar,
+            },
+        }
+    }
+
+    fn sidebar_empty(&self) -> bool {
+        self.strips.iter().all(|strip| strip.is_empty())
+    }
+
+    /// The first populated strip in native scan order (0..3), the destination
+    /// both AddCameo's and Recalculate's relocation blocks pick.
+    pub(crate) fn first_populated_tab(&self) -> Option<SidebarTab> {
+        SidebarTab::all()
+            .into_iter()
+            .find(|tab| !self.items(*tab).is_empty())
     }
 
     /// Layout fixtures explicitly supply order; they do not have a rules
