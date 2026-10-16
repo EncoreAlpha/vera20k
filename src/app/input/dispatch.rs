@@ -2954,6 +2954,18 @@ fn control_group_press_action(
     Some(GroupPressAction::Recall)
 }
 
+fn control_group_action_for_input(
+    modifiers: KeyModifiers,
+    slot: usize,
+    group: &[u64],
+    selected: &[u64],
+    last_press: Option<(usize, std::time::Duration)>,
+    sim: Option<&crate::sim::world::Simulation>,
+) -> Option<GroupPressAction> {
+    let eligible_selected = live_group_members(sim, selected);
+    control_group_press_action(modifiers, slot, group, &eligible_selected, last_press)
+}
+
 /// Assign `ids` to `slot`, evicting them from every other slot.
 ///
 /// Membership is a single group index stored on the object, so a unit belongs
@@ -2966,6 +2978,37 @@ fn assign_control_group(groups: &mut [Vec<u64>], slot: usize, ids: Vec<u64>) {
         }
     }
     groups[slot] = ids;
+}
+
+/// Apply TeamAssign's clear-then-set effects to the Rust group index.
+/// TeamAssign731060 skips both effects for an ineligible owner, so those live
+/// members keep their slot latent until their owner becomes eligible again.
+fn reassign_control_group(
+    groups: &mut [Vec<u64>],
+    slot: usize,
+    selected: &[u64],
+    sim: &crate::sim::world::Simulation,
+) {
+    let retained_ineligible = groups[slot]
+        .iter()
+        .copied()
+        .filter(|id| {
+            sim.entities()
+                .get(*id)
+                .is_some_and(|entity| !sim.house_is_control_group_eligible(entity.owner()))
+        })
+        .collect::<Vec<_>>();
+    let eligible_selected = live_group_members(Some(sim), selected);
+    let mut target_members = retained_ineligible;
+    target_members.extend(eligible_selected);
+    assign_control_group(groups, slot, target_members);
+}
+
+/// Keep the current legal selection intact when Shift+digit adds eligible
+/// control-group members. Ordinary click selection may include enemy objects.
+fn append_group_members_to_selection(mut selected: Vec<u64>, group: &[u64]) -> Vec<u64> {
+    selected.extend_from_slice(group);
+    selected
 }
 
 /// Centre of a set of world points in leptons, with the single worst outlier
@@ -3007,19 +3050,18 @@ fn trimmed_centroid_leptons(points: &[(i64, i64)]) -> Option<(i64, i64)> {
 const LEPTONS_PER_CELL: i64 = crate::util::lepton::LEPTONS_PER_CELL_I32 as i64;
 
 /// Live members of a control group, in the sim's iteration order.
-fn live_group_members(state: &AppState, group: &[u64]) -> Vec<u64> {
-    let Some(sim) = state
-        .match_state
-        .sim_runtime
-        .as_ref()
-        .map(|rt| &rt.simulation)
-    else {
+fn live_group_members(sim: Option<&crate::sim::world::Simulation>, group: &[u64]) -> Vec<u64> {
+    let Some(sim) = sim else {
         return Vec::new();
     };
     group
         .iter()
         .copied()
-        .filter(|id| sim.entities().get(*id).is_some())
+        .filter(|id| {
+            sim.entities()
+                .get(*id)
+                .is_some_and(|entity| sim.house_is_control_group_eligible(entity.owner()))
+        })
         .collect()
 }
 
@@ -3062,13 +3104,14 @@ fn handle_control_group_command(
     if group_idx >= state.match_state.input.control_groups.len() {
         return;
     }
+    let sim = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .map(|rt| &rt.simulation);
     let group = state.match_state.input.control_groups[group_idx].clone();
     let selected = selected_stable_ids_in_order(
-        state
-            .match_state
-            .sim_runtime
-            .as_ref()
-            .map(|rt| &rt.simulation),
+        sim,
         state.rules(),
         &state.match_state.input.selection_order,
         state.match_state.input.selection_order_pending,
@@ -3076,29 +3119,34 @@ fn handle_control_group_command(
     // Only live members count towards "the selection is exactly the group" —
     // membership is derived by scanning live objects, so a dead unit has
     // already left its group.
-    let live_group = live_group_members(state, &group);
+    let live_group = live_group_members(sim, &group);
     let last_press = state
         .match_state
         .input
         .last_control_group_press
         .map(|(slot, at)| (slot, at.elapsed()));
     let action = action_override.unwrap_or_else(|| {
-        control_group_press_action(
+        control_group_action_for_input(
             KeyModifiers::default(),
             group_idx,
             &live_group,
             &selected,
             last_press,
+            sim,
         )
         .expect("a bare team-select binding always resolves")
     });
 
     match action {
         GroupPressAction::Assign => {
-            assign_control_group(
+            let Some(sim) = sim else {
+                return;
+            };
+            reassign_control_group(
                 &mut state.match_state.input.control_groups,
                 group_idx,
-                selected,
+                &selected,
+                sim,
             );
         }
         GroupPressAction::Center => {
@@ -3114,8 +3162,7 @@ fn handle_control_group_command(
             if live_group.is_empty() {
                 return;
             }
-            let mut final_ids = selected;
-            final_ids.extend(live_group);
+            let final_ids = append_group_members_to_selection(selected, &live_group);
             queue_selection_snapshot_command(state, final_ids, true);
         }
         GroupPressAction::Recall => {
@@ -3499,8 +3546,9 @@ mod deploy_key_tests {
 #[cfg(test)]
 mod control_group_tests {
     use super::{
-        GroupPressAction, KeyModifiers, assign_control_group, control_group_press_action,
-        trimmed_centroid_leptons,
+        GroupPressAction, KeyModifiers, append_group_members_to_selection, assign_control_group,
+        control_group_action_for_input, control_group_press_action, live_group_members,
+        reassign_control_group, trimmed_centroid_leptons,
     };
     use std::time::Duration;
 
@@ -3596,6 +3644,32 @@ mod control_group_tests {
         );
     }
 
+    #[test]
+    fn double_tap_group_action_ignores_ineligible_selected_enemy() {
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let local = house(&mut sim, "Local", false, true);
+        let enemy = house(&mut sim, "Enemy", false, false);
+        group_entity(&mut sim, 10, local);
+        group_entity(&mut sim, 11, enemy);
+        let group = live_group_members(Some(&sim), &[10]);
+        let raw_selected = [10, 11];
+
+        assert_eq!(
+            control_group_action_for_input(
+                BARE,
+                1,
+                &group,
+                &raw_selected,
+                Some((1, Duration::from_millis(10))),
+                Some(&sim),
+            ),
+            Some(GroupPressAction::Center),
+            "an ineligible enemy selected by ordinary click is ignored by native exact-group comparison"
+        );
+    }
+
     /// The centre arm needs the selection to be *exactly* the group. One extra
     /// selected unit outside the group is one of the two bail-outs.
     #[test]
@@ -3647,6 +3721,147 @@ mod control_group_tests {
         assign_control_group(&mut groups, 1, vec![2, 4]);
         assert_eq!(groups[0], vec![1, 3]);
         assert_eq!(groups[1], vec![2, 4]);
+    }
+
+    fn house(
+        sim: &mut crate::sim::world::Simulation,
+        name: &str,
+        is_human: bool,
+        player_control: bool,
+    ) -> crate::sim::intern::InternedId {
+        let id = sim.interner.intern(name);
+        let mut house = crate::sim::house_state::HouseState::new(id, 0, None, is_human, 0, 10);
+        house.player_control = player_control;
+        sim.houses.insert(id, house);
+        id
+    }
+
+    fn group_entity(
+        sim: &mut crate::sim::world::Simulation,
+        stable_id: u64,
+        owner: crate::sim::intern::InternedId,
+    ) {
+        let type_ref = sim.interner.intern("MTNK");
+        let entity = crate::sim::game_entity::GameEntity::new_at_frame_zero_for_test(
+            stable_id,
+            10,
+            10,
+            0,
+            0,
+            owner,
+            crate::sim::combat::Health::new(100),
+            type_ref,
+            crate::map::entities::EntityCategory::Unit,
+            0,
+            5,
+            false,
+        );
+        sim.entities_mut().insert(entity);
+    }
+
+    #[test]
+    fn team_assignment_and_recall_apply_owner_eligibility_without_erasing_latent_members() {
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let local = house(&mut sim, "Local", false, true);
+        let ai = house(&mut sim, "AI", false, false);
+        let human_only = house(&mut sim, "HumanOnly", true, false);
+        let missing_house = sim.interner.intern("MissingHouse");
+        for (stable_id, owner) in [
+            (1, local),
+            (2, local),
+            (3, local),
+            (4, human_only),
+            (5, ai),
+            (6, missing_house),
+            (7, ai),
+        ] {
+            group_entity(&mut sim, stable_id, owner);
+        }
+        assert!(
+            sim.house_is_human_player(human_only),
+            "the campaign IsHumanPlayer predicate admits this owner"
+        );
+        assert!(
+            !sim.house_is_control_group_eligible(human_only),
+            "TeamAssign's mode-zero PlayerControl gate excludes a human-flag-only house"
+        );
+
+        let mut groups = vec![Vec::new(); 10];
+        groups[1] = vec![1, 2];
+        groups[3] = vec![5];
+        sim.change_owner(2, ai);
+
+        reassign_control_group(&mut groups, 1, &[3, 4, 5, 6], &sim);
+        assert_eq!(
+            groups[1],
+            vec![2, 3],
+            "eligible old membership clears, the transferred AI member stays latent, and only the local selection is added"
+        );
+        assert_eq!(
+            groups[3],
+            vec![5],
+            "an ineligible selected member remains in its prior group"
+        );
+        assert_eq!(
+            live_group_members(Some(&sim), &groups[1]),
+            vec![3],
+            "recall filters the latent member while its owner is an AI house"
+        );
+
+        groups[2] = vec![1, 7];
+        reassign_control_group(&mut groups, 2, &[], &sim);
+        assert_eq!(
+            groups[2],
+            vec![7],
+            "an empty assignment clears eligible old members but leaves an ineligible member's native slot intact"
+        );
+
+        sim.change_owner(2, local);
+        assert_eq!(
+            live_group_members(Some(&sim), &groups[1]),
+            vec![2, 3],
+            "the native group slot becomes usable again when its member returns to an eligible owner"
+        );
+    }
+
+    #[test]
+    fn shift_group_add_preserves_a_legitimately_selected_enemy() {
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let local = house(&mut sim, "Local", false, true);
+        let enemy = house(&mut sim, "Enemy", false, false);
+        group_entity(&mut sim, 10, local);
+        group_entity(&mut sim, 11, enemy);
+
+        let live_group = live_group_members(Some(&sim), &[10, 11]);
+        assert_eq!(live_group, [10], "only eligible group members are recalled");
+        assert_eq!(
+            append_group_members_to_selection(vec![11], &live_group),
+            [11, 10],
+            "Shift+digit keeps the ordinary click-selected enemy and adds the eligible group"
+        );
+    }
+
+    #[test]
+    fn multiplayer_group_eligibility_is_the_current_house_not_house_flags() {
+        use crate::sim::world::Simulation;
+
+        let mut sim = Simulation::new();
+        let local = house(&mut sim, "Local", false, false);
+        let other_human = house(&mut sim, "OtherHuman", true, true);
+        group_entity(&mut sim, 10, local);
+        group_entity(&mut sim, 11, other_human);
+        sim.session.game_mode_nonzero = true;
+        sim.session.current_house = Some(local);
+
+        assert_eq!(
+            live_group_members(Some(&sim), &[10, 11]),
+            vec![10],
+            "multiplayer recall follows IsHumanPlayer's current-house comparison"
+        );
     }
 
     #[test]
