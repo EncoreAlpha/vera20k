@@ -1022,6 +1022,32 @@ pub(crate) fn process_boarding_passenger(
     };
 
     if can_board {
+        // Native `InfantryClass::Per_Cell_Process @ 0x00519630` accepts the
+        // Bio Reactor's DOCK_NOW response at `0x0051A298..0x0051A2A7`, checks
+        // `InfantryAbsorb` at `0x0051A2DF..0x0051A2ED`, then calls Foot's
+        // GetCoords (`+0x48`, `0x0051A2EF..0x0051A2FC`) before Limbo and plays
+        // Rules+0x270 with `VocClass::PlayAt @ 0x007509E0`
+        // (`0x0051A304..0x0051A30A`). Retain that arriving-Foot position now;
+        // emit only after this Rust admission transaction commits below.
+        let bio_reactor_entry_sound = if infantry_absorber_entry {
+            rules
+                .general
+                .enter_bio_reactor_sound
+                .as_ref()
+                .and_then(|sound_id| {
+                    sim.substrate.entities.get(pax_id).map(|passenger| {
+                        (
+                            sound_id.clone(),
+                            crate::sim::movement::ground_pose::object_get_coords(
+                                passenger,
+                                sim.resolved_terrain.as_ref(),
+                            ),
+                        )
+                    })
+                })
+        } else {
+            None
+        };
         // PerCellProcess zeroes the mission tick count and the gattling spin
         // first (`+0xC4 = 0`, `SetValue(0)`, `SetStage(0)`: Unit
         // `0x0073A6FC..0x0073A70F` and `0x0073A29E..0x0073A2B1`, Infantry
@@ -1135,6 +1161,16 @@ pub(crate) fn process_boarding_passenger(
             // turn to act on it; an open-topped one reaches the setter below.
             pax.passenger_role
                 .set_inside_transport(transport_id, transport_open_topped);
+        }
+        if let Some((sound_id, coordinate)) = bio_reactor_entry_sound {
+            sim.sound_events.push(SimSoundEvent::voc_at_world_coord(
+                sound_id,
+                crate::sim::anim_class::AnimWorldCoord {
+                    x: coordinate.x,
+                    y: coordinate.y,
+                    z: coordinate.z,
+                },
+            ));
         }
         if transport_open_topped {
             // `SetInOpenTransport @ 0x00710470` (Infantry `0x0051A45E`, Unit

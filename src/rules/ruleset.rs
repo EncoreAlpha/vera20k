@@ -801,6 +801,12 @@ pub struct GeneralRules {
     /// `None` is the constructor's invalid Voc index; the fixed SOUNDMD binder
     /// resolves the name and retains the prior valid index across rules passes.
     pub leave_bio_reactor_sound: Option<String>,
+    /// `[AudioVisual] EnterBioReactorSound=` is RulesClass+0x270, read by
+    /// `RulesClass::ReadAudioVisual @ 0x006691E0` and played after successful
+    /// InfantryAbsorb admission in `InfantryClass::Per_Cell_Process
+    /// @ 0x00519630` (`0x0051A298..0x0051A30A`). `None` is the constructor's
+    /// invalid Voc index; the fixed SOUNDMD binder resolves the name.
+    pub enter_bio_reactor_sound: Option<String>,
     /// `[AudioVisual] UpgradeVeteranSound=` — `RulesClass::ReadAudioVisual @
     /// 0x006691E0` resolves it to a Voc index at `RulesClass+0x228`
     /// (`0x00669CFD..0x00669D27`); `TechnoClass::AI_Update` plays that index
@@ -2209,6 +2215,7 @@ impl Default for GeneralRules {
             cloak_delay_frames: 18,
             cloak_sound: None,
             leave_bio_reactor_sound: None,
+            enter_bio_reactor_sound: None,
             upgrade_veteran_sound: None,
             upgrade_elite_sound: None,
             slaves_free_sound: None,
@@ -3194,6 +3201,7 @@ impl GeneralRules {
             // The fixed SOUNDMD binder resolves Rules+0x274 as a Voc index.
             // Keep the constructor's invalid index until that owner binds it.
             leave_bio_reactor_sound: None,
+            enter_bio_reactor_sound: None,
             upgrade_veteran_sound: audio_visual
                 .read_name("UpgradeVeteranSound", 0x80)
                 .map(str::to_owned),
@@ -4066,6 +4074,9 @@ impl RuleSet {
         self.general.leave_bio_reactor_sound = ini
             .section("AudioVisual")
             .and_then(|section| sounds.read_rules_reference(section, "LeaveBioReactorSound"));
+        self.general.enter_bio_reactor_sound = ini
+            .section("AudioVisual")
+            .and_then(|section| sounds.read_rules_reference(section, "EnterBioReactorSound"));
         self.general.sinking_sound = ini
             .section("AudioVisual")
             .and_then(|section| sounds.read_rules_reference(section, "SinkingSound"));
@@ -6867,6 +6878,7 @@ SpawnCount=3
         assert_eq!(defaults.cloak_delay_frames, 18);
         assert_eq!(defaults.cloak_sound, None);
         assert_eq!(defaults.leave_bio_reactor_sound, None);
+        assert_eq!(defaults.enter_bio_reactor_sound, None);
         let parsed = GeneralRules::from_ini(&IniFile::from_str(
             "[General]\nCloakingStages=13\nCloakDelay=.031\n\
              [AudioVisual]\nCloakSound=NavalUnitEmerge\n",
@@ -6875,6 +6887,7 @@ SpawnCount=3
         assert_eq!(parsed.cloak_delay_frames, 27);
         assert_eq!(parsed.cloak_sound.as_deref(), Some("NavalUnitEmerge"));
         assert_eq!(parsed.leave_bio_reactor_sound, None);
+        assert_eq!(parsed.enter_bio_reactor_sound, None);
         assert_eq!(
             GeneralRules::from_ini(&IniFile::from_str("[General]\nCloakingStages=9\n")).cloak_sound,
             None,
@@ -6891,27 +6904,113 @@ SpawnCount=3
     }
 
     #[test]
-    fn leave_bio_reactor_sound_resolves_only_registered_vocs() {
+    fn bio_reactor_sounds_resolve_only_registered_vocs() {
         let sounds = crate::rules::sound_ini::SoundRegistry::from_ini(&IniFile::from_str(
-            "[SoundList]\n0=BioReactorExit\n",
+            "[SoundList]\n0=BioReactorEnter\n1=BioReactorExit\n",
         ));
-        let ini =
-            IniFile::from_str("[General]\n[AudioVisual]\nLeaveBioReactorSound=BioReactorExit\n");
+        let ini = IniFile::from_str(
+            "[General]\n[AudioVisual]\nEnterBioReactorSound=BioReactorEnter\n\
+             LeaveBioReactorSound=BioReactorExit\n",
+        );
         let mut rules = RuleSet::from_ini(&ini).expect("rules");
         assert_eq!(rules.general.leave_bio_reactor_sound, None);
+        assert_eq!(rules.general.enter_bio_reactor_sound, None);
         rules.bind_type_sound_references(&ini, &sounds);
         assert_eq!(
             rules.general.leave_bio_reactor_sound.as_deref(),
             Some("BioReactorExit")
         );
+        assert_eq!(
+            rules.general.enter_bio_reactor_sound.as_deref(),
+            Some("BioReactorEnter")
+        );
 
-        let unknown_ini =
-            IniFile::from_str("[General]\n[AudioVisual]\nLeaveBioReactorSound=NotRegistered\n");
+        let unknown_ini = IniFile::from_str(
+            "[General]\n[AudioVisual]\nEnterBioReactorSound=NotRegistered\n\
+             LeaveBioReactorSound=NotRegistered\n",
+        );
         let mut unknown_rules = RuleSet::from_ini(&unknown_ini).expect("rules");
         unknown_rules.bind_type_sound_references(&unknown_ini, &sounds);
         assert_eq!(
             unknown_rules.general.leave_bio_reactor_sound, None,
             "native Voc lookup leaves the constructor's invalid index on a miss"
+        );
+        assert_eq!(
+            unknown_rules.general.enter_bio_reactor_sound, None,
+            "native Voc lookup leaves the constructor's invalid index on a miss"
+        );
+    }
+
+    #[test]
+    fn bio_reactor_entry_sound_uses_the_effective_processed_rules_pass() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+
+        let sounds = crate::rules::sound_ini::SoundRegistry::from_ini(&IniFile::from_str(
+            "[SoundList]\n0=BioReactorEnter\n1=BioReactorExit\n",
+        ));
+        let rulesmd = IniFile::from_str(
+            "[General]\n[AudioVisual]\nEnterBioReactorSound=BioReactorEnter\n\
+             LeaveBioReactorSound=BioReactorExit\n",
+        );
+        let mut layers = RulesLayerStack::new(rulesmd);
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[AudioVisual]\nCloakSound=NavalUnitEmerge\n"),
+        );
+        let processed = layers.process().expect("ordered Rules passes process");
+        let mut rules = RuleSet::from_processed_rules(&processed).expect("projected Rules");
+        rules.bind_type_sound_references(processed.ini(), &sounds);
+        assert_eq!(
+            rules.general.enter_bio_reactor_sound.as_deref(),
+            Some("BioReactorEnter"),
+            "a later pass without the key leaves the earlier effective value"
+        );
+        assert_eq!(
+            rules.general.leave_bio_reactor_sound.as_deref(),
+            Some("BioReactorExit"),
+            "a later pass without the key leaves the earlier effective value"
+        );
+
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str(
+                "[AudioVisual]\nEnterBioReactorSound=BioReactorExit\n\
+                 LeaveBioReactorSound=BioReactorEnter\n",
+            ),
+        );
+        let processed = layers.process().expect("later Rules pass processes");
+        let mut rules = RuleSet::from_processed_rules(&processed).expect("projected Rules");
+        rules.bind_type_sound_references(processed.ini(), &sounds);
+        assert_eq!(
+            rules.general.enter_bio_reactor_sound.as_deref(),
+            Some("BioReactorExit"),
+            "the effective later Rules pass overrides the earlier key"
+        );
+        assert_eq!(
+            rules.general.leave_bio_reactor_sound.as_deref(),
+            Some("BioReactorEnter"),
+            "the effective later Rules pass overrides the earlier key"
+        );
+
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str(
+                "[AudioVisual]\nEnterBioReactorSound=NotRegistered\n\
+                 LeaveBioReactorSound=NotRegistered\n",
+            ),
+        );
+        let processed = layers.process().expect("invalid later pass processes");
+        let mut rules = RuleSet::from_processed_rules(&processed).expect("projected Rules");
+        rules.bind_type_sound_references(processed.ini(), &sounds);
+        assert_eq!(
+            rules.general.enter_bio_reactor_sound.as_deref(),
+            Some("BioReactorExit"),
+            "an unregistered later entry sound retains its earlier valid Voc"
+        );
+        assert_eq!(
+            rules.general.leave_bio_reactor_sound.as_deref(),
+            Some("BioReactorEnter"),
+            "an unregistered later leave sound retains its earlier valid Voc"
         );
     }
 
