@@ -150,7 +150,7 @@ pub(crate) struct CameoTransitions {
     build_entered: [bool; 4],
     emptied: [bool; 4],
     super_entered: [bool; 4],
-    entered_into_empty_sidebar: bool,
+    active_tab_destination: Option<SidebarTab>,
 }
 
 impl CameoTransitions {
@@ -171,15 +171,10 @@ impl CameoTransitions {
         }
     }
 
-    fn any_emptied(&self) -> bool {
-        self.emptied.iter().any(|emptied| *emptied)
-    }
-
-    /// True when a transition above must re-check the active tab: either a
-    /// strip just emptied, or an entry arrived while the sidebar was empty
-    /// (AddCameo's 6A6432 scan finds no populated strip before the insertion).
-    pub(crate) fn relocates_active_tab(&self) -> bool {
-        self.any_emptied() || self.entered_into_empty_sidebar
+    /// The last tab selected by an AddCameo/Recalculate transition in this
+    /// pass, preserving native event order across ordinary and super entries.
+    pub(crate) fn active_tab_destination(&self) -> Option<SidebarTab> {
+        self.active_tab_destination
     }
 }
 
@@ -382,11 +377,16 @@ impl CameoStrips {
     /// run first, `retain` prunes (Recalculate 6AA600), and only then do newly
     /// granted supers enter — so a super granted into a sidebar the prune had
     /// just emptied still counts as an insertion into an empty sidebar.
-    pub(crate) fn reconcile(&mut self, candidates: &[Cameo], visible_rows: usize) -> CameoReconcile {
+    pub(crate) fn reconcile(
+        &mut self,
+        candidates: &[Cameo],
+        visible_rows: usize,
+    ) -> CameoReconcile {
         self.refresh_keys(candidates);
         let mut build_entered = [false; 4];
         let mut build_inserted = false;
         let empty_before_builds = self.sidebar_empty();
+        let mut active_tab_destination = None;
         for candidate in candidates
             .iter()
             .filter(|item| item.available && matches!(item.id, CameoId::Object(_)))
@@ -394,6 +394,12 @@ impl CameoStrips {
             let accepted = self.insert(candidate);
             build_entered[candidate.tab.tab_index()] |= accepted;
             build_inserted |= accepted;
+            if empty_before_builds && accepted && active_tab_destination.is_none() {
+                // AddCameo scans after each insertion. The first accepted
+                // ordinary cameo is the only one that sees an empty sidebar;
+                // later candidates must not replace its selection.
+                active_tab_destination = Some(candidate.tab);
+            }
         }
         let counted: [usize; 4] = std::array::from_fn(|index| self.strips[index].len());
         let available: std::collections::HashSet<_> = candidates
@@ -402,9 +408,15 @@ impl CameoStrips {
             .map(|item| item.id)
             .collect();
         self.retain(visible_rows, |id| available.contains(&id));
-        let emptied = std::array::from_fn(|index| {
-            counted[index] > 0 && self.strips[index].is_empty()
-        });
+        let emptied =
+            std::array::from_fn(|index| counted[index] > 0 && self.strips[index].is_empty());
+        if emptied.iter().any(|was_emptied| *was_emptied)
+            && let Some(first) = self.first_populated_tab()
+        {
+            // Recalculate runs after all ordinary additions and scans the
+            // resulting strips, even if the emptied strip was not active.
+            active_tab_destination = Some(first);
+        }
         let empty_before_supers = self.sidebar_empty();
         let mut super_entered = [false; 4];
         let mut super_inserted = false;
@@ -414,17 +426,20 @@ impl CameoStrips {
         {
             let accepted = self.insert(candidate);
             super_entered[candidate.tab.tab_index()] |= accepted;
+            if empty_before_supers && accepted && !super_inserted {
+                // Supers are added after Recalculate. If that pass left no
+                // entries, only the first accepted Super AddCameo relocates.
+                active_tab_destination = Some(candidate.tab);
+            }
             super_inserted |= accepted;
         }
-        let entered_into_empty_sidebar =
-            (empty_before_builds && build_inserted) || (empty_before_supers && super_inserted);
         CameoReconcile {
             build_inserted,
             transitions: CameoTransitions {
                 build_entered,
                 emptied,
                 super_entered,
-                entered_into_empty_sidebar,
+                active_tab_destination,
             },
         }
     }

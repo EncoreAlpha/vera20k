@@ -99,7 +99,6 @@ pub(crate) fn advance_sidebar_credits_after_frame(
 /// No strip populated leaves the active tab alone.
 fn apply_cameo_transitions(
     transitions: crate::ui::sidebar::cameo_order::CameoTransitions,
-    first_populated: Option<sidebar::SidebarTab>,
     active_tab: &mut sidebar::SidebarTab,
     gadgets: &mut crate::ui::sidebar::gadget_flash::SidebarGadgetState,
 ) {
@@ -108,11 +107,8 @@ fn apply_cameo_transitions(
             gadgets.set_tab_disabled(tab.tab_index(), disabled);
         }
     }
-    if let Some(first) = first_populated
-        && transitions.relocates_active_tab()
-        && first != *active_tab
-    {
-        *active_tab = first;
+    if let Some(destination) = transitions.active_tab_destination() {
+        *active_tab = destination;
     }
 }
 
@@ -220,16 +216,10 @@ pub(crate) fn refresh_sidebar_projection(state: &mut AppState) {
         .match_presentation
         .sidebar_projection
         .reconcile_factory_links(sim, owner);
-    let first_populated = state
-        .match_state
-        .match_presentation
-        .sidebar_projection
-        .first_populated_tab();
     {
         let presentation = &mut state.match_state.match_presentation;
         apply_cameo_transitions(
             reconciled.transitions(),
-            first_populated,
             &mut presentation.active_sidebar_tab,
             &mut presentation.sidebar_gadget_state,
         );
@@ -786,8 +776,8 @@ pub(crate) fn begin_main_load_pass<'a>(
 #[cfg(test)]
 mod tests {
     use super::shows_alt_cameo;
-    use crate::sim::intern::StringInterner;
     use crate::sim::house_state::HouseState;
+    use crate::sim::intern::StringInterner;
     use crate::ui::sidebar::SidebarTab;
     use crate::ui::sidebar::cameo_order::{Cameo, CameoId, CameoKey, CameoStrips};
     use crate::ui::sidebar::gadget_flash::SidebarGadgetState;
@@ -820,16 +810,11 @@ mod tests {
         let mut active = SidebarTab::Building;
         let mut gadgets = SidebarGadgetState::default();
         let reconcile = |strips: &mut CameoStrips,
-                             candidates: &[Cameo],
-                             active: &mut SidebarTab,
-                             gadgets: &mut SidebarGadgetState| {
+                         candidates: &[Cameo],
+                         active: &mut SidebarTab,
+                         gadgets: &mut SidebarGadgetState| {
             let reconciled = strips.reconcile(candidates, 3);
-            super::apply_cameo_transitions(
-                reconciled.transitions(),
-                strips.first_populated_tab(),
-                active,
-                gadgets,
-            );
+            super::apply_cameo_transitions(reconciled.transitions(), active, gadgets);
         };
 
         // An entry arriving into an empty sidebar selects its own strip.
@@ -871,6 +856,58 @@ mod tests {
         reconcile(&mut strips, &emptied, &mut active, &mut gadgets);
         assert_eq!(active, SidebarTab::Building);
         assert!(gadgets.tab_disabled[SidebarTab::Building.tab_index()]);
+    }
+
+    /// The first AddCameo into an empty sidebar selects its strip; a later
+    /// SuperWeapon AddCameo does not reselect the lowest populated strip.
+    ///
+    /// Native 6A6300 performs the relocation on the individual insertion only
+    /// when the sidebar was empty before that insertion. House4F927C..4F92FD
+    /// inserts ordinary cameos before granting Supers, so an Infantry entry
+    /// can select tab 2 before a later Defense superweapon is added. The
+    /// executed control `native-tabs3-report.json` also shows an AddCameo into
+    /// an already-populated sidebar leaving ActiveTab unchanged.
+    #[test]
+    fn later_super_addition_does_not_replace_the_first_empty_sidebar_tab() {
+        let mut interner = StringInterner::new();
+        let infantry = interner.intern("TESTSOLDIER");
+        let super_weapon = interner.intern("TESTSPECIAL");
+        let candidates = [
+            Cameo {
+                id: CameoId::Object(infantry),
+                tab: SidebarTab::Infantry,
+                available: true,
+                key: CameoKey::Techno {
+                    own_side: true,
+                    considered_aircraft: false,
+                    naval: false,
+                    tech_level: 1,
+                    cost: 100,
+                    name: "Test Infantry".to_string(),
+                },
+            },
+            Cameo {
+                id: CameoId::SuperWeapon(super_weapon),
+                tab: SidebarTab::Defense,
+                available: true,
+                key: CameoKey::SuperWeapon {
+                    recharge_frames: 30,
+                    name: "Test Superweapon".to_string(),
+                },
+            },
+        ];
+        let mut strips = CameoStrips::default();
+        let reconciled = strips.reconcile(&candidates, 3);
+        let mut active = SidebarTab::Building;
+        let mut gadgets = SidebarGadgetState::default();
+
+        super::apply_cameo_transitions(reconciled.transitions(), &mut active, &mut gadgets);
+
+        assert_eq!(
+            active,
+            SidebarTab::Infantry,
+            "the later Defense superweapon is added after the Infantry tab was selected"
+        );
     }
 
     /// Retail rules and art: whose cameo `TechnoTypeClass::GetCameo`

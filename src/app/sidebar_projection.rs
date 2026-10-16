@@ -102,12 +102,6 @@ impl SidebarProjectionState {
         }
     }
 
-    /// The first populated strip in native scan order, for the relocation both
-    /// AddCameo and Recalculate perform on their transitions.
-    pub(crate) fn first_populated_tab(&self) -> Option<crate::ui::sidebar::SidebarTab> {
-        self.cameos.as_ref()?.1.first_populated_tab()
-    }
-
     /// Mouse Save 5BE6D0 writes the display object, including each strip's
     /// identities and order. Sort keys remain derived from rules/House/CSF.
     pub(crate) fn saved_order(&self) -> Option<crate::sim::snapshot::SavedSidebarOrder> {
@@ -754,23 +748,57 @@ mod tests {
         };
         let mut projection = SidebarProjectionState::default();
         // Sim A: the first projection seeds silently, growth speaks.
-        assert!(!projection.reconcile_cameos(owner, &[candidate(a)], 3).build_inserted());
-        assert!(!projection.reconcile_cameos(owner, &[candidate(a)], 3).build_inserted());
-        assert!(projection.reconcile_cameos(owner, &[candidate(a), candidate(b)], 3).build_inserted());
-        assert!(!projection.reconcile_cameos(owner, &[candidate(a)], 3).build_inserted());
-        assert!(projection.reconcile_cameos(owner, &[candidate(a), candidate(b)], 3).build_inserted());
+        assert!(
+            !projection
+                .reconcile_cameos(owner, &[candidate(a)], 3)
+                .build_inserted()
+        );
+        assert!(
+            !projection
+                .reconcile_cameos(owner, &[candidate(a)], 3)
+                .build_inserted()
+        );
+        assert!(
+            projection
+                .reconcile_cameos(owner, &[candidate(a), candidate(b)], 3)
+                .build_inserted()
+        );
+        assert!(
+            !projection
+                .reconcile_cameos(owner, &[candidate(a)], 3)
+                .build_inserted()
+        );
+        assert!(
+            projection
+                .reconcile_cameos(owner, &[candidate(a), candidate(b)], 3)
+                .build_inserted()
+        );
         // Sim B with a different pre-placed base: without the reset its
         // first refresh would read `b`-less/`a`-less strips as insertions.
         projection.reset_cameo_seed();
         assert!(
-            !projection.reconcile_cameos(owner, &[candidate(b)], 3).build_inserted(),
+            !projection
+                .reconcile_cameos(owner, &[candidate(b)], 3)
+                .build_inserted(),
             "the first refresh after a sim install is the init window"
         );
-        assert!(projection.reconcile_cameos(owner, &[candidate(a), candidate(b)], 3).build_inserted());
-        assert!(!projection.reconcile_cameos(InternedId::from_index(4), &[candidate(a)], 3).build_inserted());
+        assert!(
+            projection
+                .reconcile_cameos(owner, &[candidate(a), candidate(b)], 3)
+                .build_inserted()
+        );
+        assert!(
+            !projection
+                .reconcile_cameos(InternedId::from_index(4), &[candidate(a)], 3)
+                .build_inserted()
+        );
         // Leaving the match still clears the seed.
         projection.replace_view(None);
-        assert!(!projection.reconcile_cameos(owner, &[candidate(a)], 3).build_inserted());
+        assert!(
+            !projection
+                .reconcile_cameos(owner, &[candidate(a)], 3)
+                .build_inserted()
+        );
     }
 
     #[test]

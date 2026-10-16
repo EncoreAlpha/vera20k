@@ -514,7 +514,10 @@ fn native_tab_transitions_follow_add_cameo_and_recalculate() {
         first.transitions().tab_button_disabled(SidebarTab::Vehicle),
         Some(false)
     );
-    assert!(first.transitions().relocates_active_tab());
+    assert_eq!(
+        first.transitions().active_tab_destination(),
+        Some(SidebarTab::Vehicle)
+    );
 
     // A later addition into a populated sidebar moves nothing.
     let populated = [
@@ -523,10 +526,12 @@ fn native_tab_transitions_follow_add_cameo_and_recalculate() {
     ];
     let second = strips.reconcile(&populated, 3);
     assert_eq!(
-        second.transitions().tab_button_disabled(SidebarTab::Building),
+        second
+            .transitions()
+            .tab_button_disabled(SidebarTab::Building),
         Some(false)
     );
-    assert!(!second.transitions().relocates_active_tab());
+    assert_eq!(second.transitions().active_tab_destination(), None);
 
     // Recalculate dropping the last vehicle entry disables that strip's own
     // button and re-checks the active tab against the first populated strip.
@@ -538,20 +543,27 @@ fn native_tab_transitions_follow_add_cameo_and_recalculate() {
         Some(true)
     );
     assert_eq!(
-        third.transitions().tab_button_disabled(SidebarTab::Building),
+        third
+            .transitions()
+            .tab_button_disabled(SidebarTab::Building),
         None
     );
-    assert!(third.transitions().relocates_active_tab());
+    assert_eq!(
+        third.transitions().active_tab_destination(),
+        Some(SidebarTab::Building)
+    );
     assert_eq!(strips.first_populated_tab(), Some(SidebarTab::Building));
 
     // Re-reconciling the now empty vehicle strip reports no transition: it was
     // already empty, so native never disabled its button on this pass.
     let fourth = strips.reconcile(&[cameo(building, SidebarTab::Building)], 3);
     assert_eq!(
-        fourth.transitions().tab_button_disabled(SidebarTab::Vehicle),
+        fourth
+            .transitions()
+            .tab_button_disabled(SidebarTab::Vehicle),
         None
     );
-    assert!(!fourth.transitions().relocates_active_tab());
+    assert_eq!(fourth.transitions().active_tab_destination(), None);
 }
 
 #[test]
