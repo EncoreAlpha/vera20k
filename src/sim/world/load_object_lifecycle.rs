@@ -47,14 +47,14 @@ impl LoadOverlayHandle {
         Self(stable_id)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) const fn stable_id(self) -> u64 {
         self.0
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoadObjectRegistryKind {
+pub enum LoadObjectRegistryKind {
     Object,
     PointerExpiration,
     AllAbstract,
@@ -68,7 +68,7 @@ enum LoadOverlayTerminalPath {
     UnrevealedSurvivor,
     CommonQueued,
     SlopeSurvivor,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     WallQueued,
 }
 
@@ -85,7 +85,7 @@ struct LoadOverlayObject {
     terminal_path: LoadOverlayTerminalPath,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LoadOverlayObjectSnapshot {
     pub(crate) stable_id: u64,
@@ -121,7 +121,7 @@ pub(crate) enum LoadObjectLifecycleEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum LoadOverlayLifecycleError {
+pub enum LoadOverlayLifecycleError {
     #[error("load Overlay stable handle {0} already exists")]
     DuplicateHandle(u64),
     #[error("load Overlay handle {0} does not exist")]
@@ -146,10 +146,10 @@ pub(crate) struct LoadObjectLifecycle {
     all_abstract_registry: Vec<LoadOverlayHandle>,
     tag_removal_registry: Vec<LoadOverlayHandle>,
     overlay_registry: Vec<LoadOverlayHandle>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     events: Vec<LoadObjectLifecycleEvent>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     fail_next_registry: Option<LoadObjectRegistryKind>,
 }
@@ -297,7 +297,7 @@ impl LoadObjectLifecycle {
 
     /// Wall rejection performs its ordinary UnInit broadcast and a full-Limbo
     /// broadcast before queueing; the destructor supplies the third broadcast.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn finish_wall_reject(
         &mut self,
         handle: LoadOverlayHandle,
@@ -339,7 +339,7 @@ impl LoadObjectLifecycle {
 
     /// Release the registered constructor survivors when the scene is
     /// torn down. Iteration order is intentionally not claimed as native parity.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn release_scene_survivors(&mut self) -> Result<usize, LoadOverlayLifecycleError> {
         let survivors: Vec<_> = self
             .objects
@@ -359,7 +359,7 @@ impl LoadObjectLifecycle {
         Ok(survivors.len())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn snapshot(
         &self,
         handle: LoadOverlayHandle,
@@ -381,12 +381,12 @@ impl LoadObjectLifecycle {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn object_count(&self) -> usize {
         self.objects.len()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn registry_counts(&self) -> [usize; 5] {
         [
             self.object_registry.len(),
@@ -438,7 +438,7 @@ impl LoadObjectLifecycle {
         registry: LoadObjectRegistryKind,
         handle: LoadOverlayHandle,
     ) -> Result<(), LoadOverlayLifecycleError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if self.fail_next_registry == Some(registry) {
             self.fail_next_registry = None;
             return Err(LoadOverlayLifecycleError::RegistryCapacity { registry });
@@ -525,18 +525,18 @@ impl LoadObjectLifecycle {
     }
 
     fn record(&mut self, event: LoadObjectLifecycleEvent) {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         self.events.push(event);
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let _ = event;
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn fail_next_join_for_test(&mut self, registry: LoadObjectRegistryKind) {
         self.fail_next_registry = Some(registry);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn events(&self) -> &[LoadObjectLifecycleEvent] {
         &self.events
     }

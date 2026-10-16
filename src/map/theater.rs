@@ -442,7 +442,7 @@ impl TilesetLookup {
     /// positive 0xFFFF unchanged, compares every signed boundary with the
     /// original raw input, stops on the first greater boundary, and wrapping-
     /// adds every delta already reached.
-    pub(crate) fn translate_legacy_map_tile_index(&self, raw: i32) -> i32 {
+    pub fn translate_legacy_map_tile_index(&self, raw: i32) -> i32 {
         if raw == i32::from(u16::MAX) {
             return raw;
         }
@@ -958,7 +958,7 @@ fn resolve_contiguous_variant_chains(lookup: &mut TilesetLookup, asset_manager: 
     );
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn resolve_contiguous_variant_chains_for_test(
     lookup: &mut TilesetLookup,
     asset_manager: &AssetManager,

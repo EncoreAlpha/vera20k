@@ -43,7 +43,7 @@ pub struct TileVariantSelectorCache {
 /// Catalog clones retain this handle; the table is initialized only by the
 /// existing4814F0 selector, using the Main callback of its current caller.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct TileVariantSelector {
+pub struct TileVariantSelector {
     table8: Arc<OnceLock<[u8; TABLE_LEN]>>,
 }
 
@@ -56,12 +56,12 @@ impl TileVariantSelector {
         selector
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn from_initialized(table: [u8; TABLE_LEN]) -> Self {
         Self::from_table(Some(table))
     }
 
-    pub(crate) fn initialized_table(&self) -> Option<[u8; TABLE_LEN]> {
+    pub fn initialized_table(&self) -> Option<[u8; TABLE_LEN]> {
         self.table8.get().copied()
     }
 
@@ -89,7 +89,7 @@ impl TileVariantSelector {
 impl TileVariantSelectorCache {
     /// Prepare a saved-load candidate without changing the live process
     /// table. Its matching Main cursor is committed with this candidate.
-    pub(crate) fn detached(&self) -> Self {
+    pub fn detached(&self) -> Self {
         Self {
             selector: TileVariantSelector::from_table(self.selector.initialized_table()),
             cached_clear_tile_base: self.cached_clear_tile_base,
@@ -100,7 +100,7 @@ impl TileVariantSelectorCache {
     /// Adopt a successful candidate into the retained process identity.
     /// Divergence means another load initialized the table after preparation;
     /// its Main continuation cannot be silently paired with this candidate.
-    pub(crate) fn adopt_prepared(&mut self, prepared: Self) -> Result<(), &'static str> {
+    pub fn adopt_prepared(&mut self, prepared: Self) -> Result<(), &'static str> {
         match (
             self.selector.initialized_table(),
             prepared.selector.initialized_table(),
@@ -119,12 +119,12 @@ impl TileVariantSelectorCache {
         Ok(())
     }
 
-    pub(crate) fn selector(&self) -> TileVariantSelector {
+    pub fn selector(&self) -> TileVariantSelector {
         self.selector.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn initialized_for_test(table: [u8; TABLE_LEN]) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn initialized_for_test(table: [u8; TABLE_LEN]) -> Self {
         Self {
             selector: TileVariantSelector::from_initialized(table),
             ..Self::default()
@@ -151,7 +151,7 @@ impl TileVariantSelectorCache {
 
     /// Publish the current theater registry after this map's Fill pass. `None`
     /// maps to the native unresolved/reset sentinel `-1`.
-    pub(crate) fn complete_theater_registry_load(
+    pub fn complete_theater_registry_load(
         &mut self,
         clear_tile: Option<u16>,
         water_set: Option<u16>,
@@ -160,13 +160,13 @@ impl TileVariantSelectorCache {
         self.cached_water_set_base = water_set.map_or(-1, i32::from);
     }
 
-    #[cfg(test)]
-    pub(crate) fn cached_clear_tile_base(&self) -> i32 {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cached_clear_tile_base(&self) -> i32 {
         self.cached_clear_tile_base
     }
 
-    #[cfg(test)]
-    pub(crate) fn cached_water_set_base(&self) -> i32 {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cached_water_set_base(&self) -> i32 {
         self.cached_water_set_base
     }
 
@@ -192,7 +192,7 @@ impl TileVariantSelectionContext<'_, '_> {
     /// Resolve one pre-IsoMapPack Fill cell. The callback owns Scenario RNG:
     /// Water calls `RandomRanged(0,3)` and advances once; every other value
     /// calls equal-bound `RandomRanged(0,0)` and leaves the cursor unchanged.
-    pub(crate) fn draw_fill_tile_index(
+    pub fn draw_fill_tile_index(
         &mut self,
         is_water: bool,
         scenario_ranged_draw: &mut dyn FnMut(u32, u32) -> u32,
@@ -236,7 +236,7 @@ impl TileVariantSelectionContext<'_, '_> {
     }
 
     /// Copy the existing process table without initializing it or drawing RNG.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn initialized_table(&self) -> Option<[u8; TABLE_LEN]> {
         self.cache.selector.initialized_table()
     }

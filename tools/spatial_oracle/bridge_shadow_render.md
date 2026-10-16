@@ -273,8 +273,8 @@ The [validation receipt](bridge_shadow_render.validation.json) records exact
 commands, source/log hashes and the corrected lifecycle fixture's separate run.
 
 ```sh
-VERA20K_REQUIRE_RETAIL_INI=1 python -m tools.cargo_run -- test -p vera20k --lib
-VERA20K_REQUIRE_RETAIL_INI=1 python -m tools.cargo_run -- clippy -p vera20k --lib --bins --test '*' --examples
+VERA20K_REQUIRE_RETAIL_INI=1 python -m tools.cargo_run -- test --workspace --lib
+VERA20K_REQUIRE_RETAIL_INI=1 python -m tools.cargo_run -- clippy --workspace --lib --bins --test '*' --examples
 VERA20K_REQUIRE_RETAIL_INI=1 python -m tools.cargo_run -- test -p vera20k --lib app::presentation::render::bridge_shadow_gpu_tests:: -- --ignored --nocapture --test-threads=1
 ```
 

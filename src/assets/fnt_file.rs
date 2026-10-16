@@ -24,9 +24,9 @@ const HEADER_BYTES: usize = 4 + 6 * 4;
 /// Immutable identity of the exact bytes accepted by the FNT parser.
 /// Retained by the atlas owner so capture can prove which font it consumed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FntSourceIdentity {
-    pub(crate) byte_length: u64,
-    pub(crate) sha256: String,
+pub struct FntSourceIdentity {
+    pub byte_length: u64,
+    pub sha256: String,
 }
 
 /// Parsed bitmap font from a `.fnt` file.
@@ -160,7 +160,7 @@ impl FntFile {
         })
     }
 
-    pub(crate) fn source_identity(&self) -> Option<&FntSourceIdentity> {
+    pub fn source_identity(&self) -> Option<&FntSourceIdentity> {
         self.source_identity.as_ref()
     }
 

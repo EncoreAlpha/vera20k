@@ -9,16 +9,16 @@ use crate::sim::world::{FrameEffects, Simulation, TickLane};
 use crate::util::fixed_math::SimFixed;
 use std::collections::BTreeSet;
 
-pub(crate) struct MindScene {
+pub struct MindScene {
     rules: std::sync::Arc<RuleSet>,
     sim: Simulation,
     mind: u64,
     targets: [u64; 4],
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl MindScene {
-    pub(crate) fn retail() -> Option<Self> {
+    pub fn retail() -> Option<Self> {
         let mut rules = crate::rules::retail_ini_fixture::retail_battle_rules()?.rules;
         let (_, assets) = crate::rules::retail_ini_fixture::retail_assets().unwrap();
         let roots = crate::rules::effect_asset_catalog::anim_class_roots(&rules);
@@ -136,7 +136,7 @@ impl MindScene {
         })
     }
 
-    pub(crate) fn step(&mut self) -> Vec<crate::sim::world::SimFireEvent> {
+    pub fn step(&mut self) -> Vec<crate::sim::world::SimFireEvent> {
         let before = self.sim.entities().get(self.mind).map(|actor| {
             (
                 actor.health.current(),
@@ -191,7 +191,7 @@ impl MindScene {
         output.fire_events
     }
 
-    pub(crate) fn words(&self) -> [u32; 4] {
+    pub fn words(&self) -> [u32; 4] {
         self.sim
             .entities()
             .get(self.mind)
@@ -201,7 +201,7 @@ impl MindScene {
             .map_or([0; 4], |state| state.native_bits())
     }
 
-    pub(crate) fn victims(&self) -> Vec<u64> {
+    pub fn victims(&self) -> Vec<u64> {
         self.sim
             .entities()
             .get(self.mind)
@@ -213,11 +213,11 @@ impl MindScene {
             .collect()
     }
 
-    pub(crate) fn capture_four_through_real_attacks(&mut self) {
+    pub fn capture_four_through_real_attacks(&mut self) {
         self.capture_four_observing(|_| {});
     }
 
-    pub(crate) fn capture_four_observing(&mut self, mut observe: impl FnMut(&Self)) {
+    pub fn capture_four_observing(&mut self, mut observe: impl FnMut(&Self)) {
         let mut fired_at = BTreeSet::new();
         let mut requested = self.targets[0];
         for _ in 0..600 {
@@ -308,7 +308,7 @@ impl MindScene {
         );
     }
 
-    pub(crate) fn select_controller(&mut self) {
+    pub fn select_controller(&mut self) {
         let owner = self.sim.entities().get(self.mind).unwrap().owner();
         self.sim.queue_command(CommandEnvelope::new(
             owner,
@@ -320,7 +320,7 @@ impl MindScene {
         ));
     }
 
-    pub(crate) fn simulation(&self) -> &Simulation {
+    pub fn simulation(&self) -> &Simulation {
         &self.sim
     }
 
@@ -328,26 +328,26 @@ impl MindScene {
         &mut self.sim
     }
 
-    pub(crate) fn rules(&self) -> &std::sync::Arc<RuleSet> {
+    pub fn rules(&self) -> &std::sync::Arc<RuleSet> {
         &self.rules
     }
 
-    pub(crate) fn mind(&self) -> u64 {
+    pub fn mind(&self) -> u64 {
         self.mind
     }
 
-    pub(crate) fn targets(&self) -> [u64; 4] {
+    pub fn targets(&self) -> [u64; 4] {
         self.targets
     }
 
-    pub(crate) fn queue_command(&mut self, command: CommandEnvelope) {
+    pub fn queue_command(&mut self, command: CommandEnvelope) {
         self.sim.queue_command(command);
     }
 
     /// Internal Rust continuation only: explicitly rebind process streams and
     /// external resources through their existing owners, without claiming
     /// native/app SaveGame persistence.
-    pub(crate) fn internal_snapshot_continuation(&self) -> Self {
+    pub fn internal_snapshot_continuation(&self) -> Self {
         let saved =
             crate::sim::snapshot::GameSnapshot::save(&self.sim, 0, 0, "mastermind-overload", 0);
         let mut loaded = crate::sim::snapshot::GameSnapshot::load(&saved)
@@ -372,7 +372,7 @@ impl MindScene {
         }
     }
 
-    pub(crate) fn first_pulse(&mut self) -> u32 {
+    pub fn first_pulse(&mut self) -> u32 {
         let initial_health = self.sim.entities().get(self.mind).unwrap().health.current();
         let spark = self
             .rules
@@ -450,7 +450,7 @@ impl MindScene {
     }
 }
 
-pub(crate) fn spark_ids(scene: &MindScene) -> BTreeSet<u64> {
+pub fn spark_ids(scene: &MindScene) -> BTreeSet<u64> {
     let ty = scene
         .rules
         .ps_type_id_by_name(
@@ -471,7 +471,7 @@ pub(crate) fn spark_ids(scene: &MindScene) -> BTreeSet<u64> {
         .collect()
 }
 
-pub(crate) fn captive_ring_ids(scene: &MindScene) -> BTreeSet<crate::sim::anim_class::AnimId> {
+pub fn captive_ring_ids(scene: &MindScene) -> BTreeSet<crate::sim::anim_class::AnimId> {
     let name = scene.rules.mind_control.controlled_anim.as_deref().unwrap();
     scene
         .sim

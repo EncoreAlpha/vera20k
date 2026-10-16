@@ -13,7 +13,7 @@ use crate::sim::ore_growth::{OreGrowthConfig, OreGrowthState};
 use crate::sim::production::factory::FactoryRegistry;
 
 /// A test house's opening balance.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub const STARTING_CREDITS: i32 = 5000;
 
 /// One queued item formatted for UI rendering.
@@ -273,7 +273,7 @@ impl ProductionState {
     ) -> impl Iterator<Item = (&InternedId, &BTreeMap<ProductionCategory, u64>)> {
         self.active_producer_by_owner.iter()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_primary_factory_for_test(
         &mut self,
         owner: InternedId,

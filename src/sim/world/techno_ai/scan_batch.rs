@@ -103,7 +103,7 @@ pub(crate) struct ScanBatch {
     #[serde(skip)]
     released: BTreeSet<u64>,
     /// Answers scans took.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     used: usize,
 }
@@ -395,7 +395,7 @@ impl Simulation {
                 return None;
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         {
             self.scan_batch.as_mut().unwrap().used += 1;
         }
@@ -403,7 +403,7 @@ impl Simulation {
     }
 
     /// Answers scans took.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn batched_scans_used(&self) -> usize {
         self.scan_batch.as_ref().map_or(0, |batch| batch.used)
     }

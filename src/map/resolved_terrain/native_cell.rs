@@ -240,14 +240,14 @@ impl NativeAllocatedCellCursor {
 impl<'a> NativeCellQuery<'a> {
     /// Simulation queries retain the map's one live fallback identity. The
     /// same nested query APIs also serve isolated ordinary input producers.
-    pub(crate) fn canonical(terrain: &'a ResolvedTerrainGrid) -> Self {
+    pub fn canonical(terrain: &'a ResolvedTerrainGrid) -> Self {
         Self {
             terrain,
             dummy: std::borrow::Cow::Borrowed(&terrain.shared_cell_dummy),
         }
     }
 
-    pub(crate) fn isolated(terrain: &'a ResolvedTerrainGrid) -> Self {
+    pub fn isolated(terrain: &'a ResolvedTerrainGrid) -> Self {
         Self {
             terrain,
             dummy: std::borrow::Cow::Owned(terrain.shared_cell_dummy.fork_query_identity()),
@@ -257,11 +257,11 @@ impl<'a> NativeCellQuery<'a> {
     pub(crate) fn terrain(&self) -> &'a ResolvedTerrainGrid {
         self.terrain
     }
-    pub(crate) fn dummy(&self) -> SharedCellDummy {
+    pub fn dummy(&self) -> SharedCellDummy {
         self.dummy.as_ref().clone()
     }
 
-    pub(crate) fn lookup(&self, coord: (i16, i16)) -> NativeCellIdentity {
+    pub fn lookup(&self, coord: (i16, i16)) -> NativeCellIdentity {
         self.terrain
             .native_fixed_cell_index(coord.0, coord.1)
             .map_or_else(
@@ -274,7 +274,7 @@ impl<'a> NativeCellQuery<'a> {
             )
     }
 
-    pub(crate) fn lookup_world(&self, x: i32, y: i32) -> NativeCellIdentity {
+    pub fn lookup_world(&self, x: i32, y: i32) -> NativeCellIdentity {
         let (x, y) = (x / 256, y / 256);
         let index = y.wrapping_mul(512).wrapping_add(x);
         if (0..0x40000).contains(&index)
@@ -289,7 +289,7 @@ impl<'a> NativeCellQuery<'a> {
         NativeCellIdentity::Dummy
     }
 
-    pub(crate) fn coord(&self, cell: NativeCellIdentity) -> (i16, i16) {
+    pub fn coord(&self, cell: NativeCellIdentity) -> (i16, i16) {
         match cell {
             NativeCellIdentity::Real(_) => self.terrain.native_cell_coord(cell),
             NativeCellIdentity::Dummy => {
@@ -309,7 +309,7 @@ impl<'a> NativeCellQuery<'a> {
         }
     }
 
-    pub(crate) fn flags(&self, cell: NativeCellIdentity) -> u32 {
+    pub fn flags(&self, cell: NativeCellIdentity) -> u32 {
         match cell {
             NativeCellIdentity::Real(_) => self.terrain.native_cell_flags(cell),
             NativeCellIdentity::Dummy => self.dummy.raw_flags(),
@@ -329,7 +329,7 @@ impl<'a> NativeCellQuery<'a> {
 
     /// CellClass+EC through an already retained allocation identity. Reading
     /// Land must not perform another lookup or replace the shared Dummy.
-    pub(crate) fn land_type(&self, cell: NativeCellIdentity) -> i32 {
+    pub fn land_type(&self, cell: NativeCellIdentity) -> i32 {
         match cell {
             NativeCellIdentity::Real(index) => {
                 i32::from(self.terrain.cells[index].yr_cell_land_type)
@@ -404,7 +404,7 @@ impl SharedCellDummy {
     /// +0x48 returns to `-1` (`0x0047BC24`) and SmudgeData +0x11F to zero
     /// (`0x0047BD22`). Other constructor-owned fields are not represented by
     /// this handle yet.
-    pub(crate) fn reconstruct_for_map_resize(&self) {
+    pub fn reconstruct_for_map_resize(&self) {
         self.update_cell_word(|_| 0);
         self.state.land_type.store(0, Ordering::Relaxed);
         // Constructor47BBF0: AND FF800000 at47BCE1; preserve upper residue.
@@ -439,12 +439,12 @@ impl SharedCellDummy {
         self.state.neighbor_count.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn land_type(&self) -> i32 {
+    pub fn land_type(&self) -> i32 {
         self.state.land_type.load(Ordering::Relaxed)
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_set_land_type(&self, land_type: i32) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_set_land_type(&self, land_type: i32) {
         self.state.land_type.store(land_type, Ordering::Relaxed);
     }
 
@@ -454,7 +454,7 @@ impl SharedCellDummy {
             .fetch_add(if add { 1 } else { u8::MAX }, Ordering::Relaxed);
     }
 
-    pub(crate) fn raw_tube_index(&self) -> i16 {
+    pub fn raw_tube_index(&self) -> i16 {
         self.state.tube_index.load(Ordering::Relaxed)
     }
 
@@ -464,7 +464,7 @@ impl SharedCellDummy {
 
     /// Publish an already validated post-Resize candidate onto the retained
     /// process identity. Preserve its later lookup effects; do not reset twice.
-    pub(crate) fn adopt_prepared_load_state(&self, prepared: &Self) {
+    pub fn adopt_prepared_load_state(&self, prepared: &Self) {
         self.state
             .land_type
             .store(prepared.land_type(), Ordering::Relaxed);
@@ -508,7 +508,7 @@ impl SharedCellDummy {
     /// thread: a worker waiting on nested parallel work can run another
     /// task there, so starting from the enclosing copy would make a run's
     /// start depend on where it landed. The enclosing copy resumes after.
-    pub(crate) fn detached<R>(&self, work: impl FnOnce() -> R) -> R {
+    pub fn detached<R>(&self, work: impl FnOnce() -> R) -> R {
         self.detached_stamps(work).0
     }
 
@@ -596,7 +596,7 @@ impl SharedCellDummy {
     }
 
     /// Read the native signed overlay identity dword and independent state byte.
-    pub(crate) fn overlay_identity_state(&self) -> (i32, u8) {
+    pub fn overlay_identity_state(&self) -> (i32, u8) {
         let packed = self.state.overlay.load(Ordering::Relaxed);
         (packed as u32 as i32, (packed >> 32) as u8)
     }
@@ -622,7 +622,7 @@ impl SharedCellDummy {
             });
     }
 
-    pub(crate) fn write_overlay_identity_state(&self, identity: i32, state: u8) {
+    pub fn write_overlay_identity_state(&self, identity: i32, state: u8) {
         self.state.overlay.store(
             u64::from(identity as u32) | (u64::from(state) << 32),
             Ordering::Relaxed,
@@ -647,21 +647,21 @@ impl SharedCellDummy {
     /// Read the fallback CellClass overlay identity/data pair as the runtime
     /// crate/Mark writers see it. `None` is the native signed `-1` sentinel,
     /// so runtime overlay index zero stays distinct from an empty dummy.
-    pub(crate) fn overlay_fields(&self) -> (Option<u8>, u8) {
+    pub fn overlay_fields(&self) -> (Option<u8>, u8) {
         let (identity, state) = self.overlay_identity_state();
         (u8::try_from(identity).ok(), state)
     }
 
     /// Write only fallback `CellClass+0x44/+0x11E`, preserving every other
     /// process-global dummy field.
-    pub(crate) fn set_overlay_fields(&self, overlay_id: Option<u8>, overlay_data: u8) {
+    pub fn set_overlay_fields(&self, overlay_id: Option<u8>, overlay_data: u8) {
         self.write_overlay_identity_state(overlay_id.map_or(-1, i32::from), overlay_data);
     }
 
     /// Apply one exact `SetBridgeDirection_*` slot to the modeled flag subset
     /// without disturbing coordinate, level, or slope writers.
-    #[cfg(test)]
-    pub(crate) fn apply_bridge_flag_slot(&self, slot: BridgeStampSlot, set: bool) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn apply_bridge_flag_slot(&self, slot: BridgeStampSlot, set: bool) {
         let _ = self
             .state
             .raw_flags
@@ -682,8 +682,8 @@ impl SharedCellDummy {
         self.raw_flags() & RETAINED_CELLCLASS_BRIDGE_FLAG_MASK
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_set_retained_bridge_flags(&self, flags: u32) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_set_retained_bridge_flags(&self, flags: u32) {
         self.update_retained_bridge_flags(|_| flags);
     }
 
@@ -748,7 +748,7 @@ impl SharedCellDummy {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_bridge_flags_0x1180(&self, flags: u32) {
         let _ = self
             .state
@@ -761,8 +761,8 @@ impl SharedCellDummy {
             });
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_level_slope(&self, level: i8, slope_type: u8) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_level_slope(&self, level: i8, slope_type: u8) {
         const LEVEL_SLOPE_MASK: u64 = 0xffff << 32;
         let value = (u64::from(level as u8) << 32) | (u64::from(slope_type) << 40);
         self.update_cell_word(|current| (current & !LEVEL_SLOPE_MASK) | value);
@@ -796,14 +796,14 @@ pub(super) fn native_resolved_cell_index(
 }
 
 impl ResolvedTerrainGrid {
-    pub(crate) fn shared_cell_dummy(&self) -> SharedCellDummy {
+    pub fn shared_cell_dummy(&self) -> SharedCellDummy {
         self.shared_cell_dummy.clone()
     }
 
     /// Resolve one already-narrowed native fixed-grid coordinate to an
     /// allocated real CellClass slot. The caller owns dummy coordinate stamping
     /// on `None`, because some native probes test admission without GetCell.
-    pub(crate) fn native_fixed_cell_index(&self, x: i16, y: i16) -> Option<usize> {
+    pub fn native_fixed_cell_index(&self, x: i16, y: i16) -> Option<usize> {
         native_resolved_cell_index(
             self.width,
             self.height,
@@ -815,7 +815,7 @@ impl ResolvedTerrainGrid {
     }
 
     /// Native5657A0 lookup; retain the returned identity across callbacks.
-    pub(crate) fn native_cell_identity(&self, coord: (i16, i16)) -> NativeCellIdentity {
+    pub fn native_cell_identity(&self, coord: (i16, i16)) -> NativeCellIdentity {
         self.native_fixed_cell_index(coord.0, coord.1).map_or_else(
             || {
                 self.shared_cell_dummy
@@ -838,7 +838,7 @@ impl ResolvedTerrainGrid {
         }
     }
 
-    pub(crate) fn native_cell_flags(&self, cell: NativeCellIdentity) -> u32 {
+    pub fn native_cell_flags(&self, cell: NativeCellIdentity) -> u32 {
         match cell {
             NativeCellIdentity::Real(index) => self.cells[index].bridge_facts.raw_flags,
             NativeCellIdentity::Dummy => self.shared_cell_dummy.raw_flags(),
@@ -875,7 +875,7 @@ impl ResolvedTerrainGrid {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn test_set_dummy_accepts_smudge(&mut self, accepts: bool) {
         self.dummy_accepts_smudge = accepts;
     }
@@ -1007,7 +1007,7 @@ impl ResolvedTerrainGrid {
         self.native_allocated.as_deref()
     }
 
-    pub(crate) fn bind_shared_cell_dummy(&mut self, shared_cell_dummy: SharedCellDummy) {
+    pub fn bind_shared_cell_dummy(&mut self, shared_cell_dummy: SharedCellDummy) {
         self.shared_cell_dummy = shared_cell_dummy;
     }
 
@@ -1047,12 +1047,12 @@ impl ResolvedTerrainGrid {
         self.cellclass_projection_view(x, y).raw_flags_0x1180
     }
 
-    pub(crate) fn dummy_cell_level_slope(&self) -> (i8, u8) {
+    pub fn dummy_cell_level_slope(&self) -> (i8, u8) {
         let snapshot = self.shared_cell_dummy.snapshot();
         (snapshot.level, snapshot.slope_type)
     }
 
-    pub(crate) fn dummy_cell_requested_coord(&self) -> (i32, i32) {
+    pub fn dummy_cell_requested_coord(&self) -> (i32, i32) {
         self.shared_cell_dummy.snapshot().coord
     }
 
@@ -1061,7 +1061,7 @@ impl ResolvedTerrainGrid {
     /// Verified against `MapClass::Get_CellClass @ 0x005657A0` and the
     /// world/lepton overload at `0x00565730`: both miss paths overwrite
     /// CellClass+0x24 but preserve the independently mutable level/slope bytes.
-    pub(crate) fn stamp_dummy_cell_requested_coord(&self, x: i32, y: i32) {
+    pub fn stamp_dummy_cell_requested_coord(&self, x: i32, y: i32) {
         self.shared_cell_dummy.stamp_coord(x, y);
     }
 
@@ -1071,7 +1071,7 @@ impl ResolvedTerrainGrid {
     /// `y*512+x` slot and directly tests its pointer. Its active save-table and
     /// EMP callers establish valid coordinates; Rust therefore returns `false`
     /// outside the fixed array instead of reproducing native out-of-array UB.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn cellclass_allocation_probe(&self, x: i32, y: i32) -> bool {
         let Some((rx, ry)) = crate::map::cell_index::canonical_cell_coord(x, y) else {
             return false;
@@ -1081,18 +1081,18 @@ impl ResolvedTerrainGrid {
 
     /// Update the shared fallback level without exposing an unsupported runtime
     /// slope writer.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_dummy_cell_level(&self, level: i8) {
         self.shared_cell_dummy.set_level(level);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn test_set_dummy_cell_level_slope(&self, level: i8, slope_type: u8) {
         self.shared_cell_dummy.set_level_slope(level, slope_type);
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_set_native_allocated_cells(&mut self, allocated: &[(u16, u16)]) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_set_native_allocated_cells(&mut self, allocated: &[(u16, u16)]) {
         let mut mask = vec![false; usize::from(self.width) * usize::from(self.height)];
         for &(rx, ry) in allocated {
             if rx < self.width && ry < self.height {

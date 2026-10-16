@@ -3243,7 +3243,7 @@ impl AbilityFlags {
         self.0[ability as usize]
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn from_abilities(abilities: &[Ability]) -> Self {
         let mut flags = [false; 18];
         for ability in abilities {

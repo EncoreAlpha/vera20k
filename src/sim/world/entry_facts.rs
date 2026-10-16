@@ -215,7 +215,7 @@ impl BlockerFacts {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl EntryFacts {
     /// An empty table fitted to `sim`, as a batch starts.
     pub(crate) fn fitted(sim: &Simulation) -> Self {

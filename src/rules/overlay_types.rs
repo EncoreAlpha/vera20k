@@ -15,7 +15,7 @@ use crate::rules::terrain_rules::{LandType, SpeedCostProfile, TerrainRules};
 use crate::rules::tiberium_type::{TiberiumType, TiberiumTypeId, TiberiumTypeRegistry};
 use std::collections::HashSet;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 const STOCK_FLAT_RIPARIUS_VARIANT_COUNT: usize = 12;
 const TIBERIUM_FLAT_VARIANT_COUNT: usize = 12;
 const NATIVE_TIBERIUM_PRIMARY_IMAGE_COUNT: usize = 12;
@@ -248,7 +248,7 @@ impl OverlayTypeFlags {
 /// `OverlayClass__Mark @ 0x005FC570` writes zero at `0x005FD0CC`, replaces it
 /// with one for `Land=Road` at `0x005FD0E5`, then replaces either value with
 /// `0xFF` when `OverlayType+0x2AA` (`Crate=yes`) at `0x005FD0FB..0x005FD105`.
-pub(crate) fn native_mark_overlay_data(flags: &OverlayTypeFlags) -> u8 {
+pub fn native_mark_overlay_data(flags: &OverlayTypeFlags) -> u8 {
     if flags.crate_type {
         u8::MAX
     } else if flags.land == LandType::Road {
@@ -464,7 +464,7 @@ impl OverlayTypeRegistry {
     /// the Riparius image index plus `RandomRanged(0, 0xB)`. The returned IDs
     /// come from the parsed registry positions and require `Tiberium=yes`, so no
     /// internal overlay IDs are baked into Rust.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn stock_flat_riparius_variant_ids(&self) -> Option<[u8; 12]> {
         let mut ids: Vec<u8> = Vec::with_capacity(STOCK_FLAT_RIPARIUS_VARIANT_COUNT);
         let mut found = [false; STOCK_FLAT_RIPARIUS_VARIANT_COUNT];
@@ -561,7 +561,7 @@ impl OverlayTypeRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn stock_flat_riparius_variant_index(name: &str) -> Option<usize> {
     let prefix = name.get(..3)?;
     if !prefix.eq_ignore_ascii_case("TIB") {

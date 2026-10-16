@@ -20,8 +20,7 @@ use crate::app::loading::fresh_scenario::{
 #[cfg(test)]
 use crate::app::loading::init_helpers::load_rules_with_merged_ini;
 use crate::app::loading::init_helpers::{
-    build_tile_atlas, log_trigger_graph_diagnostics, parse_debug_spawn_units_env,
-    scheduler_anim_roots, theater_ext_for,
+    build_tile_atlas, log_trigger_graph_diagnostics, parse_debug_spawn_units_env, theater_ext_for,
 };
 use crate::app::match_bootstrap::LoadingStartup;
 use crate::sim::scenario_bootstrap::{
@@ -37,7 +36,6 @@ use crate::app::presentation::lighting::{build_lighting_grid_from_view, derive_l
 use crate::assets::asset_manager::AssetManager;
 #[cfg(test)]
 use crate::assets::asset_manager::MediaArchiveMode;
-use crate::assets::shp_file::ShpFile;
 use crate::map::actions::ActionMap;
 use crate::map::basic::{BasicSection, BridgeDestroyabilityMode};
 use crate::map::events::EventMap;
@@ -45,7 +43,7 @@ use crate::map::houses::{self, HouseColorMap, HouseRoster};
 use crate::map::lighting::{self, CellLightGrid, LightingConfig};
 use crate::map::map_file::MapFile;
 use crate::map::overlay::{OverlayEntry, TerrainObject};
-use crate::map::resolved_terrain::ResolvedTerrainGrid;
+use crate::map::resolved_terrain::{ResolvedTerrainGrid, scheduler_anim_roots};
 use crate::map::source::{
     LoadedMap, LoadedMapSource, load_map_by_name_or_path_with_assets, try_load_mmx,
 };
@@ -63,43 +61,13 @@ use crate::render::sidebar_chrome::SidebarChromeSet;
 use crate::render::sprite_atlas::SpriteAtlas;
 use crate::render::tile_atlas::TileAtlas;
 use crate::render::unit_atlas::UnitAtlas;
+#[cfg(test)]
 use crate::rules::art_data::ArtRegistry;
+use crate::rules::effect_asset_catalog::resolved_overlay_shp_ids;
 use crate::rules::ini_parser::IniFile;
 use crate::rules::overlay_types::OverlayTypeRegistry;
 use crate::rules::ruleset::RuleSet;
 use crate::sim::world::Simulation;
-
-pub(crate) fn resolved_overlay_shp_ids(
-    registry: &OverlayTypeRegistry,
-    rules_ini: &IniFile,
-    art: &ArtRegistry,
-    asset_manager: &AssetManager,
-    theater_ext: &str,
-    theater_name: &str,
-) -> BTreeSet<u8> {
-    let mut available = BTreeSet::new();
-    for raw_id in 0..registry.len().min(usize::from(u8::MAX) + 1) {
-        let overlay_id = raw_id as u8;
-        let Some(name) = registry.name(overlay_id) else {
-            continue;
-        };
-        let image_id = art.resolve_overlay_image_id(name, rules_ini);
-        let native_names = crate::rules::art_data::native_overlay_shp_names(
-            art,
-            &image_id,
-            theater_ext,
-            theater_name,
-        );
-        if native_names
-            .iter()
-            .filter_map(|candidate| asset_manager.load_file_from_mix(candidate))
-            .any(|loaded| ShpFile::from_bytes(&loaded.bytes).is_ok())
-        {
-            available.insert(overlay_id);
-        }
-    }
-    available
-}
 
 /// Append every visible real-cell write made by startup crate Mark to the
 /// initial presentation index. Ghost slots have no live overlay identity, while
@@ -2072,7 +2040,7 @@ impl MapLoadInitial {
             &overlay_registry,
             resolved_terrain.tile_animations(),
         );
-        scheduler_roots.extend(crate::app::loading::init_helpers::trigger_anim_class_roots(
+        scheduler_roots.extend(crate::map::actions::trigger_anim_class_roots(
             &rules,
             &map_data.actions,
         ));
@@ -2087,7 +2055,7 @@ impl MapLoadInitial {
         // Every other AnimClass producer and the building animations: tolerant
         // pass, after the strict one, which rewrites the scheduler-owned set
         // wholesale.
-        let tolerant_roots = crate::app::loading::init_helpers::tolerant_anim_class_roots(&rules);
+        let tolerant_roots = crate::rules::effect_asset_catalog::tolerant_anim_class_roots(&rules);
         let unbound_explosion_roots = rules.bind_anim_class_assets(
             &tolerant_roots,
             asset_manager,
@@ -2861,7 +2829,7 @@ pub(crate) fn load_map_from_initial(
             .as_ref()
             .map_or(&[], |terrain| terrain.tile_animations()),
     );
-    roots.extend(crate::app::loading::init_helpers::trigger_anim_class_roots(
+    roots.extend(crate::map::actions::trigger_anim_class_roots(
         &rules,
         &map_data.actions,
     ));

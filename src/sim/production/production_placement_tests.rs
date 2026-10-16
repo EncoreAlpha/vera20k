@@ -4166,7 +4166,7 @@ fn stock_yuri_cloning_world_with_scenario(
     let fixed_art = crate::rules::retail_ini_fixture::retail_ini("artmd.ini")?;
     let mode_ini = crate::rules::retail_ini_fixture::retail_ini("MPBattleMD.ini")?;
     let mut layers = RulesLayerStack::new(rules_ini);
-    let ini_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ini");
+    let ini_dir = crate::test_fixture::checkout_root().join("ini");
     let langrule_name = std::fs::read_dir(&ini_dir)
         .expect("retail INI directory")
         .filter_map(Result::ok)

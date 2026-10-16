@@ -155,7 +155,7 @@ impl CaptureManagerState {
     }
 
     /// `GetControlledCount @ 0x004722D0`.
-    pub(crate) fn count(&self) -> i32 {
+    pub fn count(&self) -> i32 {
         i32::try_from(self.nodes.len()).unwrap_or(i32::MAX)
     }
 
@@ -164,7 +164,7 @@ impl CaptureManagerState {
     /// native out-parameter (`+0x44 > 0`), which selects the active frame.
     /// The base strip's maximum comes from the current type's weapon;
     /// this method owns only the manager's overload decision.
-    pub(crate) fn overload_pip_state(&self) -> Option<bool> {
+    pub fn overload_pip_state(&self) -> Option<bool> {
         (self.infinite && self.count() > self.max_control)
             .then_some(self.overload_pip_countdown > 0)
     }
@@ -211,7 +211,7 @@ impl CaptureManagerState {
         self.nodes.retain(|node| node.victim != stable_id);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_victims_for_test(max_control: i32, infinite: bool, victims: &[u64]) -> Self {
         let mut state = Self::constructed(max_control, infinite);
         state.nodes = victims
@@ -224,13 +224,13 @@ impl CaptureManagerState {
         state
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn reverse_nodes_for_test(&mut self) {
         self.nodes.reverse();
     }
 
     /// A manager holding these `(victim, original owner)` nodes in order.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_nodes_for_test(nodes: &[(u64, InternedId)]) -> Self {
         let mut state = Self::constructed(3, false);
         state.nodes = nodes
@@ -277,7 +277,7 @@ impl MindControlLink {
 
     /// `+0x2C0` MindControlledBy alone, which the deploy and repack tests
     /// read (`0x00700ED0`, `0x00449C15`, `0x0044F614`, `0x00449D50`).
-    pub(crate) fn controller(&self) -> Option<u64> {
+    pub fn controller(&self) -> Option<u64> {
         self.controller
     }
 
@@ -286,7 +286,7 @@ impl MindControlLink {
         self.permanent
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn controlled_by_for_test(controller: u64) -> Self {
         Self {
             controller: Some(controller),
@@ -295,7 +295,7 @@ impl MindControlLink {
     }
 
     /// The Dominator's hold (`+0x2C4`) with no controller or ring.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn permanent_for_test() -> Self {
         Self {
             permanent: true,

@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::map::entities::{EntityCategory, MapEntity};
 use crate::rules::art_data::AnimTypeRuntimeConfig;
 use crate::rules::ini_parser::IniFile;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::rules::ruleset::RuleSet;
 
 /// Internal light unit scale. `1000 == 1.0`.
@@ -255,7 +255,7 @@ impl CellLight {
     /// Cell104 normalization and Cell108 source intensity. Unlike full483E30
     /// sampling, it scales the signed-word top BEFORE the final 0..2000 clamp.
     /// See tools/spatial_oracle/light_retained_scalar.py and its native records.
-    pub(crate) fn refresh_retained_scalars(&mut self, profile: LightingProfileUnits, level: u8) {
+    pub fn refresh_retained_scalars(&mut self, profile: LightingProfileUnits, level: u8) {
         let ambient = (profile.ambient_percent.wrapping_mul(1000) / 100) as i16;
         let base = ambient.wrapping_add(self.additive_intensity as i16);
         let level_units = profile.level_units as i16;
@@ -371,15 +371,15 @@ impl CellLightGrid {
 
     /// LightConvert556090 retains normal RGB/row identity while selecting
     /// Ion alternate table RGB; neither normalization nor Cell104 changes.
-    pub(crate) fn set_alternate_rgb(&mut self, rgb: Option<LightRgbKey>) {
+    pub fn set_alternate_rgb(&mut self, rgb: Option<LightRgbKey>) {
         self.alternate_rgb = rgb;
     }
 
-    pub(crate) fn palette_rgb(&self, normal: LightRgbKey) -> LightRgbKey {
+    pub fn palette_rgb(&self, normal: LightRgbKey) -> LightRgbKey {
         self.alternate_rgb.unwrap_or(normal)
     }
 
-    pub(crate) fn refresh_retained_scalars<I>(&mut self, heights: I, profile: LightingProfileUnits)
+    pub fn refresh_retained_scalars<I>(&mut self, heights: I, profile: LightingProfileUnits)
     where
         I: IntoIterator<Item = ((u16, u16), u8)>,
     {
@@ -403,7 +403,7 @@ impl CellLightGrid {
         );
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_compat_tint(&mut self, cell: (u16, u16), tint: [f32; 3]) {
         self.insert_profiled_light(cell, tint, 1.0);
     }
@@ -445,7 +445,7 @@ impl CellLightGrid {
         self.tint_or_default(cell)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn terrain_object_tint_at(&self, cell: (u16, u16)) -> [f32; 3] {
         self.tint_for_common_scalar_or_default(cell)
     }
@@ -582,7 +582,7 @@ fn key_to_rgb(key: LightRgbKey) -> [f32; 3] {
 }
 
 /// Return signed building body draw-depth adjustment from art.ini ExtraLight.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn building_body_depth_adjustment(extra_light: i32) -> i32 {
     extra_light
 }
@@ -725,7 +725,7 @@ pub fn cell_tint(config: &LightingConfig, z: u8) -> [f32; 3] {
 ///
 /// Terrain uses the ground-level lighting value across all cells so repeating
 /// tile textures do not expose the map grid through per-cell tint boundaries.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn terrain_tint(config: &LightingConfig) -> [f32; 3] {
     cell_tint(config, 0)
 }
@@ -964,7 +964,7 @@ pub fn point_light_area_cells(
 ///
 /// Iterates all structure entities on the map and checks their ObjectType
 /// for light emission properties parsed from rules.ini.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn collect_building_lights(entities: &[MapEntity], rules: Option<&RuleSet>) -> Vec<PointLight> {
     let Some(rules) = rules else {
         return Vec::new();
@@ -1312,7 +1312,7 @@ fn neutral_cell_light(profiles: &mut LightProfileCache) -> CellLight {
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn normalize_light(raw_rgb: LightRgbKey, common_scalar: i32) -> NormalizedLight {
     normalize_light_at_detail(raw_rgb, common_scalar, 2)
 }

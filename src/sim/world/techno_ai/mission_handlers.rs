@@ -113,9 +113,9 @@ pub(crate) fn dispatch_foot_mission(
             // The destination slot alone, NOT the wider "is this object in
             // motion" test above: the idle-mode selector branches on exactly
             // that one field.
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             has_destination: entity.navigation.nav_com().is_some(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             effective_mission: entity.mission.effective().known(),
             // Infantry Mission_Attack51F4D3 and Guard shim521320 read
             // the native Doing27..30 family. Undeploy31 is outside it.
@@ -828,11 +828,11 @@ pub(super) struct MissionHandlerInput {
     pub(super) has_attack_target: bool,
     /// The destination slot on its own. The idle-mode selector reads this one
     /// field, not the broader in-motion test [`Self::moving_or_queued`] uses.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) has_destination: bool,
     /// Current when present, otherwise queued — the selector the idle-mode
     /// early returns and the control-entry lookups read.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) effective_mission: Option<MissionType>,
     /// This is an infantryman whose DoType sits in native's deployed set, so
     /// its Attack slot takes `InfantryClass::Mission_Attack`'s own override
@@ -969,7 +969,7 @@ fn infantry_automatic_guard_delay(
 /// receivers. Production enters through `Simulation::infantry_enter_idle_mode`
 /// or `Simulation::unit_enter_idle_mode`, including the shared Foot base and
 /// their destination, timer and radio effects.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn foot_enter_idle_mode_queue(
     rules: &RuleSet,
     input: MissionHandlerInput,
