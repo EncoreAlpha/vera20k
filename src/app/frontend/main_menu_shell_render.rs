@@ -27,13 +27,6 @@ use crate::ui::main_menu_shell::{
 use crate::ui::shell::geom::{SDBTNANM_CELL_H, SDBTNANM_CELL_W_NARROW, ShellScale};
 use crate::ui::shell::static_reveal::{Kind1PaintWindow, Kind1RevealReceipt, Kind1RevealWindow};
 
-/// Archive holding the Red Alert 2 shell loop.
-///
-/// `ra2ts_l.bik` / `ra2ts_s.bik` exist under identical names in both this archive
-/// and `langmd.mix` (Yuri's Revenge). Normal mount priority resolves the Yuri copy,
-/// so the shell loader asks for this one by name instead.
-const RA2_SHELL_MOVIE_ARCHIVE: &str = "language.mix";
-
 /// Dialog 0xE2 owner-draw button policy: the SDBTNANM frame fills its 156x42
 /// cell, right-anchored and vertically centred, so a stretched cell stretches
 /// the art with it. At the authored cell size that placement is the native
@@ -304,29 +297,15 @@ pub(crate) fn ensure_movie_for_current_layout(
     };
     let asset_name = layout.movie_base.asset_name();
 
-    // The shell loop ships under the SAME filename in two archives: `language.mix`
-    // carries the Red Alert 2 loop, `langmd.mix` the Yuri's Revenge one. Normal
-    // archive priority mounts `langmd.mix` first and so resolves the Yuri copy.
-    //
-    // Prefer the Red Alert 2 copy explicitly. This is a deliberate presentation
-    // choice, not a parity claim — it is the loop this project wants on the shell.
-    // It also happens to agree with the retail duplicate priority this code already
-    // expected, which is why the old resolution logged a warning on every load.
-    // Falls back to normal lookup when `language.mix` is unavailable.
-    let preferred = assets
-        .archive(RA2_SHELL_MOVIE_ARCHIVE)
-        .and_then(|archive| archive.get_by_name(asset_name))
-        .map(|bytes| (bytes, RA2_SHELL_MOVIE_ARCHIVE));
-    let Some((bytes, source)) = preferred.or_else(|| assets.get_with_source_ref(asset_name)) else {
-        log::warn!("Missing main-menu RA2TS movie asset {asset_name}");
+    // Native YR 1.11 gamemd.exe, GZF 2026-10-15, VA 0x00531cc0
+    // (MainMenuDialog0xE2__Run), selects Ra2ts_s at width 640 and Ra2ts_l
+    // otherwise, then gives that name to the movie control. Resolve through the
+    // shared first-match asset lookup, preserving loose-file and archive priority.
+    let Some((bytes, source)) = assets.get_with_source_ref(asset_name) else {
+        log::warn!("Missing main-menu movie asset {asset_name}");
         state.frontend.main_menu_shell_error = Some(format!("Missing menu movie: {asset_name}"));
         return Ok(());
     };
-    if !source.eq_ignore_ascii_case(RA2_SHELL_MOVIE_ARCHIVE) {
-        log::warn!(
-            "{asset_name} resolved from {source}; the Red Alert 2 copy in {RA2_SHELL_MOVIE_ARCHIVE} was not available, so the shell is showing the Yuri's Revenge loop"
-        );
-    }
 
     let movie = match crate::render::bink_movie::BinkMovieSurface::from_bytes(
         &state.renderer.gpu,
@@ -337,7 +316,7 @@ pub(crate) fn ensure_movie_for_current_layout(
     ) {
         Ok(movie) => movie,
         Err(err) => {
-            log::warn!("Failed to load main-menu RA2TS movie {asset_name} from {source}: {err:#}");
+            log::warn!("Failed to load main-menu movie {asset_name} from {source}: {err:#}");
             state.frontend.main_menu_shell_error = Some(format!(
                 "Could not load {asset_name} from {source}: {err:#}"
             ));

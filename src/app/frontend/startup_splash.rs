@@ -16,22 +16,14 @@ use crate::render::batch::{BatchRenderer, BatchTexture, SpriteInstance};
 use crate::render::gpu::GpuContext;
 use crate::render::shell_surface_present::ShellSurfacePresenter;
 
-// Startup splash art. The `MD` suffix marks the Yuri's Revenge variants
-// (`GLSSMD`/`GLSLMD`/`GLSMD`, in `langmd.mix`); these unsuffixed names are the
-// Red Alert 2 originals, in `ra2.mix -> local.mix`. Both sets exist in a retail
-// install and both are 640x480 / 800x600 single-frame SHPs with a matching
-// palette, so this is a straight substitution.
-//
-// Deliberate presentation choice, not a parity claim -- the project otherwise
-// takes YR over RA2. Restoring the Yuri splash is re-adding the `MD` suffixes.
-//
-// Note the strings drawn over the splash still come from the YR string table,
-// so the trademark line names Yuri's Revenge. Changing that means sourcing the
-// whole UI string table from RA2, which is a much larger change than swapping
-// three asset names.
-const SMALL_SPLASH_SHP: &str = "GLSS.SHP";
-const LARGE_SPLASH_SHP: &str = "GLSL.SHP";
-const SPLASH_PALETTE: &str = "GLS.PAL";
+// Native YR 1.11 gamemd.exe, GZF 2026-10-15, VA 0x005312a0
+// (source record D:\ra2mdpost\Init.CPP; called from Init_Game at 0x0052ba60):
+// load GLSMD.PAL, then GLSSMD.SHP at exactly 640 pixels wide or GLSLMD.SHP at
+// every other width. If the optional SHP is unavailable, native still draws
+// its text, presents the surface, and arms the 5-second deadline.
+const SMALL_SPLASH_SHP: &str = "GLSSMD.SHP";
+const LARGE_SPLASH_SHP: &str = "GLSLMD.SHP";
+const SPLASH_PALETTE: &str = "GLSMD.PAL";
 const MINIMUM_VISIBLE_TIME: Duration = Duration::from_millis(5000);
 const TEXT_COLOR: [u8; 4] = [255, 255, 255, 255];
 
@@ -408,6 +400,61 @@ fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::asset_manager::MediaArchiveMode;
+
+    fn compare_composed_splash_to_retail_shape(
+        assets: &AssetManager,
+        font: &FntFile,
+        shape_name: &str,
+        width: usize,
+        height: usize,
+    ) {
+        let palette = Palette::from_bytes_gamemd_ui(
+            assets.get_ref("GLSMD.PAL").expect("retail splash palette"),
+        )
+        .expect("parse retail splash palette");
+        let loaded = assets
+            .load_file_from_mix(shape_name)
+            .expect("retail splash shape");
+        let shape = ShpFile::from_bytes(&loaded.bytes).expect("parse retail splash shape");
+        let frame = shape.frames.first().expect("splash frame 0");
+        let frame_rgba = shape
+            .frame_to_rgba_ui(0, &palette)
+            .expect("decode retail splash frame 0");
+        let composed = compose_startup_splash(assets, None, font, width, height)
+            .expect("compose production startup splash");
+
+        let origin_x = centered_offset(width as i32, shape.width as i32) + frame.frame_x as i32;
+        let origin_y = centered_offset(height as i32, shape.height as i32) + frame.frame_y as i32;
+        let mut compared = 0;
+        for y in 80..height.saturating_sub(60) {
+            for x in width / 8..width * 7 / 8 {
+                let source_x = x as i32 - origin_x;
+                let source_y = y as i32 - origin_y;
+                if !(0..frame.frame_width as i32).contains(&source_x)
+                    || !(0..frame.frame_height as i32).contains(&source_y)
+                {
+                    continue;
+                }
+                let source_offset =
+                    (source_y as usize * frame.frame_width as usize + source_x as usize) * 4;
+                if frame_rgba[source_offset + 3] == 0 {
+                    continue;
+                }
+                let destination_offset = (y * width + x) * 4;
+                assert_eq!(
+                    &composed[destination_offset..destination_offset + 4],
+                    &frame_rgba[source_offset..source_offset + 4],
+                    "{shape_name} pixel at ({x}, {y}) differs from production composition"
+                );
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 10_000,
+            "comparison covered only {compared} pixels"
+        );
+    }
 
     fn initialized_empty_csf() -> CsfFile {
         let mut bytes = Vec::new();
@@ -456,6 +503,38 @@ mod tests {
         blit_rgba_clipped(&mut destination, 2, 2, &source, 2, 2, -1, 0);
         assert_eq!(&destination[0..4], &[0, 0, 0, 255]);
         assert_eq!(&destination[8..12], &[100, 110, 120, 255]);
+    }
+
+    #[test]
+    #[ignore = "requires RA2_DIR with installed retail RA2/YR assets"]
+    fn retail_composition_uses_yr_large_splash_and_keeps_missing_small_art_text_only() {
+        use crate::assets::asset_manager::AssetManager;
+
+        let retail_dir = std::path::PathBuf::from(
+            std::env::var_os("RA2_DIR").expect("set RA2_DIR to the retail RA2/YR install"),
+        );
+        let assets = AssetManager::new(&retail_dir, MediaArchiveMode::STOCK_DIGITAL)
+            .expect("load retail RA2/YR assets");
+        let font = FntFile::from_bytes(assets.get_ref("GAME.FNT").expect("retail GAME.FNT"))
+            .expect("parse retail GAME.FNT");
+
+        compare_composed_splash_to_retail_shape(&assets, &font, "GLSLMD.SHP", 800, 600);
+        compare_composed_splash_to_retail_shape(&assets, &font, "GLSLMD.SHP", 1920, 1080);
+
+        let small_art_available = assets.load_file_from_mix("GLSSMD.SHP").is_some();
+        if !small_art_available {
+            let composed = compose_startup_splash(&assets, None, &font, 640, 480)
+                .expect("compose missing-small-art splash");
+            let center = (240 * 640 + 320) * 4;
+            assert_eq!(&composed[center..center + 4], &[0, 0, 0, 255]);
+            let white_loading_pixels = (10..100)
+                .flat_map(|x| (10..30).map(move |y| (y * 640 + x) * 4))
+                .filter(|offset| composed[*offset..*offset + 4] == TEXT_COLOR)
+                .count();
+            assert!(white_loading_pixels > 0, "missing small art retains text");
+        } else {
+            compare_composed_splash_to_retail_shape(&assets, &font, "GLSSMD.SHP", 640, 480);
+        }
     }
 
     #[test]
