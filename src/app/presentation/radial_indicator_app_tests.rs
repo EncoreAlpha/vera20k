@@ -517,6 +517,76 @@ fn large_concentric_outer_ring_keeps_a_bounded_expanding_ring() {
     );
 }
 
+#[test]
+fn targeting_a_missing_cell_cannot_change_the_simulation_dummy() {
+    let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules_for_map("XMP03T4.MAP")
+    else {
+        return;
+    };
+    let rules = &retail.rules;
+    let mut sim = state(rules);
+    let tank = sim
+        .spawn_object("HTNK", "Americans", 12, 12, 0, rules)
+        .unwrap();
+    // A retained dummy target makes the dummy coordinate part of lockstep
+    // state. This supplied prior isolates rendering from target acquisition.
+    sim.entities_mut()
+        .get_mut(tank)
+        .unwrap()
+        .set_archive_target(Some(crate::sim::combat::TargetKind::Cell(
+            u16::MAX,
+            u16::MAX,
+        )));
+    let dummy = sim.effective_shared_cell_dummy();
+    dummy.stamp_coord(7, 9);
+    dummy.set_level_slope(-2, 3);
+    let before_dummy = dummy.snapshot();
+    let before_hash = sim.state_hash();
+    let save = || {
+        crate::sim::snapshot::GameSnapshot::save(
+            &sim,
+            0,
+            rules.source_ini_hash(),
+            "range-cursor",
+            0,
+        )
+    };
+    let before_save = save();
+    for cell in [(40, 40), (u16::MAX, u16::MAX)] {
+        assert!(
+            sim.resolved_terrain
+                .as_ref()
+                .unwrap()
+                .native_fixed_cell_index(cell.0 as i16, cell.1 as i16)
+                .is_none()
+        );
+        let draws = build(
+            Some(&sim),
+            Some(rules),
+            &[],
+            Some("NukeSpecial"),
+            Some(cell),
+            &mut SuperweaponRangePulse::default(),
+            &HouseColorMap::new(),
+            SurfaceLineViewport {
+                camera: [0; 2],
+                clip: [0, 0, 1024, 768],
+                z_origin_y: 0,
+                zoom: 1.0,
+            },
+            0,
+        );
+        assert!(!draws.is_empty());
+        assert_eq!(dummy.snapshot(), before_dummy);
+        assert_eq!(sim.state_hash(), before_hash);
+        assert_eq!(
+            save(),
+            before_save,
+            "rendering must preserve all serialized state"
+        );
+    }
+}
+
 fn advance(sim: &mut Simulation, rules: &RuleSet) {
     sim.advance_app_frame(
         &[],

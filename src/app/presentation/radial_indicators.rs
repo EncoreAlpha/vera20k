@@ -161,14 +161,23 @@ pub(crate) fn build(
         if !super_weapon.range.is_finite() {
             return draws;
         }
-        if let Some((cell_x, cell_y)) = cursor_cell
-            && let Some(position) = crate::sim::cell_rect::get_cellclass_fallback(
-                sim.resolved_terrain.as_ref(),
-                i32::from(cell_x),
-                i32::from(cell_y),
-            )
-            .center_coordinate()
-        {
+        let position = cursor_cell.and_then(|(cell_x, cell_y)| {
+            let center = || {
+                crate::sim::cell_rect::get_cellclass_fallback(
+                    sim.resolved_terrain.as_ref(),
+                    i32::from(cell_x),
+                    i32::from(cell_y),
+                )
+                .center_coordinate()
+            };
+            // Missing-cell drawing may read the fallback's retained height,
+            // but its coordinate stamp must stay private to presentation.
+            match sim.resolved_terrain.as_ref() {
+                Some(terrain) => terrain.shared_cell_dummy().detached(center),
+                None => center(),
+            }
+        });
+        if let Some(position) = position {
             // Tactical::DrawUnitActionVisuals @0x006DBE20 reads the current
             // CurrentFoundationCenter, subtracts 0x7E from its ground cell center,
             // and calls Game::DrawRadialIndicator @0x00456980. Use the launch
