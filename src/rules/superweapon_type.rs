@@ -112,12 +112,12 @@ pub struct SuperWeaponType {
     /// `Range=` (`SuperWeaponTypeClass+0xF8`), a stored native float. The
     /// constructor initializes it to `0.0` (`0x006CE5B0`); `ReadINI @
     /// 0x006CEA20` reads the current value with `ReadDouble @ 0x005283D0`
-    /// and stores the result as a float at `0x006CEBEE`, with no later clamp.
+    /// and stores the result as a float at `0x006CEC01`, with no later clamp.
     pub range: f32,
     /// `LineMultiplier=` (`SuperWeaponTypeClass+0xFC`), a signed integer.
     /// The constructor initializes it to `0` (`0x006CE5B0`); `ReadINI @
     /// 0x006CEA20` reads the current value with `ReadInt @ 0x005276D0` at
-    /// `0x006CEC08`, with no later clamp.
+    /// `0x006CEC0E`, with no later clamp.
     pub line_multiplier: i32,
     /// Charge time in game frames. INI value is minutes × 900.
     pub recharge_time_frames: i32,

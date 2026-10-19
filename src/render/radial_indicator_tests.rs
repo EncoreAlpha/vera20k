@@ -111,9 +111,57 @@ fn native_superweapon_radius_prefix_controls_are_consumed() {
         let truncate = control["truncate_input"].as_bool().unwrap();
         assert_eq!(
             radius_pixels(radius, truncate),
-            control["output_radius_pixels"].as_i64().unwrap() as i32,
+            Some(control["output_radius_pixels"].as_i64().unwrap() as i32),
             "{}",
             control["name"]
         );
     }
+}
+
+#[test]
+fn invalid_and_oversized_radials_emit_no_surface_work() {
+    for radius in [
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        -1.0,
+        1e38,
+        4294967296.0,
+    ] {
+        for pixel_radius in [false, true] {
+            let draw = RadialIndicatorDraw {
+                center: [100, 100],
+                radius,
+                truncate_radius: true,
+                pixel_radius,
+                rgb: [255; 3],
+                fade: false,
+                rays: false,
+                frame: 0,
+            };
+            draw.draws([0, 0, 200, 200], |_| {
+                panic!("unsupported radius emitted work")
+            });
+        }
+    }
+    let oversized = RadialIndicatorDraw {
+        center: [100, 100],
+        radius: 1000.0,
+        truncate_radius: false,
+        pixel_radius: false,
+        rgb: [255; 3],
+        fade: false,
+        rays: false,
+        frame: 0,
+    };
+    assert!(radius_pixels(oversized.radius, false).is_some());
+    oversized.draws([0, 0, 200, 200], |_| {
+        panic!("oversized radial emitted work")
+    });
+    crate::render::surface_line::ellipse(
+        [100, 100],
+        [MAX_ELLIPSE_RADIUS_PIXELS + 1, 512],
+        [0, 0, 200, 200],
+        |_| panic!("oversized ellipse bypassed the shared work budget"),
+    );
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "native_sha256": "3e81a61775d2745d1dabe397325ef663cd994ffc194da4e998e3bf5d2d308600",
+  "native_sha256": "1cdd1180e49024fbda8ad568caac2e86e856063ff67ab38f62b7d2c7bb84298c",
   "unicorn_binding": "2.1.4",
   "unicorn_core": [
     2,
@@ -42,6 +42,6 @@
   ],
   "replay_command": "python -m tools.procedural_drawing_oracle.shroud --superweapon-range --check",
   "generation_command": "python -m tools.procedural_drawing_oracle.shroud --superweapon-range --write",
-  "required_environment": "VERA20K_GAMEMD_EXE must identify the Steam gamemd.exe with the recorded SHA256",
-  "payload_sha256": "01f58190a5f30548f049cb08ce1abe560b53a756107165cc4a318cb4c022f7b6"
+  "required_environment": "VERA20K_GAMEMD_EXE must identify a supported original image; --check requires the recorded SHA256",
+  "payload_sha256": "c2c6d8e3b12030690b3f1831f0ee069730f6672a0c7703db192bd96ff14fee8a"
 }

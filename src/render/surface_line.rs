@@ -71,6 +71,11 @@ mod antialiased;
 pub(crate) use antialiased::CUBIC_TABLE;
 pub(crate) use antialiased::antialiased_line;
 
+/// Presentation safety budget for authored shapes. Clipping alone does not
+/// bound the native wrapping midpoint loops. The largest radial native
+/// control (NAPSIS) has a horizontal radius of 657 pixels.
+pub(crate) const MAX_ELLIPSE_RADIUS_PIXELS: i32 = 1024;
+
 /// Original XSurface::DrawEllipse7BB350. Two midpoint walks start at the
 /// vertical and horizontal axes independently; each updates before storing.
 /// Stores are opaque, including pixels in shroud or behind existing objects.
@@ -80,6 +85,12 @@ pub(crate) fn ellipse(
     clip: [i32; 4],
     mut emit: impl FnMut([i32; 2]),
 ) {
+    if radius
+        .iter()
+        .any(|value| !(0..=MAX_ELLIPSE_RADIUS_PIXELS).contains(value))
+    {
+        return;
+    }
     let mut pixel = |[x, y]: [i32; 2]| {
         if x >= clip[0] && x < clip[0] + clip[2] && y >= clip[1] && y < clip[1] + clip[3] {
             emit([x, y]);
@@ -96,7 +107,7 @@ pub(crate) fn ellipse(
     let mut dx: i32 = 0;
     let mut dy = rx2.wrapping_mul(ry).wrapping_mul(2);
     let mut decision = (rx2 / 4).wrapping_sub(rx2.wrapping_mul(ry));
-    loop {
+    for _ in 0..=rx {
         decision = decision.wrapping_add(dx).wrapping_add(ry2);
         if decision >= 0 {
             dy = dy.wrapping_sub(rx2.wrapping_mul(2));
@@ -120,7 +131,7 @@ pub(crate) fn ellipse(
     dx = ry2.wrapping_mul(rx).wrapping_mul(2);
     dy = 0;
     decision = (ry2 / 4).wrapping_sub(ry2.wrapping_mul(rx));
-    loop {
+    for _ in 0..=ry {
         decision = decision.wrapping_add(dy).wrapping_add(rx2);
         if decision >= 0 {
             dx = dx.wrapping_sub(ry2.wrapping_mul(2));

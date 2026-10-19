@@ -9,6 +9,11 @@ use crate::render::surface_line::SurfaceLineViewport;
 use crate::rules::ruleset::RuleSet;
 use crate::sim::world::Simulation;
 
+/// Presentation budget for authored Range/LineMultiplier combinations. The
+/// stock Nuke emits 15 rings. Larger sets are omitted as a whole; the native
+/// outer pulse still advances and no simulation value is clamped.
+const MAX_SUPERWEAPON_RINGS: i32 = 64;
+
 /// Process-lived Tactical superweapon range fade state. Native
 /// Tactical::DrawUnitActionVisuals @0x006DBE20 advances these globals only
 /// after the selected superweapon passes its positive-Range gate. Positive
@@ -132,7 +137,10 @@ pub(crate) fn build(
             }
             draws.push(outer);
         }
-        let expanding = (radius_pixels(range as f32, true) as u32).wrapping_mul(phase) >> 10;
+        let Some(pixels) = radius_pixels(range as f32, true) else {
+            continue;
+        };
+        let expanding = (pixels as u32).wrapping_mul(phase) >> 10;
         if expanding > 32 {
             draws.push(RadialIndicatorDraw {
                 radius: expanding as f32,
@@ -150,6 +158,9 @@ pub(crate) fn build(
         // Native outer pulse state advances once per active draw, before the
         // line-multiplier branch; Range<=0 and no armed SW freeze it.
         let outer_factor = superweapon_pulse.advance();
+        if !super_weapon.range.is_finite() {
+            return draws;
+        }
         if let Some((cell_x, cell_y)) = cursor_cell
             && let Some(position) = crate::sim::cell_rect::get_cellclass_fallback(
                 sim.resolved_terrain.as_ref(),
@@ -211,11 +222,15 @@ pub(crate) fn build(
                 ))
                 .expect("finite superweapon range");
                 let final_index = X::mul(X::load_i32(multiplier), range);
-                let mut index = 0_i32;
+                if X::compare(final_index, X::load_i32(MAX_SUPERWEAPON_RINGS))
+                    != crate::util::native_x87::X87Ordering::Less
+                {
+                    return draws;
+                }
                 // Native stores outer phase/direction once, then advances only
                 // these local registers for each positive-LM ring.
                 let mut ring_pulse = *superweapon_pulse;
-                loop {
+                for index in 0..MAX_SUPERWEAPON_RINGS {
                     // 6DC2F5..6DC3A3 compares the exact integer FILD against the
                     // full PC53 product of LineMultiplier * stored f32 Range.
                     if X::compare(X::load_i32(index), final_index)
@@ -246,7 +261,6 @@ pub(crate) fn build(
                         ),
                         ..base
                     });
-                    index = index.wrapping_add(1);
                 }
             }
         }

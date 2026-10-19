@@ -4448,8 +4448,6 @@ def _superweapon_winmain_fpcw(u, sp):
 
 
 def _superweapon_loop_control(name, range_bits, line_multiplier, *, draws=1):
-    if native.image_sha256() != native.STEAM_NATIVE_SHA256:
-        raise native.OracleError('Superweapon controls require the Steam gamemd.exe image')
     u = _superweapon_control_machine()
     fake = 0x50000000
     type_ptr, player_ptr = fake + 0x1000, fake + 0x2000
@@ -4572,8 +4570,6 @@ def _superweapon_loop_control(name, range_bits, line_multiplier, *, draws=1):
 
 
 def _superweapon_inactive_controls():
-    if native.image_sha256() != native.STEAM_NATIVE_SHA256:
-        raise native.OracleError('Superweapon controls require the Steam gamemd.exe image')
     controls = []
     for name, selected_index, range_bits in (
             ('no_selected_superweapon', -1, 0x40E00000),
@@ -4609,8 +4605,6 @@ def _superweapon_inactive_controls():
 
 
 def _superweapon_radius_control(name, radius_bits, truncate=False):
-    if native.image_sha256() != native.STEAM_NATIVE_SHA256:
-        raise native.OracleError('Superweapon controls require the Steam gamemd.exe image')
     u = _superweapon_control_machine()
     sp = native.STACK_BASE + native.STACK_SIZE - 0x1000
     _superweapon_winmain_fpcw(u, sp)
@@ -4671,8 +4665,6 @@ def finish_superweapon_range_controls(argv=None):
     mode.add_argument('--check', action='store_true', help='compare without writing (default)')
     mode.add_argument('--write', action='store_true', help='update only the superweapon corpus section')
     args = parser.parse_args(argv)
-    if native.image_sha256() != native.STEAM_NATIVE_SHA256:
-        raise native.OracleError('Configure VERA20K_GAMEMD_EXE to the supported Steam gamemd.exe')
     source_paths = {'oracle':Path(__file__), 'shared_runner':Path(native.__file__)}
     sources = native.oracle_sources.source_identity(source_paths)
     generated = generate_superweapon_range_controls()
@@ -4703,7 +4695,7 @@ def finish_superweapon_range_controls(argv=None):
         required_winmain_callees=['0x007CBF49', '0x007C5EE4'],
         replay_command='python -m tools.procedural_drawing_oracle.shroud --superweapon-range --check',
         generation_command='python -m tools.procedural_drawing_oracle.shroud --superweapon-range --write',
-        required_environment='VERA20K_GAMEMD_EXE must identify the Steam gamemd.exe with the recorded SHA256')
+        required_environment='VERA20K_GAMEMD_EXE must identify a supported original image; --check requires the recorded SHA256')
     metadata['payload_sha256'] = hashlib.sha256(payload).hexdigest()
     target = Path(__file__).with_name('radial_indicator.json')
     sidecar = Path(__file__).with_name('superweapon_range.meta.json')

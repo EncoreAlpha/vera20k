@@ -326,9 +326,11 @@ fn superweapon_range_ring_requires_targeting_mode_and_positive_range() {
     );
     assert_eq!(
         crate::render::radial_indicator::radius_pixels(single[0].radius, single[0].truncate_radius),
-        native_helper_control["output_radius_pixels"]
-            .as_i64()
-            .unwrap() as i32
+        Some(
+            native_helper_control["output_radius_pixels"]
+                .as_i64()
+                .unwrap() as i32
+        )
     );
     assert_eq!(
         pulse,
@@ -427,6 +429,92 @@ fn superweapon_pulse_reaches_and_reverses_at_native_endpoints() {
     let descending: Vec<_> = (0..10).map(|_| pulse.advance()).collect();
     assert_eq!(descending, (0..=90).rev().step_by(10).collect::<Vec<_>>());
     assert_eq!(pulse, SuperweaponRangePulse::default());
+}
+
+#[test]
+fn nonfinite_authored_superweapon_range_does_not_panic_or_draw() {
+    for multiplier in [-1, 0, 2] {
+        let ini = crate::rules::ini_parser::IniFile::from_str(&format!(
+            "[SuperWeaponTypes]\n0=EXTREME\n[EXTREME]\nType=MultiMissile\n\
+             Range=1e39\nLineMultiplier={multiplier}\n"
+        ));
+        let rules = RuleSet::from_ini(&ini).unwrap();
+        assert!(!rules.super_weapon("EXTREME").unwrap().range.is_finite());
+        let sim = state(&rules);
+        let mut pulse = SuperweaponRangePulse::default();
+        let draws = target_query(&sim, &rules, Some("EXTREME"), &mut pulse);
+        for draw in &draws {
+            draw.draws([0, 0, 1024, 768], |_| {});
+        }
+        assert!(
+            draws.is_empty(),
+            "unsupported range must not enter the renderer"
+        );
+        assert_eq!(pulse.phase, 10, "keep the native positive-range pulse step");
+    }
+}
+
+#[test]
+fn authored_ring_counts_are_bounded_without_truncating_admitted_sets() {
+    for (range, multiplier, expected) in [
+        ("63.5", 1, 64),
+        ("64", 1, 0),
+        ("1", i32::MAX, 0),
+        ("1e38", 2, 0),
+    ] {
+        let ini = crate::rules::ini_parser::IniFile::from_str(&format!(
+            "[SuperWeaponTypes]\n0=BOUNDED\n[BOUNDED]\nType=MultiMissile\n\
+             Range={range}\nLineMultiplier={multiplier}\n"
+        ));
+        let rules = RuleSet::from_ini(&ini).unwrap();
+        let sim = state(&rules);
+        let mut pulse = SuperweaponRangePulse::default();
+        let draws = target_query(&sim, &rules, Some("BOUNDED"), &mut pulse);
+        assert_eq!(
+            draws.len(),
+            expected,
+            "Range={range}, LineMultiplier={multiplier}"
+        );
+        assert_eq!(pulse.phase, 10);
+    }
+}
+
+#[test]
+fn large_concentric_outer_ring_keeps_a_bounded_expanding_ring() {
+    let patch =
+        crate::rules::ini_parser::IniFile::from_str("[NAPSIS]\nPsychicDetectionRadius=100\n");
+    let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules_for_map_with_patch(
+        "XMP03T4.MAP",
+        &patch,
+    ) else {
+        return;
+    };
+    let rules = &retail.rules;
+    let mut sim = state(rules);
+    let sensor = sim
+        .spawn_object("NAPSIS", "Americans", 16, 16, 0, rules)
+        .unwrap();
+    let draws = query(&sim, rules, &[sensor], 32);
+    let expanding = draws
+        .iter()
+        .find(|draw| draw.pixel_radius)
+        .expect("expanding ring");
+    assert!(expanding.radius > 32.0 && expanding.radius < 1024.0);
+    let clip = [
+        expanding.center[0] - 100,
+        expanding.center[1] - 100,
+        200,
+        200,
+    ];
+    let mut operations = Vec::new();
+    for draw in draws {
+        draw.draws(clip, |operation| operations.push(operation));
+    }
+    assert_eq!(
+        operations.len(),
+        2,
+        "only the bounded expanding ring reaches drawing"
+    );
 }
 
 fn advance(sim: &mut Simulation, rules: &RuleSet) {

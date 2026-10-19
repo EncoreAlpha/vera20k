@@ -191,7 +191,8 @@ fn armed_nuke_rings_reach_offscreen_surface_line_gpu() {
     let output = gpu.finish(encoder, &reads, size);
 
     for draw in &radials {
-        let radius = radius_pixels(draw.radius, draw.truncate_radius);
+        let radius =
+            radius_pixels(draw.radius, draw.truncate_radius).expect("bounded retail radius");
         let x = (center[0] + radius) as usize;
         let y = center[1] as usize;
         let offset = (y * size[0] as usize + x) * 4;
