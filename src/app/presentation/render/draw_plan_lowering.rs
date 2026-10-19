@@ -46,9 +46,9 @@ pub(crate) enum ObjectTexture {
     OverlayAtlas,
     /// Per-piece native destination edit; never a texture-only coalesced draw.
     TerrainShp(crate::render::terrain_draw::TerrainPiece),
-    /// Bullet body/shadow: signed native Z comparison, destination edits,
-    /// and no depth write. The atlas page is payload, never an ordering key.
-    ProjectileShp(usize, crate::render::terrain_draw::TerrainPiece),
+    /// An atlas SHP whose source mask performs a native destination edit.
+    /// The atlas page is payload, never an ordering key.
+    SpriteAtlasEdit(usize, crate::render::terrain_draw::TerrainPiece),
     UnitAtlasPage(usize),
     UnitPosePage(usize),
     ShpPage(usize),
@@ -1001,7 +1001,7 @@ mod tests {
                             .into_iter()
                             .map(|piece| {
                                 marked_piece(
-                                    ObjectTexture::ProjectileShp(index % 2, piece),
+                                    ObjectTexture::SpriteAtlasEdit(index % 2, piece),
                                     id as u32,
                                 )
                             })
@@ -1406,6 +1406,14 @@ mod tests {
                         23,
                     ),
                     building_piece(BuildingPieceKind::Body, ObjectTexture::ShpPage(1), 22),
+                    building_piece(
+                        BuildingPieceKind::Shadow,
+                        ObjectTexture::SpriteAtlasEdit(
+                            0,
+                            crate::render::terrain_draw::TerrainPiece::Shadow,
+                        ),
+                        24,
+                    ),
                     building_piece(BuildingPieceKind::Bib, ObjectTexture::ShpPage(0), 21),
                 ],
             ),
@@ -1415,13 +1423,13 @@ mod tests {
             ),
         ]);
 
-        assert_eq!(pass.owners, [1, 2, 2, 2, 3]);
+        assert_eq!(pass.owners, [1, 2, 2, 2, 2, 3]);
         assert_eq!(
             pass.instances
                 .iter()
                 .map(|instance| instance.draw_state.fx_flags)
                 .collect::<Vec<_>>(),
-            [1, 21, 22, 23, 3]
+            [1, 22, 24, 21, 23, 3]
         );
     }
     #[test]
