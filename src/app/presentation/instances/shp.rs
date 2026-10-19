@@ -776,9 +776,9 @@ pub(crate) fn building_embedded_shadow_piece(
     instance.uv_origin = shadow_entry.uv_origin;
     instance.uv_size = shadow_entry.uv_size;
     instance.source_palette = shadow_entry.source_palette;
-    // Native's shadow a7 is -4 - AdjustForZ(Location.Z); the shared SHP
-    // walker also applies its established -2 row term.
-    instance.z_adjust = lifted_z_adjust(lift_px, -4 + SHP_DRAW_Z_ADJUST_PX) as f32;
+    // Techno70647A/70649E (and70654F/706576 for visual state1) combine
+    // both -2 terms before CC_Draw_Shape: -4 - AdjustForZ(Location.Z).
+    instance.z_adjust = lifted_z_adjust(lift_px, -4);
     instance.z_gradient = pack_z_gradient(ZGradient::Flat, false);
     instance.zshape_origin = [0.0, 0.0];
 

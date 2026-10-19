@@ -1,10 +1,12 @@
-//! Retail GAPOWR embedded-SHP shadow through the production building plan and
-//! destination-edit renderer. The darken/Z expectations come from the original
-//! 0x00497390 leaf corpus; this is a bounded GPU path check, not full scene parity.
+//! Retail GAPOWR embedded-SHP shadow through its production helper, lowerer
+//! and normal object dispatcher. Caller Z comes from70647A/70649E; pixel
+//! expectations come from the original497390 corpus. The full collector is
+//! exercised separately by normal app capture, not by this component fixture.
 
 use super::draw_plan_lowering::{
     NativeDisplayOrder, ObjectTexture, PlannedObjectInstance, lower_object_instances,
 };
+use super::merge_passes::draw_native_object_pass;
 use crate::app::presentation::instances::{
     TacticalEntityPurpose, building_embedded_shadow_piece, observer_draw_context,
     tactical_entity_admission,
@@ -15,7 +17,7 @@ use crate::render::batch::{BatchRenderer, DepthAxis, InstanceBufferPool, SpriteI
 use crate::render::native_z::{DEFAULT_Z, ZGradient, pack_z_gradient, sprite_row_z, stored_z};
 use crate::render::sprite_atlas::{ShpPaletteContext, ShpSpriteKey, build_sprite_atlas};
 use crate::render::tactical_draw_plan::{RenderZPolicy, SpriteEncoding};
-use crate::render::terrain_draw::{DestinationEditCommand, TerrainDrawRenderer, TerrainPiece};
+use crate::render::terrain_draw::{TerrainDrawRenderer, TerrainPiece};
 use crate::render::terrain_draw_gpu_tests::{Gpu, camera, clear, encoded};
 use crate::rules::house_colors::HouseColorIndex;
 use std::collections::HashSet;
@@ -199,6 +201,11 @@ fn retail_gapowr_embedded_shadow_uses_real_atlas_mask_and_native_leaf() {
         decision,
     )
     .expect("production GAPOWR embedded second-half shadow plan");
+    // Techno70647A/70649E and70654F/706576 fold both -2 terms into the
+    // caller's argument before CC_Draw_Shape. Do not fit the camera to an
+    // adjustment read from the implementation under test.
+    let expected_shadow_z = -4 - lift_px;
+    assert_eq!(shadow.instance.z_adjust, expected_shadow_z as f32);
     assert_eq!(
         shadow.kind,
         crate::render::tactical_draw_plan::BuildingPieceKind::Shadow
@@ -261,9 +268,9 @@ fn retail_gapowr_embedded_shadow_uses_real_atlas_mask_and_native_leaf() {
     let solid_y = (solid_index / source_size[0] as usize) as i32;
     let mut view = camera(source_size);
     view.camera_pos = shadow.instance.position;
-    // Camera placement selects an existing native leaf candidate while keeping
-    // the producer's entity-derived shadow Z untouched.
-    let screen_top_goal = DEFAULT_Z + shadow_z - solid_y - candidate;
+    // Choose the camera from the independently established native caller Z,
+    // so an incorrect producer adjustment cannot cancel out of this test.
+    let screen_top_goal = DEFAULT_Z + expected_shadow_z - solid_y - candidate;
     let desired_camera_row = shadow.instance.position[1].round() as i32 - screen_top_goal;
     view.native_z_origin_y = desired_camera_row as f32 - view.camera_pos[1];
     let screen_top = shadow.instance.position[1].round() as i32
@@ -293,12 +300,6 @@ fn retail_gapowr_embedded_shadow_uses_real_atlas_mask_and_native_leaf() {
         ObjectTexture::SpriteAtlasEdit(page_index, TerrainPiece::Shadow)
     );
     assert_eq!(run.render_z, RenderZPolicy::ReadWrite);
-    let command = DestinationEditCommand {
-        index: run.start,
-        piece: TerrainPiece::Shadow,
-        render_z: run.render_z,
-        atlas_slot: page_index + 1,
-    };
 
     let size = source_size;
     let color = gpu.target(size, format);
@@ -326,44 +327,30 @@ fn retail_gapowr_embedded_shadow_uses_real_atlas_mask_and_native_leaf() {
         wgpu::LoadOp::Clear(wgpu::Color::WHITE),
     );
     let mut reads = Vec::with_capacity(4);
-    terrain.draw_span(
-        &mut encoder,
-        &color_view,
-        &depth_view,
-        &batch,
-        |slot| {
-            slot.checked_sub(1)
-                .and_then(|index| atlas.page(index))
-                .map(|page| &page.texture)
-        },
-        buffer,
-        &ground.instances,
-        std::iter::once(command),
-        [0, 0, size[0], size[1]],
-    );
-    reads.extend([
-        gpu.read(&mut encoder, &color),
-        gpu.read(&mut encoder, &depth),
-    ]);
-    terrain.draw_span(
-        &mut encoder,
-        &color_view,
-        &depth_view,
-        &batch,
-        |slot| {
-            slot.checked_sub(1)
-                .and_then(|index| atlas.page(index))
-                .map(|page| &page.texture)
-        },
-        buffer,
-        &ground.instances,
-        std::iter::once(command),
-        [0, 0, size[0], size[1]],
-    );
-    reads.extend([
-        gpu.read(&mut encoder, &color),
-        gpu.read(&mut encoder, &depth),
-    ]);
+    for _ in 0..2 {
+        draw_native_object_pass(
+            &mut encoder,
+            &color_view,
+            &depth_view,
+            &mut terrain,
+            [0, 0, size[0], size[1]],
+            &batch,
+            Some((buffer, count)),
+            ground,
+            None,
+            None,
+            None,
+            Some(&atlas),
+            None,
+            batch.default_zshape_bind_group(),
+            None,
+            None,
+        );
+        reads.extend([
+            gpu.read(&mut encoder, &color),
+            gpu.read(&mut encoder, &depth),
+        ]);
+    }
     let output = gpu.finish(encoder, &reads, size);
     let solid_offset = solid_index * 4;
     assert_eq!(
