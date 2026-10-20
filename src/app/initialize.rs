@@ -277,7 +277,7 @@ impl App {
                         fnt,
                         gpu.config.width,
                         gpu.config.height,
-                        options_profile.ra2_look,
+                        options_profile.yr_original_style,
                     )
                     .map_err(|err| log::warn!("Could not build retail startup splash: {err:#}"))
                     .ok()

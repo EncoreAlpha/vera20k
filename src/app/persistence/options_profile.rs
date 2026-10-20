@@ -119,9 +119,9 @@ pub(crate) struct RetailOptionsProfile {
     pub(crate) original_shape: bool,
     /// The Options page's battle sidebar size.
     pub(crate) sidebar: crate::ui::main_menu_dialogs::options::SidebarSize,
-    /// Whether the startup splash and the menu movie use Red Alert 2's art
-    /// instead of Yuri's Revenge's: the Options page's RA2 Loading & Menu Movie.
-    pub(crate) ra2_look: bool,
+    /// Whether shell art uses Yuri's Revenge's original assets. Off by default,
+    /// so new profiles use Red Alert 2's style where the games have variants.
+    pub(crate) yr_original_style: bool,
     /// `[VERA] ShiftQueue=`: whether a Shift-click on a mobile strip queues
     /// [`Self::shift_queue_count`] builds: the Options page's Shift-Click
     /// Batch Queue. Off by default, so Shift + left click queues one copy as
@@ -192,7 +192,7 @@ impl Default for RetailOptionsProfile {
             zoom: crate::ui::main_menu_dialogs::options::Zoom::Auto,
             original_shape: false,
             sidebar: crate::ui::main_menu_dialogs::options::SidebarSize::Normal,
-            ra2_look: false,
+            yr_original_style: false,
             shift_queue: false,
             shift_queue_count: DEFAULT_SHIFT_QUEUE_COUNT,
             wol_test_service: false,
@@ -212,7 +212,7 @@ pub(crate) struct FormattedProfileSections {
     pub(crate) audio: [(&'static str, String); 7],
     pub(crate) network: [(&'static str, String); 4],
     /// VERA's own section, written after the native ones.
-    pub(crate) vera: [(&'static str, String); 8],
+    pub(crate) vera: [(&'static str, String); 9],
 }
 
 impl RetailOptionsLoad {
@@ -410,7 +410,17 @@ impl RetailOptionsProfile {
             self.sidebar = crate::ui::main_menu_dialogs::options::SidebarSize::from_ini_value(
                 vera.read_int("Sidebar", self.sidebar.ini_value()),
             );
-            self.ra2_look = vera.read_bool("RA2Look", self.ra2_look);
+            self.yr_original_style = if vera.is_present("YROriginalStyle") {
+                vera.read_bool("YROriginalStyle", self.yr_original_style)
+            } else if vera.is_present("RA2Look") {
+                // Earlier VERA builds stored the opposite choice: true meant
+                // Red Alert 2, false meant Yuri's Revenge. ReadBool's old
+                // default was false, so a malformed legacy value migrates to
+                // the original YR choice just as it did before this key.
+                !vera.read_bool("RA2Look", false)
+            } else {
+                self.yr_original_style
+            };
             self.shift_queue = vera.read_bool("ShiftQueue", self.shift_queue);
             // Absent keeps the current value; present-but-nonnumeric answers 0,
             // which the range lifts to 1 rather than a click that queues nothing.
@@ -499,7 +509,14 @@ impl RetailOptionsProfile {
                     format_bool(self.original_shape).to_string(),
                 ),
                 ("Sidebar", self.sidebar.ini_value().to_string()),
-                ("RA2Look", format_bool(self.ra2_look).to_string()),
+                (
+                    "YROriginalStyle",
+                    format_bool(self.yr_original_style).to_string(),
+                ),
+                // The preservation writer updates/inserts but does not delete
+                // omitted keys. Keep the legacy inverse coherent for downgrades;
+                // this version always treats YROriginalStyle as authoritative.
+                ("RA2Look", format_bool(!self.yr_original_style).to_string()),
                 ("ShiftQueue", format_bool(self.shift_queue).to_string()),
                 ("ShiftQueueCount", self.shift_queue_count.to_string()),
                 (
@@ -1167,7 +1184,7 @@ mod tests {
         assert_eq!(defaults.retained_profile.zoom, Zoom::Auto);
         assert!(!defaults.retained_profile.original_shape);
         assert_eq!(defaults.retained_profile.sidebar, SidebarSize::Normal);
-        assert!(!defaults.retained_profile.ra2_look);
+        assert!(!defaults.retained_profile.yr_original_style);
         // Shift + left click queues one copy, as in gamemd, until it is ticked.
         assert!(!defaults.retained_profile.shift_queue);
         // Internet shows TXT_APIMISSING, as on retail, until it is ticked.
@@ -1186,7 +1203,7 @@ mod tests {
         assert_eq!(load.retained_profile.zoom, Zoom::Percent(200));
         assert!(load.retained_profile.original_shape);
         assert_eq!(load.retained_profile.sidebar, SidebarSize::Large);
-        assert!(load.retained_profile.ra2_look);
+        assert!(!load.retained_profile.yr_original_style);
         assert!(load.retained_profile.shift_queue);
         assert!(load.retained_profile.wol_test_service);
         assert_eq!(load.retained_profile.shift_queue_count, 8);
@@ -1199,7 +1216,7 @@ mod tests {
             zoom: Zoom::Percent(150),
             original_shape: true,
             sidebar: SidebarSize::ExtraLarge,
-            ra2_look: true,
+            yr_original_style: true,
             shift_queue: true,
             shift_queue_count: 7,
             wol_test_service: true,
@@ -1209,7 +1226,7 @@ mod tests {
             String::from_utf8(profile.transform_ra2md(b"[Video]\r\nScreenWidth=800\r\n")).unwrap();
         assert!(
             output.contains(
-                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nRA2Look=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\n"
+                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nRA2Look=no\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\n"
             ),
             "{output}"
         );
@@ -1218,10 +1235,39 @@ mod tests {
         assert_eq!(reread.retained_profile.zoom, Zoom::Percent(150));
         assert!(reread.retained_profile.original_shape);
         assert_eq!(reread.retained_profile.sidebar, SidebarSize::ExtraLarge);
-        assert!(reread.retained_profile.ra2_look);
+        assert!(reread.retained_profile.yr_original_style);
         assert!(reread.retained_profile.shift_queue);
         assert!(reread.retained_profile.wol_test_service);
         assert_eq!(reread.retained_profile.shift_queue_count, 7);
+    }
+
+    #[test]
+    fn yr_original_style_defaults_to_ra2_and_migrates_ra2_look() {
+        let defaults = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\n");
+        assert!(
+            !defaults.retained_profile.yr_original_style,
+            "unchecked Original Yuri's Revenge Style selects the default RA2 look"
+        );
+
+        let legacy_ra2 = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nRA2Look=yes\n");
+        assert!(
+            !legacy_ra2.retained_profile.yr_original_style,
+            "legacy RA2Look=yes must preserve the old RA2 choice"
+        );
+        let legacy_yuri = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nRA2Look=no\n");
+        assert!(
+            legacy_yuri.retained_profile.yr_original_style,
+            "legacy RA2Look=no must preserve the old Yuri's Revenge choice"
+        );
+
+        let explicit_new_key_wins = load_snapshot(
+            &RetailStartupOptions::default(),
+            b"[VERA]\nRA2Look=yes\nYROriginalStyle=no\n",
+        );
+        assert!(
+            !explicit_new_key_wins.retained_profile.yr_original_style,
+            "the new YR-original key must win over a conflicting legacy key"
+        );
     }
 
     /// `read_int` answers 0 for a present-but-nonnumeric value and a hand-edited
