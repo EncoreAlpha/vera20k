@@ -1454,6 +1454,7 @@ pub(crate) fn try_queue_context_order_at_screen_point(
         {
             return false;
         }
+        let (target_rx, target_ry) = context_order_cell(sim, (target_rx, target_ry));
         let cell_is_shrouded = crate::app::presentation::instances::cell_visibility_for_local_owner(
             Some(owner_id),
             Some(&sim.fog),
@@ -2291,6 +2292,14 @@ pub(crate) fn try_queue_context_order_at_screen_point(
         );
     }
     finish_order(state, queued, speaker_id) || consumed_attack_action
+}
+
+/// The shared Cell passed to Selection__DispatchMultiUnitOrder's receivers
+/// after its playfield clamp (`0x004AE77E`, `MapClass::Clamp_To_Playfield
+/// @ 0x00586E50`). Keep the screen-derived world point for object hit-testing;
+/// this Cell is only the later Cell-action/receiver input.
+fn context_order_cell(sim: &crate::sim::world::Simulation, clicked: (u16, u16)) -> (u16, u16) {
+    sim.clamped_click_cell(clicked)
 }
 
 /// The data capability shared by self-click, self-hover and the deploy key.
@@ -3309,6 +3318,87 @@ mod tests {
     use crate::sim::combat::Health;
     use crate::sim::game_entity::GameEntity;
     use crate::sim::world::Simulation;
+
+    /// The native selection dispatcher clamps its shared Cell before asking
+    /// receivers' What_Action and ClickedAction (`0x004AE77E`), then each Foot
+    /// resolves from that same Cell (`0x004AE8BA`, `0x004AE921`, `0x004AE976`).
+    /// Object hit-testing keeps the raw screen-derived world point. The fixed
+    /// edge clicks exercise both NoMove and Move after clamping; the interior
+    /// water click must remain unchanged.
+    #[test]
+    fn mobile_cell_dispatch_clamps_before_action_and_goal_resolution() {
+        use crate::app::input::commands::ordinary_cell_move_goal;
+        use crate::sim::world::{CellActionQuery, MoveAction};
+
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let (mut sim, rules, _) = Simulation::walk_cell_input_test_scene_with(retail.rules, false);
+        let owner = sim.interner.get("Local").unwrap();
+        let tank = sim
+            .spawn_object("MTNK", "Local", 12, 4, 0, &rules)
+            .expect("retail tank spawns");
+        sim.resolve_type_handles(&rules);
+
+        for (raw, expected_action) in [((7, 0), MoveAction::NoMove), ((16, 0), MoveAction::Move)] {
+            let clamped = sim.clamped_click_cell(raw);
+            assert_ne!(clamped, raw, "fixed edge input {raw:?} must clamp");
+            let action = |cell| {
+                sim.cell_move_action(
+                    owner,
+                    tank,
+                    cell,
+                    CellActionQuery {
+                        mouse_over: false,
+                        shift: false,
+                    },
+                    &rules,
+                    None,
+                )
+                .unwrap()
+            };
+            assert_eq!(action(raw), MoveAction::NoMove, "raw edge {raw:?}");
+            assert_eq!(action(clamped), expected_action, "clamped edge {raw:?}");
+
+            let prepared = context_order_cell(&sim, raw);
+            assert_eq!(action(prepared), expected_action, "dispatch action {raw:?}");
+
+            let goal = |cell| ordinary_cell_move_goal(&sim, &rules, None, owner, tank, cell, false);
+            let clamped_goal = goal(clamped);
+            assert_eq!(goal(prepared), clamped_goal, "dispatch destination {raw:?}");
+        }
+
+        let inside = (9, 5);
+        assert_eq!(sim.clamped_click_cell(inside), inside);
+        assert_eq!(context_order_cell(&sim, inside), inside);
+        assert_eq!(
+            sim.cell_move_action(
+                owner,
+                tank,
+                context_order_cell(&sim, inside),
+                CellActionQuery {
+                    mouse_over: false,
+                    shift: false,
+                },
+                &rules,
+                None,
+            )
+            .unwrap(),
+            MoveAction::NoMove
+        );
+        assert_eq!(
+            ordinary_cell_move_goal(
+                &sim,
+                &rules,
+                None,
+                owner,
+                tank,
+                context_order_cell(&sim, inside),
+                false,
+            ),
+            ordinary_cell_move_goal(&sim, &rules, None, owner, tank, inside, false)
+        );
+    }
 
     /// An all-berserk selection's left release follows the best object's
     /// class rung: Infantry NoMove (`0x0051F05E`, cell `0x0051FAAB`), Unit
