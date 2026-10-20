@@ -212,7 +212,7 @@ pub(crate) struct FormattedProfileSections {
     pub(crate) audio: [(&'static str, String); 7],
     pub(crate) network: [(&'static str, String); 4],
     /// VERA's own section, written after the native ones.
-    pub(crate) vera: [(&'static str, String); 9],
+    pub(crate) vera: [(&'static str, String); 8],
 }
 
 impl RetailOptionsLoad {
@@ -410,17 +410,7 @@ impl RetailOptionsProfile {
             self.sidebar = crate::ui::main_menu_dialogs::options::SidebarSize::from_ini_value(
                 vera.read_int("Sidebar", self.sidebar.ini_value()),
             );
-            self.yr_original_style = if vera.is_present("YROriginalStyle") {
-                vera.read_bool("YROriginalStyle", self.yr_original_style)
-            } else if vera.is_present("RA2Look") {
-                // Earlier VERA builds stored the opposite choice: true meant
-                // Red Alert 2, false meant Yuri's Revenge. ReadBool's old
-                // default was false, so a malformed legacy value migrates to
-                // the original YR choice just as it did before this key.
-                !vera.read_bool("RA2Look", false)
-            } else {
-                self.yr_original_style
-            };
+            self.yr_original_style = vera.read_bool("YROriginalStyle", false);
             self.shift_queue = vera.read_bool("ShiftQueue", self.shift_queue);
             // Absent keeps the current value; present-but-nonnumeric answers 0,
             // which the range lifts to 1 rather than a click that queues nothing.
@@ -513,10 +503,6 @@ impl RetailOptionsProfile {
                     "YROriginalStyle",
                     format_bool(self.yr_original_style).to_string(),
                 ),
-                // The preservation writer updates/inserts but does not delete
-                // omitted keys. Keep the legacy inverse coherent for downgrades;
-                // this version always treats YROriginalStyle as authoritative.
-                ("RA2Look", format_bool(!self.yr_original_style).to_string()),
                 ("ShiftQueue", format_bool(self.shift_queue).to_string()),
                 ("ShiftQueueCount", self.shift_queue_count.to_string()),
                 (
@@ -554,7 +540,8 @@ impl RetailOptionsProfile {
             .collect();
         let output =
             crate::util::ini_writer::set_ini_byte_values(&output, NETWORK_SECTION, &network);
-        apply_formatted_section(&output, VERA_SECTION, &formatted.vera)
+        let output = apply_formatted_section(&output, VERA_SECTION, &formatted.vera);
+        crate::util::ini_writer::remove_ini_keys(&output, VERA_SECTION, &["RA2Look"])
     }
 
     /// Commit the complete modeled profile with one read and one write.
@@ -1196,7 +1183,7 @@ mod tests {
 
         let load = load_snapshot(
             &RetailStartupOptions::default(),
-            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nRA2Look=yes\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\n",
+            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\n",
         );
         assert!(load.retained_profile.full_screen);
         // The first release saved the whole factor.
@@ -1226,7 +1213,7 @@ mod tests {
             String::from_utf8(profile.transform_ra2md(b"[Video]\r\nScreenWidth=800\r\n")).unwrap();
         assert!(
             output.contains(
-                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nRA2Look=no\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\n"
+                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\n"
             ),
             "{output}"
         );
@@ -1242,31 +1229,56 @@ mod tests {
     }
 
     #[test]
-    fn yr_original_style_defaults_to_ra2_and_migrates_ra2_look() {
+    fn yr_original_style_defaults_to_ra2_and_reads_only_its_own_key() {
         let defaults = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\n");
         assert!(
             !defaults.retained_profile.yr_original_style,
             "unchecked Original Yuri's Revenge Style selects the default RA2 look"
         );
 
-        let legacy_ra2 = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nRA2Look=yes\n");
-        assert!(
-            !legacy_ra2.retained_profile.yr_original_style,
-            "legacy RA2Look=yes must preserve the old RA2 choice"
-        );
-        let legacy_yuri = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nRA2Look=no\n");
-        assert!(
-            legacy_yuri.retained_profile.yr_original_style,
-            "legacy RA2Look=no must preserve the old Yuri's Revenge choice"
-        );
+        for value in ["yes", "no"] {
+            let ignored = load_snapshot(
+                &RetailStartupOptions::default(),
+                format!("[VERA]\nRA2Look={value}\n").as_bytes(),
+            );
+            assert!(
+                !ignored.retained_profile.yr_original_style,
+                "RA2Look={value} must not affect the default"
+            );
+        }
 
-        let explicit_new_key_wins = load_snapshot(
+        let explicit_new_key = load_snapshot(
             &RetailStartupOptions::default(),
-            b"[VERA]\nRA2Look=yes\nYROriginalStyle=no\n",
+            b"[VERA]\nYROriginalStyle=yes\n",
         );
         assert!(
-            !explicit_new_key_wins.retained_profile.yr_original_style,
-            "the new YR-original key must win over a conflicting legacy key"
+            explicit_new_key.retained_profile.yr_original_style,
+            "the YR-original preference must be read from its own key"
+        );
+    }
+
+    #[test]
+    fn saving_removes_ra2_look_and_preserves_other_profile_bytes() {
+        let profile = RetailOptionsProfile {
+            yr_original_style: true,
+            ..RetailOptionsProfile::default()
+        };
+        let input = b"[VERA]\r\n; retain this comment\r\nFullScreen=yes\r\nRA2Look=no ; remove this whole line\r\nUnknownSetting=keep\r\n[other]\nRA2Look=keep in another section\n[vera]\nra2look=yes\nShiftQueue=yes";
+        let output = String::from_utf8(profile.transform_ra2md(input)).unwrap();
+
+        assert_eq!(output.matches("RA2Look=").count(), 1, "{output}");
+        assert!(!output.contains("ra2look="), "{output}");
+        assert!(
+            output.contains("YROriginalStyle=yes\r\n"),
+            "new preference should be saved: {output}"
+        );
+        assert!(
+            output.contains("; retain this comment\r\nFullScreen=no\r\nUnknownSetting=keep\r\n"),
+            "keep the comment and unknown key while the modeled setting uses the profile: {output}"
+        );
+        assert!(
+            output.contains("[other]\nRA2Look=keep in another section\n"),
+            "only the VERA key should be removed: {output}"
         );
     }
 
