@@ -267,16 +267,20 @@ fn magnetron_temporary_bullet_tails_match_original_rng_lights_and_ids() {
             .anims
             .iter()
             .find(|(_, anim)| {
-                anim.native_unique_id as u64 == native_anims[index]["native_id"].as_u64().unwrap()
+                anim.native_unique_id() as u64 == native_anims[index]["native_id"].as_u64().unwrap()
             })
             .map(|(_, anim)| anim)
             .expect("interleaved native Anim allocation");
         assert_eq!(
-            sim.interner.resolve(anim.type_id),
+            sim.interner.resolve(anim.type_id()),
             native_anims[index]["name"]
         );
         assert_eq!(
-            serde_json::json!([anim.world_coord.x, anim.world_coord.y, anim.world_coord.z]),
+            serde_json::json!([
+                anim.world_coord().x,
+                anim.world_coord().y,
+                anim.world_coord().z
+            ]),
             native_anims[index]["location"]
         );
         assert_eq!(
@@ -1160,7 +1164,7 @@ fn fall_to_the_impact(sim: &mut Simulation, rules: &RuleSet) -> JumpjetFall {
             .substrate
             .anims
             .iter()
-            .filter(|(_, anim)| anim.type_id == boom)
+            .filter(|(_, anim)| anim.type_id() == boom)
             .count();
         sim.advance_tick(&[], Some(rules), Some(&grid), None, 67);
         if sim.sound_events.iter().any(|event| {
@@ -1191,7 +1195,7 @@ fn fall_to_the_impact(sim: &mut Simulation, rules: &RuleSet) -> JumpjetFall {
                     .substrate
                     .anims
                     .iter()
-                    .filter(|(_, anim)| anim.type_id == boom)
+                    .filter(|(_, anim)| anim.type_id() == boom)
                     .count()
                     - booms_before;
                 return fall;
@@ -1255,7 +1259,7 @@ fn a_shot_down_drainer_drops_its_link_and_ray_at_the_kill() {
         None
     );
     assert!(sim.anim(ray).is_none_or(|anim| {
-        !anim.in_logic_vector && sim.substrate.pending_delete.contains_object(&ray)
+        !anim.in_logic_vector() && sim.substrate.pending_delete.contains_object(&ray)
     }));
 }
 
@@ -1692,9 +1696,9 @@ fn retail_dustbowl_flak_shoots_a_harrier_down() {
                 .anims
                 .iter()
                 .filter(|(id, anim)| {
-                    !anims_before.contains(id) && impact_anims.contains(&anim.type_id)
+                    !anims_before.contains(id) && impact_anims.contains(&anim.type_id())
                 })
-                .map(|(_, anim)| sim.interner.resolve(anim.type_id).to_string())
+                .map(|(_, anim)| sim.interner.resolve(anim.type_id()).to_string())
                 .collect();
             break;
         };
@@ -1725,7 +1729,7 @@ fn retail_dustbowl_flak_shoots_a_harrier_down() {
                 rocking.angle_forwards().to_num::<f64>()
             );
             for (id, anim) in sim.substrate.anims.iter() {
-                if anim.type_id == smoke_type {
+                if anim.type_id() == smoke_type {
                     smoke.insert(*id);
                 }
             }
@@ -2009,7 +2013,7 @@ fn retail_dustbowl_flak_shoots_down_a_nighthawk_and_a_kirov() {
                     .anims
                     .iter()
                     .filter(|(anim_id, _)| !anims_before.contains(anim_id))
-                    .map(|(_, anim)| sim.interner.resolve(anim.type_id).to_string())
+                    .map(|(_, anim)| sim.interner.resolve(anim.type_id()).to_string())
                     .collect();
                 continue;
             };

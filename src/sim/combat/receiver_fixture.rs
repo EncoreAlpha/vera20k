@@ -194,8 +194,8 @@ fn constructed_anims(world: &Simulation) -> Vec<ConstructedAnimObservation> {
         .anims
         .iter()
         .map(|(_, anim)| ConstructedAnimObservation {
-            type_id: anim.type_id,
-            world_coord: anim.world_coord,
+            type_id: anim.type_id(),
+            world_coord: anim.world_coord(),
         })
         .collect()
 }

@@ -303,17 +303,17 @@ fn impact_effects_match_native() {
         let anim = sim.anim(new_anims[0]).unwrap();
         assert!(
             sim.interner
-                .resolve(anim.type_id)
+                .resolve(anim.type_id())
                 .eq_ignore_ascii_case(event[1].as_str().unwrap())
         );
-        let at = anim.world_coord;
+        let at = anim.world_coord();
         assert_eq!(vec![at.x, at.y, at.z], ints(&event[2]), "{row}");
         // (delay, loopCount, drawFlags, zAdjust, reverse)
         assert_eq!(
             (
-                i32::from(anim.runtime.loop_remaining),
-                anim.draw_flags,
-                anim.z_adjust
+                i32::from(anim.runtime().loop_remaining),
+                anim.draw_flags(),
+                anim.z_adjust()
             ),
             (int(&event[4]), int(&event[5]) as u32, int(&event[6])),
             "{row}"
@@ -691,7 +691,7 @@ fn psi_warnings(sim: &Simulation) -> Vec<Option<u64>> {
     sim.substrate
         .anims
         .iter()
-        .filter(|(_, anim)| sim.interner.resolve(anim.type_id) == "PSIWARN")
+        .filter(|(_, anim)| sim.interner.resolve(anim.type_id()) == "PSIWARN")
         .map(|(_, anim)| anim.attached_bullet())
         .collect()
 }
@@ -837,7 +837,7 @@ fn retail_nuclear_missile_rises_falls_and_strikes_its_target() {
         sim.substrate
             .anims
             .iter()
-            .filter(|(_, anim)| sim.interner.resolve(anim.type_id) == "PSIWARN")
+            .filter(|(_, anim)| sim.interner.resolve(anim.type_id()) == "PSIWARN")
             .any(|(_, anim)| sim.psi_warning_detected_by(viewer, anim, &rules))
     };
     let place = |sim: &mut Simulation, kind, owner, at: (u16, u16)| {
@@ -902,7 +902,7 @@ fn retail_nuclear_missile_rises_falls_and_strikes_its_target() {
         .awaited_anim()
         .expect("NUKEBALL stands");
     assert_eq!(
-        sim.interner.resolve(sim.anim(ball).unwrap().type_id),
+        sim.interner.resolve(sim.anim(ball).unwrap().type_id()),
         "NUKEBALL"
     );
     let lighting = sim.session.lighting();
@@ -1036,7 +1036,7 @@ fn impact_waiting_nuke(sim: &mut Simulation, rules: &RuleSet) -> (u64, AnimId) {
         .awaited_anim()
         .expect("the real impact constructed NUKEBALL");
     assert_eq!(
-        sim.interner.resolve(sim.anim(ball).unwrap().type_id),
+        sim.interner.resolve(sim.anim(ball).unwrap().type_id()),
         "NUKEBALL"
     );
     (id, ball)
@@ -1142,7 +1142,11 @@ fn nuke_awaited_anim_retirement_routes_release_before_next_bullet_visit() {
             }
             "building scalar" => sim.scalar_delete_anim(ball),
             "terrain scalar" => {
-                sim.substrate.anims.get_mut(ball).unwrap().terrain_attached = true;
+                sim.substrate
+                    .anims
+                    .get_mut(ball)
+                    .unwrap()
+                    .set_terrain_attached_for_test(true);
                 assert_eq!(sim.scalar_delete_load_terrain_anims(), 1);
             }
             "deferred finalizer" => {
@@ -1213,7 +1217,7 @@ fn nuke_awaited_anim_retirement_routes_release_before_next_bullet_visit() {
             !sim.substrate
                 .anims
                 .iter()
-                .any(|(_, anim)| sim.interner.resolve(anim.type_id) == "NUKEBALL")
+                .any(|(_, anim)| sim.interner.resolve(anim.type_id()) == "NUKEBALL")
         );
         assert!(
             !sim.sound_events
@@ -1246,7 +1250,7 @@ fn nuke_awaited_anim_expiry_after_waiter_retirement_is_safe() {
     );
     let unrelated = sim
         .anims()
-        .find(|(other, anim)| **other != ball && sim.interner.resolve(anim.type_id) == "NUKEBALL")
+        .find(|(other, anim)| **other != ball && sim.interner.resolve(anim.type_id()) == "NUKEBALL")
         .map(|(&id, _)| id)
         .unwrap();
     sim.notify_anim_pointer_expired(unrelated);
@@ -1316,7 +1320,7 @@ fn nuke_shared_anim_waiters_keep_live_cursor_compaction() {
         run_until(&mut sim, &rules, 3, |sim| sim.projectiles.is_empty());
         assert!(
             !sim.anims()
-                .any(|(_, anim)| sim.interner.resolve(anim.type_id) == "NUKEBALL")
+                .any(|(_, anim)| sim.interner.resolve(anim.type_id()) == "NUKEBALL")
         );
     }
 }

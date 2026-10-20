@@ -769,22 +769,26 @@ fn assert_recorded_anim_states(
             .get(ids[pointer.as_str().unwrap()])
             .unwrap();
         assert_eq!(
-            fixture.sim.interner.resolve(anim.type_id),
+            fixture.sim.interner.resolve(anim.type_id()),
             constructor["name"].as_str().unwrap(),
             "{name}: Anim type"
         );
         assert_eq!(
-            [anim.world_coord.x, anim.world_coord.y, anim.world_coord.z],
+            [
+                anim.world_coord().x,
+                anim.world_coord().y,
+                anim.world_coord().z
+            ],
             xyz(&expected["location"]),
             "{name}: retained Anim XYZ"
         );
         assert_eq!(
-            anim.draw_flags,
+            anim.draw_flags(),
             expected["draw_flags"].as_u64().unwrap() as u32,
             "{name}: Anim draw flags"
         );
         assert_eq!(
-            anim.z_adjust,
+            anim.z_adjust(),
             signed(&expected["z_adjust"]),
             "{name}: Anim z adjust"
         );
@@ -796,9 +800,9 @@ fn assert_recorded_anim_states(
                 let raw = event["args"][0].as_u64().unwrap();
                 (raw != 0).then(|| fixture.id(&json!(format!("0x{raw:x}"))).unwrap())
             });
-        assert_eq!(anim.owner_entity, owner, "{name}: Anim attachment");
+        assert_eq!(anim.owner_entity(), owner, "{name}: Anim attachment");
         let expected = &expected["runtime"];
-        let runtime = &anim.runtime;
+        let runtime = &anim.runtime();
         for (actual, key) in [
             (runtime.current_frame, "current_frame"),
             (runtime.frame_step, "frame_step"),

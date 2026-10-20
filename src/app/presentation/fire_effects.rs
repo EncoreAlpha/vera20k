@@ -78,7 +78,7 @@ fn weapon_wave_visible(
             u16::try_from(point.y.div_euclid(256)).ok()?,
         ))
     };
-    let (Some((sx, sy)), Some((tx, ty))) = (cell(wave.source), cell(wave.target)) else {
+    let (Some((sx, sy)), Some((tx, ty))) = (cell(wave.source()), cell(wave.target())) else {
         return false;
     };
     wave.visible_through_fog(
@@ -110,9 +110,9 @@ pub(crate) fn build_magnetic_wave_draws(
                 MagneticWaveDraw {
                     polygon: geometry.polygon,
                     source_point: geometry.source_point,
-                    source_z: wave.source.z,
-                    phase: wave.lifetime,
-                    direction: u8::try_from(wave.direction_octant).ok()?,
+                    source_z: wave.source().z,
+                    phase: wave.lifetime(),
+                    direction: u8::try_from(wave.direction_octant()).ok()?,
                     // VERA's existing scene Z is contiguous. Native ring
                     // fallback can differ by one clipping-edge pixel; C32's
                     // production footprints remain inside both margins.
@@ -267,7 +267,7 @@ mod tests {
                     .substrate
                     .anims
                     .iter()
-                    .find(|(_, anim)| anim.type_id == flash_type)
+                    .find(|(_, anim)| anim.type_id() == flash_type)
                     .expect("the real muzzle AnimClass exists");
                 assert_eq!(
                     sim.anim_absolute_coord(*flash_id),
@@ -278,11 +278,11 @@ mod tests {
                     })
                 );
                 assert!(
-                    flash.owner_entity.is_none(),
+                    flash.owner_entity().is_none(),
                     "a building flash stays at its birth"
                 );
                 assert_eq!(
-                    flash.z_adjust,
+                    flash.z_adjust(),
                     fire_coord::building_muzzle_z_adjust(event.fire_offset_y, false)
                 );
                 let sounds = weapon_report_sounds(&sim, std::slice::from_ref(&event));

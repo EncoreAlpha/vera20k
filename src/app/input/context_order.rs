@@ -279,6 +279,30 @@ pub(crate) fn attack_action(
     {
         action = AttackAction::NoMove;
     }
+    // A player's Deployer= infantryman in Doing 27..30 (Type+0xEC8,
+    // +0x6C4) keeps Attack only for a DeployFire= type (+0x6AC) whose
+    // SelectWeapon(NULL) weapon reaches the target, else NoMove: over an
+    // object CanFireAt (vt+0x3A8, Infantry51EB81..51EC11), on a Cell
+    // IsCloseEnough3D (vt+0x164 0x6F7970, which asks CanFireAt on the Cell
+    // under the Cell's centre; Infantry51F8BB..51F94E).
+    if action == AttackAction::Attack
+        && actor.category() == EntityCategory::Infantry
+        && human
+        && kind.deployer
+        && actor.infantry_deploy_doing()
+        && (!kind.deploy_fire
+            || !resolved_unit_in_range(
+                sim,
+                actor_id,
+                target,
+                Some(rules),
+                sim.resolved_terrain.as_ref(),
+                overlay_registry,
+                None,
+            ))
+    {
+        action = AttackAction::NoMove;
+    }
     // Infantry51EE3B..51EEEF: a player's Infiltrate= infantryman's Attack is
     // Capture over a building it may infiltrate, which its producers ask
     // first (Simulation::infiltrator_building_action); otherwise it is 0
@@ -610,6 +634,17 @@ fn attack_branch_orders(
             continue;
         }
         attack_receivers.insert(id);
+        // Unit 0x738890 and Infantry 0x51F190 ClickedAction_Object hand an
+        // object click's 2 to Foot 0x4D74E0, which moves near the object, as
+        // the unforced click does (`object_attack_click_command`).
+        if action == AttackAction::NoMove
+            && !is_structure
+            && let TargetKind::Entity(target_id) = attack_target
+        {
+            consumed_attack_action = true;
+            queued.extend(no_move_near_object(sim, rules, id, target_id));
+            continue;
+        }
         match action {
             AttackAction::None | AttackAction::NoMove => consumed_attack_action = true,
             AttackAction::Rally => unreachable!("rally remains with its existing receiver"),
@@ -625,21 +660,11 @@ fn attack_branch_orders(
                     TargetKind::Entity(target_id) => {
                         match infantry_attack_action(sim, rules, id, target_id) {
                             Some(InfantryAttackAction::NoMove) => {
-                                let owner = sim.entities().get(id).expect("action actor").owner();
-                                let Some(destination) =
-                                    crate::app::input::commands::object_move_destination(
-                                        sim,
-                                        rules,
-                                        owner,
-                                        id,
-                                        target_id,
-                                        crate::sim::world::MoveAction::NoMove,
-                                        false,
-                                    )
+                                let Some(command) = no_move_near_object(sim, rules, id, target_id)
                                 else {
                                     continue;
                                 };
-                                move_click_command(sim, rules, OrderMode::Move, id, destination)
+                                command
                             }
                             Some(InfantryAttackAction::Infiltrate) => Command::CaptureBuilding {
                                 engineer_id: id,
@@ -670,6 +695,33 @@ fn attack_branch_orders(
         consumed: consumed_attack_action,
         select_fallback,
     }
+}
+
+/// Foot `0x004D74E0` case 2 for a forced object click: a Move near the
+/// object.
+fn no_move_near_object(
+    sim: &crate::sim::world::Simulation,
+    rules: &crate::rules::ruleset::RuleSet,
+    id: u64,
+    target_id: u64,
+) -> Option<Command> {
+    let owner = sim.entities().get(id)?.owner();
+    let destination = crate::app::input::commands::object_move_destination(
+        sim,
+        rules,
+        owner,
+        id,
+        target_id,
+        crate::sim::world::MoveAction::NoMove,
+        false,
+    )?;
+    Some(move_click_command(
+        sim,
+        rules,
+        OrderMode::Move,
+        id,
+        destination,
+    ))
 }
 
 /// INI voice key for the mission a command commits.

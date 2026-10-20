@@ -74,7 +74,7 @@ fn native_trigger_reveal_cell_put_discovers_unshrouded_campaign_resident() {
         if revealed {
             plane.mark_visible(10, 10);
         }
-        sim.fog.by_owner.insert(player, plane);
+        sim.fog.by_owner_mut_for_test().insert(player, plane);
         let typ = sim.interner.intern("E1");
         let mut actor = GameEntity::new_at_frame_for_test(
             1,
@@ -2399,7 +2399,7 @@ fn insert_particle_system(sim: &mut Simulation, stable_id: u64) {
             crate::rules::particle_system_type::ParticleSystemTypeId(0),
             IVec3::ZERO,
         );
-        system.facing = 0;
+        system.set_facing_for_test(0);
         system
     });
 }
@@ -2682,7 +2682,7 @@ fn particle_logic_membership_uses_the_object_local_guard_and_rebuilds_it() {
             .particle_systems
             .get(7)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     assert_eq!(sim.live_object_order_snapshot(), vec![7]);
 
@@ -2693,14 +2693,14 @@ fn particle_logic_membership_uses_the_object_local_guard_and_rebuilds_it() {
         .particle_systems
         .get_mut(7)
         .unwrap()
-        .in_logic_vector = false;
+        .set_in_logic_vector_for_test(false);
     sim.rebuild_logic_membership();
     assert!(
         sim.substrate
             .particle_systems
             .get(7)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     sim.debug_assert_logic_membership_consistent();
 
@@ -2710,7 +2710,7 @@ fn particle_logic_membership_uses_the_object_local_guard_and_rebuilds_it() {
             .particle_systems
             .get(7)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     assert!(sim.live_object_order_snapshot().is_empty());
 }
@@ -3815,7 +3815,7 @@ fn detach_sensor_guard_applies_to_techno_but_not_constructed_terrain() {
                 .sensor_deposit
                 .is_some()
         );
-        let sensor_counts = sim.fog.sensors_by_house.clone();
+        let sensor_counts = sim.fog.sensors_by_house().clone();
         let registered = sim.live_object_order_snapshot();
         sim.session.set_binary_frame_for_test(105);
         {
@@ -3988,7 +3988,7 @@ fn detach_sensor_guard_applies_to_techno_but_not_constructed_terrain() {
             sim.scenario_rng.logical_state(),
             expected_rng.logical_state()
         );
-        assert_eq!(sim.fog.sensors_by_house, sensor_counts);
+        assert_eq!(sim.fog.sensors_by_house(), &sensor_counts);
         assert_eq!(sim.terrain_objects.cell_index()[&(16, 16)], tree);
         assert!(sim.terrain_objects.objects()[&tree].is_live());
         assert_eq!(sim.live_object_order_snapshot(), registered);
@@ -4074,7 +4074,7 @@ fn particle_system_retirement_clears_only_the_indexed_techno_spark_link() {
         .particle_systems
         .get_mut(1)
         .unwrap()
-        .done_spawning = true;
+        .set_done_spawning_for_test(true);
     let rng = [
         sim.scenario_rng.native_state_hex(),
         sim.main_rng.native_state_hex(),
@@ -4193,21 +4193,21 @@ fn pointer_expiry_stops_particle_owner_without_deleting_living_children() {
     insert_particle_system(&mut sim, 4);
     let _ = sim.reveal(3);
     let owned = sim.substrate.particle_systems.get_mut(1).unwrap();
-    owned.owner_entity = Some(3);
+    owned.set_owner_entity_for_test(Some(3));
     let mut child = crate::sim::particles::Particle::test_fixture(
         crate::rules::particle_type::ParticleTypeId(0),
         IVec3::new(500, 700, 90),
     );
-    child.lifetime_remaining = 71;
-    owned.particles.push(child);
+    child.set_lifetime_remaining_for_test(71);
+    owned.particles_mut_for_test().push(child);
     let attached = sim.substrate.particle_systems.get_mut(2).unwrap();
-    attached.owner_entity = Some(3);
-    attached.target_ref = Some(crate::sim::combat::TargetKind::Entity(3));
+    attached.set_owner_entity_for_test(Some(3));
+    attached.set_target_ref_for_test(Some(crate::sim::combat::TargetKind::Entity(3)));
     sim.substrate
         .particle_systems
         .get_mut(4)
         .unwrap()
-        .target_ref = Some(crate::sim::combat::TargetKind::Entity(3));
+        .set_target_ref_for_test(Some(crate::sim::combat::TargetKind::Entity(3)));
     let rng = [
         sim.scenario_rng.native_state_hex(),
         sim.main_rng.native_state_hex(),
@@ -4217,24 +4217,24 @@ fn pointer_expiry_stops_particle_owner_without_deleting_living_children() {
     sim.uninit(3);
 
     let owned = sim.substrate.particle_systems.get(1).unwrap();
-    assert!(owned.owner_entity.is_none());
-    assert!(owned.done_spawning, "owner+E0 expiry sets done+F8");
-    assert_eq!(owned.particles.len(), 1);
-    assert_eq!(owned.particles[0].lifetime_remaining, 71);
-    assert_eq!(owned.particles[0].coords, IVec3::new(500, 700, 90));
-    assert!(!owned.particles[0].marked_for_deletion);
+    assert!(owned.owner_entity().is_none());
+    assert!(owned.done_spawning(), "owner+E0 expiry sets done+F8");
+    assert_eq!(owned.particles().len(), 1);
+    assert_eq!(owned.particles()[0].lifetime_remaining(), 71);
+    assert_eq!(owned.particles()[0].coords(), IVec3::new(500, 700, 90));
+    assert!(!owned.particles()[0].marked_for_deletion());
     assert!(
         owned.alive(),
         "living children retain their system for its own AI"
     );
     let attached = sim.substrate.particle_systems.get(2).unwrap();
-    assert!(attached.owner_entity.is_none());
-    assert!(attached.target_ref.is_none());
-    assert!(attached.done_spawning);
+    assert!(attached.owner_entity().is_none());
+    assert!(attached.target_ref().is_none());
+    assert!(attached.done_spawning());
     let target_only = sim.substrate.particle_systems.get(4).unwrap();
-    assert!(target_only.target_ref.is_none());
+    assert!(target_only.target_ref().is_none());
     assert!(
-        !target_only.done_spawning,
+        !target_only.done_spawning(),
         "target+E4 expiry has no done write"
     );
     assert_eq!(
@@ -4262,7 +4262,7 @@ fn completed_empty_smoke_limbo_clears_every_matching_techno_before_late_drain() 
         .particle_systems
         .get_mut(4)
         .unwrap()
-        .owner_entity = Some(1);
+        .set_owner_entity_for_test(Some(1));
     for (id, smoke_id) in [(1, 4), (2, 4), (3, 5)] {
         sim.substrate
             .entities
@@ -4290,9 +4290,9 @@ fn completed_empty_smoke_limbo_clears_every_matching_techno_before_late_drain() 
     assert!(sim.substrate.pending_delete.is_empty());
 
     let system = sim.substrate.particle_systems.get_mut(4).unwrap();
-    system.done_spawning = true;
+    system.set_done_spawning_for_test(true);
     system
-        .particles
+        .particles_mut_for_test()
         .push(crate::sim::particles::Particle::test_fixture(
             crate::rules::particle_type::ParticleTypeId(0),
             IVec3::ZERO,
@@ -4313,7 +4313,7 @@ fn completed_empty_smoke_limbo_clears_every_matching_techno_before_late_drain() 
         .particle_systems
         .get_mut(4)
         .unwrap()
-        .particles
+        .particles_mut_for_test()
         .clear();
     sim.lifecycle_test_events.clear();
     sim.retire_particle_system(4, super::UninitContext::default());
@@ -4342,7 +4342,7 @@ fn completed_empty_smoke_limbo_clears_every_matching_techno_before_late_drain() 
     let system = sim.substrate.particle_systems.get(4).unwrap();
     assert!(!system.alive());
     assert!(system.in_limbo());
-    assert!(!system.in_logic_vector);
+    assert!(!system.in_logic_vector());
     assert_eq!(sim.substrate.pending_delete.object_ids(), vec![4]);
     assert_eq!(sim.substrate.display.layer_of(4), None);
     let visited = sim
@@ -4435,7 +4435,7 @@ fn particle_system_physical_disposal_removes_retained_child_air_entries() {
         system_id,
         crate::sim::world::UninitContext::with_rules(&rules)
     ));
-    let child_id = sim.particle_systems().get(system_id).unwrap().particles[0].stable_id();
+    let child_id = sim.particle_systems().get(system_id).unwrap().particles()[0].stable_id();
     assert_eq!(
         sim.substrate.display.layer_of(child_id),
         Some(super::display_layers::DisplayLayer::AIR)
@@ -5355,13 +5355,13 @@ fn lifecycle_authority_set_logic_order_for_test_synchronizes_all_membership_flag
 
     sim.set_logic_order_for_test(vec![3, 4, 1]);
     assert_eq!(sim.live_object_order_snapshot(), vec![3, 4, 1]);
-    assert!(sim.substrate.anims.get(3).unwrap().in_logic_vector);
+    assert!(sim.substrate.anims.get(3).unwrap().in_logic_vector());
     assert!(
         sim.substrate
             .particle_systems
             .get(4)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     assert!(
         sim.substrate
@@ -5383,13 +5383,13 @@ fn lifecycle_authority_set_logic_order_for_test_synchronizes_all_membership_flag
 
     sim.set_logic_order_for_test(vec![2]);
     assert_eq!(sim.live_object_order_snapshot(), vec![2]);
-    assert!(!sim.substrate.anims.get(3).unwrap().in_logic_vector);
+    assert!(!sim.substrate.anims.get(3).unwrap().in_logic_vector());
     assert!(
         !sim.substrate
             .particle_systems
             .get(4)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     assert!(
         !sim.substrate
@@ -5858,14 +5858,14 @@ fn gsi_05_02_mixed_six_family_order_roundtrips_and_dispatches_every_slot() {
             .in_logic_vector
             .is_member()
     );
-    assert!(restored.waves.get(mixed[2]).unwrap().in_logic_vector);
+    assert!(restored.waves.get(mixed[2]).unwrap().in_logic_vector());
     assert!(
         restored
             .substrate
             .anims
             .get(mixed[3])
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
     assert!(restored.projectiles.get(mixed[4]).unwrap().in_logic_vector);
     assert!(
@@ -5874,7 +5874,7 @@ fn gsi_05_02_mixed_six_family_order_roundtrips_and_dispatches_every_slot() {
             .particle_systems
             .get(mixed[5])
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
 
     let mut visited = Vec::new();
@@ -5925,7 +5925,7 @@ fn substrate_registration_and_removal_dispatch_is_order_identical() {
         sim.live_object_order_snapshot(),
         vec![terrain_id, entity_id, anim_id, projectile_id, particle_id]
     );
-    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector);
+    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector());
     assert!(
         sim.terrain_objects
             .objects()
@@ -5941,14 +5941,14 @@ fn substrate_registration_and_removal_dispatch_is_order_identical() {
             .in_logic_vector
             .is_member()
     );
-    assert!(sim.substrate.anims.get(anim_id).unwrap().in_logic_vector);
+    assert!(sim.substrate.anims.get(anim_id).unwrap().in_logic_vector());
     assert!(sim.projectiles.get(projectile_id).unwrap().in_logic_vector);
     assert!(
         sim.substrate
             .particle_systems
             .get(particle_id)
             .unwrap()
-            .in_logic_vector
+            .in_logic_vector()
     );
 
     // The flag gates a second removal; re-registration tail-appends rather
@@ -5966,7 +5966,7 @@ fn substrate_registration_and_removal_dispatch_is_order_identical() {
             wave_id
         ]
     );
-    assert!(sim.waves.get(wave_id).unwrap().in_logic_vector);
+    assert!(sim.waves.get(wave_id).unwrap().in_logic_vector());
 
     // The retire subset dispatches through the same classifier: Terrain /
     // Bullet / Wave retire; Entity and Anim do not.
@@ -6015,7 +6015,7 @@ fn gsi_05_02_tail_appends_run_same_pass_and_terminal_current_skips_successor() {
         // BulletType 46C4F0 places this ground-level launch at floor + 1.
         ProjectileCoord::new(64, 1, 1)
     );
-    assert_eq!(sim.waves.get(wave_id).unwrap().lifetime, 99);
+    assert_eq!(sim.waves.get(wave_id).unwrap().lifetime(), 99);
 
     let mut removal = Simulation::new();
     let terminal_id = removal.allocate_stable_id();
@@ -6041,7 +6041,7 @@ fn gsi_05_02_tail_appends_run_same_pass_and_terminal_current_skips_successor() {
         removal.substrate.pending_delete.object_ids(),
         vec![terminal_id]
     );
-    assert_eq!(removal.waves.get(successor_id).unwrap().lifetime, 100);
+    assert_eq!(removal.waves.get(successor_id).unwrap().lifetime(), 100);
     removal.debug_assert_logic_membership_consistent();
 }
 
@@ -6202,7 +6202,7 @@ fn gsi_05_03_terminal_non_entities_remain_resolvable_until_common_drain() {
         ProjectileCoord::new(0, 0, 0),
         ProjectileCoord::new(256, 0, 0),
     );
-    terminal_wave.lifetime = 0;
+    terminal_wave.set_lifetime_for_test(0);
     sim.admit_wave(wave_id, terminal_wave);
     assert!(sim.object_ai_visit_one(wave_id, None, ObjectAiCtx::default()));
 
@@ -6215,7 +6215,7 @@ fn gsi_05_03_terminal_non_entities_remain_resolvable_until_common_drain() {
     assert!(sim.waves.get(wave_id).is_some());
     assert!(!sim.terrain_objects.objects()[&terrain_id].in_logic_vector());
     assert!(!sim.projectiles.get(projectile_id).unwrap().in_logic_vector);
-    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector);
+    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector());
     assert_eq!(
         sim.substrate.pending_delete.object_ids(),
         vec![terrain_id, projectile_id, wave_id]
@@ -7039,14 +7039,18 @@ fn wave_pointer_expiry_target_survives_dying_then_uninit_starts_decay_tail() {
         .waves
         .advance_one(wave_id, represented, sim.resolved_terrain.as_ref())
         .expect("represented Wave AI");
-    assert!(sim.waves.get(wave_id).unwrap().active_geometry);
-    assert!(!sim.waves.get(wave_id).unwrap().decaying);
+    assert!(sim.waves.get(wave_id).unwrap().active_geometry());
+    assert!(!sim.waves.get(wave_id).unwrap().decaying());
 
     sim.uninit(target_id);
 
     let wave = sim.waves.get(wave_id).expect("Wave remains represented");
-    assert_eq!(wave.owner_id, Some(owner_id));
-    assert_eq!(wave.target_ref, None, "UnInit synchronously expires +0xAC");
+    assert_eq!(wave.owner_id(), Some(owner_id));
+    assert_eq!(
+        wave.target_ref(),
+        None,
+        "UnInit synchronously expires +0xAC"
+    );
     assert_eq!(sim.active_wave_links.get(&owner_id), Some(&wave_id));
     let expired = sim.wave_update_context(sim.waves.get(wave_id).unwrap(), None);
     assert_eq!(expired.target_position, None);
@@ -7055,8 +7059,8 @@ fn wave_pointer_expiry_target_survives_dying_then_uninit_starts_decay_tail() {
         .advance_one(wave_id, expired, sim.resolved_terrain.as_ref())
         .expect("post-expiry Wave AI");
     let wave = sim.waves.get(wave_id).unwrap();
-    assert!(!wave.active_geometry);
-    assert!(wave.decaying, "null target activates the decay/fade tail");
+    assert!(!wave.active_geometry());
+    assert!(wave.decaying(), "null target activates the decay/fade tail");
 }
 
 #[test]
@@ -7129,9 +7133,9 @@ fn wave_pointer_expiry_owner_allows_dying_damage_then_uninit_nulls_later_calls()
     );
 
     sim.uninit(owner_id);
-    assert_eq!(sim.waves.get(wave_id).unwrap().owner_id, None);
+    assert_eq!(sim.waves.get(wave_id).unwrap().owner_id(), None);
     assert_eq!(
-        sim.waves.get(wave_id).unwrap().target_ref,
+        sim.waves.get(wave_id).unwrap().target_ref(),
         Some(TargetKind::Cell(4, 5)),
         "owner expiry does not clear an unrelated CellClass target",
     );
@@ -7186,8 +7190,8 @@ fn wave_pointer_expiry_ignores_unrelated_object_and_preserves_owner_link() {
     sim.uninit(unrelated_id);
 
     let wave = sim.waves.get(wave_id).expect("unrelated expiry keeps Wave");
-    assert_eq!(wave.owner_id, Some(owner_id));
-    assert_eq!(wave.target_ref, Some(TargetKind::Entity(target_id)));
+    assert_eq!(wave.owner_id(), Some(owner_id));
+    assert_eq!(wave.target_ref(), Some(TargetKind::Entity(target_id)));
     assert_eq!(sim.active_wave_links.get(&owner_id), Some(&wave_id));
 }
 
@@ -7335,10 +7339,10 @@ fn gsi_01_05_terminal_wave_damages_once_before_single_current_removal() {
         ProjectileCoord::new(4 * 256, 5 * 256, 0),
         ProjectileCoord::new(5 * 256, 5 * 256, 0),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 5)]);
     sim.admit_wave(wave_id, wave);
     sim.set_logic_order_for_test(vec![wave_id, victim_id, successor_id]);
@@ -7386,7 +7390,7 @@ fn gsi_01_05_terminal_wave_damages_once_before_single_current_removal() {
         vec![victim_id, successor_id]
     );
     assert!(sim.waves.get(wave_id).is_some());
-    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector);
+    assert!(!sim.waves.get(wave_id).unwrap().in_logic_vector());
     assert_eq!(
         sim.lifecycle_test_events
             .iter()
@@ -7419,10 +7423,10 @@ fn terminal_type_zero_wave_with_empty_recorded_vector_has_no_damage_area_tail() 
         ProjectileCoord::new(4 * 256, 5 * 256, 0),
         ProjectileCoord::new(5 * 256, 5 * 256, 0),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     sim.admit_wave(wave_id, wave);
     sim.active_wave_links.insert(firer_id, wave_id);
     sim.scenario_rng = crate::sim::rng::SimRng::new(0x45_4d_50_54_59);
@@ -7511,10 +7515,10 @@ fn wave_elite_ambient_damage_carries_within_cell_and_resets_on_next_cell() {
         ProjectileCoord::new(4 * 256, 5 * 256, 0),
         ProjectileCoord::new(6 * 256, 5 * 256, 0),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![
         WaveRecordedCell::real(4, 5),
         WaveRecordedCell::real(5, 5),
@@ -7645,10 +7649,10 @@ fn wave_shared_damage_passes_a_unit_inside_its_war_factory() {
         ProjectileCoord::new(4 * 256, 5 * 256, 0),
         ProjectileCoord::new(6 * 256, 5 * 256, 0),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 5)]);
     sim.admit_wave(wave_id, wave);
 
@@ -7733,10 +7737,10 @@ fn wave_walks_nonbuilding_terrain_building_order_and_terrain_owns_wood_gate() {
             ProjectileCoord::new(4 * 256, 5 * 256, 0),
             ProjectileCoord::new(6 * 256, 5 * 256, 0),
         );
-        wave.active_geometry = false;
-        wave.decaying = true;
-        wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-        wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+        wave.set_active_geometry_for_test(false);
+        wave.set_decaying_for_test(true);
+        wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+        wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
         wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 5)]);
         sim.admit_wave(wave_id, wave);
         sim.lifecycle_test_events.clear();
@@ -7846,10 +7850,10 @@ fn wave_tail_consumes_wall_roll_before_mandatory_cliff_chance_roll() {
         ProjectileCoord::new(0, 0, 0),
         ProjectileCoord::new(4 * 256, 256, 50),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 1)]);
     sim.admit_wave(wave_id, wave);
 
@@ -7960,10 +7964,10 @@ fn assert_direct_fatal_death_weapon_starts_crater(bridge: bool) {
             ProjectileCoord::new(4 * 256, 5 * 256, 0),
             ProjectileCoord::new(5 * 256, 5 * 256, 0),
         );
-        wave.active_geometry = false;
-        wave.decaying = true;
-        wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-        wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+        wave.set_active_geometry_for_test(false);
+        wave.set_decaying_for_test(true);
+        wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+        wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
         wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 5)]);
         sim.admit_wave(wave_id, wave);
 
@@ -8143,10 +8147,10 @@ fn wave_cliff_collapse_consumes_exact_body_rng_and_spawns_row_major_anims() {
         ProjectileCoord::new(0, 0, 0),
         ProjectileCoord::new(4 * 256, 256, 50),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![WaveRecordedCell::real(4, 1)]);
     sim.admit_wave(wave_id, wave);
 
@@ -8239,14 +8243,14 @@ fn wave_cliff_collapse_consumes_exact_body_rng_and_spawns_row_major_anims() {
             (
                 names
                     .iter()
-                    .position(|name| *name == sim.interner.resolve(anim.type_id))
+                    .position(|name| *name == sim.interner.resolve(anim.type_id()))
                     .expect("one of the three cliff anim types"),
-                anim.world_coord,
-                anim.runtime.delay_remaining,
-                anim.runtime.rate_reload,
-                anim.draw_flags,
-                anim.runtime.loop_remaining,
-                anim.runtime.constructor_reverse,
+                anim.world_coord(),
+                anim.runtime().delay_remaining,
+                anim.runtime().rate_reload,
+                anim.draw_flags(),
+                anim.runtime().loop_remaining,
+                anim.runtime().constructor_reverse,
             )
         })
         .collect::<Vec<_>>();
@@ -8385,10 +8389,10 @@ fn gsi_01_05_wave_reselects_live_cell_list_after_fatal_receiver_unmark() {
         ProjectileCoord::new(4 * 256, 5 * 256, 0),
         ProjectileCoord::new(6 * 256, 5 * 256, 0),
     );
-    wave.active_geometry = false;
-    wave.decaying = true;
-    wave.fade_in = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
-    wave.fade_out = NativeF64Bits::from_bits(0x3fa9_9999_a000_0000);
+    wave.set_active_geometry_for_test(false);
+    wave.set_decaying_for_test(true);
+    wave.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
+    wave.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fa9_9999_a000_0000));
     wave.replace_recorded_cells(vec![
         WaveRecordedCell::real(4, 5),
         WaveRecordedCell::real(5, 5),
@@ -9284,8 +9288,11 @@ fn mixed_display_lifecycle_matches_original_sequences_and_save_restore() {
                 }
                 "particle" => {
                     insert_particle_system(&mut sim, id);
-                    sim.substrate.particle_systems.get_mut(id).unwrap().coords =
-                        IVec3::from_array(xyz);
+                    sim.substrate
+                        .particle_systems
+                        .get_mut(id)
+                        .unwrap()
+                        .set_coords_for_test(IVec3::from_array(xyz));
                 }
                 "terrain" => {
                     let terrain = {
@@ -9385,8 +9392,11 @@ fn mixed_display_lifecycle_matches_original_sequences_and_save_restore() {
                             .position
                             .set_sub_y_for_test(SimFixed::from_num(xyz[1] % 256));
                     } else {
-                        sim.substrate.particle_systems.get_mut(id).unwrap().coords =
-                            IVec3::from_array(xyz);
+                        sim.substrate
+                            .particle_systems
+                            .get_mut(id)
+                            .unwrap()
+                            .set_coords_for_test(IVec3::from_array(xyz));
                     }
                 }
                 _ => unreachable!(),

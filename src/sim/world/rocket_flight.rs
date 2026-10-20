@@ -460,7 +460,7 @@ pub(super) mod retail_tests {
                 let sim = &runtime.simulation;
                 for (&id, anim) in sim.anims() {
                     if seen_anims.insert(id) {
-                        anim_names.insert(sim.interner.resolve(anim.type_id).to_owned());
+                        anim_names.insert(sim.interner.resolve(anim.type_id()).to_owned());
                     }
                 }
                 // Detonate's UnInit leaves the frame's pending-delete flush.
@@ -1126,8 +1126,8 @@ pub(super) mod retail_tests {
                 .filter(|(id, _)| !seen_anims.contains(*id))
                 .map(|(_, anim)| {
                     (
-                        sim.interner.resolve(anim.type_id).to_ascii_uppercase(),
-                        anim.world_coord,
+                        sim.interner.resolve(anim.type_id()).to_ascii_uppercase(),
+                        anim.world_coord(),
                     )
                 })
                 .collect();

@@ -1197,7 +1197,9 @@ use crate::util::save_codec;
 // states; the session no longer carries a separate copy of that order.
 // 446 -> 447: terrain objects and ore growth leave the production state for
 // their own owners (the terrain object store, the ore growth config/state).
-const SNAPSHOT_VERSION: u32 = 447;
+// 447 -> 448: GameEntity retains UnitClass's signed firing counter across
+// LimboLaunch/parasite release. Its positional entity payload grows by a dword.
+const SNAPSHOT_VERSION: u32 = 448;
 
 const SNAPSHOT_PRODUCT_MAGIC: [u8; 8] = *b"VERA20K\0";
 const SNAPSHOT_ENVELOPE_VERSION: u32 = 1;
@@ -1939,7 +1941,7 @@ impl RestoredObjectIndex {
             highest_id = highest_id.max(registry_id);
         }
         for (&registry_id, anim) in sim.substrate.anims.iter() {
-            Self::register(&mut identities, "AnimStore", registry_id, anim.stable_id)?;
+            Self::register(&mut identities, "AnimStore", registry_id, anim.stable_id())?;
             highest_id = highest_id.max(registry_id);
         }
         for (&registry_id, light) in sim.substrate.spotlights.iter() {
@@ -1956,7 +1958,7 @@ impl RestoredObjectIndex {
                 &mut identities,
                 "VoxelAnimStore",
                 registry_id,
-                debris.stable_id,
+                debris.stable_id(),
             )?;
             highest_id = highest_id.max(registry_id);
         }
@@ -1965,12 +1967,12 @@ impl RestoredObjectIndex {
                 &mut identities,
                 "ParticleSystemStore",
                 registry_id,
-                system.stable_id,
+                system.stable_id(),
             )?;
             highest_id = highest_id.max(registry_id);
             // Individual particles retain AIR Display membership. Register
             // their owning store's identities in the existing restore index.
-            for particle in &system.particles {
+            for particle in system.particles() {
                 let id = particle.stable_id();
                 Self::register(&mut identities, "ParticleSystemStore.children", id, id)?;
                 highest_id = highest_id.max(id);
@@ -2004,7 +2006,7 @@ impl RestoredObjectIndex {
             highest_id = highest_id.max(registry_id);
         }
         for (&registry_id, wave) in sim.waves.iter() {
-            Self::register(&mut identities, "WaveStore", registry_id, wave.id)?;
+            Self::register(&mut identities, "WaveStore", registry_id, wave.id())?;
             highest_id = highest_id.max(registry_id);
         }
         for shot in sim.disk_laser_observations() {
@@ -2572,7 +2574,7 @@ fn restore_object_references(
     }
 
     for (&anim_id, anim) in sim.substrate.anims.iter() {
-        if let Some(owner_id) = anim.owner_entity {
+        if let Some(owner_id) = anim.owner_entity() {
             require_resolved_reference(
                 entity_ids.contains(&owner_id),
                 "AnimStore",
@@ -2585,7 +2587,7 @@ fn restore_object_references(
     }
 
     for (&system_id, system) in sim.substrate.particle_systems.iter() {
-        if let Some(owner_id) = system.owner_entity {
+        if let Some(owner_id) = system.owner_entity() {
             require_object_reference(
                 &entity_ids,
                 sim.terrain_objects.objects(),
@@ -2595,7 +2597,7 @@ fn restore_object_references(
                 owner_id,
             )?;
         }
-        if let Some(crate::sim::combat::TargetKind::Entity(attached_id)) = system.target_ref {
+        if let Some(crate::sim::combat::TargetKind::Entity(attached_id)) = system.target_ref() {
             require_object_reference(
                 &entity_ids,
                 sim.terrain_objects.objects(),
@@ -2657,7 +2659,7 @@ fn restore_object_references(
 
     let wave_ids = sim.waves.iter().map(|(&id, _)| id).collect::<BTreeSet<_>>();
     for (&wave_id, wave) in sim.waves.iter() {
-        if let Some(owner_id) = wave.owner_id {
+        if let Some(owner_id) = wave.owner_id() {
             require_resolved_reference(
                 entity_ids.contains(&owner_id),
                 "WaveStore",
@@ -2667,7 +2669,7 @@ fn restore_object_references(
                 owner_id,
             )?;
         }
-        if let Some(TargetKind::Entity(target_id)) = wave.target_ref {
+        if let Some(TargetKind::Entity(target_id)) = wave.target_ref() {
             require_object_reference(
                 &entity_ids,
                 sim.terrain_objects.objects(),
@@ -2689,7 +2691,7 @@ fn restore_object_references(
         )?;
         require_resolved_reference(
             wave_ids.contains(&wave_id)
-                && sim.waves.get(wave_id).and_then(|wave| wave.owner_id) == Some(owner_id),
+                && sim.waves.get(wave_id).and_then(|wave| wave.owner_id()) == Some(owner_id),
             "ActiveWaveLinks",
             owner_id,
             "wave",
@@ -5453,7 +5455,7 @@ mod tests {
             },
             None,
         ));
-        let constructor_direction = active.direction_octant;
+        let constructor_direction = active.direction_octant();
         let moved_endpoint = ProjectileCoord::new(0, 512, 0);
         let _ = active.advance(
             WaveUpdateContext {
@@ -5466,10 +5468,11 @@ mod tests {
             None,
         );
         assert_eq!(
-            active.direction_octant, constructor_direction,
+            active.direction_octant(),
+            constructor_direction,
             "live geometry refresh retains constructor-only +0x1CC"
         );
-        let moved_edges = active.edge_geometry;
+        let moved_edges = active.edge_geometry();
         sim.admit_wave(active_id, active);
         sim.active_wave_links.insert(owner_ids[0], active_id);
 
@@ -5481,11 +5484,11 @@ mod tests {
             ProjectileCoord::new(512, 512, 0),
             ProjectileCoord::new(2304, 512, 50),
         );
-        inactive.active_geometry = false;
-        inactive.decaying = true;
-        inactive.fade_in = NativeF64Bits::from_bits(0x3fe0_0000_0000_0000);
-        inactive.fade_out = NativeF64Bits::from_bits(0x3fc9_9999_a000_0000);
-        inactive.direction_octant = 6;
+        inactive.set_active_geometry_for_test(false);
+        inactive.set_decaying_for_test(true);
+        inactive.set_fade_in_for_test(NativeF64Bits::from_bits(0x3fe0_0000_0000_0000));
+        inactive.set_fade_out_for_test(NativeF64Bits::from_bits(0x3fc9_9999_a000_0000));
+        inactive.set_direction_octant_for_test(6);
         inactive.replace_recorded_cells(vec![WaveRecordedCell::real(7, 2)]);
         sim.admit_wave(inactive_id, inactive);
         sim.active_wave_links.insert(owner_ids[1], inactive_id);
@@ -5498,9 +5501,9 @@ mod tests {
             ProjectileCoord::new(768, 512, 0),
             ProjectileCoord::new(2560, 512, 50),
         );
-        dummy.active_geometry = false;
-        dummy.decaying = true;
-        dummy.direction_octant = 2;
+        dummy.set_active_geometry_for_test(false);
+        dummy.set_decaying_for_test(true);
+        dummy.set_direction_octant_for_test(2);
         dummy.replace_recorded_cells(vec![WaveRecordedCell::shared_dummy()]);
         sim.admit_wave(dummy_id, dummy);
         sim.active_wave_links.insert(owner_ids[2], dummy_id);
@@ -5516,17 +5519,17 @@ mod tests {
         assert_eq!(restored.active_wave_links, sim.active_wave_links);
         assert_eq!(restored.waves.get(active_id), sim.waves.get(active_id));
         assert_eq!(
-            restored.waves.get(active_id).unwrap().direction_octant,
+            restored.waves.get(active_id).unwrap().direction_octant(),
             constructor_direction
         );
         assert_eq!(
-            restored.waves.get(active_id).unwrap().edge_geometry,
+            restored.waves.get(active_id).unwrap().edge_geometry(),
             moved_edges
         );
         assert_eq!(restored.waves.get(inactive_id), sim.waves.get(inactive_id));
         assert_eq!(restored.waves.get(dummy_id), sim.waves.get(dummy_id));
         assert_eq!(
-            restored.waves.get(dummy_id).unwrap().recorded_cells,
+            restored.waves.get(dummy_id).unwrap().recorded_cells(),
             vec![WaveRecordedCell::shared_dummy()],
         );
     }
@@ -5642,7 +5645,7 @@ mod tests {
                 before,
                 "restore must reject atomically: {case}"
             );
-            assert_eq!(sim.anim(anim).unwrap().building_slot, Some((owner, 3)));
+            assert_eq!(sim.anim(anim).unwrap().building_slot(), Some((owner, 3)));
         }
     }
 
@@ -5652,7 +5655,7 @@ mod tests {
         let anim = sim
             .set_building_anim_slot(owner, 3, false, false, 0, &rules)
             .unwrap();
-        assert!(sim.anim(anim).unwrap().owner_entity.is_none());
+        assert!(sim.anim(anim).unwrap().owner_entity().is_none());
         sim.destroy_anim(anim, &rules);
         assert!(sim.substrate.pending_delete.contains_object(&anim));
         // Anim UnInit4255B0 broadcasts before deferred physical deletion;
@@ -5661,7 +5664,7 @@ mod tests {
             sim.entities().get(owner).unwrap().building_art.anim_slots()[3],
             None
         );
-        assert!(sim.anim(anim).unwrap().building_slot.is_none());
+        assert!(sim.anim(anim).unwrap().building_slot().is_none());
         assert!(sim.anim(anim).unwrap().is_building_anim());
         let bytes = GameSnapshot::save(&sim, 0, 0, "expired-slot.map", 0);
         // Scenario load consumes the saved RNG state and reseeds zero; keep
@@ -5670,7 +5673,7 @@ mod tests {
         let hash = sim.state_hash();
         let mut restored = GameSnapshot::load(&bytes).unwrap().sim;
         restored.restore_after_snapshot_load().unwrap();
-        assert_eq!(restored.anim(anim).unwrap().building_slot, None);
+        assert_eq!(restored.anim(anim).unwrap().building_slot(), None);
         assert!(restored.anim(anim).unwrap().is_building_anim());
         assert!(restored.substrate.pending_delete.contains_object(&anim));
         assert_eq!(restored.state_hash(), hash);
@@ -5687,9 +5690,14 @@ mod tests {
             .anims
             .get_mut(anim)
             .unwrap()
-            .runtime
+            .runtime_mut_for_test()
             .current_frame = 17;
-        sim.substrate.anims.get_mut(anim).unwrap().runtime.paused = true;
+        sim.substrate
+            .anims
+            .get_mut(anim)
+            .unwrap()
+            .runtime_mut_for_test()
+            .paused = true;
         let building = sim.substrate.entities.get_mut(id).unwrap();
         building.building_art.anim_effect_replay_mut_for_test()[16] = true;
         building.building_last_operational.set_for_test(true);
@@ -5738,8 +5746,8 @@ mod tests {
                 .building_art
                 .damage_state_active()
         );
-        assert_eq!(restored.anim(anim).unwrap().runtime.current_frame, 17);
-        assert!(restored.anim(anim).unwrap().runtime.paused);
+        assert_eq!(restored.anim(anim).unwrap().runtime().current_frame, 17);
+        assert!(restored.anim(anim).unwrap().runtime().paused);
         assert!(
             restored
                 .entities()
@@ -5768,7 +5776,7 @@ mod tests {
             restored.entities().get(id).unwrap().building_art.storage(),
             sim.entities().get(id).unwrap().building_art.storage()
         );
-        assert_eq!(restored.anim(anim).unwrap().building_slot, Some((id, 3)));
+        assert_eq!(restored.anim(anim).unwrap().building_slot(), Some((id, 3)));
         assert_eq!(restored.state_hash(), expected);
     }
 
@@ -5812,6 +5820,13 @@ mod tests {
             .set_for_test(u32::MAX);
         let populated_counter_hash = sim.state_hash();
         assert_ne!(populated_counter_hash, zero_counter_hash);
+        sim.substrate
+            .entities
+            .get_mut(1)
+            .unwrap()
+            .unit_firing_counter
+            .set_for_test(7);
+        assert_ne!(sim.state_hash(), populated_counter_hash);
 
         let ship_head = DriveCoord::cell(6, 5, 0);
         let entity = sim.substrate.entities.get_mut(1).expect("SHP unit");
@@ -5844,6 +5859,15 @@ mod tests {
                 .body_frame_counter
                 .get(),
             u32::MAX
+        );
+        assert_eq!(
+            restored
+                .entities()
+                .get(1)
+                .unwrap()
+                .unit_firing_counter
+                .get(),
+            7
         );
         let restored_ship = restored
             .substrate
@@ -6287,8 +6311,8 @@ mod tests {
     #[test]
     fn gsi_04_18_spy_sat_latch_and_erased_map_knowledge_roundtrip_at_v65() {
         let mut sim = Simulation::with_seed(0x418);
-        sim.fog.width = 12;
-        sim.fog.height = 12;
+        sim.fog.set_width_for_test(12);
+        sim.fog.set_height_for_test(12);
         let owner = sim.interner.intern("Soviet");
         let gapper = sim.interner.intern("Americans");
         let mut house = crate::sim::house_state::HouseState::new(owner, 1, None, true, 10_000, 10);
@@ -6508,10 +6532,10 @@ mod tests {
                 crate::rules::particle_system_type::ParticleSystemTypeId(0),
                 glam::IVec3::ZERO,
             );
-            system.offset = glam::IVec3::ZERO;
+            system.set_offset_for_test(glam::IVec3::ZERO);
             system.set_spawn_timer_for_test(crate::util::native_x87::NativeF32Bits::ONE);
-            system.owner_entity = Some(entity_id);
-            system.target_coords = glam::IVec3::ZERO;
+            system.set_owner_entity_for_test(Some(entity_id));
+            system.set_target_coords_for_test(glam::IVec3::ZERO);
             system
         });
         sim.substrate.next_stable_object_id = 5;
@@ -7025,8 +7049,8 @@ mod tests {
         let viewer = sim.interner.intern("AMERICANS");
         let source_owner = sim.interner.intern("RUSSIANS");
         let type_ref = sim.interner.intern("SUB");
-        sim.fog.width = 8;
-        sim.fog.height = 8;
+        sim.fog.set_width_for_test(8);
+        sim.fog.set_height_for_test(8);
         sim.fog
             .insert_fogged_object_footprint(viewer, 91, vec![(3, 3), (4, 3)]);
         sim.fog.sensors_add_at(viewer, (3, 3), 2);
@@ -7064,7 +7088,7 @@ mod tests {
         let mut restored = GameSnapshot::load(&bytes).expect("current snapshot").sim;
 
         assert_eq!(restored.state_hash(), expected_hash);
-        assert_eq!(restored.fog.fogged_objects.len(), 1);
+        assert_eq!(restored.fog.fogged_objects().len(), 1);
         assert!(restored.fog.has_sensor_for_house(viewer, 3, 3));
         assert!(restored.fog.is_cloaked_by_house(7, 3, 3));
         let restored_entity = restored.substrate.entities.get(entity_id).unwrap();
@@ -7569,9 +7593,9 @@ mod tests {
         sim.substrate.particle_systems.insert({
             let mut system =
                 ParticleSystem::test_fixture(particle_id, ParticleSystemTypeId(0), IVec3::ZERO);
-            system.facing = 0x1d;
-            system.target_ref = Some(crate::sim::combat::TargetKind::Entity(entity_id));
-            system.owner_entity = Some(entity_id);
+            system.set_facing_for_test(0x1d);
+            system.set_target_ref_for_test(Some(crate::sim::combat::TargetKind::Entity(entity_id)));
+            system.set_owner_entity_for_test(Some(entity_id));
             system
         });
         sim.substrate
@@ -7600,7 +7624,7 @@ mod tests {
                 .particle_systems
                 .get(particle_id)
                 .expect("particle system")
-                .in_logic_vector
+                .in_logic_vector()
         );
         assert!(
             restored
@@ -7634,9 +7658,9 @@ mod tests {
             .particle_systems
             .get(particle_id)
             .expect("particle system");
-        assert_eq!(system.owner_entity, Some(entity_id));
+        assert_eq!(system.owner_entity(), Some(entity_id));
         assert_eq!(
-            system.target_ref,
+            system.target_ref(),
             Some(crate::sim::combat::TargetKind::Entity(entity_id))
         );
         assert_eq!(
@@ -7673,9 +7697,9 @@ mod tests {
         sim.substrate.particle_systems.insert({
             let mut system =
                 ParticleSystem::test_fixture(particle_id, ParticleSystemTypeId(0), IVec3::ZERO);
-            system.facing = 0x1d;
-            system.target_ref = Some(crate::sim::combat::TargetKind::Entity(999));
-            system.owner_entity = Some(entity_id);
+            system.set_facing_for_test(0x1d);
+            system.set_target_ref_for_test(Some(crate::sim::combat::TargetKind::Entity(999)));
+            system.set_owner_entity_for_test(Some(entity_id));
             system
         });
 
@@ -7705,7 +7729,7 @@ mod tests {
                 .particle_systems
                 .get(particle_id)
                 .expect("particle system")
-                .target_ref,
+                .target_ref(),
             Some(crate::sim::combat::TargetKind::Entity(999)),
             "failed restoration must not sanitize the unresolved strong reference"
         );
@@ -10012,6 +10036,7 @@ mod tests {
         // 444 -> 445: retained per-pass BuildingType light integers.
         // 445 -> 446: the House array's registration order.
         // 446 -> 447: terrain objects and ore growth have their own owners.
-        assert_eq!(super::SNAPSHOT_VERSION, 447);
+        // 447 -> 448: retained Unit firing counter through parasite release.
+        assert_eq!(super::SNAPSHOT_VERSION, 448);
     }
 }

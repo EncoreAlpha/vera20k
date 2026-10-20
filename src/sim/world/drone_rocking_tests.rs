@@ -977,27 +977,27 @@ fn stock_drone_monotonic_bites_match_native_state_rng_spark_births_and_flh() {
                 let system = scene.sim.particle_systems().get(id).unwrap();
                 let state = &expected["state"];
                 assert_eq!(
-                    scene.rules.particle_system_type(system.type_id).name,
+                    scene.rules.particle_system_type(system.type_id()).name,
                     expected["type"].as_str().unwrap()
                 );
                 assert_eq!(json!(system.native_unique_id()), state["native_id"]);
-                assert_eq!(json!(system.coords.to_array()), state["position"]);
-                assert_eq!(json!(system.lifetime), state["lifetime"]);
+                assert_eq!(json!(system.coords().to_array()), state["position"]);
+                assert_eq!(json!(system.lifetime()), state["lifetime"]);
                 assert_eq!(
-                    json!(system.spark_spawn_frames),
+                    json!(system.spark_spawn_frames()),
                     state["spark_spawn_frames"]
                 );
-                assert_eq!(json!(system.done_spawning), state["time_to_die"]);
-                assert_eq!(json!(system.in_logic_vector), state["logic"]);
+                assert_eq!(json!(system.done_spawning()), state["time_to_die"]);
+                assert_eq!(json!(system.in_logic_vector()), state["logic"]);
                 assert!(system.alive() && !system.in_limbo());
                 assert!(
-                    system.owner_entity.is_none()
-                        && system.target_ref.is_none()
-                        && system.owner_house.is_none()
+                    system.owner_entity().is_none()
+                        && system.target_ref().is_none()
+                        && system.owner_house().is_none()
                 );
-                assert_eq!(json!(system.target_coords.to_array()), state["target"]);
-                assert_eq!(json!(system.particles.len()), state["particle_count"]);
-                assert!(system.particles.is_empty());
+                assert_eq!(json!(system.target_coords().to_array()), state["target"]);
+                assert_eq!(json!(system.particles().len()), state["particle_count"]);
+                assert!(system.particles().is_empty());
                 assert_eq!(
                     expected["rng_request_before"], expected["rng_request_after"],
                     "native constructor draws no RNG"

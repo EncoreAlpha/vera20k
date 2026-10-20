@@ -621,8 +621,8 @@ fn a_human_aircraft_shooting_over_shroud_maps_the_cells_around_it() {
             64,
             crate::map::resolved_terrain::test_flat_cell,
         ));
-        sim.fog.width = 64;
-        sim.fog.height = 64;
+        sim.fog.set_width_for_test(64);
+        sim.fog.set_height_for_test(64);
         sim.substrate
             .entities
             .get_mut(1)

@@ -187,11 +187,12 @@ fn assert_collapsed_bridge_restores(
         let loaded = restored
             .anim(id)
             .expect("every saved live AnimClass restores");
-        assert_eq!(loaded.type_id, original.type_id);
-        assert_eq!(loaded.world_coord, original.world_coord);
-        assert_eq!(loaded.bounce, original.bounce, "BounceClass body {id}");
+        assert_eq!(loaded.type_id(), original.type_id());
+        assert_eq!(loaded.world_coord(), original.world_coord());
+        assert_eq!(loaded.bounce(), original.bounce(), "BounceClass body {id}");
         assert_eq!(
-            loaded.runtime, original.runtime,
+            loaded.runtime(),
+            original.runtime(),
             "AnimClass timer/lifecycle {id}"
         );
     }
@@ -355,7 +356,7 @@ fn assert_debris_restore_continuation(
     let mut second = assert_collapsed_bridge_restores(scenario, template, target, attacker);
     let flying = first
         .anims()
-        .filter_map(|(&id, anim)| anim.bounce.is_some().then_some(id))
+        .filter_map(|(&id, anim)| anim.bounce().is_some().then_some(id))
         .collect::<Vec<_>>();
     assert!(!flying.is_empty(), "save must contain live Bouncer flight");
     assert_eq!(

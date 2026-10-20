@@ -30,8 +30,8 @@ fn authority(sim: &Simulation, source: u64, expected_load: bool) -> Value {
         "actor":actor,"actor_in_logic":actor.in_logic_vector.is_member(),
         "bullets":bullets,
         "anims":sim.substrate.anims.iter().map(|(_, anim)|
-            json!({"state":anim,"in_logic":anim.in_logic_vector,
-                "building_slot":anim.building_slot,"damage_fire_slot":anim.damage_fire_slot})
+            json!({"state":anim,"in_logic":anim.in_logic_vector(),
+                "building_slot":anim.building_slot(),"damage_fire_slot":anim.damage_fire_slot()})
         ).collect::<Vec<_>>(),
         "logic":sim.substrate.logic.snapshot(),"display":sim.substrate.display,
         "pending_delete":sim.substrate.pending_delete.object_ids(),

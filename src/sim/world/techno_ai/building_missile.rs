@@ -477,7 +477,7 @@ mod tests {
                 }
             );
             for (&(&id, anim), native) in new_anims.iter().zip(&native_anims) {
-                let name = sim.interner.resolve(anim.type_id);
+                let name = sim.interner.resolve(anim.type_id());
                 let coord = sim.anim_absolute_coord(id).unwrap();
                 match native[1].as_str().unwrap() {
                     "PSIWARN" => {
@@ -485,7 +485,7 @@ mod tests {
                         let native_coord: Vec<i32> =
                             native[2].as_array().unwrap().iter().map(int).collect();
                         assert_eq!(vec![coord.x, coord.y, coord.z], native_coord, "{row}");
-                        assert!(anim.draw_runtime.hidden, "{row}");
+                        assert!(anim.draw_runtime().hidden, "{row}");
                         assert_eq!(anim.owner_house(), Some(owner));
                         assert_eq!(anim.attached_bullet(), Some(bullet_id));
                     }
@@ -503,11 +503,11 @@ mod tests {
                             ],
                             "{row}"
                         );
-                        assert_eq!(anim.z_adjust, int(&row["take_off_z_adjust"]));
+                        assert_eq!(anim.z_adjust(), int(&row["take_off_z_adjust"]));
                     }
                     other => panic!("anim {other}"),
                 }
-                assert_eq!(anim.draw_flags, u32::try_from(int(&native[5])).unwrap());
+                assert_eq!(anim.draw_flags(), u32::try_from(int(&native[5])).unwrap());
             }
         }
     }

@@ -66,7 +66,7 @@ fn delivered_ids(sim: &Simulation) -> Vec<u64> {
     for name in ["DEATHFX", "DESTROYFX"] {
         ids.push(
             sim.anims()
-                .find(|(_, anim)| sim.interner.resolve(anim.type_id) == name)
+                .find(|(_, anim)| sim.interner.resolve(anim.type_id()) == name)
                 .unwrap_or_else(|| panic!("missing {name}"))
                 .0
                 .to_owned(),
@@ -150,13 +150,13 @@ fn ordinary_lethal_fire_commits_debris_animations_and_sparks_once() {
         .find(|(id, _)| **id == ids[1])
         .unwrap()
         .1
-        .native_unique_id;
+        .native_unique_id();
     let destroy_native = sim
         .anims()
         .find(|(id, _)| **id == ids[2])
         .unwrap()
         .1
-        .native_unique_id;
+        .native_unique_id();
     assert_eq!(death_native, debris_native.wrapping_add(1));
     assert_eq!(destroy_native, death_native.wrapping_add(1));
     let next_id = sim.allocate_stable_id();

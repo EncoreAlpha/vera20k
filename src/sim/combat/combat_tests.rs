@@ -3487,14 +3487,14 @@ fn gsi_04_07_damage_receiver_smoke_creation_precedes_retaliation() {
         .expect("yellow crossing attaches a Smoke system");
     let system = sim.particle_systems().get(system_id).unwrap();
     assert_eq!(
-        rules.particle_system_type(system.type_id).name,
+        rules.particle_system_type(system.type_id()).name,
         "SmallGreySSys"
     );
-    assert_eq!(system.owner_entity, Some(victim_id));
-    assert_eq!(system.target_ref, None);
-    assert_eq!(system.owner_house, None);
+    assert_eq!(system.owner_entity(), Some(victim_id));
+    assert_eq!(system.target_ref(), None);
+    assert_eq!(system.owner_house(), None);
     assert_eq!(
-        system.coords,
+        system.coords(),
         glam::IVec3::new(8 * 256 + 128, 5 * 256 + 128, 0)
     );
     let mut expected_order = before_order;
@@ -3527,7 +3527,7 @@ fn gsi_04_07_damage_receiver_smoke_creation_precedes_retaliation() {
         crate::sim::world::UninitContext::with_rules(&rules)
     ));
     assert_eq!(
-        sim.particle_systems().get(system_id).unwrap().coords,
+        sim.particle_systems().get(system_id).unwrap().coords(),
         glam::IVec3::new(moved.x, moved.y, moved.z)
     );
     assert_eq!(sim.scenario_rng.logical_state(), before_rng);
@@ -3583,7 +3583,10 @@ fn gsi_04_07_damage_receiver_smoke_creation_precedes_retaliation() {
         180
     );
     assert!(
-        sim.particle_systems().get(system_id).unwrap().done_spawning,
+        sim.particle_systems()
+            .get(system_id)
+            .unwrap()
+            .done_spawning(),
         "recovery above ConditionYellow invokes mark-only ParticleSystem Destroy"
     );
     assert_eq!(
@@ -8294,7 +8297,7 @@ fn deployed_desolator_self_irradiates_and_refires_below_third() {
         .radiation
         .site_at((10, 10))
         .expect("detonation armed a site at the desolator's cell");
-    assert_eq!(site.level, 500);
+    assert_eq!(site.level(), 500);
     assert_eq!(sim.radiation.cell_level((10, 10)), 500.0);
 
     // Tick 2: gate closed (effective 500 ≥ 500/3) → no fire, self-target
@@ -8329,7 +8332,7 @@ fn deployed_desolator_self_irradiates_and_refires_below_third() {
     let events = guard_visit(&mut sim, 341);
     assert_eq!(events.len(), 1, "gate reopens below one third");
     let site = sim.radiation.site_at((10, 10)).expect("merged site");
-    assert!(site.level > 500, "re-detonation merged effective + added");
+    assert!(site.level() > 500, "re-detonation merged effective + added");
 }
 
 #[test]
@@ -10615,7 +10618,7 @@ fn gsi_05_14_a_dying_harvester_throws_voxel_tires_and_no_shp_debris() {
     );
     // Every piece launches from the wreck's own coordinate, lifted 10 leptons.
     for piece in &result.consequences.effects().voxel_debris {
-        assert_eq!(piece.object.duration, 150);
+        assert_eq!(piece.object.duration(), 150);
         assert_eq!(piece.object.world_coord().z, 10);
     }
 }
