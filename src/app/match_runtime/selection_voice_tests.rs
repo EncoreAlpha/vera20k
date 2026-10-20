@@ -36,7 +36,7 @@ fn pack_voice_requests_match_native_slots_suppression_and_pending_owner() {
         );
         let mut terrain = crate::map::resolved_terrain::test_flat_ground_grid(16);
         if input["resource_cell"] == true {
-            terrain.cell_mut(10, 10).unwrap().land_type =
+            terrain.cell_mut_for_test(10, 10).unwrap().land_type =
                 crate::rules::terrain_rules::LandType::Tiberium.as_index();
         }
         sim.install_resolved_terrain_for_new_map(terrain);

@@ -128,7 +128,7 @@ fn set_tile(sim: &mut Simulation, cell: (u16, u16), offset: i32) {
     sim.resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(cell.0, cell.1)
+        .cell_mut_for_test(cell.0, cell.1)
         .unwrap()
         .final_tile_index = WATER_SET + offset;
 }
@@ -467,7 +467,7 @@ fn a_water_click_sends_the_plane_to_land_beside_it() {
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(TARGET.0, TARGET.1)
+        .cell_mut_for_test(TARGET.0, TARGET.1)
         .unwrap();
     // Water: Foot's speed there is 0.
     cell.land_type = 2;
@@ -855,7 +855,7 @@ fn drop_payload_matches_native() {
                     .get(id)
                     .unwrap()
                     .navigation
-                    .neighbor_state
+                    .neighbor_state()
                     .cell()
             })
             .collect();
@@ -987,7 +987,7 @@ fn drop_payload_matches_native() {
                 .get(id)
                 .unwrap()
                 .navigation
-                .neighbor_state
+                .neighbor_state()
                 .cell();
             assert_eq!(cell, expected, "{row}");
         }

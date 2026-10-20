@@ -193,7 +193,7 @@ fn set_slopes(sim: &mut Simulation, slope: u8) {
     let terrain = sim.resolved_terrain.as_mut().unwrap();
     for y in 0..32 {
         for x in 0..32 {
-            terrain.cell_mut(x, y).unwrap().slope_type = slope;
+            terrain.cell_mut_for_test(x, y).unwrap().slope_type = slope;
         }
     }
 }
@@ -354,7 +354,7 @@ fn retreat_building_selection_matches_original_controls() {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(x as u16, y as u16)
+                .cell_mut_for_test(x as u16, y as u16)
                 .unwrap();
             cell.speed_costs.foot = None;
             cell.base_speed_costs.foot = None;

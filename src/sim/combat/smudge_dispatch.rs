@@ -818,16 +818,16 @@ mod dispatch_tests {
                 1, 2, &raw, &terrain, &overlay,
             ));
 
-            terrain.cell_mut(1, 3).unwrap().speed_costs.track = None;
+            terrain.cell_mut_for_test(1, 3).unwrap().speed_costs.track = None;
             assert!(!survivor_smudge_cell_passable(
                 1, 3, &raw, &terrain, &overlay,
             ));
-            terrain.cell_mut(1, 4).unwrap().speed_costs.track = Some(0);
+            terrain.cell_mut_for_test(1, 4).unwrap().speed_costs.track = Some(0);
             assert!(!survivor_smudge_cell_passable(
                 1, 4, &raw, &terrain, &overlay,
             ));
 
-            let bridge = terrain.cell_mut(1, 5).unwrap();
+            let bridge = terrain.cell_mut_for_test(1, 5).unwrap();
             bridge.speed_costs.track = Some(0);
             bridge.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
             raw.mark_ground(1, 5, 0x40);
@@ -840,7 +840,7 @@ mod dispatch_tests {
                 1, 5, &raw, &terrain, &overlay,
             ));
 
-            let wall_bridge = terrain.cell_mut(1, 6).unwrap();
+            let wall_bridge = terrain.cell_mut_for_test(1, 6).unwrap();
             wall_bridge.speed_costs.track = Some(0);
             wall_bridge.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
             overlay.place_overlay(1, 6, 0, 0);

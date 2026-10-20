@@ -311,7 +311,7 @@ fn counted_tag_pauses_drivers_preserves_saved_gate_and_reenables_due_timers() {
     );
     sim.classify_map_triggers(None);
     waypoints(&mut sim, &[(0, (8, 9)), (1, (8, 8))]);
-    sim.session.set_started(true);
+    sim.session.publish_started();
     sim.advance_triggers(Some(&rules), Some(registry), FrameEffects::default());
     assert!(!sim.ore_growth_config.grows());
     assert!(sim.trigger_runtime.logic_tags.is_empty());
@@ -357,7 +357,7 @@ fn counted_tag_pauses_drivers_preserves_saved_gate_and_reenables_due_timers() {
     assert!(!restored.ore_growth_config.grows());
     assert!(!restored.ore_growth_config.spreads());
     assert!(restored.ore_growth_config.tiberium_grows_flag());
-    restored.session.set_started(true);
+    restored.session.publish_started();
     assert!(run(&mut restored, &action(86, "257", "A"), None, None));
     let current_frame = restored.session.binary_frame() as i32;
     let frame = restored

@@ -307,7 +307,7 @@ impl PreparedLoad {
         self.simulation.install_fresh_process_main(process_main);
         // Original successful LoadGame67E6C4 publishes A8ED5C=1 after the
         // fallible content/read tail. Failed preparation never changes it.
-        self.simulation.session.set_started(true);
+        self.simulation.session.publish_started();
         (
             self.simulation,
             CommittedLoadPresentation {
@@ -1301,8 +1301,8 @@ mod tests {
         saved.overlay_grid = Some(OverlayGrid::new(1, 1));
         saved.install_resolved_terrain_for_new_map(translated_template.clone());
         saved
-            .dynamic_terrain_cells
-            .insert((0, 0), DynamicTerrainCellState::capture(&runtime_actual));
+            .dynamic_terrain_cells_mut_for_test()
+            .record(&runtime_actual);
         let bytes = snapshot_bytes(&saved, &rules);
 
         let mut current = load_fixture_simulation(false);
@@ -1333,7 +1333,7 @@ mod tests {
         );
         assert_eq!(restored_cell.radar_left, [31, 32, 33]);
         assert_eq!(
-            restored.dynamic_terrain_cells.get(&(0, 0)),
+            restored.dynamic_terrain_cells().get(&(0, 0)),
             Some(&DynamicTerrainCellState::capture(&runtime_actual))
         );
     }

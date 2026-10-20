@@ -182,7 +182,7 @@ impl DamageConsequences {
                 &world.session.theater(),
                 &rules.radiation,
                 world.resolved_terrain.as_ref(),
-                &mut world.lighting_sources.pending,
+                &mut world.lighting_sources,
             );
         }
 

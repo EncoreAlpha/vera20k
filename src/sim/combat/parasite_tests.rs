@@ -1165,7 +1165,7 @@ fn a_dog_released_on_a_bridge_deck_stays_on_the_deck() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(x, y)
+            .cell_mut_for_test(x, y)
             .unwrap();
         cell.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
         cell.has_bridge_deck = true;
@@ -1293,7 +1293,8 @@ fn naval_owner_water_gate_matches_original_can_infect() {
         };
         let terrain = arena.sim.resolved_terrain.as_mut().unwrap();
         terrain.set_projectile_water_set_base(row["water_set"].as_i64().unwrap() as i32);
-        terrain.cell_mut(5, 2).unwrap().final_tile_index = row["tile"].as_i64().unwrap() as i32;
+        terrain.cell_mut_for_test(5, 2).unwrap().final_tile_index =
+            row["tile"].as_i64().unwrap() as i32;
         if row["victim_cell"] != serde_json::json!([5, 2]) {
             arena
                 .sim

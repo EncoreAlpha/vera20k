@@ -1056,7 +1056,7 @@ SpreadPercentage=.06
     fn gsi_04_09_new_placement_requires_proof_and_rejects_outside_playfield() {
         let (overlay_registry, tiberium_types) = native_tiberium_fixture();
         let mut terrain = flat_clear_terrain();
-        terrain.cell_mut(0, 0).unwrap().outside_playfield = true;
+        terrain.cell_mut_for_test(0, 0).unwrap().outside_playfield = true;
         let rules_ini = IniFile::from_str(
             "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n",
         );
@@ -1554,7 +1554,7 @@ SpreadPercentage=.06
         sim.ore_growth_state
             .reset_native_tiberium_classes(rules.tiberium_types.len(), 0);
         let mut terrain = flat_clear_terrain();
-        let cell = terrain.cell_mut(0, 0).unwrap();
+        let cell = terrain.cell_mut_for_test(0, 0).unwrap();
         cell.speed_costs.foot = Some(37);
         cell.base_speed_costs.foot = Some(37);
         let mut overlay = OverlayGrid::new(1, 1);

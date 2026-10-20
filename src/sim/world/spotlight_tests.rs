@@ -209,7 +209,7 @@ fn init(sim: &mut Simulation, map: &crate::map::map_file::MapFile) {
         None,
     );
     sim.classify_map_triggers(None);
-    sim.session.set_started(true);
+    sim.session.publish_started();
 }
 #[test]
 fn spotlight_action52_counts_only_matching_live_trigger_buildings_and_keeps_full_scalar() {
@@ -222,7 +222,7 @@ fn spotlight_action52_counts_only_matching_live_trigger_buildings_and_keeps_full
             .get_mut(first)
             .unwrap()
             .lifecycle
-            .set_cell_marked(true);
+            .set_cell_marked_for_test(true);
         sim.construct_spotlight(first, Some(&rules));
         let second = parent_id(&mut sim, EntityCategory::Structure, 3);
         sim.substrate
@@ -230,7 +230,7 @@ fn spotlight_action52_counts_only_matching_live_trigger_buildings_and_keeps_full
             .get_mut(second)
             .unwrap()
             .lifecycle
-            .set_cell_marked(true);
+            .set_cell_marked_for_test(true);
         sim.construct_spotlight(second, Some(&rules));
         let a = sim
             .substrate

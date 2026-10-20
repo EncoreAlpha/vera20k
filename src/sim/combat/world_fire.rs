@@ -2625,7 +2625,7 @@ pub(crate) fn tick_combat(
                 &world.session.theater(),
                 &rules.radiation,
                 world.resolved_terrain.as_ref(),
-                &mut Vec::new(),
+                &mut crate::sim::light_sources::LightingSources::default(),
             );
         }
     }

@@ -136,7 +136,7 @@ fn paid_snapshot(
         .and_then(|l| l.selected_drive_runtime())
         .and_then(|r| r.retained())
         .unwrap_or(&constructor_drive);
-    let path = &actor.navigation.path_runtime;
+    let path = actor.navigation.path_runtime();
     let track_state = json!({
         "movement_timer":[path.movement_timer().start_frame(), path.movement_timer().duration()],
         "blocked_timer":[path.blocked_timer().start_frame(), path.blocked_timer().duration()],
@@ -647,7 +647,7 @@ fn retail_fv_approach_matches_native_candidates_admission_and_queue() {
                 row["drive_head"],
                 "{name} paid head"
             );
-            let timing = actor.navigation.path_runtime;
+            let timing = actor.navigation.path_runtime();
             assert_eq!(
                 json!([
                     timing.movement_timer().start_frame(),

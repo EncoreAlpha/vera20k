@@ -262,7 +262,10 @@ fn ore_rung_spreads_no_ore_under_a_landed_aircraft() {
         let mut sim =
             super::refinery_dock_oracle_tests::world_with(&rules, &rules_ini, |terrain| {
                 for (rx, ry) in [source, target] {
-                    terrain.cell_mut(rx, ry).expect("cell").allows_tiberium = true;
+                    terrain
+                        .cell_mut_for_test(rx, ry)
+                        .expect("cell")
+                        .allows_tiberium = true;
                 }
             });
         sim.native_unique_ids =

@@ -102,7 +102,7 @@ pub(super) fn terrain_from_zone_classes(
 ) -> ResolvedTerrainGrid {
     assert_eq!(classes.len(), width as usize * height as usize);
     assert_eq!(levels.len(), classes.len());
-    let prototype = water_row_terrain(1).cells.into_iter().next().unwrap();
+    let prototype = water_row_terrain(1).cells()[0].clone();
     let cells = classes
         .iter()
         .zip(levels)
@@ -450,7 +450,8 @@ fn gsi_04_06_simulation_detects_class_only_change_with_identical_pathgrid() {
         ZONE_INVALID
     );
 
-    sim.resolved_terrain.as_mut().unwrap().cells[0].zone_type = zone_class::CRUSHABLE;
+    sim.resolved_terrain.as_mut().unwrap().cells_mut_for_test()[0].zone_type =
+        zone_class::CRUSHABLE;
     sim.rebuild_zone_grid(&path_grid);
 
     let zones = sim.zone_grid.as_ref().unwrap();
@@ -628,7 +629,7 @@ fn gsi_04_06_base_repair_fallbacks_and_explicit_merge_provenance() {
     );
 
     let mut sentinel = terrain_from_zone_classes(1, 1, &[zone_class::OUTSIDE], &[0]);
-    sentinel.cells[0].outside_playfield = false;
+    sentinel.cells_mut_for_test()[0].outside_playfield = false;
     let sentinel_path = PathGrid::from_resolved_terrain(&sentinel);
     let mut sentinel_zones = ZoneGrid::build_with_terrain(&sentinel_path, &sentinel, &[], 1, 1);
     assert_eq!(

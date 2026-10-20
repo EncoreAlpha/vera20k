@@ -116,7 +116,7 @@ fn ground_walk_order_preserves_native_human_deploy_refusal() {
     let (mut sim, rules, id) = Simulation::walk_cell_input_test_scene(false);
     let actor = sim.substrate.entities.get_mut(id).unwrap();
     actor.mission_leaf.set_infantry_doing_verified(27).unwrap();
-    actor.navigation.path_runtime.start_movement(50, 5);
+    actor.navigation.path_runtime_mut().start_movement(50, 5);
     let navigation_before = serde_json::to_value(&actor.navigation).unwrap();
     let rng_before = sim.rng_state();
 
@@ -140,7 +140,7 @@ fn ground_walk_order_preserves_native_human_deploy_refusal() {
         json!(u8::from(walk.walk_is_moving().unwrap())),
         native["moving"]
     );
-    let timer = actor.navigation.path_runtime.movement_timer();
+    let timer = actor.navigation.path_runtime().movement_timer();
     assert_eq!(
         json!({"start_frame": timer.start_frame(), "duration": timer.duration()}),
         native["movement_timer"]
@@ -608,7 +608,7 @@ impl Simulation {
         let terrain = self.resolved_terrain.as_mut().unwrap();
         for x in 8..=10 {
             let cell = terrain
-                .cells
+                .cells_mut_for_test()
                 .iter_mut()
                 .find(|c| c.rx == x && c.ry == 6)
                 .unwrap();

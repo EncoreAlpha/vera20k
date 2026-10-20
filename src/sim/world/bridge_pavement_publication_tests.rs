@@ -2,6 +2,7 @@
 //! This proves the perpendicular entry and scalar core; engineer fallback and
 //! GPU composition remain separate acceptance requirements.
 use super::*;
+use crate::map::resolved_terrain::DynamicTerrainCellState;
 use crate::sim::snapshot::GameSnapshot;
 
 #[test]

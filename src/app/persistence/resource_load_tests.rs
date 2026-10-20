@@ -97,7 +97,7 @@ fn bound_saved_world(
     let roster =
         crate::map::houses::parse_house_roster(&map.ini, &rules.color_schemes, Some(&rules));
     let lighting = crate::map::lighting::parse_lighting(&map.ini);
-    let mut metadata = SavedMapMetadata::capture(
+    let metadata = SavedMapMetadata::capture(
         map.ini.content_hash(),
         &loaded.source,
         &map.basic,
@@ -109,8 +109,8 @@ fn bound_saved_world(
         SAVED_ELAPSED_BUCKETS,
         Some("Saved player"),
         [6, -2],
+        true,
     );
-    metadata.set_radar_pause_credit(true);
     // One video-owned and one ordinary trigger-owned untimed hold.
     simulation.pause_scenario(0);
     simulation.pause_scenario(0);

@@ -701,6 +701,30 @@ pub(super) fn capability_cursor_for_hover(
             };
         }
 
+        // Grinder: a Unit's or Infantryman's Select over a Grinding= building
+        // (`context_order::grinder_action`).
+        if !matches!(
+            modifier,
+            OrderModifier::ForceFire | OrderModifier::ForceMove | OrderModifier::GuardArea
+        ) && !(modifier == OrderModifier::AttackMove && force_move_key)
+            && matches!(hover.kind, HoverTargetKind::FriendlyStructure)
+            && let Some(action) = rules.and_then(|rules| {
+                super::context_order::grinder_action(
+                    sim,
+                    rules,
+                    best_id,
+                    hover.stable_id,
+                    overlay_registry,
+                )
+            })
+        {
+            return match action {
+                crate::sim::world::BuildingClickAction::NoEnter => CursorFeedbackKind::NoEnter,
+                crate::sim::world::BuildingClickAction::Grind
+                | crate::sim::world::BuildingClickAction::Enter => CursorFeedbackKind::Enter,
+            };
+        }
+
         let is_infantry = sel_entity.category() == EntityCategory::Infantry;
 
         // 5. Infantry boarding a friendly transport (Passengers > 0).
@@ -1309,6 +1333,7 @@ pub(crate) fn cursor_id_for_feedback(kind: CursorFeedbackKind) -> Option<CursorI
         // and the superweapon targeting minis while one is armed.
         CursorFeedbackKind::Minimap(id) => Some(id),
         CursorFeedbackKind::Enter => Some(CursorId::Enter),
+        CursorFeedbackKind::NoEnter => Some(CursorId::NoEnter),
         CursorFeedbackKind::EngineerDamage => Some(CursorId::EngineerRepair),
         CursorFeedbackKind::RepairAction(valid) => Some(if valid {
             CursorId::Repair
@@ -2448,7 +2473,7 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
                 sim.resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(x, 2)
+                    .cell_mut_for_test(x, 2)
                     .unwrap()
                     .land_type = u8::try_from(land_type).unwrap();
             }
@@ -2679,7 +2704,7 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
             .set_bunker_link_for_test(BunkerLink::Installed(99));
         for id in [actor, target] {
             let entity = sim.entities_mut().get_mut(id).unwrap();
-            entity.lifecycle.set_cell_marked(true);
+            entity.lifecycle.set_cell_marked_for_test(true);
             entity.position.set_exact_z_leptons_for_test(Some(900));
         }
         let mut retained = crate::map::resolved_terrain::test_flat_cell(0, 0);
@@ -2739,7 +2764,7 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
         for id in [actor_id, target_id] {
             let entity = sim.entities_mut().get_mut(id).unwrap();
             entity.position.set_exact_z_leptons_for_test(Some(900));
-            entity.lifecycle.set_cell_marked(true);
+            entity.lifecycle.set_cell_marked_for_test(true);
         }
         let mut retained_cell = crate::map::resolved_terrain::test_flat_cell(0, 0);
         // A bridge anchor retaining Dummy makes its requested coordinate a
@@ -3086,8 +3111,11 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
                 let mut terrain = crate::map::resolved_terrain::test_flat_ground_grid(20);
                 terrain.test_set_high_bridge_set_starts(Some(100), Some(200));
                 for y in 9..=11 {
-                    terrain.cell_mut(12, y).unwrap().bridge_facts.overlay_id =
-                        Some(if collapsed { 0xE7 } else { 0xD4 });
+                    terrain
+                        .cell_mut_for_test(12, y)
+                        .unwrap()
+                        .bridge_facts
+                        .overlay_id = Some(if collapsed { 0xE7 } else { 0xD4 });
                 }
                 sim.install_resolved_terrain_for_new_map(terrain);
                 sim.bridge_state = Some(crate::sim::bridge_state::BridgeRuntimeState::default());

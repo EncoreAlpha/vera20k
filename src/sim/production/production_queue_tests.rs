@@ -380,7 +380,7 @@ fn busy_factory_exit_failed_chosen_receiver_returns_once_and_restores_attachment
             .get_mut(product)
             .unwrap()
             .lifecycle
-            .set_cell_marked(true);
+            .set_cell_marked_for_test(true);
         let registry = sim.production.factories().clone();
         let credits = sim.houses[&owner].economy().credits();
         let next_id = sim.substrate.next_stable_object_id;
@@ -598,7 +598,7 @@ fn busy_factory_exit_original_rows_compare_receiver_archive_restoration_and_rng(
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(rx, ry)
+                .cell_mut_for_test(rx, ry)
                 .unwrap();
             target.level = native["level"].as_u64().unwrap() as u8;
             target.slope_type = native["slope"].as_u64().unwrap() as u8;
@@ -741,7 +741,7 @@ fn busy_factory_exit_original_rows_compare_receiver_archive_restoration_and_rng(
             // delayed result, restoration and RNG. Mark/lifecycle parity for
             // this different refusal cause is explicitly excluded.
             assert_eq!(before["product"]["marked"], 0);
-            actor.lifecycle.set_cell_marked(true);
+            actor.lifecycle.set_cell_marked_for_test(true);
         }
         // Native before is post-constructor. Import that declared boundary;
         // this compares ExitObject, not Factory construction/charge or release.
@@ -2005,7 +2005,7 @@ fn failed_vehicle_exit_promotes_a_fresh_identity_that_can_deliver_after_cells_cl
     assert_eq!(factory.progress, 0);
     assert!(factory.queue.is_empty());
     assert_eq!(credits_for_owner(&sim, "Americans"), 50_700);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = crate::rules::terrain_rules::LandType::Clear.as_index();
         cell.speed_costs.track = Some(100);
         cell.speed_costs.wheel = Some(100);

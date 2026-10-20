@@ -148,7 +148,7 @@ fn staged_terrain(
             .collect(),
     );
     for &(rx, ry) in ore_cells {
-        let cell = terrain.cell_mut(rx, ry).expect("staged ore cell");
+        let cell = terrain.cell_mut_for_test(rx, ry).expect("staged ore cell");
         let tiberium_land_type = LandType::Tiberium.as_index();
         cell.land_type = tiberium_land_type;
         cell.speed_costs = oracle.tiberium_speed_costs;
@@ -230,7 +230,7 @@ fn rock_where_grid_blocks(sim: &mut Simulation, grid: &PathGrid) {
             let cell = sim
                 .resolved_terrain
                 .as_mut()
-                .and_then(|terrain| terrain.cell_mut(rx, ry))
+                .and_then(|terrain| terrain.cell_mut_for_test(rx, ry))
                 .expect("staged cell");
             cell.land_type = LandType::Rock.as_index();
             cell.speed_costs = rock;
@@ -404,7 +404,7 @@ fn assert_ore_intact(sim: &Simulation, oracle: &OutboundContractOracle, target: 
 fn assert_command_state(sim: &Simulation, entity_id: u64, target: (u16, u16)) {
     let entity = sim.substrate.entities.get(entity_id).expect("miner entity");
     // Find_Path installed the route as Foot+5E0 words from START.
-    let route = entity.navigation.path_replay.installed_cells(START);
+    let route = entity.navigation.path_replay().installed_cells(START);
     assert_eq!(route.first().copied(), Some(START));
     assert_eq!(route.last().copied(), Some(target));
     assert_eq!(
@@ -435,7 +435,7 @@ fn assert_command_state(sim: &Simulation, entity_id: u64, target: (u16, u16)) {
     );
     assert!(drive.track().cursor() >= 0);
     assert!(!drive.track().reversed());
-    assert!(!entity.navigation.path_replay.directions().is_empty());
+    assert!(!entity.navigation.path_replay().directions().is_empty());
     // The Harvest handler dispatches BEFORE Phase-1 ground movement (the
     // native handler→locomotion order), so by observation time the drive has
     // already begun accelerating in the same tick the command was issued.

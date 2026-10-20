@@ -242,7 +242,7 @@ fn authored_computer_barracks_is_captured_and_delivers_paid_e2() {
             assert!(held.is_none_or(|previous| previous == id));
             held = Some(id);
             if !saved && fixture.sim.houses[&local].economy().spent_credits() > spent {
-                fixture.sim.session.set_started(true);
+                fixture.sim.session.publish_started();
                 roundtrip_fixture_save(&mut fixture, "scenario-house-captured-barracks");
                 assert_eq!(fixture.sim.session.current_house(), Some(local));
                 assert_eq!(

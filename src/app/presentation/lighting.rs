@@ -662,7 +662,7 @@ fn queue_area(
 
 fn source_maps(sim: &Simulation) -> (BTreeMap<u64, PointLight>, BTreeMap<(u16, u16), PointLight>) {
     (
-        sim.lighting_sources.buildings.clone(),
+        sim.lighting_sources.buildings().clone(),
         sim.radiation
             .sites()
             .filter_map(|site| site.light_source().map(|source| (site.center(), source)))
@@ -775,7 +775,7 @@ fn collect_live_building_lights(
         return Vec::new();
     };
     sim.lighting_sources
-        .buildings
+        .buildings()
         .values()
         .filter(|source| source.active && source.detail && detail_level >= 2)
         .cloned()

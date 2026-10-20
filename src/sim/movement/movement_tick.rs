@@ -158,7 +158,7 @@ fn no_queue_path_request(
 ) -> Option<crate::sim::components::DriveCoord> {
     if !entity
         .navigation
-        .path_replay
+        .path_replay()
         .remaining_directions()
         .is_empty()
     {
@@ -268,12 +268,10 @@ impl FootPathRequest {
         path: Vec<(u16, u16)>,
     ) {
         let current = (actor.position.rx(), actor.position.ry());
-        super::path_markers::install_path_replay(
-            &mut actor.navigation.path_replay,
-            current,
-            &path,
-            1,
-        );
+        actor
+            .navigation
+            .path_replay_mut()
+            .install(current, &path, 1);
     }
 }
 
@@ -438,7 +436,7 @@ fn advance_ordinary_mover(
         //wait: 75AF57..75AF66 calls the owner's vt+0x548 and returns.
         if !entity
             .navigation
-            .path_runtime
+            .path_runtime()
             .movement_timer()
             .expired(native_frame as i32)
         {
@@ -538,7 +536,7 @@ fn advance_ordinary_mover(
         && super::ground_pose::position_world_xy(before)
             != super::ground_pose::position_world_xy(&entity.position)
     {
-        entity.navigation.path_runtime.set_path_blocked(false);
+        entity.navigation.path_runtime_mut().clear_blockage();
     }
 }
 
@@ -1010,7 +1008,7 @@ mod pass_cache_tests {
         let mut overlays = crate::sim::overlay_grid::OverlayGrid::new(5, 5);
         let mut entities = EntityStore::new();
         let mut unit = GameEntity::test_default(7, "MTNK", "Americans", 2, 2);
-        unit.lifecycle.set_cell_marked(true);
+        unit.lifecycle.set_cell_marked_for_test(true);
         entities.insert(unit);
         let interner = test_interner();
         let mut cache = MovementPassCache::default();
@@ -1095,7 +1093,7 @@ mod pass_cache_tests {
         let mut entities = EntityStore::new();
         let mut occupancy = OccupancyGrid::new();
         let mut unit = GameEntity::test_default(7, "MTNK", "Americans", 2, 2);
-        unit.lifecycle.set_cell_marked(true);
+        unit.lifecycle.set_cell_marked_for_test(true);
         entities.insert(unit);
         occupancy.add(
             2,
@@ -1221,7 +1219,7 @@ Foundation=2x2
                         entity
                             .set_category_for_test(crate::map::entities::EntityCategory::Structure);
                     }
-                    entity.lifecycle.set_cell_marked(true);
+                    entity.lifecycle.set_cell_marked_for_test(true);
                     entities.insert(entity);
                 }
                 edit => {
@@ -1234,7 +1232,7 @@ Foundation=2x2
                             4 => entity.death.set_dying_for_test(!entity.death.is_dying()),
                             _ => entity
                                 .lifecycle
-                                .set_cell_marked(!entity.lifecycle.cell_marked()),
+                                .set_cell_marked_for_test(!entity.lifecycle.cell_marked()),
                         }
                     }
                 }

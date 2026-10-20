@@ -1401,7 +1401,7 @@ fn project_terrain_path_cell(
         || crate::sim::bridge_state::cell_render_state(cell.bridge_facts).is_some();
     // PathGrid is VERA's own walkability plane, with no native counterpart, so
     // it asks the cell's one land attribute (`CellClass+0xEC`) directly.
-    let land = cell.land_type();
+    let land = cell.land_type;
     let rock = land == LandType::Rock.as_index();
     let water = land == LandType::Water.as_index();
     let path_cell = PathCell {

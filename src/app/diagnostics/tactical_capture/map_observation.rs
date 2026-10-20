@@ -4577,14 +4577,14 @@ mod tests {
     #[test]
     fn crate_observation_preserves_occupied_slot_identity_without_mutating_simulation() {
         let mut sim = crate::sim::world::Simulation::new();
-        *sim.crate_authority.slot_mut(3) = crate::sim::crates::CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(3) = crate::sim::crates::CrateSlot {
             start_frame: 50,
             aux: 777,
             duration: 100,
             cell_x: 10,
             cell_y: 12,
         };
-        *sim.crate_authority.slot_mut(7) = crate::sim::crates::CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(7) = crate::sim::crates::CrateSlot {
             cell_x: -1,
             cell_y: 4,
             ..Default::default()

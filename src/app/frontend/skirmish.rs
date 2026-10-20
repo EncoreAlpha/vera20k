@@ -922,7 +922,7 @@ mod tests {
     #[test]
     fn native_gather_rejects_a_blocked_cell_inside_the_8x8_rect() {
         let mut terrain = test_terrain(32, 32);
-        let blocked = terrain.cell_mut(11, 11).unwrap();
+        let blocked = terrain.cell_mut_for_test(11, 11).unwrap();
         blocked.speed_costs.track = Some(0);
         blocked.base_speed_costs.track = Some(0);
         blocked.zone_type = zone_class::IMPASSABLE;
@@ -988,7 +988,7 @@ mod tests {
         };
         let map = test_map_with_starts(&[authored]);
         let mut terrain = test_terrain(64, 64);
-        let blocked = terrain.cell_mut(61, 28).unwrap();
+        let blocked = terrain.cell_mut_for_test(61, 28).unwrap();
         blocked.speed_costs.track = Some(0);
         blocked.base_speed_costs.track = Some(0);
         blocked.zone_type = zone_class::IMPASSABLE;
@@ -2130,7 +2130,7 @@ mod tests {
         for ry in 0..terrain.height() {
             for rx in 0..terrain.width() {
                 terrain
-                    .cell_mut(rx, ry)
+                    .cell_mut_for_test(rx, ry)
                     .expect("terrain cell")
                     .overlay_blocks = true;
             }

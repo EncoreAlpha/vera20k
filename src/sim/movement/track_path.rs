@@ -210,7 +210,7 @@ impl Simulation {
             .get_mut(id)
             .ok_or("retired Drive/Ship path requester")?
             .navigation
-            .path_runtime
+            .path_runtime_mut()
             .start_movement(frame, rules.general.path_delay_ticks());
         let found = self.foot_find_path(request, rules, registry, frame_effects)?;
         self.continue_track_path_request(id, found, rules, registry, frame_effects)
@@ -256,7 +256,7 @@ impl Simulation {
             .ok_or("retired Drive/Ship path owner")?;
         let &direction = actor
             .navigation
-            .path_replay
+            .path_replay()
             .remaining_directions()
             .first()
             .ok_or("Find_Path route left no Foot+5E0 head")?;
@@ -280,8 +280,8 @@ impl Simulation {
             .get_mut(id)
             .ok_or("retired Drive/Ship path owner")?
             .navigation
-            .path_runtime
-            .set_retries_left(crate::sim::components::FootPathRuntime::RETRY_RELOAD);
+            .path_runtime_mut()
+            .reload_retries();
         Ok(FootPathOutcome::Resume)
     }
 
@@ -346,8 +346,8 @@ impl Simulation {
             .entities
             .get_mut(id)
             .ok_or("retired Drive/Ship path owner")?;
-        if actor.navigation.path_runtime.retries_left() > 0 {
-            actor.navigation.path_runtime.decrement_retries_left();
+        if actor.navigation.path_runtime().retries_left() > 0 {
+            actor.navigation.path_runtime_mut().decrement_retries_left();
             return self.finish_track_path_tail(id, rules, registry, frame_effects);
         }
         //4B2DDE..4B2E30: the exhausted ladder.
@@ -365,7 +365,7 @@ impl Simulation {
             .get_mut(id)
             .unwrap()
             .navigation
-            .path_runtime
+            .path_runtime_mut()
             .clear_scold_latch();
         self.finish_track_path_tail(id, rules, registry, frame_effects)
     }
@@ -1139,7 +1139,7 @@ impl Simulation {
         }
         if !self.begin_foot_destination(id, true, Some(rules), None, frame_effects) {
             if depot_fast_return && let Some(actor) = self.substrate.entities.get_mut(id) {
-                actor.navigation.path_replay.clear_live_head();
+                actor.navigation.path_replay_mut().clear_live_head();
             }
             return false;
         }
@@ -1231,7 +1231,7 @@ impl Simulation {
         // The successful depot tail742D0B calls Foot before its
         // unconditional first path-word clear742D11 and early return.
         if depot_fast_return {
-            actor.navigation.path_replay.clear_live_head();
+            actor.navigation.path_replay_mut().clear_live_head();
         }
         accepted
     }

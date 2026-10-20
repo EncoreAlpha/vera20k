@@ -134,7 +134,7 @@ fn fixture(row: &Value, rules: &RuleSet) -> (Simulation, u64, InternedId) {
         cell.slope_type = native["slope"].as_u64().unwrap() as u8;
         if let Some(overlay) = native.get("overlay_id") {
             cell.bridge_facts.overlay_id = overlay.as_i64().and_then(|id| u8::try_from(id).ok());
-            overlays.cell_mut(x, y).overlay_id = cell.bridge_facts.overlay_id;
+            overlays.cell_mut_for_test(x, y).overlay_id = cell.bridge_facts.overlay_id;
         }
         cell.bridge_facts.raw_flags = native["structural_flags"].as_u64().unwrap() as u32;
         assert_eq!(native["land"], 0, "fixture has only native land0");
@@ -169,7 +169,7 @@ fn fixture(row: &Value, rules: &RuleSet) -> (Simulation, u64, InternedId) {
         LocomotorKind::Teleport
     );
     actor.lifecycle.set_in_limbo_for_test(false);
-    actor.lifecycle.set_cell_marked(true);
+    actor.lifecycle.set_cell_marked_for_test(true);
     actor
         .position
         .put_location(coord(&before["actor"]["coords"]));
@@ -214,7 +214,7 @@ fn fixture(row: &Value, rules: &RuleSet) -> (Simulation, u64, InternedId) {
             let (rx, ry) = pair(&before["actor"]["navcell"]);
             NavTargetRef::cell(rx, ry)
         }));
-    actor.navigation.path_replay.set_directions_for_test(
+    actor.navigation.path_replay_mut().set_directions_for_test(
         before["actor"]["path"]
             .as_array()
             .unwrap()
@@ -222,23 +222,26 @@ fn fixture(row: &Value, rules: &RuleSet) -> (Simulation, u64, InternedId) {
             .map(|word| signed(word) as u8)
             .collect(),
     );
-    actor.navigation.path_replay.set_cursor(0);
-    actor.navigation.path_replay.set_reference_cell(Some((
-        signed(&before["actor"]["reference"][0]) as i16,
-        signed(&before["actor"]["reference"][1]) as i16,
-    )));
+    actor.navigation.path_replay_mut().set_cursor_for_test(0);
     actor
         .navigation
-        .path_runtime
+        .path_replay_mut()
+        .set_reference_cell_for_test(Some((
+            signed(&before["actor"]["reference"][0]) as i16,
+            signed(&before["actor"]["reference"][1]) as i16,
+        )));
+    actor
+        .navigation
+        .path_runtime_mut()
         .set_movement_timer_for_test(timer(&before["actor"]["movement_timer"]));
     actor
         .navigation
-        .path_runtime
+        .path_runtime_mut()
         .set_blocked_timer_for_test(timer(&before["actor"]["blocked_timer"]));
     actor
         .navigation
-        .path_runtime
-        .set_retries_left(before["actor"]["retries"].as_u64().unwrap() as u32);
+        .path_runtime_mut()
+        .set_retries_left_for_test(before["actor"]["retries"].as_u64().unwrap() as u32);
     //Raw prestate follows the actual original5217C0 initial mark. Native Cell
     //object lists are deliberately empty, independently of these raw bytes.
     for native in before["cells"].as_array().unwrap() {
@@ -273,7 +276,7 @@ fn fixture(row: &Value, rules: &RuleSet) -> (Simulation, u64, InternedId) {
         let supplied = coord(&transport["coords"]);
         let vehicle = sim.substrate.entities.get_mut(target).unwrap();
         vehicle.lifecycle.set_in_limbo_for_test(false);
-        vehicle.lifecycle.set_cell_marked(true);
+        vehicle.lifecycle.set_cell_marked_for_test(true);
         vehicle.position.put_location(supplied);
         vehicle.health.set_for_test(signed(&transport["health"]));
         vehicle.set_on_bridge(
@@ -464,13 +467,13 @@ fn assert_state(sim: &Simulation, id: u64, owner: InternedId, native: &Value, co
         "{context}: retained auxiliary identity"
     );
     assert_eq!(
-        actor.navigation.path_replay.cursor(),
+        actor.navigation.path_replay().cursor(),
         0,
         "{context}: no Process consumes this queue"
     );
     let path: Vec<_> = actor
         .navigation
-        .path_replay
+        .path_replay()
         .directions()
         .iter()
         .map(|&word| if word == u8::MAX { -1 } else { i32::from(word) })
@@ -480,13 +483,13 @@ fn assert_state(sim: &Simulation, id: u64, owner: InternedId, native: &Value, co
         expected["path"],
         "{context}: retained path head/suffix"
     );
-    let reference = actor.navigation.path_replay.reference_cell().unwrap();
+    let reference = actor.navigation.path_replay().reference_cell().unwrap();
     assert_eq!(
         json!([reference.0, reference.1]),
         expected["reference"],
         "{context}: Foot reference cell"
     );
-    let path = actor.navigation.path_runtime;
+    let path = actor.navigation.path_runtime();
     assert_eq!(
         json!([
             path.movement_timer().start_frame(),
@@ -1221,7 +1224,7 @@ fn teleport_admission_input_error_restores_physical_occupation() {
     sim.resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(12, 10)
+        .cell_mut_for_test(12, 10)
         .unwrap()
         .speed_costs = crate::rules::terrain_rules::SpeedCostProfile::default();
     let raw = save_codec::serialize(&sim.substrate.raw_cell_occupation).unwrap();
@@ -1251,11 +1254,11 @@ fn teleport_admission_input_error_restores_physical_occupation() {
     );
     let after = &row["boundaries"][0]["after"]["actor"];
     assert_eq!(
-        actor.navigation.path_runtime.movement_timer(),
+        actor.navigation.path_runtime().movement_timer(),
         timer(&after["movement_timer"])
     );
     assert_eq!(
-        actor.navigation.path_runtime.blocked_timer(),
+        actor.navigation.path_runtime().blocked_timer(),
         timer(&after["blocked_timer"])
     );
     assert_rng(

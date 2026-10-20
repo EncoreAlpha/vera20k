@@ -341,7 +341,7 @@ fn deploy_mcv_accepts_mixed_height_clear_foundation() {
     sim.resolved_terrain
         .as_mut()
         .expect("deploy fixture terrain")
-        .cell_mut(20, 21)
+        .cell_mut_for_test(20, 21)
         .expect("foundation cell")
         .level = 1;
 

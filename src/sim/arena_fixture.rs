@@ -82,7 +82,7 @@ pub fn flood(
         .expect("Water land semantics");
     let mut terrain = clear_ground(size);
     for (x, y) in cells {
-        let cell = terrain.cell_mut(x, y).unwrap();
+        let cell = terrain.cell_mut_for_test(x, y).unwrap();
         cell.land_type = LandType::Water.as_index();
         cell.speed_costs = water.speed_costs;
         cell.ground_walk_blocked = water.ground_blocked;

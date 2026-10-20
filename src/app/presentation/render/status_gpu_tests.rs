@@ -657,7 +657,7 @@ fn native_building_status_labels(fixture: &'static str) {
                 entity.lifecycle.set_in_limbo_for_test(false);
                 entity
                     .lifecycle
-                    .set_cell_marked(actor["marked"].as_bool().unwrap());
+                    .set_cell_marked_for_test(actor["marked"].as_bool().unwrap());
                 entity
                     .selection
                     .set_selected_for_test(actor["selected"].as_bool().unwrap());
@@ -980,7 +980,7 @@ fn native_status_controls(fixture: &'static str, type_name: &str, category: Enti
                         sim.resolved_terrain
                             .as_mut()
                             .unwrap()
-                            .cell_mut(
+                            .cell_mut_for_test(
                                 cell["cell"][0].as_u64().unwrap() as u16,
                                 cell["cell"][1].as_u64().unwrap() as u16,
                             )

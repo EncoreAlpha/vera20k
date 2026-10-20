@@ -1,5 +1,6 @@
 use super::*;
 use crate::map::bridge_facts::{BridgeFlagStamp, BridgeStampFamily};
+use crate::map::resolved_terrain::DynamicTerrainCellState;
 use crate::rules::ini_parser::IniFile;
 use crate::sim::overlay_grid::OverlayGrid;
 
@@ -40,8 +41,12 @@ fn family_world(
     terrain.apply_runtime_bridge_mark_stamp(BridgeFlagStamp::new((4, 4), 6, true), stamp);
     let anchor = terrain.native_cell_identity((4, 4));
     terrain.write_native_cell_state(anchor, anchor_state);
-    terrain.cells[4 * 9 + 4].bridge_facts.overlay_id = Some(anchor_overlay);
-    terrain.cells[4 * 9 + 3].bridge_facts.overlay_id = Some(42);
+    terrain.cells_mut_for_test()[4 * 9 + 4]
+        .bridge_facts
+        .overlay_id = Some(anchor_overlay);
+    terrain.cells_mut_for_test()[4 * 9 + 3]
+        .bridge_facts
+        .overlay_id = Some(42);
     let mut grid = OverlayGrid::new(9, 9);
     for y in 0..9 {
         for x in 0..9 {
@@ -304,7 +309,7 @@ fn bridge_publication_production_nonanchor_collapse_keeps_other_overlay_and_runs
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(2, 4)
+        .cell_mut_for_test(2, 4)
         .unwrap();
     assert_eq!(forward2.bridge_facts.raw_flags & 0x200, 0);
     forward2.bridge_transition = true;
@@ -315,8 +320,8 @@ fn bridge_publication_production_nonanchor_collapse_keeps_other_overlay_and_runs
         let Cell::Real(index) = terrain.native_cell_identity(coord) else {
             panic!()
         };
-        terrain.cells[index].bridge_walkable = true;
-        terrain.cells[index].bridge_transition = true;
+        terrain.cells_mut_for_test()[index].bridge_walkable = true;
+        terrain.cells_mut_for_test()[index].bridge_transition = true;
     }
     let before = crate::sim::pathfinding::PathGrid::from_resolved_terrain_with_bridges(
         sim.resolved_terrain.as_ref().unwrap(),
@@ -388,7 +393,7 @@ fn bridge_publication_production_nonanchor_collapse_keeps_other_overlay_and_runs
         assert!(!path.transition);
         assert_eq!(grid.cell(coord.0, coord.1).overlay_data, 0);
         assert_eq!(
-            sim.dynamic_terrain_cells[&coord],
+            *sim.dynamic_terrain_cells.get(&coord).unwrap(),
             DynamicTerrainCellState::capture(cell)
         );
     }

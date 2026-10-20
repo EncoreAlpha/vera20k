@@ -113,7 +113,7 @@ fn paid_e2_negative_build_limit_prunes_and_refuses_stale_produce_after_load() {
 
     for loaded in [false, true] {
         if loaded {
-            fixture.sim.session.set_started(true);
+            fixture.sim.session.publish_started();
             roundtrip_fixture_save(&mut fixture, "paid-e2-produced-limit");
         }
         let sidebar = refresh_fixture_sidebar(&mut fixture, SidebarTab::Infantry);

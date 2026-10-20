@@ -3189,7 +3189,7 @@ SpreadPercentage=.06
         overlay_grid.place_overlay(3, 3, tib01, 3);
         block_all_neighbors_except(&mut overlay_grid, blocker, (3, 3), Some((4, 3)));
         let mut terrain = flat_clear_resolved_grid(8, 8);
-        terrain.cell_mut(4, 3).unwrap().outside_playfield = true;
+        terrain.cell_mut_for_test(4, 3).unwrap().outside_playfield = true;
 
         let rules_ini = IniFile::from_str(
             "[InfantryTypes]\n[VehicleTypes]\n[AircraftTypes]\n[BuildingTypes]\n",

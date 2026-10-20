@@ -418,7 +418,7 @@ mod tests {
             0, 52, 52, 52, 52, 0, 0, 0, 0, 104, 104, 104, 104, 104, 104, 104, 104, 52, 52, 52, 52,
         ];
         for (slope, contribution) in expected_contributions.into_iter().enumerate() {
-            let cell = terrain.cell_mut(55, 55).unwrap();
+            let cell = terrain.cell_mut_for_test(55, 55).unwrap();
             cell.level = 2;
             cell.slope_type = slope as u8;
             let target =
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn native_click_target_uses_ground_slope_for_bridge_and_fails_closed_without_cell() {
         let mut terrain = click_terrain(64, 64);
-        let cell = terrain.cell_mut(63, 63).unwrap();
+        let cell = terrain.cell_mut_for_test(63, 63).unwrap();
         cell.level = 3;
         cell.slope_type = 1;
         cell.has_bridge_deck = true;

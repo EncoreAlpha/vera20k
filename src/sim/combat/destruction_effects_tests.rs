@@ -822,7 +822,11 @@ fn a_heavy_ship_dying_on_water_sinks_without_its_explosion() {
         let ship = spawn(&mut sim, &rules, kind, 12, 12);
         if !water {
             // Only the gate's `+0xEC` read changes; the ship stays placed.
-            let cell = sim.resolved_terrain.as_mut().unwrap().cell_mut(12, 12);
+            let cell = sim
+                .resolved_terrain
+                .as_mut()
+                .unwrap()
+                .cell_mut_for_test(12, 12);
             cell.unwrap().land_type = LandType::Clear.as_index();
         }
         let mut replay = sim.scenario_rng.clone();

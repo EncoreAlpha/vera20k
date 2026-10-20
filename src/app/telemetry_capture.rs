@@ -493,7 +493,7 @@ fn capture_selected(
     let (path_steps_left, path_blocked, goal, path_preview) = if moving {
         let path = entity
             .navigation
-            .path_replay
+            .path_replay()
             .remaining_cells_from((entity.position.rx() as i16, entity.position.ry() as i16));
         let preview = path
             .iter()
@@ -507,7 +507,7 @@ fn capture_selected(
             .collect();
         (
             path.len() as u32,
-            entity.navigation.path_runtime.path_blocked(),
+            entity.navigation.path_runtime().path_blocked(),
             crate::sim::movement::movement_goal_cell(entity),
             preview,
         )

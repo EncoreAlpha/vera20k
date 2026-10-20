@@ -443,7 +443,7 @@ impl Simulation {
                 .recoil_after_overlay_crush();
             //73B067 clears Foot+6B5 after the damage call, even when the
             //Cell refuses a non-Wall overlay. TiltsWhenCrushes is not a gate.
-            actor.foot_speed.set_crush_slowdown(false);
+            actor.foot_speed.clear_crush_slowdown();
         }
     }
 
@@ -1418,7 +1418,7 @@ impl Simulation {
         }
         if let Some(entity) = self.substrate.entities.get_mut(id) {
             // Keep the backing suffix/cursor/reference; this is one DWORD.
-            entity.navigation.path_replay.clear_live_head();
+            entity.navigation.path_replay_mut().clear_live_head();
         }
     }
 }

@@ -253,7 +253,7 @@ fn teleport_target_loss_and_pointer_expiry_match_native_controls() {
             });
             entity
                 .lifecycle
-                .set_cell_marked(input["marked"].as_bool().unwrap());
+                .set_cell_marked_for_test(input["marked"].as_bool().unwrap());
             let mut shot = super::super::lifecycle_tests::gsi_05_02_projectile(1, None);
             shot.target = ProjectileTarget::Entity(1);
             sim.admit_projectile(99, shot);

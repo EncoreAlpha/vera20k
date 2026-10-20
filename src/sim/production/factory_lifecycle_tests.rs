@@ -95,7 +95,7 @@ fn paid_destroyer_runs_shipyard_production_animation_through_idle_recovery() {
     let terrain = sim.resolved_terrain.as_mut().unwrap();
     for y in 24..48 {
         for x in 24..48 {
-            *terrain.cell_mut(x, y).unwrap() = water.cell(x, y).unwrap().clone();
+            *terrain.cell_mut_for_test(x, y).unwrap() = water.cell(x, y).unwrap().clone();
         }
     }
     let owner = sim.interner.intern("Americans");

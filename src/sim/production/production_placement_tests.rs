@@ -1046,7 +1046,7 @@ fn place_ready_building_accepts_clear_mixed_height_footprint() {
         sim.resolved_terrain
             .as_mut()
             .expect("placement fixture terrain")
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .expect("footprint cell")
             .level = z;
     }
@@ -1359,7 +1359,7 @@ fn free_unit_total_placement_failure_refunds_once_and_leaves_no_entity() {
             let cell = sim
                 .resolved_terrain
                 .as_mut()
-                .and_then(|terrain| terrain.cell_mut(rx, ry))
+                .and_then(|terrain| terrain.cell_mut_for_test(rx, ry))
                 .expect("fixture terrain cell");
             cell.speed_costs = SpeedCostProfile::default();
             cell.base_speed_costs = SpeedCostProfile::default();

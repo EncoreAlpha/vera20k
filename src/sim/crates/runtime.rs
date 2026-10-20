@@ -188,13 +188,8 @@ pub(crate) fn clear_crate_slot(
         return false;
     }
     let _ = remove_crate_overlay_from_cell(sim, rules, registry, (slot.cell_x, slot.cell_y));
-    let slot = sim.crate_authority.slot_mut(slot_index);
-    slot.cell_x = 0;
-    slot.cell_y = 0;
-    let mut timer = slot.timer();
-    timer.pause(current_frame);
-    slot.start_frame = timer.start_frame();
-    slot.duration = timer.duration();
+    sim.crate_authority
+        .clear_and_preserve_timer(slot_index, current_frame);
     true
 }
 
@@ -309,7 +304,7 @@ mod tests {
                 } else {
                     input["duplicate_slot"] == true
                 };
-                *sim.crate_authority.slot_mut(index) = if occupied {
+                *sim.crate_authority.slot_mut_for_test(index) = if occupied {
                     CrateSlot {
                         start_frame: start,
                         aux,
@@ -385,7 +380,7 @@ mod tests {
         let mut sim = sim_with_grid(0x51);
         let rules = crate_ruleset("");
         let registry = crate_registry();
-        *sim.crate_authority.slot_mut(2) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(2) = CrateSlot {
             start_frame: 100,
             aux: 0x1234,
             duration: 500,
@@ -411,7 +406,7 @@ mod tests {
         let rules = crate_ruleset("");
         let registry = crate_registry();
 
-        *sim.crate_authority.slot_mut(0) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(0) = CrateSlot {
             start_frame: 10,
             aux: 0,
             duration: 30,
@@ -422,7 +417,7 @@ mod tests {
         assert_eq!(sim.crate_authority.slots()[0].duration, 0);
         assert_eq!(sim.crate_authority.slots()[0].start_frame, -1);
 
-        *sim.crate_authority.slot_mut(1) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(1) = CrateSlot {
             start_frame: -1,
             aux: 0,
             duration: 77,
@@ -456,7 +451,7 @@ mod tests {
             let grid = sim.overlay_grid.as_mut().expect("grid");
             grid.place_overlay(15, 15, wood, 0xFF);
             grid.place_overlay(16, 15, tiberium, 3);
-            grid.cell_mut(15, 15).wall_owner = Some(crate::sim::intern::InternedId::from_index(5));
+            grid.cell_mut_for_test(15, 15).wall_owner = Some(crate::sim::intern::InternedId::from_index(5));
             let _ = grid.take_dirty_cells();
         }
 
@@ -534,7 +529,7 @@ mod tests {
                 ),
             );
             sim.session.game_options_mut_for_test().crates = crates;
-            *sim.crate_authority.slot_mut(0) = CrateSlot {
+            *sim.crate_authority.slot_mut_for_test(0) = CrateSlot {
                 start_frame: -1,
                 aux: 0,
                 duration: 0,
@@ -568,14 +563,14 @@ mod tests {
         let rules = crate_ruleset("");
         let registry = crate_registry();
 
-        *sim.crate_authority.slot_mut(0) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(0) = CrateSlot {
             start_frame: 900,
             aux: 0,
             duration: 5_000,
             cell_x: 6,
             cell_y: 6,
         };
-        *sim.crate_authority.slot_mut(1) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(1) = CrateSlot {
             start_frame: 100,
             aux: 0,
             duration: 200,
@@ -623,7 +618,7 @@ mod tests {
             grid.place_overlay(15, 15, wood, 0xFF);
             let _ = grid.take_dirty_cells();
         }
-        *sim.crate_authority.slot_mut(0) = CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(0) = CrateSlot {
             start_frame: -1,
             aux: 0,
             duration: 0,
@@ -744,7 +739,7 @@ mod tests {
             crate::sim::scenario_session::ScenarioGameMode::from_legacy_nonzero(true),
         );
         on.session.game_options_mut_for_test().crates = true;
-        *on.crate_authority.slot_mut(0) = due_slot;
+        *on.crate_authority.slot_mut_for_test(0) = due_slot;
         on.advance_tick(&[], Some(&rules), None, Some(&registry), 33);
         let regenerated = on.crate_authority.slots()[0];
         assert_ne!(
@@ -776,7 +771,7 @@ mod tests {
             crate::sim::scenario_session::ScenarioGameMode::from_legacy_nonzero(true),
         );
         off.session.game_options_mut_for_test().crates = false;
-        *off.crate_authority.slot_mut(0) = due_slot;
+        *off.crate_authority.slot_mut_for_test(0) = due_slot;
         off.advance_tick(&[], Some(&rules), None, Some(&registry), 33);
         assert_eq!(
             off.crate_authority.slots()[0],

@@ -113,7 +113,7 @@ fn save(
         .match_state
         .scenario_elapsed_clock
         .begin_save(clock_now);
-    let mut map = crate::sim::snapshot::scenario_resources::SavedMapMetadata::capture(
+    let map = crate::sim::snapshot::scenario_resources::SavedMapMetadata::capture(
         map_hash,
         source,
         &state.match_state.map_basic,
@@ -125,8 +125,8 @@ fn save(
         clock_save.accumulated_buckets(),
         state.match_state.session.local_player_name(),
         state.audio.theme.saved_slots(),
+        presentation.radar_movies.scenario_hold(),
     );
-    map.set_radar_pause_credit(presentation.radar_movies.scenario_hold());
     let resources = crate::sim::snapshot::scenario_resources::SavedScenarioResourcesRef::capture(
         &runtime.resources,
         processed,

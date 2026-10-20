@@ -168,7 +168,7 @@ mod map_wall_owner_candidate_tests {
             .type_facts
             .set_foundation_for_test(foundation.to_string());
         entity.lifecycle.set_object_alive_for_test(true);
-        entity.lifecycle.set_cell_marked(true);
+        entity.lifecycle.set_cell_marked_for_test(true);
         entity
     }
 
@@ -644,7 +644,7 @@ mod map_wall_owner_candidate_tests {
                 );
                 lamp.lifecycle.set_object_alive_for_test(true);
                 lamp.lifecycle.set_in_limbo_for_test(false);
-                lamp.lifecycle.set_cell_marked(true);
+                lamp.lifecycle.set_cell_marked_for_test(true);
                 sim.entities_mut().insert(lamp);
                 sim.allocate_building_light(id, &rules);
                 id += 1;
@@ -791,7 +791,7 @@ mod map_wall_owner_candidate_tests {
         sim.publish_global_lighting(crate::sim::light_sources::PaletteUpdate::from_scenario(
             sim.session.lighting(),
         ));
-        assert!(!sim.lighting_sources.pending.is_empty());
+        assert!(!sim.lighting_sources.pending().is_empty());
         sim.radiation.apply_detonation(
             RadDetonation {
                 rx: 120,
@@ -803,16 +803,16 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
         assert!(matches!(
-            sim.lighting_sources.pending.last(),
+            sim.lighting_sources.pending().last(),
             Some(LightingEvent::Radiation { .. })
         ));
         sim.session.lighting_mut().set_current_ambient_for_test(30);
         sim.rebuild_lighting_sources_after_load(&rules);
-        assert!(sim.lighting_sources.pending.is_empty());
-        assert!(sim.lighting_sources.buildings[&41].active);
+        assert!(sim.lighting_sources.pending().is_empty());
+        assert!(sim.lighting_sources.buildings()[&41].active);
         // A load reinstalls lighting through the world-presentation owner.
         lights.install(
             CellLightGrid::new(),
@@ -1145,7 +1145,7 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
         sim.session.lighting_mut().set_current_ambient_for_test(250);
         sim.publish_global_lighting(crate::sim::light_sources::PaletteUpdate::from_scenario(
@@ -1158,10 +1158,10 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
         assert!(matches!(
-            sim.lighting_sources.pending.as_slice(),
+            sim.lighting_sources.pending(),
             [
                 LightingEvent::Building { .. },
                 LightingEvent::Radiation { .. },
@@ -1287,7 +1287,7 @@ mod map_wall_owner_candidate_tests {
         terrain: &ResolvedTerrainGrid,
         sim: &mut Simulation,
     ) {
-        let events = std::mem::take(&mut sim.lighting_sources.pending);
+        let events = sim.lighting_sources.take_pending();
         lighting.apply_events(terrain, &events);
     }
 
@@ -1333,7 +1333,7 @@ mod map_wall_owner_candidate_tests {
         );
         lamp.lifecycle.set_object_alive_for_test(true);
         lamp.lifecycle.set_in_limbo_for_test(false);
-        lamp.lifecycle.set_cell_marked(false);
+        lamp.lifecycle.set_cell_marked_for_test(false);
         lamp.install_building_up(BuildingUp::completing_in_ticks(9, 0), 0);
         sim.entities_mut().insert(lamp);
         sim.add_entity_occupancy(41);
@@ -1459,7 +1459,7 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
 
         let terrain = flat_terrain(10, 10);
@@ -1509,7 +1509,7 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
         let first = derive_lighting_view(&LightingConfig::default(), Some(&sim), 2);
         assert_eq!(first.point_lights.len(), 1);
@@ -1520,7 +1520,7 @@ mod map_wall_owner_candidate_tests {
             sim.session.theater(),
             &rules.radiation,
             None,
-            &mut sim.lighting_sources.pending,
+            &mut sim.lighting_sources,
         );
         let merged = derive_lighting_view(&LightingConfig::default(), Some(&sim), 2);
         assert_eq!(merged.point_lights.len(), 1);
@@ -2578,9 +2578,12 @@ mod generated_overlay_grid_tests {
         let mut map = emit::empty_map_file(&RmgOptions::default(), 16, 12);
         emit::populate(&mut map, &generated, &[], &[], &[]);
         let mut terrain = ResolvedTerrainGrid::build_generated_materialized_for_test(&map);
-        terrain.cell_mut(22, 22).expect("rock cell").slope_type = 5;
         terrain
-            .cell_mut(22, 24)
+            .cell_mut_for_test(22, 22)
+            .expect("rock cell")
+            .slope_type = 5;
+        terrain
+            .cell_mut_for_test(22, 24)
             .expect("sloped ore cell")
             .slope_type = 1;
 

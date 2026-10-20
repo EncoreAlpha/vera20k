@@ -430,7 +430,7 @@ pub fn load_with_launch(
     if sim.path_grid().is_none() {
         return Err("headless post-map navigation is unavailable".to_string());
     }
-    sim.session.set_started(true);
+    sim.session.publish_started();
     Ok(HeadlessScenario {
         runtime: crate::sim::runtime::SimRuntime {
             simulation: sim,

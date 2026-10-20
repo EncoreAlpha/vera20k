@@ -2711,7 +2711,7 @@ fn retail_launches(
     let terrain = sim.resolved_terrain.as_mut().unwrap();
     for y in 0..32 {
         for x in 0..32 {
-            terrain.cell_mut(x, y).unwrap().level = 4;
+            terrain.cell_mut_for_test(x, y).unwrap().level = 4;
         }
     }
     // MarkSucceeded seats a ship on this dry fixture ground.

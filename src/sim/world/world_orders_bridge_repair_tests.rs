@@ -74,7 +74,7 @@ fn build_ordinary_c4_sim(
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(17, y)
+            .cell_mut_for_test(17, y)
             .unwrap()
             .bridge_facts
             .overlay_id = Some(overlay);
@@ -172,7 +172,11 @@ fn seed_destroyed_bridge(sim: &mut Simulation) {
         .as_mut()
         .expect("bridge tests require resolved terrain");
     for &(rx, ry) in BRIDGE_CELLS {
-        terrain.cell_mut(rx, ry).unwrap().bridge_facts.overlay_id = Some(0xE7);
+        terrain
+            .cell_mut_for_test(rx, ry)
+            .unwrap()
+            .bridge_facts
+            .overlay_id = Some(0xE7);
     }
     sim.bridge_state = Some(BridgeRuntimeState::default());
 }
@@ -189,7 +193,7 @@ fn stamp_concrete_middle_tile(sim: &mut Simulation, cell: (u16, u16)) {
             b"[General]\nBridgeMiddle1=7\nBridgeMiddle2=40\n",
         ),
     );
-    let ramp = terrain.cell_mut(cell.0, cell.1).unwrap();
+    let ramp = terrain.cell_mut_for_test(cell.0, cell.1).unwrap();
     ramp.final_tile_index = 100 + 7 - 1;
     ramp.final_sub_tile = 4;
 }
@@ -214,7 +218,7 @@ fn seed_hut_fallback_bridgehead_layout(sim: &mut Simulation) {
         .as_mut()
         .expect("bridge fallback tests require resolved terrain");
     let anchor_cell = terrain.native_cell_identity((13, 10));
-    let starter = terrain.cell_mut(12, 10).unwrap();
+    let starter = terrain.cell_mut_for_test(12, 10).unwrap();
     starter.bridge_facts.raw_flags = BRIDGE_FLAG_STRUCTURAL;
     starter.bridge_facts.native_anchor = Some(anchor_cell);
     starter.bridge_facts.anchor = Some(BridgeAnchorRelation {
@@ -223,7 +227,7 @@ fn seed_hut_fallback_bridgehead_layout(sim: &mut Simulation) {
         family: BridgeStampFamily::Nesw,
         direction: 6,
     });
-    let anchor = terrain.cell_mut(13, 10).unwrap();
+    let anchor = terrain.cell_mut_for_test(13, 10).unwrap();
     anchor.bridge_facts.raw_flags = 0;
     anchor.bridge_facts.state_byte = FALLBACK_ANCHOR_STATE;
     stamp_concrete_middle_tile(sim, (13, 10));
@@ -234,7 +238,7 @@ fn seed_terminal_overlay_with_fallback_trap(sim: &mut Simulation, overlay_byte: 
     sim.resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(10, 10)
+        .cell_mut_for_test(10, 10)
         .unwrap()
         .bridge_facts
         .overlay_id = Some(overlay_byte);
@@ -246,7 +250,7 @@ fn seed_hut_fallback_without_starter(sim: &mut Simulation) {
         .resolved_terrain
         .as_mut()
         .expect("bridge fallback tests require resolved terrain");
-    let starter = terrain.cell_mut(12, 10).unwrap();
+    let starter = terrain.cell_mut_for_test(12, 10).unwrap();
     starter.bridge_facts.raw_flags = 0;
     starter.bridge_facts.anchor = None;
 }
@@ -458,7 +462,7 @@ fn queued_hut_capture_survives_repair_before_event_execution() {
             sim.resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(rx, ry)
+                .cell_mut_for_test(rx, ry)
                 .unwrap()
                 .bridge_facts
                 .overlay_id = Some(0xD4);
@@ -660,7 +664,7 @@ fn c4_on_cabhut_without_a_collapsible_bridge_changes_nothing() {
                     .resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(12, 10)
+                    .cell_mut_for_test(12, 10)
                     .unwrap();
                 starter.bridge_facts.raw_flags =
                     BRIDGE_FLAG_ANCHOR_SELF | BRIDGE_FLAG_DIRECTION_ZERO;
@@ -774,7 +778,7 @@ fn ordinary_engineer_overlay_repair_does_not_clear_neighbor_pavement() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(rx, ry)
+            .cell_mut_for_test(rx, ry)
             .unwrap();
         cell.has_damaged_data = true;
         cell.bridge_facts.raw_flags |= crate::map::bridge_pavement::DAMAGED_PAVEMENT;
@@ -822,13 +826,13 @@ fn live_repair_fixture() -> (
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(x, y)
+            .cell_mut_for_test(x, y)
             .unwrap()
             .bridge_facts
             .overlay_id = Some(231);
         let overlays = sim.overlay_grid.as_mut().unwrap();
         overlays.place_overlay(x, y, 231, 0xA0 + index as u8);
-        overlays.cell_mut(x, y).wall_owner = Some(owner);
+        overlays.cell_mut_for_test(x, y).wall_owner = Some(owner);
     }
     (sim, rules, registry, engineer)
 }

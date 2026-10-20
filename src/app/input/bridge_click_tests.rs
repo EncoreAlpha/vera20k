@@ -515,7 +515,7 @@ fn ordinary_walk_cell_input_reaches_near_bank_and_valid_high_bridge() {
             })
         );
         assert!(
-            e.navigation.path_replay.remaining_directions().is_empty(),
+            e.navigation.path_replay().remaining_directions().is_empty(),
             "command accepts before Process search"
         );
         for _ in 0..250 {
@@ -573,7 +573,7 @@ fn encoded_walk_destination_survives_topology_change_before_due_frame() {
         e.locomotor.as_ref().unwrap().walk_destination_cell(),
         Some(clicked)
     );
-    assert!(e.navigation.path_replay.remaining_directions().is_empty());
+    assert!(e.navigation.path_replay().remaining_directions().is_empty());
     // This proves exact event installation. The following failed-Process and
     // same-slot Move restart remain the separately documented open increment.
 }

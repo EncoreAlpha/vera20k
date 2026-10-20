@@ -465,7 +465,7 @@ pub fn clear_tiberium_source_cells_for_terrain(
             continue;
         }
 
-        *overlay_grid.cell_mut(terrain_object.rx, terrain_object.ry) = Default::default();
+        overlay_grid.clear_cell_silently(terrain_object.rx, terrain_object.ry);
         crate::sim::overlay_grid::recalc_overlay_passability(
             overlay_grid,
             resolved_terrain,
@@ -587,10 +587,10 @@ fn construct_terrain_objects_inner(
                 .and_then(|overlay_id| overlay_registry.flags(overlay_id))
                 .is_some_and(|flags| flags.tiberium);
             if clears_resource {
-                *sim.overlay_grid
+                sim.overlay_grid
                     .as_mut()
                     .expect("authored overlay grid was checked above")
-                    .cell_mut(obj.rx, obj.ry) = Default::default();
+                    .clear_cell_silently(obj.rx, obj.ry);
             }
         }
         constructed += 1;

@@ -27,7 +27,7 @@ fn structural_fallout_retires_effect_only_ground_victim() {
     // Admit the initial victim on clear ground before supplying the later
     // structural bridge state. Its ordinary Unlimbo needs Clear/Foot, and
     // this effect-only corridor supplies no OverlayType reader context.
-    let clear = terrain.cell_mut(4, 4).unwrap();
+    let clear = terrain.cell_mut_for_test(4, 4).unwrap();
     clear.speed_costs.foot = Some(100);
     clear.base_speed_costs.foot = Some(100);
     sim.resolved_terrain = Some(terrain);
@@ -107,7 +107,7 @@ fn structural_drop_in_owns_order_footprints_and_restore_without_teardown_side_ef
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(x, y)
+            .cell_mut_for_test(x, y)
             .unwrap();
         cell.level = 0;
         cell.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
@@ -332,7 +332,7 @@ fn a_bombed_bridge_hut_drops_its_bridge() {
             sim.resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(17, y)
+                .cell_mut_for_test(17, y)
                 .unwrap()
                 .bridge_facts
                 .overlay_id = Some(0xD4);

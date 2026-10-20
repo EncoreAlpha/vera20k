@@ -5496,7 +5496,7 @@ mod tests {
         let mut terrain = crate::map::resolved_terrain::test_flat_ground_grid(8);
         for ry in 0..8 {
             for rx in 0..8 {
-                terrain.cell_mut(rx, ry).unwrap().accepts_smudge = true;
+                terrain.cell_mut_for_test(rx, ry).unwrap().accepts_smudge = true;
             }
         }
         sim.resolved_terrain = Some(terrain);

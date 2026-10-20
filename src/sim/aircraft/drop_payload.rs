@@ -1337,12 +1337,12 @@ mod tests {
             let rules = drop_test_rules();
             insert_loaded_paradrop_pair(&mut sim, 1, 2);
             let mut loco = LocomotorState::from_object_type(rules.object("E1").unwrap(), 0);
-            loco.set_layer(MovementLayer::Bridge);
+            loco.set_layer_for_test(MovementLayer::Bridge);
             {
                 let passenger = sim.substrate.entities.get_mut(2).unwrap();
                 passenger.locomotor = Some(loco);
                 passenger.lifecycle.set_object_alive_for_test(post_attach);
-                passenger.lifecycle.set_cell_marked(post_attach);
+                passenger.lifecycle.set_cell_marked_for_test(post_attach);
             }
             let mut peer = GameEntity::test_default(9, "E1", "Americans", 30, 30);
             peer.mark_live_contact_with(2);
@@ -1423,7 +1423,7 @@ mod tests {
                     .get_mut(2)
                     .unwrap()
                     .lifecycle
-                    .set_cell_marked(false);
+                    .set_cell_marked_for_test(false);
                 drop_payload(
                     &mut sim,
                     1,

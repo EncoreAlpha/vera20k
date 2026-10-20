@@ -540,7 +540,7 @@ fn factory_restore_rejects_inconsistent_roots() {
                 .set_in_limbo_for_test(false),
             "marked-root" => {
                 let entity = saved.substrate.entities.get_mut(parent).unwrap();
-                entity.lifecycle.set_cell_marked(true);
+                entity.lifecycle.set_cell_marked_for_test(true);
             }
             "logic-root" => saved.set_logic_order_for_test(vec![parent]),
             "missing-entity" => {

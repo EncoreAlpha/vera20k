@@ -393,7 +393,9 @@ fn actor_input(actor: &mut GameEntity, native: &Value) {
         .lifecycle
         .set_object_alive_for_test(native["alive"] == 1);
     actor.lifecycle.set_in_limbo_for_test(native["limbo"] == 1);
-    actor.lifecycle.set_cell_marked(native["marked"] == 1);
+    actor
+        .lifecycle
+        .set_cell_marked_for_test(native["marked"] == 1);
     actor
         .in_logic_vector
         .set_for_test(native["logic_registered"] == 1);
@@ -944,7 +946,9 @@ fn stock_naval_unload_leaves_match_original_mission_door_slots_and_rng() {
                 .lifecycle
                 .set_object_alive_for_test(actor["alive"] == 1);
             entity.lifecycle.set_in_limbo_for_test(actor["limbo"] == 1);
-            entity.lifecycle.set_cell_marked(actor["marked"] == 1);
+            entity
+                .lifecycle
+                .set_cell_marked_for_test(actor["marked"] == 1);
             entity.in_logic_vector.set_for_test(actor["logic"] == 1);
             entity.set_in_playfield(actor["in_playfield"] == 1);
             assert_eq!(actor["contacts"], json!([0]));

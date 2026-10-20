@@ -576,7 +576,7 @@ fn genetic_converter_command_uses_selected_bridge_membership() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(5, 5)
+            .cell_mut_for_test(5, 5)
             .unwrap();
         cell.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
         cell.has_bridge_deck = true;
@@ -746,7 +746,7 @@ fn iron_curtain_command_selects_deck_members_and_overlapping_foundation() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(5, 5)
+            .cell_mut_for_test(5, 5)
             .unwrap();
         cell.bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
         cell.has_bridge_deck = true;
@@ -931,7 +931,7 @@ fn iron_curtain_command_observes_native_deck_order_after_nested_bridge_drop_in()
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(x, y)
+            .cell_mut_for_test(x, y)
             .unwrap();
         // Ground level 3 puts the deck at level 7 (Z 728), inside the
         // dispatcher's height window, so the death exercises its actual
@@ -945,7 +945,7 @@ fn iron_curtain_command_observes_native_deck_order_after_nested_bridge_drop_in()
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(5, 5)
+        .cell_mut_for_test(5, 5)
         .unwrap()
         .bridge_facts;
     facts.overlay_id = Some(24);

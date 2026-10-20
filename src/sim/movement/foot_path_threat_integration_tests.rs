@@ -58,8 +58,12 @@ fn request_move(
     // current cell; no layer is kept per route cell.
     (
         result,
-        actor.navigation.path_replay.route_cells(),
-        actor.navigation.path_replay.remaining_directions().to_vec(),
+        actor.navigation.path_replay().route_cells(),
+        actor
+            .navigation
+            .path_replay()
+            .remaining_directions()
+            .to_vec(),
     )
 }
 

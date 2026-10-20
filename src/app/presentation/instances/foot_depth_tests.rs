@@ -90,7 +90,7 @@ fn set_live_level(runtime: &mut SimRuntime, coord: (u16, u16), level: u8) {
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(coord.0, coord.1)
+        .cell_mut_for_test(coord.0, coord.1)
         .unwrap()
         .level = level;
 }
@@ -172,7 +172,7 @@ fn composite_split_uses_live_raw_bridge_terms_and_native_on_bridge() {
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(2, 2)
+        .cell_mut_for_test(2, 2)
         .unwrap()
         .bridge_facts
         .raw_flags = 0x100;
@@ -191,7 +191,7 @@ fn composite_split_uses_live_raw_bridge_terms_and_native_on_bridge() {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(x, y)
+                .cell_mut_for_test(x, y)
                 .unwrap()
                 .final_tile_index = 5;
         }
@@ -205,7 +205,7 @@ fn composite_split_uses_live_raw_bridge_terms_and_native_on_bridge() {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(x, y)
+                .cell_mut_for_test(x, y)
                 .unwrap()
                 .final_tile_index = 0;
         }

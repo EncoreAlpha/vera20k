@@ -58,7 +58,7 @@ fn fixture(input: &Value, stock: &Value) -> (Scene, Vec<(u16, u16)>) {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(rx, ry)
+                .cell_mut_for_test(rx, ry)
                 .unwrap()
                 .allows_tiberium = input["tile_allows_tiberium"] != false;
         }
@@ -129,7 +129,7 @@ fn fixture(input: &Value, stock: &Value) -> (Scene, Vec<(u16, u16)>) {
                     .resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(at.0, at.1)
+                    .cell_mut_for_test(at.0, at.1)
                     .unwrap();
                 c.land_type = 1;
                 c.allows_tiberium = false;
@@ -139,7 +139,7 @@ fn fixture(input: &Value, stock: &Value) -> (Scene, Vec<(u16, u16)>) {
                     .resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(at.0, at.1)
+                    .cell_mut_for_test(at.0, at.1)
                     .unwrap()
                     .slope_type = 1
             }
@@ -148,7 +148,7 @@ fn fixture(input: &Value, stock: &Value) -> (Scene, Vec<(u16, u16)>) {
                     .resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(at.0, at.1)
+                    .cell_mut_for_test(at.0, at.1)
                     .unwrap()
                     .bridge_facts
                     .raw_flags = 0x100

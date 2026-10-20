@@ -458,7 +458,7 @@ fn a_jumpjet_cruising_over_water_leaves_no_wake() {
         .spawn_object("JJV", "Americans", 0, 0, 64, &rules)
         .expect("spawn Jumpjet");
     let mut terrain = water_terrain(2, 1);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = crate::rules::terrain_rules::LandType::Water.as_index();
     }
     sim.resolved_terrain = Some(terrain);
@@ -537,7 +537,7 @@ fn a_ship_wakes_every_eighth_frame_unless_it_is_underwater() {
     }
     // The gate reads the `CellClass+0xEC` mirror; stamp Water on the fixture.
     let mut terrain = water_terrain(4, 1);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = crate::rules::terrain_rules::LandType::Water.as_index();
     }
     sim.resolved_terrain = Some(terrain);
@@ -607,7 +607,7 @@ Rate=120
     // The native gate reads CellClass+0xEC == 2 (Water); the fixture's water
     // grid carries land type 4 for movement, so stamp the binary's mirror.
     let mut terrain = water_terrain(2, 1);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = crate::rules::terrain_rules::LandType::Water.as_index();
     }
     sim.resolved_terrain = Some(terrain);
@@ -941,7 +941,10 @@ fn terminal_app_frame_finalizes_overlay_updates_before_hash() {
     let rules = RuleSet::from_ini(&ini).expect("terminal overlay rules");
     let overlays = crate::rules::overlay_types::OverlayTypeRegistry::from_ini(&ini, None);
     let mut terrain = gsi_04_10_clear_terrain(2, 1);
-    terrain.cell_mut(0, 0).expect("terrain cell").slope_type = 5;
+    terrain
+        .cell_mut_for_test(0, 0)
+        .expect("terrain cell")
+        .slope_type = 5;
 
     let mut sim = Simulation::new();
     sim.resolved_terrain = Some(terrain);
@@ -1725,13 +1728,13 @@ fn dynamic_navigation_publication_composes_structures_bibs_and_bridges() {
     .expect("dynamic navigation rules");
     let mut terrain = gsi_04_10_clear_terrain(16, 16);
     for rx in [1, 3] {
-        let cell = terrain.cell_mut(rx, 1).expect("bridgehead cell");
+        let cell = terrain.cell_mut_for_test(rx, 1).expect("bridgehead cell");
         cell.bridge_walkable = true;
         cell.bridge_transition = true;
         cell.bridge_deck_level = 4;
     }
     {
-        let cell = terrain.cell_mut(2, 1).expect("bridge body cell");
+        let cell = terrain.cell_mut_for_test(2, 1).expect("bridge body cell");
         cell.ground_walk_blocked = true;
         cell.base_build_blocked = true;
         cell.bridge_walkable = true;
@@ -1780,7 +1783,7 @@ fn dynamic_navigation_publication_composes_structures_bibs_and_bridges() {
     sim.resolved_terrain
         .as_mut()
         .expect("bridge terrain")
-        .cell_mut(2, 1)
+        .cell_mut_for_test(2, 1)
         .expect("bridge body cell")
         .bridge_facts
         .overlay_id = Some(0xE8);
@@ -2208,7 +2211,7 @@ fn gsi_04_11_bullet_ore_reduction_precedes_outer_crater_anim_start() {
 
     let mut sim = Simulation::with_seed(1);
     let mut terrain = gsi_04_10_clear_terrain(10, 10);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.filled_clear = true;
         cell.accepts_smudge = true;
         cell.allows_tiberium = true;
@@ -2308,7 +2311,7 @@ fn gsi_04_11_missile_outer_anim_precedes_per_cell_ore_reduction() {
     let ore_id = registry.id_for_name("ORE").unwrap();
     let mut sim = Simulation::with_seed(7);
     let mut terrain = gsi_04_10_clear_terrain(10, 10);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.filled_clear = true;
         cell.accepts_smudge = true;
         cell.allows_tiberium = true;
@@ -2481,7 +2484,7 @@ fn gsi_04_10_clear_terrain(width: u16, height: u16) -> ResolvedTerrainGrid {
     use crate::rules::terrain_rules::LandType;
 
     let mut terrain = water_terrain(width, height);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = LandType::Clear.as_index();
         cell.speed_costs = OPEN_SPEED_COSTS;
         cell.ground_walk_blocked = false;
@@ -2514,11 +2517,11 @@ fn gsi_04_15_active_tube_leaf_preempts_unit_and_infantry_mission_host() {
         (EntityCategory::Infantry, "TESTINF"),
     ] {
         let mut clear = gsi_04_10_clear_terrain(3, 1);
-        clear.cells[0].tube_index = Some(TubeId(0));
+        clear.cells_mut_for_test()[0].tube_index = Some(TubeId(0));
         let terrain = ResolvedTerrainGrid::from_cells_with_tubes(
             3,
             1,
-            clear.cells,
+            clear.cells().to_vec(),
             vec![TubeFact::explicit((0, 0), (1, 0), 2, vec![2])],
         );
         let path = PathGrid::from_resolved_terrain(&terrain);
@@ -2541,7 +2544,7 @@ fn gsi_04_15_active_tube_leaf_preempts_unit_and_infantry_mission_host() {
             true,
         );
         entity.lifecycle.set_in_limbo_for_test(false);
-        entity.lifecycle.set_cell_marked(false);
+        entity.lifecycle.set_cell_marked_for_test(false);
         if category == EntityCategory::Unit {
             entity.mega_mission = crate::sim::mission::mega_mission::MegaMission::attack_move(
                 Some(crate::sim::combat::TargetKind::Cell(2, 0)),
@@ -2872,7 +2875,11 @@ fn structural_bridge_for_damage_dispatch() -> (ResolvedTerrainGrid, BridgeRuntim
     );
     let anchor = terrain.native_cell_identity((5, 5));
     terrain.write_native_cell_state(anchor, 15);
-    terrain.cell_mut(5, 5).unwrap().bridge_facts.overlay_id = Some(25);
+    terrain
+        .cell_mut_for_test(5, 5)
+        .unwrap()
+        .bridge_facts
+        .overlay_id = Some(25);
     let state = BridgeRuntimeState::from_resolved_terrain(&terrain, true, 15);
     for x in 3..=6 {
         assert!(
@@ -2890,8 +2897,8 @@ fn structural_bridge_for_damage_dispatch() -> (ResolvedTerrainGrid, BridgeRuntim
 /// `water_terrain`'s ground, the deck spans (3..=6, 5).
 fn water_under_structural_bridge() -> (ResolvedTerrainGrid, BridgeRuntimeState) {
     let (mut terrain, _) = structural_bridge_for_damage_dispatch();
-    let water = water_terrain(1, 1).cells[0].clone();
-    for cell in &mut terrain.cells {
+    let water = water_terrain(1, 1).cells()[0].clone();
+    for cell in terrain.cells_mut_for_test() {
         cell.land_type = water.land_type;
         cell.speed_costs = water.speed_costs;
         cell.ground_walk_blocked = water.ground_walk_blocked;
@@ -2914,7 +2921,7 @@ fn structural_bridge_for_fallout(
     use crate::rules::terrain_rules::{LandType, SpeedCostProfile};
     let (mut terrain, _) = structural_bridge_for_damage_dispatch();
     for x in 3..=6 {
-        let cell = terrain.cell_mut(x, 5).unwrap();
+        let cell = terrain.cell_mut_for_test(x, 5).unwrap();
         cell.level = ground_level;
         cell.bridge_deck_level = ground_level + 4;
         if water_below {
@@ -4352,7 +4359,7 @@ fn spawn_object_reads_the_live_terrain_level() {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(rx, ry)
+                .cell_mut_for_test(rx, ry)
                 .unwrap();
             cell.level = 4;
         }
@@ -4455,7 +4462,7 @@ fn test_bridge_collapse_kills_ground_unit_under_destroyed_cell() {
     let unit = sim.substrate.entities.get_mut(id).unwrap();
     unit.set_on_bridge(false);
     if let Some(locomotor) = unit.locomotor.as_mut() {
-        locomotor.set_layer(MovementLayer::Ground);
+        locomotor.set_layer_for_test(MovementLayer::Ground);
     }
     sim.add_entity_occupancy(id);
     assert!(
@@ -5396,7 +5403,7 @@ fn gsi_04_05_stop_preserves_committed_drive_until_reserved_head_finishes() {
     assert!(
         stopped
             .navigation
-            .path_replay
+            .path_replay()
             .remaining_directions()
             .is_empty()
     );
@@ -5589,7 +5596,7 @@ fn gsi_13_06_stop_preserves_committed_ship_segment_and_speed_state() {
     assert!(
         stopped
             .navigation
-            .path_replay
+            .path_replay()
             .remaining_directions()
             .is_empty()
     );
@@ -7029,7 +7036,9 @@ fn parked_friendly_on_the_route_is_scattered_out_of_the_way() {
         };
         let terrain = sim.resolved_terrain.as_mut().expect("stacking terrain");
         for ry in (0..24).filter(|&ry| ry != PARKED_AT.1) {
-            let cell = terrain.cell_mut(PARKED_AT.0, ry).expect("wall cell");
+            let cell = terrain
+                .cell_mut_for_test(PARKED_AT.0, ry)
+                .expect("wall cell");
             cell.land_type = LandType::Rock.as_index();
             cell.speed_costs = rock;
             cell.zone_type = zone_class::IMPASSABLE;
@@ -7180,11 +7189,11 @@ fn unit_route_beside_building(
 /// object has no order or no installed words.
 fn found_route(e: &GameEntity, start: (u16, u16)) -> Vec<(u16, u16)> {
     if crate::sim::movement::motion_query::is_moving(&e) != Some(true)
-        || e.navigation.path_replay.directions().is_empty()
+        || e.navigation.path_replay().directions().is_empty()
     {
         return Vec::new();
     }
-    e.navigation.path_replay.installed_cells(start)
+    e.navigation.path_replay().installed_cells(start)
 }
 
 /// Find_Path's search calls the Unit's own +1AC for every neighbour
@@ -7304,8 +7313,8 @@ fn stacking_motion_state(sim: &Simulation, id: u64) -> String {
             e.position.ry(),
             e.position.sub_x(),
             e.position.sub_y(),
-            e.navigation.path_replay.route_cells(),
-            e.navigation.path_replay.remaining_directions().len(),
+            e.navigation.path_replay().route_cells(),
+            e.navigation.path_replay().remaining_directions().len(),
             crate::sim::movement::movement_goal_cell(e)
         ),
     };
@@ -8066,7 +8075,7 @@ fn repro_two_moving_vehicles_pass_through_each_other() {
             .entities
             .get(id)
             .filter(|e| crate::sim::movement::motion_query::is_moving(&e) == Some(true))
-            .map(|e| e.navigation.path_replay.route_cells())
+            .map(|e| e.navigation.path_replay().route_cells())
             .unwrap_or_default()
     };
     let mut previous_paths = [path_of(&sim, west), path_of(&sim, east)];
@@ -8934,7 +8943,7 @@ fn a_group_spread_asks_each_members_can_enter_cell_at_the_target_height() {
     sim.resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(20, 20)
+        .cell_mut_for_test(20, 20)
         .unwrap()
         .level = 2;
     let west = sim
@@ -9009,7 +9018,7 @@ fn a_group_spread_asks_infantry_with_a_flagged_targets_deck_height() {
         .resolved_terrain
         .as_mut()
         .unwrap()
-        .cell_mut(20, 20)
+        .cell_mut_for_test(20, 20)
         .unwrap();
     target.level = 1;
     target.bridge_facts.raw_flags |= crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;

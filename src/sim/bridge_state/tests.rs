@@ -142,14 +142,18 @@ fn bridgeheads_stay_bridge_walkable_when_a_legacy_body_is_destroyed() {
 
     let mut terrain = make_bridge_with_bridgeheads_terrain();
     // A legacy body deck (no bit0x100) is intact while its overlay decodes.
-    terrain.cell_mut(2, 0).unwrap().bridge_facts.overlay_id = Some(0x18);
+    terrain
+        .cell_mut_for_test(2, 0)
+        .unwrap()
+        .bridge_facts
+        .overlay_id = Some(0x18);
     let path = PathGrid::from_resolved_terrain_with_bridges(&terrain);
     for rx in [1u16, 2, 3] {
         assert!(path.is_walkable_on_layer(rx, 0, MovementLayer::Bridge));
     }
 
     // 47E040's destroyed stamp: state 0, 0x100 clear, 0x400 set.
-    let body = &mut terrain.cell_mut(2, 0).unwrap().bridge_facts;
+    let body = &mut terrain.cell_mut_for_test(2, 0).unwrap().bridge_facts;
     body.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_DESTROYED_OR_RAMP;
     body.state_byte = 0;
     let path = PathGrid::from_resolved_terrain_with_bridges(&terrain);
@@ -448,7 +452,11 @@ fn seed_overlay_row(
     overlay: u8,
 ) {
     for x in xs {
-        terrain.cell_mut(x, y).unwrap().bridge_facts.overlay_id = Some(overlay);
+        terrain
+            .cell_mut_for_test(x, y)
+            .unwrap()
+            .bridge_facts
+            .overlay_id = Some(overlay);
     }
 }
 

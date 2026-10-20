@@ -594,7 +594,11 @@ fn test_path_grid_rebuild_closes_destroyed_bridge_deck() {
     let mut terrain = terrain;
     // Legacy decks (no bit0x100) stay intact while their +44 identity decodes.
     for rx in 1..=3 {
-        terrain.cell_mut(rx, 0).unwrap().bridge_facts.overlay_id = Some(0x18);
+        terrain
+            .cell_mut_for_test(rx, 0)
+            .unwrap()
+            .bridge_facts
+            .overlay_id = Some(0x18);
     }
     let intact_grid = PathGrid::from_resolved_terrain_with_bridges(&terrain);
     assert!(
@@ -604,7 +608,7 @@ fn test_path_grid_rebuild_closes_destroyed_bridge_deck() {
 
     // Destroy only the body cell (rx=2) with 47E040's destroyed stamp: state
     // 0, bit0x100 clear and bit0x400 set. The bridgeheads keep their state.
-    let body = &mut terrain.cell_mut(2, 0).unwrap().bridge_facts;
+    let body = &mut terrain.cell_mut_for_test(2, 0).unwrap().bridge_facts;
     body.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_DESTROYED_OR_RAMP;
     body.state_byte = 0;
 

@@ -99,7 +99,7 @@ impl Arena {
         let id = self.registry.id_for_name(name).expect("fixture overlay");
         let grid = self.sim.overlay_grid.as_mut().expect("overlay grid");
         grid.place_overlay(cell.0, cell.1, id, data);
-        grid.cell_mut(cell.0, cell.1).wall_owner = owner;
+        grid.cell_mut_for_test(cell.0, cell.1).wall_owner = owner;
     }
 }
 

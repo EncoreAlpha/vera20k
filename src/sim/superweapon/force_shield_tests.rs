@@ -162,7 +162,7 @@ fn the_launch_matches_native() {
             && let Some(terrain) = sim.resolved_terrain.as_mut()
         {
             let index = terrain.index(cell.0, cell.1).unwrap();
-            terrain.cells[index].bridge_facts.raw_flags =
+            terrain.cells_mut_for_test()[index].bridge_facts.raw_flags =
                 crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
         }
         let russians = sim.interner.intern("Russians");
@@ -301,7 +301,8 @@ fn a_bridge_cell_walks_from_the_ground_centre() {
     let (rules, mut sim, _) = world_with(rules, 64, &[]);
     let terrain = sim.resolved_terrain.as_mut().expect("the world has a map");
     let index = terrain.index(40, 40).unwrap();
-    terrain.cells[index].bridge_facts.raw_flags = crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
+    terrain.cells_mut_for_test()[index].bridge_facts.raw_flags =
+        crate::map::bridge_facts::BRIDGE_FLAG_STRUCTURAL;
     let russians = sim.interner.intern("Russians");
     sim.spawn_object_at_height("NATECH", "Russians", 10, 10, 0, 0, &rules)
         .unwrap();

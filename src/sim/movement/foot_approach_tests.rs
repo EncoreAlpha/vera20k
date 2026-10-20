@@ -80,8 +80,8 @@ fn original_approach_candidate_heights() {
                 .flat_map(|ry| (0..width).map(move |rx| test_flat_cell(rx, ry)))
                 .collect(),
         );
-        let sampled =
-            &mut terrain.cells[usize::from(cell[1]) * usize::from(width) + usize::from(cell[0])];
+        let sampled = &mut terrain.cells_mut_for_test()
+            [usize::from(cell[1]) * usize::from(width) + usize::from(cell[0])];
         sampled.level = row["level"].as_u64().unwrap().try_into().unwrap();
         sampled.slope_type = row["slope"].as_u64().unwrap().try_into().unwrap();
         sampled.bridge_facts.raw_flags = row["flags"].as_u64().unwrap().try_into().unwrap();
@@ -342,7 +342,7 @@ fn stamp_destroyable_cliff(sim: &mut Simulation) {
                 continue;
             }
             let cell = terrain
-                .cell_mut(8 + u16::from(column), 9 + u16::from(row))
+                .cell_mut_for_test(8 + u16::from(column), 9 + u16::from(row))
                 .unwrap();
             cell.final_tile_index = 100;
             cell.final_sub_tile = sub_tile;

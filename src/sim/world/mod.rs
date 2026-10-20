@@ -1300,8 +1300,7 @@ pub struct Simulation {
     /// parsed terrain grid is derived/skipped and receives these values before
     /// overlay/bridge/navigation reconstruction on restore.
     #[serde(default)]
-    pub dynamic_terrain_cells:
-        BTreeMap<(u16, u16), crate::map::resolved_terrain::DynamicTerrainCellState>,
+    pub(crate) dynamic_terrain_cells: crate::map::resolved_terrain::DynamicTerrainCells,
     pub bridge_state: Option<BridgeRuntimeState>,
     /// Resident Map+D4 ordered collapse coordinates. Independent of optional
     /// geometry so even standalone fallout/save retains its native publication.
@@ -2366,7 +2365,6 @@ impl Simulation {
         let scenario_no_damage = self.session.no_damage();
         let mut effects = crate::sim::combat::DeathEffects::default();
         let mut under_attack_events = Vec::new();
-        let mut collapsed_terrain_cells = BTreeMap::new();
 
         {
             for recorded in &request.recorded_cells {
@@ -2692,12 +2690,7 @@ impl Simulation {
                             .expect("collapse terrain retained");
                         for &(cell_x, cell_y) in &mutation.changed_cells {
                             if let Some(cell) = terrain.cell(cell_x, cell_y) {
-                                collapsed_terrain_cells.insert(
-                                    (cell_x, cell_y),
-                                    crate::map::resolved_terrain::DynamicTerrainCellState::capture(
-                                        cell,
-                                    ),
-                                );
+                                self.dynamic_terrain_cells.record(cell);
                             }
                         }
                     }
@@ -2706,7 +2699,6 @@ impl Simulation {
         }
 
         let terrain_navigation_changed_cells = run.finish();
-        self.dynamic_terrain_cells.extend(collapsed_terrain_cells);
         if let Some(terrain) = self.resolved_terrain.as_ref() {
             self.real_cell_bridge_flags_0x1180 = terrain.capture_real_cell_bridge_flags_0x1180();
         }
@@ -3107,6 +3099,18 @@ impl Simulation {
         }
     }
 
+    /// Saved isometric-tile replacements, reapplied on restore.
+    pub fn dynamic_terrain_cells(&self) -> &crate::map::resolved_terrain::DynamicTerrainCells {
+        &self.dynamic_terrain_cells
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dynamic_terrain_cells_mut_for_test(
+        &mut self,
+    ) -> &mut crate::map::resolved_terrain::DynamicTerrainCells {
+        &mut self.dynamic_terrain_cells
+    }
+
     /// Install a newly constructed map grid and capture the real CellClass
     /// `0x1180` value authority after row-major OverlayPack marking.
     pub fn install_resolved_terrain_for_new_map(&mut self, resolved_terrain: ResolvedTerrainGrid) {
@@ -3438,7 +3442,7 @@ impl Simulation {
             native_local_cell_cursor: None,
             native_allocated_cell_cursor: None,
             real_cell_bridge_flags_0x1180: RealCellBridgeFlags0x1180::default(),
-            dynamic_terrain_cells: BTreeMap::new(),
+            dynamic_terrain_cells: Default::default(),
             bridge_state: None,
             pending_bridge_collapses: Default::default(),
             overlay_grid: None,
@@ -6808,7 +6812,7 @@ impl Simulation {
             tick,
             admitted_commands,
         } = frame;
-        let lighting_events = std::mem::take(&mut self.lighting_sources.pending);
+        let lighting_events = self.lighting_sources.take_pending();
         let trigger_effects = std::mem::take(&mut self.trigger_effects);
         // Preserve the established terminal-frame gate: these are committed
         // light-vector facts and the next admitted frame clears the producer
@@ -6980,7 +6984,7 @@ impl Simulation {
                 self.session.binary_frame(),
                 &rules.radiation,
                 self.resolved_terrain.as_ref(),
-                &mut self.lighting_sources.pending,
+                &mut self.lighting_sources,
             );
             profile_phase!(RADIATION);
         }
@@ -7354,7 +7358,7 @@ pub(crate) fn wake_anchor_for(
         return None;
     }
     let cell = terrain?.cell(entity.position.rx(), entity.position.ry())?;
-    if cell.land_type() != crate::rules::terrain_rules::LandType::Water.as_index() {
+    if cell.land_type != crate::rules::terrain_rules::LandType::Water.as_index() {
         return None;
     }
     Some((

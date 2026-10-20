@@ -858,7 +858,7 @@ fn mixed_land_and_naval_factories_bind_independent_vehicle_and_ship_slots() {
     .expect("mixed stock-shaped Vehicle/Ship rules");
     let mut sim = Simulation::new();
     let mut terrain = water_terrain(40, 40);
-    let land_exit = terrain.cell_mut(6, 5).unwrap();
+    let land_exit = terrain.cell_mut_for_test(6, 5).unwrap();
     land_exit.land_type = crate::rules::terrain_rules::LandType::Clear.as_index();
     let grid = PathGrid::test_all_passable(40, 40);
     sim.install_fixture_path_grid(Some(&grid));
@@ -1041,12 +1041,12 @@ fn naval_delivery_nonzero_canenter_refunds_without_trying_second_producer() {
     let rules = naval_production_rules();
     let mut sim = Simulation::new();
     let mut terrain = water_terrain(40, 40);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.speed_costs.float = Some(0);
         cell.base_speed_costs.float = Some(0);
     }
     for candidate in [(12, 12), (22, 22)] {
-        let cell = terrain.cell_mut(candidate.0, candidate.1).unwrap();
+        let cell = terrain.cell_mut_for_test(candidate.0, candidate.1).unwrap();
         cell.speed_costs.float = Some(100);
         cell.base_speed_costs.float = Some(100);
     }
@@ -1170,7 +1170,7 @@ fn naval_empty_fnpc_refunds_then_a_fresh_successor_records_delivery_once() {
     let rules = naval_production_rules();
     let mut sim = Simulation::new();
     let mut terrain = water_terrain(40, 40);
-    for cell in &mut terrain.cells {
+    for cell in terrain.cells_mut_for_test() {
         cell.speed_costs.float = Some(0);
         cell.base_speed_costs.float = Some(0);
     }
@@ -1295,7 +1295,7 @@ fn naval_empty_fnpc_refunds_then_a_fresh_successor_records_delivery_once() {
         Some(1)
     );
     assert_eq!(sim.houses[&americans].stats().built(), 0);
-    for cell in &mut sim.resolved_terrain.as_mut().unwrap().cells {
+    for cell in sim.resolved_terrain.as_mut().unwrap().cells_mut_for_test() {
         cell.speed_costs.float = Some(100);
         cell.base_speed_costs.float = Some(100);
     }
@@ -1621,7 +1621,7 @@ fn naval_rally_destination_and_move_survive_beyond_the_path_grid() {
     assert!(
         produced
             .navigation
-            .path_replay
+            .path_replay()
             .remaining_directions()
             .is_empty()
     );

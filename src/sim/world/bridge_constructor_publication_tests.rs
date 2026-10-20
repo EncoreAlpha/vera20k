@@ -84,7 +84,7 @@ fn live_bridge_constructor_matches_original_and_drains_at_admitted_tick() {
                 sim.resolved_terrain
                     .as_mut()
                     .unwrap()
-                    .cell_mut(16, 16)
+                    .cell_mut_for_test(16, 16)
                     .unwrap()
                     .slope_type = 5;
             }
@@ -93,7 +93,7 @@ fn live_bridge_constructor_matches_original_and_drains_at_admitted_tick() {
                     .as_mut()
                     .unwrap()
                     .place_overlay(16, 16, 7, 0);
-                sim.resolved_terrain.as_mut().unwrap().cells[16 * 33 + 16]
+                sim.resolved_terrain.as_mut().unwrap().cells_mut_for_test()[16 * 33 + 16]
                     .bridge_facts
                     .overlay_id = Some(7);
             }
@@ -308,7 +308,7 @@ fn constructor_side_admission_matches_original_foot_receiver() {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(x, y)
+                .cell_mut_for_test(x, y)
                 .unwrap();
             let flags = native["bridge_flags"].as_u64().unwrap() as u32;
             assert_eq!(cell.bridge_facts.raw_flags & !0x100, flags & !0x100);

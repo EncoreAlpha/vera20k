@@ -143,7 +143,7 @@ fn stock_lamp_loaded_by_scenario_changes_actual_terrain_pixels() {
         crate::map::entities::EntityCategory::Structure,
         crate::sim::world::UninitContext::with_rules(rules),
     );
-    let events = std::mem::take(&mut scenario.runtime.simulation.lighting_sources.pending);
+    let events = scenario.runtime.simulation.lighting_sources.take_pending();
     lighting.apply_events(terrain, &events);
     lighting.refresh(terrain, &scenario.runtime.simulation, 2);
     let dark_scalar = lighting

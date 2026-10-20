@@ -368,7 +368,7 @@ mod tests {
             cell_x: 15,
             cell_y: 15,
         };
-        *simulation.crate_authority.slot_mut(0) = due;
+        *simulation.crate_authority.slot_mut_for_test(0) = due;
 
         let mut resources = SimResources::empty();
         resources.rules = crate_ruleset("");

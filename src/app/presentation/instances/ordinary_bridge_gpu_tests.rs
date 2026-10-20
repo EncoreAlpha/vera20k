@@ -1127,11 +1127,13 @@ fn assert_retail_cell_body_then_shadow(packet: &Value) {
         terrain.width(),
         terrain.height(),
     );
-    live_grid.cell_mut(coord.0, coord.1).rubble_building_type = type_id;
+    live_grid
+        .cell_mut_for_test(coord.0, coord.1)
+        .rubble_building_type = type_id;
     if is_rubble {
         assert!(
             live_grid
-                .cell_mut(coord.0, coord.1 + 1)
+                .cell_mut_for_test(coord.0, coord.1 + 1)
                 .rubble_building_type
                 .is_none()
         );

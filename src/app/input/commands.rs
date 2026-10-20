@@ -1098,7 +1098,7 @@ mod tests {
             "one click, one destination for the whole army: {queued:?}"
         );
 
-        sim.session.set_input_locked(true);
+        sim.session.set_input_locked_for_test(true);
         assert_eq!(
             schedule_stress_attack_moves(&mut sim, "Local", &[14], (40, 60)),
             0,
@@ -1114,7 +1114,7 @@ mod tests {
         let kind = sim.interner.intern("FixtureType");
         sim.houses
             .register(HouseState::new(local, 0, None, true, 0, 10));
-        sim.session.set_input_locked(true);
+        sim.session.set_input_locked_for_test(true);
         let before_hash = sim.state_hash();
         let before_names = sim.interner.len();
         for payload in [
@@ -1147,7 +1147,7 @@ mod tests {
             Some(0)
         );
         assert_eq!(sim.pending_command_snapshot().len(), 2);
-        sim.session.set_input_locked(false);
+        sim.session.set_input_locked_for_test(false);
         assert_eq!(
             schedule_command_in_sim(&mut sim, "Local", Command::Stop { entity_id: 11 }),
             Some(0)
@@ -1235,8 +1235,13 @@ mod tests {
             "the app cascade receives exactly one executed edge"
         );
         assert_eq!(
-            crate::app::match_runtime::scenario_exit::arbitrate_executed_exit(false),
-            crate::app::match_runtime::scenario_exit::ExecutedExitDisposition::Abort,
+            crate::app::match_runtime::scenario_exit::route_scenario_termination(
+                crate::app::match_runtime::scenario_exit::TerminationRequests {
+                    exit: true,
+                    ..Default::default()
+                }
+            ),
+            Some(crate::app::match_runtime::scenario_exit::TerminationRoute::Exit),
             "standalone EXIT keeps the abort route"
         );
         assert_eq!(
@@ -1286,10 +1291,14 @@ mod tests {
         assert!(local_outcome_exit_ready, "House expiry happened this frame");
         assert_eq!(sim.take_executed_exit_owner(), Some(local));
         assert_eq!(
-            crate::app::match_runtime::scenario_exit::arbitrate_executed_exit(
-                local_outcome_exit_ready
+            crate::app::match_runtime::scenario_exit::route_scenario_termination(
+                crate::app::match_runtime::scenario_exit::TerminationRequests {
+                    outcome_ready: local_outcome_exit_ready,
+                    exit: true,
+                    ..Default::default()
+                }
             ),
-            crate::app::match_runtime::scenario_exit::ExecutedExitDisposition::Outcome,
+            Some(crate::app::match_runtime::scenario_exit::TerminationRoute::Outcome),
             "Main_Game's victory/loss route has priority over simultaneous EXIT"
         );
         assert_eq!(

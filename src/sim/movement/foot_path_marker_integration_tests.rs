@@ -75,7 +75,7 @@ fn marked_probe_survives_modern_foot_search_and_mark_restoration() {
         );
         // Find_Path installs the finished route as Foot+5E0 words from the
         // current cell.
-        let route = &actor.navigation.path_replay.route_cells();
+        let route = &actor.navigation.path_replay().route_cells();
         assert_eq!(route.first().copied(), Some(start));
         assert_eq!(route.last().copied(), Some(goal_cell));
         if urgency == 0 {
@@ -103,7 +103,7 @@ fn marked_probe_survives_modern_foot_search_and_mark_restoration() {
             ));
             let actor = sim.substrate.entities.get(id).unwrap();
             assert_eq!(
-                actor.navigation.path_replay.route_cells().get(1).copied(),
+                actor.navigation.path_replay().route_cells().get(1).copied(),
                 Some(probe)
             );
             assert_eq!(sim.rng_state(), rng);

@@ -227,8 +227,8 @@ fn retail_hills_engineer_cliff_start_is_rejected() {
     let header = &scenario.map.header;
     let output = json!({
         "schema_version":1,"native_size":[header.width,header.height],
-        "width":scenario.sim().zone_grid.as_ref().unwrap().width,
-        "height":scenario.sim().zone_grid.as_ref().unwrap().height,
+        "width":scenario.sim().zone_grid.as_ref().unwrap().width(),
+        "height":scenario.sim().zone_grid.as_ref().unwrap().height(),
         "local_size":[header.local_left,header.local_top,header.local_width,header.local_height],
         "map_hash":format!("{:016x}",scenario.map.ini.content_hash()),
         "rules_hash":format!("{:016x}",scenario.runtime.resources.rules.simulation_config_hash()),

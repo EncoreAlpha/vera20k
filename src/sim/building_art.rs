@@ -1184,7 +1184,7 @@ mod slot_tests {
         // coordinate commit and verify its already retained slot moves in place.
         let entity = sim.entities_mut().get_mut(id).unwrap();
         entity.lifecycle.set_in_limbo_for_test(true);
-        entity.lifecycle.set_cell_marked(false);
+        entity.lifecycle.set_cell_marked_for_test(false);
         let outcome = sim.try_reveal_entity_with_context(
             id,
             RevealRequest {

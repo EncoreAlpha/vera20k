@@ -10,7 +10,7 @@ fn original_pause_histories_pin_overflow_rearm_nesting_and_world_branch() {
     for row in controls["controls"].as_array().unwrap() {
         let mode = SessionMode::from_game_mode(row["mode"].as_i64().unwrap() as i32);
         let mut sim = crate::sim::world::Simulation::with_seed(0);
-        sim.session.set_input_locked(true);
+        sim.session.set_input_locked_for_test(true);
         let mut clock = ScenarioPauseClock::default();
         for step in row["steps"].as_array().unwrap() {
             let ms = step["bucket"].as_u64().unwrap() * 16;

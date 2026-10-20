@@ -1202,7 +1202,9 @@ use crate::util::save_codec;
 // 448 -> 449: the Techno disguise state retains the firing blink timer
 // (+1EC/+1F4); WeaponType retains DisguiseFakeBlinkTime= and [General]
 // DisabledDisguiseDetectionPercent=.
-const SNAPSHOT_VERSION: u32 = 449;
+// 449 -> 450: the retained `[Basic]` section carries Scenario+0x1440 `Lose`,
+// the movie campaign defeat plays before its retry prompt.
+const SNAPSHOT_VERSION: u32 = 450;
 
 const SNAPSHOT_PRODUCT_MAGIC: [u8; 8] = *b"VERA20K\0";
 const SNAPSHOT_ENVELOPE_VERSION: u32 = 1;
@@ -3136,17 +3138,13 @@ impl Simulation {
 
         // Reproject runtime isometric replacements onto the pristine
         // app-supplied map before overlay, bridge, and zone reconstruction.
-        {
-            let terrain = self
-                .resolved_terrain
-                .as_mut()
-                .expect("validated terrain cache");
-            for (&(rx, ry), state) in &self.dynamic_terrain_cells {
-                if !terrain.apply_dynamic_cell_state(rx, ry, state) {
-                    return Err(SnapshotRestoreError::DynamicTerrainCellMissing { rx, ry });
-                }
-            }
-        }
+        self.dynamic_terrain_cells
+            .apply_to(
+                self.resolved_terrain
+                    .as_mut()
+                    .expect("validated terrain cache"),
+            )
+            .map_err(|(rx, ry)| SnapshotRestoreError::DynamicTerrainCellMissing { rx, ry })?;
 
         // MouseClass::Load @ 0x005BE657 calls the restored-cell TMP admission
         // pass @ 0x00546DA0 before publishing the loaded map. Admission must
@@ -4002,10 +4000,7 @@ mod tests {
             .unwrap()
             .clone();
         replaced.final_tile_index = 71;
-        sim.dynamic_terrain_cells.insert(
-            (1, 2),
-            crate::map::resolved_terrain::DynamicTerrainCellState::capture(&replaced),
-        );
+        sim.dynamic_terrain_cells.record(&replaced);
         sim.real_cell_bridge_flags_0x1180.set_allocated_cell(
             2 * 4 + 1,
             crate::map::bridge_facts::BRIDGE_FLAG_DIRECTION_ZERO,
@@ -4172,8 +4167,8 @@ mod tests {
     }
 
     fn assert_zone_grids_equivalent(a: &ZoneGrid, b: &ZoneGrid) {
-        assert_eq!(a.width, b.width);
-        assert_eq!(a.height, b.height);
+        assert_eq!(a.width(), b.width());
+        assert_eq!(a.height(), b.height());
         for &mz in MovementZone::all_ground() {
             let map_a = a.map_for(mz).expect("zone map exists for movement zone");
             let map_b = b.map_for(mz).expect("zone map exists for movement zone");
@@ -4192,8 +4187,8 @@ mod tests {
                 }
             }
             assert_eq!(map_a.zone_count(), map_b.zone_count());
-            for y in 0..a.height {
-                for x in 0..a.width {
+            for y in 0..a.height() {
+                for x in 0..a.width() {
                     assert_eq!(
                         map_a.zone_at(x, y, MovementLayer::Ground),
                         map_b.zone_at(x, y, MovementLayer::Ground),
@@ -4653,7 +4648,7 @@ mod tests {
         let ruin = sim.interner.intern("CAOUTP");
         let mut grid = crate::sim::overlay_grid::OverlayGrid::new(3, 3);
         grid.place_overlay(1, 2, 0xEF, 4);
-        grid.cell_mut(1, 2).rubble_building_type = Some(ruin);
+        grid.cell_mut_for_test(1, 2).rubble_building_type = Some(ruin);
         grid.place_overlay(2, 2, 0xEF, 0);
         sim.overlay_grid = Some(grid);
 
@@ -4668,14 +4663,14 @@ mod tests {
     #[test]
     fn phase14_crate_authority_roundtrips_visible_and_ghost_slots() {
         let mut sim = Simulation::with_seed(0);
-        *sim.crate_authority.slot_mut(0) = crate::sim::crates::CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(0) = crate::sim::crates::CrateSlot {
             start_frame: 17,
             aux: 0x40b5_1800,
             duration: 3375,
             cell_x: 6,
             cell_y: 9,
         };
-        *sim.crate_authority.slot_mut(1) = crate::sim::crates::CrateSlot {
+        *sim.crate_authority.slot_mut_for_test(1) = crate::sim::crates::CrateSlot {
             start_frame: -2,
             aux: u32::MAX,
             duration: i32::MIN,
@@ -6355,7 +6350,7 @@ mod tests {
         let entity_id = sim.allocate_stable_id();
         let mut entity = GameEntity::test_default(entity_id, "MTNK", "Americans", 5, 7);
         entity.lifecycle.set_in_limbo_for_test(false);
-        entity.lifecycle.set_cell_marked(false);
+        entity.lifecycle.set_cell_marked_for_test(false);
         entity.in_logic_vector.set_for_test(true);
         entity.position.set_z_for_test(3);
         entity.position.set_exact_z_leptons_for_test(Some(-37));
@@ -7790,7 +7785,7 @@ mod tests {
         sim.session.set_map_width_for_test(4);
         sim.session.set_map_height_for_test(4);
         let mut terrain = flat_terrain(4, 4);
-        terrain.cell_mut(1, 1).unwrap().level = 2;
+        terrain.cell_mut_for_test(1, 1).unwrap().level = 2;
         let tree_id = sim.allocate_stable_id();
         let tree = TerrainObjectState::new(
             tree_id,
@@ -8457,7 +8452,7 @@ mod tests {
         let mut map_load_terrain = flat_terrain(4, 3);
         map_load_terrain.test_set_native_allocated_cells(&[(0, 0), (1, 1)]);
         {
-            let pristine_bridge_cell = map_load_terrain.cell_mut(1, 1).unwrap();
+            let pristine_bridge_cell = map_load_terrain.cell_mut_for_test(1, 1).unwrap();
             pristine_bridge_cell.level = 2;
             pristine_bridge_cell.slope_type = 1;
             pristine_bridge_cell.bridge_facts.raw_flags = MODELED_CELLCLASS_BRIDGE_FLAG_MASK;
@@ -8637,7 +8632,7 @@ mod tests {
         );
         assert!(restored_terrain.cell(1, 0).is_none());
         assert_eq!(
-            restored_terrain.cells[1].bridge_facts.raw_flags & MODELED_CELLCLASS_BRIDGE_FLAG_MASK,
+            restored_terrain.cells()[1].bridge_facts.raw_flags & MODELED_CELLCLASS_BRIDGE_FLAG_MASK,
             0,
             "unallocated storage is not promoted into real-cell authority"
         );
@@ -9029,7 +9024,7 @@ mod tests {
         let mut entity = GameEntity::test_default(7, "MTNK", "Americans", 5, 5);
         entity.lifecycle.set_object_alive_for_test(false);
         entity.lifecycle.set_in_limbo_for_test(true);
-        entity.lifecycle.set_cell_marked(false);
+        entity.lifecycle.set_cell_marked_for_test(false);
         entity.in_logic_vector.set_for_test(false);
         entity.death.set_dying_for_test(true);
         entity.removal_facts.set_dirty_rect_eligible_for_test(true);
@@ -9068,7 +9063,7 @@ mod tests {
         let mut sim = Simulation::new();
         let mut off_cell_member = GameEntity::test_default(1, "MTNK", "Americans", 5, 5);
         off_cell_member.lifecycle.set_in_limbo_for_test(false);
-        off_cell_member.lifecycle.set_cell_marked(false);
+        off_cell_member.lifecycle.set_cell_marked_for_test(false);
         sim.substrate.entities.insert(off_cell_member);
         sim.substrate
             .logic
@@ -9077,7 +9072,7 @@ mod tests {
 
         let mut marked_non_member = GameEntity::test_default(2, "MTNK", "Americans", 6, 6);
         marked_non_member.lifecycle.set_in_limbo_for_test(false);
-        marked_non_member.lifecycle.set_cell_marked(true);
+        marked_non_member.lifecycle.set_cell_marked_for_test(true);
         sim.substrate.entities.insert(marked_non_member);
 
         let bytes = GameSnapshot::save(&sim, 0, 0, "test_map", 0);
@@ -10056,6 +10051,7 @@ mod tests {
         // 446 -> 447: terrain objects and ore growth have their own owners.
         // 447 -> 448: retained Unit firing counter through parasite release.
         // 448 -> 449: the disguise firing blink and its rules keys.
-        assert_eq!(super::SNAPSHOT_VERSION, 449);
+        // 449 -> 450: the retained `[Basic]` Lose movie.
+        assert_eq!(super::SNAPSHOT_VERSION, 450);
     }
 }

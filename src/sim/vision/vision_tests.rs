@@ -1177,7 +1177,7 @@ fn a_jumpjet_below_its_floor_sees_from_its_location_z() {
     entity.position.set_z_for_test(4);
     entity.position.set_exact_z_leptons_for_test(Some(208));
     let mut loco = LocomotorState::for_test_kind(LocomotorKind::Jumpjet);
-    loco.set_layer(MovementLayer::Air);
+    loco.set_layer_for_test(MovementLayer::Air);
     entity.locomotor = Some(loco);
     store.insert(entity);
 

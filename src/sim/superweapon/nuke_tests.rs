@@ -225,7 +225,7 @@ fn impact_effects_match_native() {
         sim.session.set_binary_frame_for_test(4000);
         sim.session
             .set_lighting_for_test(ScenarioLightingState::default());
-        sim.lighting_sources.pending.clear();
+        sim.lighting_sources.take_pending();
         sim.sound_events.clear();
         let anims_before: Vec<AnimId> = sim.substrate.anims.iter().map(|(&id, _)| id).collect();
         let waits = int(&row["waits"]) != 0;
@@ -249,7 +249,7 @@ fn impact_effects_match_native() {
         assert_eq!(lighting.selected_profile(), ScenarioLightingProfile::Nuke);
         assert!(
             sim.lighting_sources
-                .pending
+                .pending()
                 .iter()
                 .any(|event| matches!(event, LightingEvent::Global { .. }))
         );

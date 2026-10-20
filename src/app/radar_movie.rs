@@ -397,7 +397,7 @@ mod tests {
         let controls = crate::test_fixture::json("tools/scenario_pause.json");
         for row in controls["radar_controls"].as_array().unwrap() {
             let mut sim = Simulation::with_seed(0);
-            sim.session.set_input_locked(true);
+            sim.session.set_input_locked_for_test(true);
             if row["initial_hold"].as_bool().unwrap() {
                 sim.pause_scenario(0);
             }

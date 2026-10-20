@@ -354,7 +354,7 @@ impl Calls {
             .collect();
         let lighting = sim
             .lighting_sources
-            .pending
+            .pending()
             .iter()
             .filter(|event| matches!(event, LightingEvent::Global { .. }))
             .count();
@@ -1193,7 +1193,7 @@ fn a_bridge_strike_hits_the_deck_only() {
             entity.position.set_z_for_test(4);
         }
         entity.lifecycle.set_in_limbo_for_test(false);
-        entity.lifecycle.set_cell_marked(true);
+        entity.lifecycle.set_cell_marked_for_test(true);
         sim.substrate.entities.insert(entity);
         sim.substrate
             .occupancy
@@ -1233,7 +1233,7 @@ fn a_strike_damages_a_building() {
         EntityCategory::Structure,
     );
     building.lifecycle.set_in_limbo_for_test(false);
-    building.lifecycle.set_cell_marked(true);
+    building.lifecycle.set_cell_marked_for_test(true);
     building.set_owner_for_test(sim.interner.intern("Soviet"));
     building.set_type_ref_for_test(sim.interner.intern("GAPOWR"));
     building.health = Health::new(150);

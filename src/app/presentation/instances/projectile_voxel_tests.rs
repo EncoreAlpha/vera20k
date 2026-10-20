@@ -113,7 +113,7 @@ pub(crate) fn launched_stock_submarine_torpedo(
                 .unwrap()
                 .cell(cell.0, cell.1)
                 .unwrap()
-                .land_type()
+                .land_type
                 == crate::rules::terrain_rules::LandType::Water.as_index()
         );
     }

@@ -1017,7 +1017,7 @@ impl Simulation {
         // Foot4DAECA clears the transient draw lift after piggyback callbacks,
         // before the warp-in/pending-entry predicate and ParasiteAI.
         if let Some(entity) = sim.substrate.entities.get_mut(stable_id) {
-            entity.set_ion_blast_lift(0);
+            entity.clear_ion_blast_lift();
         }
         // FootClass::AI 0x004DAED0..0x004DAEDC: with vt+0x1D8 (the warp-in)
         // clear, the pending entry (`Unit+0x500`) asks for its slot.

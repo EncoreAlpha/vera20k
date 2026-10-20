@@ -424,7 +424,7 @@ fn diagnose_rejected_order(
         "NavCom and route length after direct apply: {:?}",
         simulation.entities().get(entity_id).map(|entity| (
             entity.navigation.nav_com(),
-            entity.navigation.path_replay.route_cells().len()
+            entity.navigation.path_replay().route_cells().len()
         ))
     );
 }
@@ -454,7 +454,7 @@ fn accepted_route(
 ) -> Option<Vec<(u16, u16)>> {
     let entity = scenario.sim().entities().get(entity_id)?;
     entity.navigation.nav_com()?;
-    Some(entity.navigation.path_replay.route_cells())
+    Some(entity.navigation.path_replay().route_cells())
 }
 
 /// Issue an ordinary player `Command::Move` — the same entry point a right-click
@@ -1941,7 +1941,7 @@ fn tank_repathing_around_a_deck_blocker_stays_on_the_bridge_layer() {
         .map(|entity| {
             entity
                 .navigation
-                .path_replay
+                .path_replay()
                 .installed_cells(span.approach_a)
         })
         .unwrap_or_default();
@@ -1994,7 +1994,7 @@ fn tank_repathing_around_a_deck_blocker_stays_on_the_bridge_layer() {
         .get(crosser)
         .expect("crosser present")
         .navigation
-        .path_replay
+        .path_replay()
         .clone();
     let mut idle_frames = 0u32;
     for _ in 0..MAX_TICKS {
@@ -2058,7 +2058,7 @@ fn tank_repathing_around_a_deck_blocker_stays_on_the_bridge_layer() {
             ground_layer_deck_frames.push(row);
         }
         if crate::sim::movement::motion_query::is_moving(&entity) == Some(true) {
-            let route = &entity.navigation.path_replay;
+            let route = entity.navigation.path_replay();
             if route_reinstalled(&previous_route, route) {
                 path_rebuilds += 1;
                 if row.structural {

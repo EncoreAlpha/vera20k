@@ -344,21 +344,14 @@ fn place_overlay_and_init_timer(
     // `CrateSlot__PlaceOverlayAndInitTimer @ 0x004A17C0`: accepted ghosts
     // and visible overlays both write the packed coordinate before drawing
     // and installing start/aux/duration timer words.
-    {
-        let slot = sim.crate_authority.slot_mut(slot_index);
-        slot.cell_x = cell.0 as i16;
-        slot.cell_y = cell.1 as i16;
-    }
+    sim.crate_authority.claim(slot_index, cell);
     let timer_draw = sim.scenario_rng.next_range_u32_inclusive(0, 0x7fff_fffe);
-    let (start_frame, aux, duration) = state::crate_timer_words(
+    let words = state::crate_timer_words(
         rules.crate_rules.regen,
         timer_draw,
         sim.session.binary_frame() as i32,
     );
-    let slot = sim.crate_authority.slot_mut(slot_index);
-    slot.start_frame = start_frame;
-    slot.aux = aux;
-    slot.duration = duration;
+    sim.crate_authority.install_timer(slot_index, words);
     Some(accepted)
 }
 
@@ -699,7 +692,7 @@ fn crate_surface_at(sim: &Simulation, cell: (u16, u16)) -> CrateSurface {
         .resolved_terrain
         .as_ref()
         .and_then(|terrain| terrain.cell(cell.0, cell.1))
-        .is_some_and(|cell| cell.land_type() == LandType::Water.as_index())
+        .is_some_and(|cell| cell.land_type == LandType::Water.as_index())
     {
         CrateSurface::Water
     } else {
@@ -1490,7 +1483,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain_cell.speed_costs.track = Some(0);
         terrain_cell.speed_costs.float = Some(100);
@@ -1518,7 +1511,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         zero_cell.speed_costs.track = Some(100);
         zero_cell.speed_costs.float = Some(0);
@@ -1546,7 +1539,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain_cell.bridge_facts.raw_flags = BRIDGE_FLAG_STRUCTURAL;
         terrain_cell.speed_costs.track = Some(0);
@@ -1571,7 +1564,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain_cell.bridge_facts.raw_flags = BRIDGE_FLAG_STRUCTURAL;
         terrain_cell.speed_costs.track = Some(100);
@@ -1599,7 +1592,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain_cell.bridge_facts.raw_flags = BRIDGE_FLAG_STRUCTURAL;
         terrain_cell.speed_costs.track = Some(100);
@@ -1630,7 +1623,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap()
             .slope_type = 5;
         assert_eq!(
@@ -1657,7 +1650,7 @@ pub(crate) mod tests {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap()
             .slope_type = u8::MAX;
         assert_eq!(
@@ -1797,7 +1790,7 @@ pub(crate) mod tests {
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap()
             .speed_costs
             .track = Some(0);
@@ -1892,7 +1885,7 @@ pub(crate) mod tests {
         let rubble = sim.interner.intern("RetainedRubble");
         {
             let grid = sim.overlay_grid.as_mut().unwrap();
-            let target = grid.cell_mut(cell.0, cell.1);
+            let target = grid.cell_mut_for_test(cell.0, cell.1);
             target.wall_owner = Some(retained_owner);
             target.rubble_building_type = Some(rubble);
             target.overlay_data = u8::MAX;
@@ -2075,7 +2068,7 @@ pub(crate) mod tests {
             .as_mut()
             .unwrap()
             .place_overlay(12, 13, 0, 1);
-        *incoming.crate_authority.slot_mut(0) = state::CrateSlot {
+        *incoming.crate_authority.slot_mut_for_test(0) = state::CrateSlot {
             start_frame: 0,
             aux: 0,
             duration: 0,
@@ -2695,11 +2688,11 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
             let destination = (15, 13);
             let wrong_movement_decoy = (13, 12);
             let mut terrain = uniform_terrain(false);
-            for cell in &mut terrain.cells {
+            for cell in terrain.cells_mut_for_test() {
                 cell.speed_costs.float = Some(0);
                 cell.speed_costs.track = Some(0);
             }
-            let drawn_cell = terrain.cell_mut(drawn.0, drawn.1).expect("drawn cell");
+            let drawn_cell = terrain.cell_mut_for_test(drawn.0, drawn.1).expect("drawn cell");
             drawn_cell.land_type = if drawn_is_water {
                 LandType::Water.as_index()
             } else {
@@ -2711,7 +2704,7 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
             // decoy admits only the opposite FNPC type, so choosing the search
             // movement from anywhere but the draw lands on the decoy.
             let destination_cell = terrain
-                .cell_mut(destination.0, destination.1)
+                .cell_mut_for_test(destination.0, destination.1)
                 .expect("destination cell");
             destination_cell.speed_costs.float = Some(100);
             destination_cell.speed_costs.track = Some(100);
@@ -2721,7 +2714,7 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
                 LandType::Water.as_index()
             };
             let decoy = terrain
-                .cell_mut(wrong_movement_decoy.0, wrong_movement_decoy.1)
+                .cell_mut_for_test(wrong_movement_decoy.0, wrong_movement_decoy.1)
                 .expect("wrong-movement decoy");
             if drawn_is_water {
                 decoy.speed_costs.track = Some(100);
@@ -2761,18 +2754,18 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
         let registry = crate_registry();
         let mut sim = sim_with_grid(1);
         let mut terrain = uniform_terrain(false);
-        for cell in &mut terrain.cells {
+        for cell in terrain.cells_mut_for_test() {
             cell.speed_costs.track = Some(0);
         }
         // Both preferred candidates are on ring 9. Engine ring order encounters
         // (29,11) first and (11,20) second, while nearest-to-origin would choose
         // (11,20). Native's zero reference is a sentinel, not a real target.
         terrain
-            .cell_mut(29, 11)
+            .cell_mut_for_test(29, 11)
             .expect("candidate A")
             .speed_costs
             .track = Some(100);
-        let selected = terrain.cell_mut(11, 20).expect("candidate B");
+        let selected = terrain.cell_mut_for_test(11, 20).expect("candidate B");
         selected.speed_costs.track = Some(100);
         selected.bridge_facts.raw_flags |= BRIDGE_FLAG_STRUCTURAL;
         sim.resolved_terrain = Some(terrain);
@@ -2807,7 +2800,7 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
     fn gsi_01_04_crate_snap_requires_native_candidate_anchor_diamond() {
         let mut sim = sim_with_grid(1);
         let mut terrain = uniform_terrain(false);
-        for cell in &mut terrain.cells {
+        for cell in terrain.cells_mut_for_test() {
             cell.speed_costs.track = Some(0);
         }
         // Both candidates are valid cells inside the 40x40 terrain rectangle.
@@ -2815,12 +2808,12 @@ fn crate_random_rectangle_draws_signed_reversed_ranges_then_narrows_to_i16() {
         // (8,5) only: on flat terrain it requires 12 < x+y <= 26,
         // x-y < 14, and y-x < 6.
         terrain
-            .cell_mut(8, 3)
+            .cell_mut_for_test(8, 3)
             .expect("rectangular-only candidate")
             .speed_costs
             .track = Some(100);
         terrain
-            .cell_mut(8, 5)
+            .cell_mut_for_test(8, 5)
             .expect("in-diamond candidate")
             .speed_costs
             .track = Some(100);

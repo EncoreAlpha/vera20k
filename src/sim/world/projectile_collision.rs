@@ -735,7 +735,7 @@ mod tests {
                 .resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(bridge.0, bridge.1)
+                .cell_mut_for_test(bridge.0, bridge.1)
                 .unwrap();
             let supplied =
                 super::super::lifecycle_tests::common_raw_terrain_cell(bridge.0, bridge.1, 0, true);
@@ -880,7 +880,7 @@ mod tests {
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(10, 20)
+            .cell_mut_for_test(10, 20)
             .unwrap()
             .level = 6;
         crate::sim::terrain_spawn::construct_terrain_objects(
@@ -899,7 +899,7 @@ mod tests {
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(10, 20)
+            .cell_mut_for_test(10, 20)
             .unwrap()
             .level = 0;
         let mut collision = world(&sim);
@@ -1261,7 +1261,7 @@ mod tests {
                 }
                 entity
                     .lifecycle
-                    .set_cell_marked(target["marked"].as_bool().unwrap_or(true));
+                    .set_cell_marked_for_test(target["marked"].as_bool().unwrap_or(true));
                 entity.set_on_bridge(target["on_bridge"].as_bool().unwrap_or(false));
                 // The supplied phase is the installed Rocket's MissionState.
                 if target["rocket"].as_bool().unwrap_or(false)
@@ -2247,7 +2247,7 @@ mod tests {
             sim.resolved_terrain
                 .as_mut()
                 .unwrap()
-                .cell_mut(2, 2)
+                .cell_mut_for_test(2, 2)
                 .unwrap()
                 .bridge_facts
                 .raw_flags = cell["flags"].as_u64().unwrap_or(0) as u32;

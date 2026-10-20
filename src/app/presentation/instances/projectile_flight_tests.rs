@@ -137,7 +137,7 @@ fn original_cannon_launch_motion_and_live_bridge_draw_form_one_production_chain(
     let mut terrain = test_flat_ground_grid(32);
     terrain.test_set_native_allocated_cells(&cells.iter().copied().collect::<Vec<_>>());
     for &(x, y) in &cells {
-        let cell = terrain.cell_mut(x, y).unwrap();
+        let cell = terrain.cell_mut_for_test(x, y).unwrap();
         cell.level = initial["level"].as_u64().unwrap() as u8;
         cell.bridge_facts.raw_flags = initial["flags"].as_u64().unwrap() as u32;
     }
@@ -200,7 +200,11 @@ fn original_cannon_launch_motion_and_live_bridge_draw_form_one_production_chain(
         // fixture. Changing the actual retained terrain exercises the live probe.
         let terrain = sim.resolved_terrain.as_mut().unwrap();
         for &(x, y) in &cells {
-            terrain.cell_mut(x, y).unwrap().bridge_facts.raw_flags = flags;
+            terrain
+                .cell_mut_for_test(x, y)
+                .unwrap()
+                .bridge_facts
+                .raw_flags = flags;
         }
         let terrain = sim.resolved_terrain.as_ref().unwrap();
         let mut ordinary_visits = 0;

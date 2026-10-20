@@ -54,6 +54,9 @@ pub(crate) struct MatchState {
     /// frame remains visible but simulation is frozen; its destination is
     /// committed only after the retail fade/voice-wait sequence completes.
     pub(crate) scenario_exit: Option<crate::app::match_runtime::scenario_exit::ScenarioExitCascade>,
+    /// `g_bScenarioRestartRequested` `0x008B41C0`: B6 Restart raised it and
+    /// the termination router consumes it before the next simulation frame.
+    pub(crate) scenario_restart_requested: bool,
     /// Match elapsed wall time for the retail score screen. App-local and never
     /// serialized, hashed, or read by deterministic simulation.
     pub(crate) scenario_elapsed_clock: crate::app::match_runtime::frame_pacer::ScenarioElapsedClock,
@@ -123,7 +126,7 @@ mod tests {
     #[test]
     fn retained_pause_does_not_leak_into_result_or_shell_audio() {
         let mut sim = Simulation::with_seed(0);
-        sim.session.set_started(true);
+        sim.session.publish_started();
         sim.pause_scenario(2);
         assert!(presentation_pause_for_screen(
             &GameScreen::InGame,

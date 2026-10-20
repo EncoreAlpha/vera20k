@@ -923,7 +923,7 @@ fn a_blocked_bio_reactor_restores_and_retries_its_cargo_head() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         cell.speed_costs.foot = Some(cost);
         cell.base_speed_costs.foot = Some(cost);
@@ -1118,7 +1118,7 @@ fn a_bio_reactor_unlimbo_failure_keeps_the_placement_draw_and_restores_cargo() {
         .get_mut(passenger)
         .unwrap()
         .lifecycle
-        .set_cell_marked(true);
+        .set_cell_marked_for_test(true);
     sim.power_states.insert(
         owner,
         crate::sim::power_system::PowerState::settled_for_test(),
@@ -1181,7 +1181,7 @@ fn a_bio_reactor_scan_uses_location_cell_on_a_multi_cell_foundation() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain.speed_costs.foot = Some(cost);
         terrain.base_speed_costs.foot = Some(cost);
@@ -1263,7 +1263,7 @@ fn a_bio_reactor_scan_uses_infantry_cell_entry_with_building_height() {
         sim.resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap()
             .level = 2;
     }
@@ -1314,7 +1314,7 @@ fn a_bio_reactor_relaxed_scan_wraps_from_octant_seven() {
             .resolved_terrain
             .as_mut()
             .unwrap()
-            .cell_mut(cell.0, cell.1)
+            .cell_mut_for_test(cell.0, cell.1)
             .unwrap();
         terrain.speed_costs.foot = Some(cost);
         terrain.base_speed_costs.foot = Some(cost);
