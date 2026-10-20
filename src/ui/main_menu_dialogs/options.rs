@@ -65,8 +65,7 @@ pub(crate) const ORIGINAL_SHAPE_LABEL: &str = "Original 4:3 Shape";
 pub(crate) const ORIGINAL_SHAPE_HELP: &str =
     "Battles keep the original 4:3 shape, with bars on wide screens.";
 pub(crate) const YR_ORIGINAL_STYLE_LABEL: &str = "Original YR Style";
-pub(crate) const YR_ORIGINAL_STYLE_HELP: &str =
-    "Use Yuri's Revenge artwork for the startup splash, menu movie and Skirmish setup screens.";
+pub(crate) const YR_ORIGINAL_STYLE_HELP: &str = "Use Yuri's Revenge artwork for the startup splash, menu movie, setup screens, buttons, scrollbars and popups.";
 pub(crate) const SHIFT_QUEUE_LABEL: &str = "Shift-Click Batch Queue";
 pub(crate) const DEVELOPER_OPTIONS_LABEL: &str = "Developer Options";
 pub(crate) const WOL_TEST_SERVICE_LABEL: &str = "Offline Internet Test Service";

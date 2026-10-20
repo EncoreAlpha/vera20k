@@ -61,8 +61,8 @@ impl crate::app::persistence::options::launcher::LauncherPreviewOperations for A
     fn store_yr_original_style(&mut self, yr_original_style: bool) {
         // The menu movie's session identity carries the choice, so its next
         // paint loads the selected game copy; the splash follows next launch.
-        // The Skirmish atlas carries the same profile value and is rebuilt now
-        // when it already exists, before another shell screen can paint.
+        // The Skirmish atlas carries the same profile value; it is rebuilt
+        // (or built) now, before another shell screen can paint.
         self.persistence.options_profile.yr_original_style = yr_original_style;
         let _ = App::ensure_skirmish_shell_chrome(self);
     }

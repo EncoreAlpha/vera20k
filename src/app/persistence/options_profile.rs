@@ -407,7 +407,7 @@ impl RetailOptionsProfile {
             self.sidebar = crate::ui::main_menu_dialogs::options::SidebarSize::from_ini_value(
                 vera.read_int("Sidebar", self.sidebar.ini_value()),
             );
-            self.yr_original_style = vera.read_bool("YROriginalStyle", false);
+            self.yr_original_style = vera.read_bool("YROriginalStyle", self.yr_original_style);
             self.shift_queue = vera.read_bool("ShiftQueue", self.shift_queue);
             // Absent keeps the current value; present-but-nonnumeric answers 0,
             // which the range lifts to 1 rather than a click that queues nothing.

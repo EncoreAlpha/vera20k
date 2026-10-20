@@ -4,6 +4,10 @@
 //! entries require active caller evidence and are selected by that screen.
 //! The persisted shell style selects exact RA2 art or active YR art for the
 //! Skirmish setup and Choose Map screens while keeping YR dialog geometry.
+//! User-requested YR parity exception: RA2 shell art is the default (#2196,
+//! replacing #2055's YR default); `[VERA] YROriginalStyle=yes` restores YR's
+//! art. Keep that default during future parity work unless the user
+//! explicitly asks to change it.
 
 use std::collections::HashMap;
 
@@ -768,7 +772,9 @@ pub fn build_skirmish_shell_chrome_atlas(
         push_optional(&mut rendered, render_flag_pcx_entry(assets, name), name);
     }
     for name in ["wodact.pcx", "wouact.pcx"] {
-        let pair = style_control_asset_pair(name).expect("known WOL style asset");
+        let Some(pair) = style_control_asset_pair(name) else {
+            continue;
+        };
         push_optional(
             &mut rendered,
             render_style_pcx_entry(&style_resolver, name, pair),
@@ -1950,5 +1956,82 @@ mod tests {
         )
         .expect("YR MNBTTN");
         assert_ne!(ra2_button.rgba, yr_button.rgba);
+    }
+
+    #[test]
+    #[ignore = "requires the configured stock retail RA2/YR install"]
+    fn production_style_pairs_resolve_the_expected_retail_members() {
+        use crate::render::shell_ui_style_assets::ShellUiAssetResolver;
+        let assets = retail_assets();
+        let ra2 = ShellUiAssetResolver::new(&assets, false);
+        let yr = ShellUiAssetResolver::new(&assets, true);
+        let control = super::style_control_asset_pair("cue_i.pcx").expect("styled control");
+        for (label, pair, ra2_source, yr_source, should_differ) in [
+            (
+                "setup small",
+                super::SETUP_SMALL_BACKGROUND,
+                "ra2.mix -> neutral.mix",
+                "ra2.mix -> neutral.mix",
+                false,
+            ),
+            (
+                "setup large",
+                super::SETUP_LARGE_BACKGROUND,
+                "ra2.mix -> neutral.mix",
+                "ra2md.mix -> ntrlmd.mix",
+                true,
+            ),
+            (
+                "choose map large",
+                super::CHOOSE_MAP_LARGE_BACKGROUND,
+                "ra2.mix -> neutral.mix",
+                "ra2md.mix -> ntrlmd.mix",
+                true,
+            ),
+            (
+                "setup palette",
+                super::SETUP_PALETTE,
+                "ra2.mix -> cache.mix",
+                "ra2md.mix -> ntrlmd.mix",
+                true,
+            ),
+            (
+                "neutral popup",
+                super::MODE_TWO_NEUTRAL_BACKGROUND,
+                "ra2.mix -> local.mix",
+                "expandmd01.mix",
+                true,
+            ),
+            (
+                "main button",
+                super::MAIN_BUTTON_SHAPE,
+                "ra2.mix -> local.mix",
+                "ra2md.mix -> localmd.mix",
+                true,
+            ),
+            (
+                "control",
+                control,
+                "ra2.mix -> local.mix",
+                "ra2md.mix -> localmd.mix",
+                true,
+            ),
+        ] {
+            let ra2_asset = ra2.resolve(pair).expect("resolve exact RA2 source");
+            let yr_asset = yr.resolve(pair).expect("resolve active YR source");
+            assert_eq!(ra2_asset.source, ra2_source, "{label}");
+            assert_eq!(yr_asset.source, yr_source, "{label}");
+            assert_eq!(ra2_asset.bytes != yr_asset.bytes, should_differ, "{label}");
+        }
+
+        // These mode-2 resources have one retail member and remain shared
+        // through ordinary lookup in either shell style.
+        for member in ["PUDLGBGA.SHP", "PUDLGBGS.SHP", "DIALOG.PAL"] {
+            let (bytes, source) = assets
+                .get_with_source_ref(member)
+                .unwrap_or_else(|| panic!("missing shared shell asset {member}"));
+            assert_eq!(source, "ra2.mix -> local.mix", "{member}");
+            assert!(!bytes.is_empty(), "{member}");
+        }
     }
 }
