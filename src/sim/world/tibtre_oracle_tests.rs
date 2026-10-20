@@ -325,9 +325,7 @@ fn forced_spread_matches_original_admission_placement_queues_and_rng() {
                 binary_frame: case["input"]["frame"].as_u64().unwrap_or(200) as u32,
                 growth_enabled: true,
                 spread_enabled: case["input"]["spreads"] != false,
-                radar_dirty_cells: None,
-                radar_dirty_generation: None,
-                tactical_dirty_cells: None,
+                dirty_cells: None,
             },
             coords[0],
             true,
@@ -429,13 +427,11 @@ fn same_frame_ore_terrain_ai_publishes_the_path_view_before_return() {
         .expect("force1 Terrain turn creates actual ore");
     let cell = s.sim.resolved_terrain.as_ref().unwrap().cell(x, y).unwrap();
     assert_eq!(cell.land_type, 5, "native Mark published ore attributes");
-    assert!(
-        s.sim
-            .path_grid
-            .as_ref()
-            .unwrap()
-            .resolved_cell_is_current(cell, false)
-    );
+    assert!(s.sim.path_grid.as_ref().unwrap().resolved_cell_is_current(
+        cell,
+        s.sim.overlay_grid.as_ref(),
+        false
+    ));
     assert!(
         !s.sim
             .overlay_grid

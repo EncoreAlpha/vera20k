@@ -222,7 +222,7 @@ pub(crate) fn build_unit_instances(
     // Presentation runs after the just-completed simulation frame; snapshot
     // the one binary frame used by every Drive/Ship Draw_Matrix in this pass.
     let display_binary_frame =
-        display_binary_frame_for_committed_session(sim.session.binary_frame());
+        display_binary_frame_for_committed_session(sim.session().binary_frame());
     let (cam_x, cam_y, sw, sh) = (
         state.match_state.input.camera_x,
         state.match_state.input.camera_y,
@@ -233,7 +233,7 @@ pub(crate) fn build_unit_instances(
         crate::app::input::camera::tactical_viewport_px(state);
     let unit_viewport = [tactical_width as f32 / z, tactical_height as f32 / z];
     let local_owner = crate::app::input::commands::preferred_local_owner_name(state);
-    let local_owner_id = local_owner.as_deref().and_then(|o| sim.interner.get(o));
+    let local_owner_id = local_owner.as_deref().and_then(|o| sim.interner().get(o));
     let ignore_visibility = state.match_state.sandbox_full_visibility;
     let art_reg: Option<&crate::rules::art_data::ArtRegistry> =
         state.rules().map(|rules| rules.art());
@@ -242,6 +242,7 @@ pub(crate) fn build_unit_instances(
         .sim_runtime
         .as_ref()
         .and_then(|rt| rt.view().resolved_terrain());
+    let light_cells = terrain.map(crate::map::resolved_terrain::NativeCellQuery::isolated);
     state
         .match_state
         .match_presentation
@@ -279,7 +280,7 @@ pub(crate) fn build_unit_instances(
         };
         // Common visibility, passenger, limbo, and DrawState admission is shared below.
         let pos = &entity.position;
-        let owner_str = sim.interner.resolve(entity.owner());
+        let owner_str = sim.interner().resolve(entity.owner());
         let mut observer = super::helpers::observer_draw_context(
             sim,
             entity,
@@ -289,26 +290,26 @@ pub(crate) fn build_unit_instances(
         );
         let Some((type_name, body)) = unit_body_draw(
             entity,
-            &sim.interner,
+            sim.interner(),
             state.rules(),
             band,
-            sim.session.binary_frame(),
+            sim.session().binary_frame(),
             observer,
         ) else {
             continue;
         };
         let no_shadow = state
             .rules()
-            .and_then(|rules| sim.interner.object_type(entity.type_ref(), rules))
+            .and_then(|rules| sim.interner().object_type(entity.type_ref(), rules))
             .is_some_and(|object| object.no_shadow);
         let type_str = type_name.as_ref();
         observer.drawn_voxel = Some(true);
         let remap_owner = entity
             .disguise
             .as_ref()
-            .filter(|_| DrawState::draws_disguise(entity, sim.session.binary_frame(), observer))
+            .filter(|_| DrawState::draws_disguise(entity, sim.session().binary_frame(), observer))
             .and_then(|state| state.house())
-            .map(|id| sim.interner.resolve(id))
+            .map(|id| sim.interner().resolve(id))
             .unwrap_or(owner_str);
         let hc: HouseColorIndex = state
             .match_state
@@ -323,10 +324,10 @@ pub(crate) fn build_unit_instances(
             owner_str,
             local_owner.as_deref(),
             local_owner_id,
-            &sim.fog,
-            &sim.house_alliances,
+            sim.fog(),
+            sim.house_alliances(),
             ignore_visibility,
-            sim.session.binary_frame(),
+            sim.session().binary_frame(),
             house_color_to_remap_row(hc),
             observer,
         ) else {
@@ -339,7 +340,12 @@ pub(crate) fn build_unit_instances(
         let interp_z = pos.z();
         let draw_state = draw_decision.state;
         let extra_light = state.rules().map_or(0, |rules| {
-            crate::app::presentation::lighting::body_extra_light(entity, rules, sim, terrain)
+            crate::app::presentation::lighting::body_extra_light(
+                entity,
+                rules,
+                sim,
+                light_cells.as_ref(),
+            )
         });
         let tint = vxl_body_tint(
             state.match_state.match_presentation.lighting.grid(),
@@ -376,7 +382,7 @@ pub(crate) fn build_unit_instances(
             body_tint,
             body_light,
             state.rules(),
-            sim.session.binary_frame(),
+            sim.session().binary_frame(),
         );
         let center_x: f32 = sx;
         let center_y: f32 = sy;
@@ -394,8 +400,7 @@ pub(crate) fn build_unit_instances(
         // native display sort.
         let dock_depth_y_offset: f32 = if entity.miner.is_some()
             && sim
-                .substrate
-                .occupancy
+                .occupancy()
                 .first_building_on_layer(
                     pos.rx(),
                     pos.ry(),
@@ -436,8 +441,8 @@ pub(crate) fn build_unit_instances(
         }
 
         // Sampled at the turret's frame, so the two sprites cannot disagree.
-        let body_facing = body_draw_facing(entity, sim.session.binary_frame());
-        let ground_pose = ground_pose(entity, slope_state, sim.session.binary_frame());
+        let body_facing = body_draw_facing(entity, sim.session().binary_frame());
+        let ground_pose = ground_pose(entity, slope_state, sim.session().binary_frame());
         if let BodyDraw::Pose(tilt) = body {
             let key = UnitSpriteKey {
                 type_id: type_str.to_string(),
@@ -467,10 +472,10 @@ pub(crate) fn build_unit_instances(
                     barrel_elevation,
                 } => (turret, barrel_elevation),
                 _ => (
-                    entity.body_facing_current(sim.session.binary_frame()),
+                    entity.body_facing_current(sim.session().binary_frame()),
                     entity
                         .barrel_elevation()
-                        .current(sim.session.binary_frame()),
+                        .current(sim.session().binary_frame()),
                 ),
             };
             // Turret unit: emit body, turret, and barrel as separate sprites.
@@ -594,6 +599,19 @@ pub(crate) fn build_unit_instances(
             }
         }
 
+        emit_jumpjet_unit_shadow(
+            state,
+            atlas,
+            entity,
+            type_str,
+            anim_frame,
+            [center_x, center_y],
+            no_shadow,
+            draw_state,
+            band,
+            &mut pieces,
+        );
+
         // OREGATH is an SHP sprite from sprite_atlas, but remains an owned piece
         // of its harvester's Ground slot so atlas identity cannot re-sort it.
         if let Some(frame) = harvest_overlay_frame(state.rules(), sim, entity, display_binary_frame)
@@ -601,7 +619,7 @@ pub(crate) fn build_unit_instances(
                 state,
                 entity,
                 frame,
-                harvest_arm_screen_position(entity, sim.session.binary_frame()),
+                harvest_arm_screen_position(entity, sim.session().binary_frame()),
                 pos.z(),
                 tint,
                 palette_light.brightness(),
@@ -873,8 +891,8 @@ fn ground_pose(
 }
 
 /// One posed body drawn on this frame's pose page. It joins its display
-/// layer in emission order like an atlas body; aircraft cast no VERA shadow
-/// (recorded on the draw passes).
+/// layer in emission order like an atlas body. The concrete Unit and Aircraft
+/// callers emit their shadow separately in native order.
 fn emit_pose_sprite(
     state: &AppState,
     pieces: &mut Vec<ObjectPieceInstance>,
@@ -1143,8 +1161,15 @@ fn unit_shadow_admitted(
 ) -> bool {
     entity.category() == EntityCategory::Unit
         && !entity.sinking.is_active()
-        && band == EntityDrawBand::Ground
+        && (band == EntityDrawBand::Ground || has_jumpjet_unit_shadow(entity))
         && techno_shadow_admitted(entity, no_shadow)
+}
+
+fn has_jumpjet_unit_shadow(entity: &crate::sim::game_entity::GameEntity) -> bool {
+    entity.category() == EntityCategory::Unit
+        && entity.locomotor.as_ref().is_some_and(|l| {
+            l.active_kind() == crate::rules::locomotor_type::LocomotorKind::Jumpjet
+        })
 }
 
 fn techno_shadow_admitted(entity: &crate::sim::game_entity::GameEntity, no_shadow: bool) -> bool {
@@ -1183,7 +1208,7 @@ fn emit_unit_shadow_sprite(
     pieces: &mut Vec<ObjectPieceInstance>,
 ) {
     // Original Unit73C1D2 also skips its shadow suffix while sinking +3CD.
-    if !unit_shadow_admitted(entity, no_shadow, band) {
+    if !unit_shadow_admitted(entity, no_shadow, band) || has_jumpjet_unit_shadow(entity) {
         return;
     }
     let key = UnitSpriteKey {
@@ -1201,6 +1226,7 @@ fn emit_unit_shadow_sprite(
     };
     emit_shadow_stencil(
         entry,
+        UnitTextureSource::Stable(entry.page),
         [center_x, center_y],
         depth,
         voxel_adjust,
@@ -1213,6 +1239,7 @@ fn emit_unit_shadow_sprite(
 /// body mask, so its immutable atlas entry also serves pitched/rolled bodies.
 fn emit_shadow_stencil(
     entry: UnitSpriteEntry,
+    source: UnitTextureSource,
     anchor: [f32; 2],
     depth: f32,
     voxel_adjust: f32,
@@ -1236,7 +1263,137 @@ fn emit_shadow_stencil(
         z_gradient: VOXEL_Z_GRADIENT,
         ..Default::default()
     };
-    push_unit_sprite(UnitTextureSource::Stable(entry.page), sprite, pieces);
+    push_unit_sprite(source, sprite, pieces);
+}
+
+/// The original Unit suffix follows stable, split-gun and posed bodies alike.
+/// Its composed mask reads those exact pieces; a high-flight stencil is
+/// unmasked, and positive low flight uses the existing frame-local pages.
+fn emit_jumpjet_unit_shadow(
+    state: &AppState,
+    atlas: &crate::render::unit_atlas::UnitAtlas,
+    entity: &crate::sim::game_entity::GameEntity,
+    type_id: &str,
+    frame: u32,
+    body_anchor: [f32; 2],
+    no_shadow: bool,
+    draw_state: DrawState,
+    band: EntityDrawBand,
+    pieces: &mut Vec<ObjectPieceInstance>,
+) {
+    use crate::render::unit_shadow::{UnitShadowContext, UnitShadowMask};
+    if !has_jumpjet_unit_shadow(entity)
+        || !unit_shadow_admitted(entity, no_shadow, band)
+        || pieces.is_empty()
+    {
+        return;
+    }
+    let Some(runtime) = state.match_state.sim_runtime.as_ref() else {
+        return;
+    };
+    let view = runtime.view();
+    let Some(terrain) = view.resolved_terrain() else {
+        return;
+    };
+    let xy = crate::sim::movement::ground_pose::position_world_xy(&entity.position);
+    let Some(mut pose) = crate::render::unit_shadow::pose(
+        UnitShadowContext {
+            xyz: [
+                xy[0],
+                xy[1],
+                crate::sim::movement::ground_pose::object_world_z_leptons(entity, Some(terrain)),
+            ],
+            on_bridge: entity.on_bridge(),
+            marked: entity.lifecycle.cell_marked(),
+            primary_facing: entity.body_facing_current(view.session().binary_frame()),
+        },
+        |coord| super::foot_depth::depth_cell(terrain, None, None, coord),
+    ) else {
+        return;
+    };
+    pose.anchor[1] -= f32::from(entity.ion_blast_lift_pixels());
+    let key = UnitSpriteKey {
+        type_id: type_id.to_owned(),
+        turret_index: 0,
+        facing: pose.facing,
+        layer: VxlLayer::Shadow,
+        frame: if pose.mask == UnitShadowMask::Retained {
+            frame | crate::render::unit_atlas::GROUNDED_SHADOW_FRAME_FLAG
+        } else {
+            frame
+        },
+        slope_type: pose.slope,
+        barrel_pitch: 0,
+    };
+    let Some(entry) = atlas
+        .get(&key)
+        .filter(|e| e.native_draw_bounds.is_some())
+        .copied()
+    else {
+        return;
+    };
+    let (entry, source) = if pose.mask == UnitShadowMask::None {
+        (entry, UnitTextureSource::Stable(entry.page))
+    } else {
+        let parts: Vec<_> = pieces
+            .iter()
+            .filter_map(|piece| {
+                let (page, posed) = match piece.target {
+                    ObjectTexture::UnitAtlasPage(page) => (page, false),
+                    ObjectTexture::UnitPosePage(page) => (page, true),
+                    _ => return None,
+                };
+                let sprite = &piece.instance;
+                Some(crate::render::unit_atlas::UnitShadowPart {
+                    entry: UnitSpriteEntry {
+                        uv_origin: sprite.uv_origin,
+                        uv_size: sprite.uv_size,
+                        pixel_size: sprite.size,
+                        offset_x: 0.,
+                        offset_y: 0.,
+                        native_draw_bounds: None,
+                        page,
+                    },
+                    point: [
+                        128 + (sprite.position[0] - body_anchor[0]) as i32,
+                        128 + (sprite.position[1] - body_anchor[1]) as i32,
+                    ],
+                    posed,
+                })
+            })
+            .collect();
+        let mut cache = state.renderer.vxl_pose_frame_cache.borrow_mut();
+        if pose.mask == UnitShadowMask::Retained {
+            if !atlas.prepare_native_shadow_with(&state.renderer.gpu.queue, &key, |body| {
+                cache.stamp_shadow_parts(atlas, &parts, body)
+            }) {
+                return;
+            }
+            (entry, UnitTextureSource::Stable(entry.page))
+        } else {
+            let Some(entry) = cache.render_unit_shadow(atlas, &key, pose.mask_offset, &parts)
+            else {
+                return;
+            };
+            (entry, UnitTextureSource::Pose(entry.page))
+        }
+    };
+    let depth = body_sort_depth(
+        state,
+        entity,
+        pose.anchor[1] + entry.offset_y + entry.pixel_size[1],
+        entity.position.z(),
+    );
+    let z_adjust = super::foot_depth::unit_z_adjust(state, entity, true, None);
+    emit_shadow_stencil(
+        entry,
+        source,
+        pose.anchor,
+        depth,
+        z_adjust as f32,
+        draw_state,
+        pieces,
+    );
 }
 
 fn aircraft_shadow_pose(
@@ -1312,6 +1469,7 @@ fn emit_aircraft_shadow_sprite(
     let z_adjust = super::foot_depth::unit_z_adjust(state, entity, false, Some(pose.world_z));
     emit_shadow_stencil(
         entry,
+        UnitTextureSource::Stable(entry.page),
         pose.anchor,
         depth,
         z_adjust as f32,
@@ -1738,7 +1896,7 @@ fn harvest_overlay_frame(
     display_binary_frame: u32,
 ) -> Option<u16> {
     let harvester = rules
-        .and_then(|rules| sim.interner.object_type(entity.type_ref(), rules))
+        .and_then(|rules| sim.interner().object_type(entity.type_ref(), rules))
         .is_some_and(|object| object.harvester);
     if !harvester
         || !entity
@@ -1751,14 +1909,14 @@ fn harvest_overlay_frame(
         || crate::sim::movement::motion_query::is_moving_now(
             entity,
             rules.map(|rules| {
-                crate::sim::movement::SpeedRules::new(rules, &sim.interner, &sim.houses)
+                crate::sim::movement::SpeedRules::new(rules, sim.interner(), sim.houses())
             }),
             display_binary_frame,
         )
     {
         return None;
     }
-    let frame = sim.session.binary_frame();
+    let frame = sim.session().binary_frame();
     oregath_frame(
         entity.body_frame_counter.get(),
         frame,
@@ -1946,7 +2104,7 @@ mod tests {
             let light =
                 crate::render::palette_light::PaletteLight::color_scheme([1000; 3], intensity)
                     .with_colour_word(int(&row["word"]) as u16);
-            sim.session
+            sim.session_mut_for_test()
                 .set_binary_frame_for_test(int(&row["frame"]) as u32);
             let (lit_tint, lit) =
                 crate::app::presentation::lighting::techno_effect_light(&unit, tint, light, &sim);
@@ -1955,7 +2113,7 @@ mod tests {
                 lit_tint,
                 lit,
                 Some(&rules_by_iron_index[&int(&row["iron_color"])]),
-                sim.session.binary_frame(),
+                sim.session().binary_frame(),
             );
             let out = int(&row["out_intensity"]);
             assert_eq!(lit.brightness(), out, "{row}");
@@ -1989,6 +2147,37 @@ mod tests {
         let colors = crate::rules::color_add::ColorAddTable::from_ini(&ini);
         assert_eq!(colors.entries()[0].name.as_deref(), Some("None"));
         assert_eq!(colors.entries()[0].rgb, [0, 0, 0]);
+    }
+
+    #[test]
+    fn jumpjet_unit_shadow_admission_matches_original_gates_across_bands() {
+        let fixture = crate::test_fixture::json("tools/voxel_oracle/unit_shadow.json");
+        for row in fixture["callers"].as_array().unwrap() {
+            let mut entity = GameEntity::test_default(1, "ZEP", "Russians", 10, 10);
+            entity.set_category_for_test(EntityCategory::Unit);
+            entity.locomotor = Some(LocomotorState::for_test_kind(LocomotorKind::Jumpjet));
+            let mut cloak = crate::sim::cloak_disguise::CloakRuntime::new(0);
+            cloak.set_state_for_test(row["input"]["cloak"].as_i64().unwrap_or(0) as i32);
+            entity.cloak = Some(cloak);
+            if row["input"]["sinking"].as_bool().unwrap_or(false) {
+                continue;
+            }
+            for band in [
+                EntityDrawBand::Ground,
+                EntityDrawBand::Air,
+                EntityDrawBand::Top,
+            ] {
+                assert_eq!(
+                    unit_shadow_admitted(
+                        &entity,
+                        row["input"]["no_shadow"].as_bool().unwrap_or(false),
+                        band
+                    ),
+                    row["draw_admitted"].as_bool().unwrap(),
+                    "{row}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2278,7 +2467,7 @@ mod tests {
     #[test]
     fn drive_ship_slope_snapshot_uses_production_display_frame_selector() {
         let mut sim = Simulation::with_seed(0);
-        sim.session.set_binary_frame_for_test(51);
+        sim.session_mut_for_test().set_binary_frame_for_test(51);
         let mut entity = GameEntity::test_default(1, "SHIP", "Americans", 0, 0);
         entity.set_owner_for_test(sim.intern("Americans"));
         entity.set_type_ref_for_test(sim.intern("SHIP"));
@@ -2294,20 +2483,17 @@ mod tests {
             .unwrap();
         slope.snap(4, 40);
         slope.sample_process_entry(9, 49);
-        sim.substrate.entities.insert(entity);
+        sim.entities_mut_for_test().insert(entity);
 
         let bytes = GameSnapshot::save(&sim, 1, 2, "slope display selector", 3);
         let restored = GameSnapshot::load(&bytes)
             .expect("current slope snapshot")
             .sim;
         let display_binary_frame =
-            display_binary_frame_for_committed_session(restored.session.binary_frame());
+            display_binary_frame_for_committed_session(restored.session().binary_frame());
         assert_eq!(display_binary_frame, 50);
         assert_eq!(
-            locomotor_render_slope_state(
-                restored.substrate.entities.get(1).unwrap(),
-                display_binary_frame,
-            ),
+            locomotor_render_slope_state(restored.entities().get(1).unwrap(), display_binary_frame,),
             Some(UnitRenderSlopeState::Transition {
                 from_slope: 4,
                 to_slope: 9,
@@ -2368,5 +2554,4 @@ mod tests {
         assert_eq!(no_spawn_alt_type_id("V3", false, Some(&in_flight)), None);
         assert_eq!(no_spawn_alt_type_id("V3", true, None), None);
     }
-
 }

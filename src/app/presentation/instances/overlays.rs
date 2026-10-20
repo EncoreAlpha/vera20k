@@ -259,7 +259,7 @@ pub(crate) fn build_display_effect_instances(
         .general
         .parachute_shp
         .as_deref()
-        .and_then(|name| sim.interner.get(name));
+        .and_then(|name| sim.interner().get(name));
     let local_owner = input.local_owner;
     for &stable_id in sim.display_layers().ordered_ids() {
         if let Some(light) = sim.building_spotlight(stable_id, input.rules) {
@@ -311,7 +311,7 @@ pub(crate) fn build_display_effect_instances(
         if parachute_type.is_some_and(|ty| parachute_canopy_owner(anim, ty).is_some()) {
             continue;
         }
-        let type_name: &str = sim.interner.resolve(anim.type_id());
+        let type_name: &str = sim.interner().resolve(anim.type_id());
         let config = input.rules.art().anim_runtime_config(type_name);
         if config.is_some_and(|config| !config.art_body_read) {
             continue;
@@ -372,7 +372,7 @@ pub(crate) fn build_display_effect_instances(
         }
         let tint = input.lighting.anim_tint_at((rx, ry), config);
         let remap_color =
-            crate::render::sprite_atlas::anim_remap_color(anim, &sim.interner, input.house_colors);
+            crate::render::sprite_atlas::anim_remap_color(anim, sim.interner(), input.house_colors);
         let palette_light = if remap_color.is_some() {
             Default::default()
         } else {
@@ -541,7 +541,7 @@ pub(crate) fn parachute_canopy_owners(
     let Some(parachute_type) = state
         .rules()
         .and_then(|rules| rules.general.parachute_shp.as_deref())
-        .and_then(|name| sim.interner.get(name))
+        .and_then(|name| sim.interner().get(name))
     else {
         return std::collections::HashSet::new();
     };
@@ -861,20 +861,20 @@ pub(crate) fn build_overlay_instances(
                 .match_state
                 .sim_runtime
                 .as_ref()
-                .and_then(|runtime| runtime.simulation.overlay_grid.as_ref()),
+                .and_then(|runtime| runtime.simulation.overlay_grid()),
             registry: state.overlay_registry(),
             rules: state.rules(),
             interner: state
                 .match_state
                 .sim_runtime
                 .as_ref()
-                .map(|runtime| &runtime.simulation.interner),
+                .map(|runtime| runtime.simulation.interner()),
             tiberium_types: state.rules().map(|rules| &rules.tiberium_types),
             terrain: state
                 .match_state
                 .sim_runtime
                 .as_ref()
-                .and_then(|runtime| runtime.simulation.resolved_terrain.as_ref()),
+                .and_then(|runtime| runtime.simulation.resolved_terrain()),
             heights: state.height_map(),
             lighting: state.match_state.match_presentation.lighting.grid(),
             camera: [cam_x, cam_y],
@@ -905,7 +905,7 @@ pub(crate) fn build_overlay_instances(
         if !obj.is_live() || !obj.in_logic_vector() {
             continue;
         }
-        let name = sim.interner.resolve(obj.type_ref());
+        let name = sim.interner().resolve(obj.type_ref());
         // Ordinary native Ground6D97D0 -> Terrain71CC50/71C1B0 admits live
         // static art independently of anchor exploration; ABuffer clips pixels.
 
@@ -1066,32 +1066,30 @@ fn native_terrain_instances(
     })
 }
 
-/// Attach native magnetic destination edits to retained Display parents.
-/// Sonic's existing outline fallback remains a separate presentation residual.
+/// Attach native Sonic/magnetic destination edits to retained Display parents.
 pub(crate) fn build_weapon_wave_instances(
     state: &AppState,
     objects: &mut Vec<crate::app::presentation::render::draw_plan_lowering::PlannedObjectInstance>,
     order: &crate::app::presentation::render::draw_plan_lowering::NativeDisplayOrder,
-) -> Vec<SpriteInstance> {
-    let mut instances = Vec::new();
+) {
     let Some(sim) = state
         .match_state
         .sim_runtime
         .as_ref()
         .map(|rt| &rt.simulation)
     else {
-        return instances;
+        return;
     };
     let observer = crate::app::input::commands::preferred_local_owner(state)
         .as_deref()
-        .and_then(|owner| sim.interner.get(owner));
+        .and_then(|owner| sim.interner().get(owner));
     let camera = [
         state.match_state.input.camera_x,
         state.match_state.input.camera_y,
     ]
     .map(|value| value.floor() as i32);
     for (id, draw) in
-        crate::app::presentation::fire_effects::build_magnetic_wave_draws(sim, observer, camera)
+        crate::app::presentation::fire_effects::build_weapon_wave_draws(sim, observer, camera)
     {
         use crate::app::presentation::render::draw_plan_lowering::{
             ObjectBodyDraw, PlannedObjectInstance,
@@ -1101,25 +1099,14 @@ pub(crate) fn build_weapon_wave_instances(
         };
         let mut planned = PlannedObjectInstance::object(parent, Vec::new());
         planned.body_draw = Some(ObjectBodyDraw::Surface(
-            crate::render::surface_line::SurfaceDraw::MagneticWave(draw),
+            crate::render::surface_line::SurfaceDraw::Wave(draw),
         ));
         objects.push(planned);
-    }
-    for wave in crate::app::presentation::fire_effects::build_weapon_wave_visuals(sim, observer) {
-        let projected: Vec<[f32; 2]> = wave
-            .polygon
-            .into_iter()
-            .map(|[x, y]| [x as f32, y as f32])
-            .collect();
-        instances.extend(crate::render::wave_geometry::build_wave_instances(
-            &projected, wave.tint, 1.0, 0.00045,
-        ));
     }
     // Live BuildingLightRuntime producers are intentionally not lowered here:
     // native DrawExtras first uses SpotlightClass type 16's zero-blend
     // shape-blitter/light-mask path, which this renderer does not yet expose.
     // A white quad or alpha approximation would invent visible behavior.
-    instances
 }
 
 /// Emit one sprite instance per active parachute anim, anchored at the
@@ -1179,7 +1166,7 @@ pub(crate) fn build_parachute_instances(
     let Some(shp_name) = input.rules.general.parachute_shp.as_deref() else {
         return;
     };
-    let Some(parachute_type) = sim.interner.get(shp_name) else {
+    let Some(parachute_type) = sim.interner().get(shp_name) else {
         return;
     };
 
@@ -1212,7 +1199,7 @@ pub(crate) fn build_parachute_instances(
 
         // Single-facing anim (no Facings= in art.ini for PARACH).
         let remap_color =
-            crate::render::sprite_atlas::anim_remap_color(anim, &sim.interner, input.house_colors);
+            crate::render::sprite_atlas::anim_remap_color(anim, sim.interner(), input.house_colors);
         let key = ShpSpriteKey {
             palette_context: if remap_color.is_some() {
                 crate::render::sprite_atlas::ShpPaletteContext::SelectedScheme

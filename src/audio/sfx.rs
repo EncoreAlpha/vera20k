@@ -64,6 +64,8 @@ mod gattling_loop_tests;
 #[cfg(test)]
 mod house_cue_tests;
 #[cfg(test)]
+mod ring_resample_tests;
+#[cfg(test)]
 mod unit_voice_lifecycle_tests;
 #[cfg(test)]
 mod unit_voice_tests;

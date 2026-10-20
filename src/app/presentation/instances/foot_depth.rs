@@ -41,9 +41,7 @@ pub(crate) fn depth_cell(
     };
     if let Some(index) = terrain.native_fixed_cell_index(coord[0], coord[1]) {
         let cell = &terrain.cells()[index];
-        let overlay_id = overlays.map_or(cell.bridge_facts.overlay_id, |o| {
-            o.cell(cell.rx, cell.ry).overlay_id
-        });
+        let overlay_id = overlays.and_then(|o| o.cell(cell.rx, cell.ry).overlay_id);
         DepthCell {
             coord: [cell.rx as i16, cell.ry as i16],
             level: cell.level as i8,
@@ -320,8 +318,7 @@ fn unit_z_adjust_in_runtime(
             Some(-3)
         } else if object.is_some_and(|o| o.harvester) {
             let cell = depth_cell(terrain, None, None, coord);
-            sim.substrate
-                .occupancy
+            sim.occupancy()
                 .first_building_on_layer(
                     cell.coord[0] as u16,
                     cell.coord[1] as u16,

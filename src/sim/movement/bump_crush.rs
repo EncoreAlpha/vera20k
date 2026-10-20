@@ -516,10 +516,11 @@ impl CrushTarget {
 /// `UnitClass::Death_Explosion` with its Scenario picks and anims, then the
 /// same release), `Record_The_Kill` (score, trigger events, EVA and the
 /// crusher's veterancy, which this engine now pays), then unmark, limbo and
-/// `UnInit`; no smudge. A crushed vehicle's `Death_Explosion` is not run
-/// here (residual in `combat/destruction_effects.rs`).
+/// `UnInit`; no smudge. `Simulation::per_cell_process` runs them, except that
+/// the captive release waits for the victim's UnInit (residual in
+/// `sim::capture_manager`).
 ///
-/// RESIDUAL (GSI-08.17) — two real gaps sit underneath it.
+/// GSI-08.17 named two more gaps underneath it.
 /// - **Overlay crushing — CLOSED.** `Per_Cell_Process @ 0x0073AFD4` flattens any
 ///   overlay whose `ObjectTypeClass::Crushable=` (`+0x22D`) is set, and a
 ///   `MovementZone=CrusherAll` type (stock: the Battle Fortress alone) also
@@ -529,8 +530,10 @@ impl CrushTarget {
 ///   This block previously described the rule correctly while listing it as
 ///   open, and the gate it describes was for a while implemented as a Drive
 ///   locomotor test instead.
-/// - **Mind-control release.** A crushed controller does not free its captives
-///   here, so their ownership stays with a dead object.
+/// - **Mind-control release.** A crushed controller frees its captives in its
+///   UnInit (`FootClass::UnInit @ 0x004DE5DD`) later in the same frame, not
+///   inside vt+0x170 before Record_The_Kill (residual in
+///   `sim::capture_manager`).
 pub fn can_crush(
     capability: CrushCapability,
     target: CrushTarget,
@@ -580,36 +583,16 @@ fn deploy_crush_immune(entity: &GameEntity) -> bool {
     entity.native_crush_immunity() != 0
 }
 
-/// Emit the normal crush-path `EntityCrushed` (CrushSound) event for a single
-/// victim. Native crush teardown does not also enter the ordinary DieSound
-/// path. The event is skipped when CrushSound is absent. Caller must invoke BEFORE
-/// removing the victim from the EntityStore so victim.position and
-/// victim.type_ref are still valid.
-#[cfg(any(test, feature = "test-support"))]
-pub fn emit_crush_kill_sounds(
-    victim: &crate::sim::game_entity::GameEntity,
-    rules: &crate::rules::ruleset::RuleSet,
-    interner: &mut crate::sim::intern::StringInterner,
-    sound_events: &mut Vec<crate::sim::world::SimSoundEvent>,
-) {
-    emit_crush_kill_sounds_at(
-        victim,
-        (
-            i32::from(victim.position.rx()),
-            i32::from(victim.position.ry()),
-        ),
-        rules,
-        interner,
-        sound_events,
-    );
-}
-
-pub fn emit_crush_kill_sounds_at(
+/// Emit the crush-path `EntityCrushed` (CrushSound) event for a victim at the
+/// crush coordinate; native crush teardown does not also enter the ordinary
+/// DieSound path. Skipped when CrushSound is absent. Call before removing the
+/// victim from the EntityStore, while its type is still readable.
+pub(crate) fn emit_crush_kill_sounds_at(
     victim: &crate::sim::game_entity::GameEntity,
     crush_coord: (i32, i32),
     rules: &crate::rules::ruleset::RuleSet,
     interner: &mut crate::sim::intern::StringInterner,
-    sound_events: &mut Vec<crate::sim::world::SimSoundEvent>,
+    sound_events: &mut crate::sim::world::FrameChannel<crate::sim::world::SimSoundEvent>,
 ) {
     let rx = crush_coord.0.clamp(0, i32::from(u16::MAX)) as u16;
     let ry = crush_coord.1.clamp(0, i32::from(u16::MAX)) as u16;
@@ -619,7 +602,7 @@ pub fn emit_crush_kill_sounds_at(
     };
     if let Some(ref crush_sound) = obj.crush_sound {
         let id = interner.intern(crush_sound);
-        sound_events.push(crate::sim::world::SimSoundEvent::EntityCrushed {
+        sound_events.emit(crate::sim::world::SimSoundEvent::EntityCrushed {
             crush_sound_id: id,
             rx,
             ry,
