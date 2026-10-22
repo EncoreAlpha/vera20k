@@ -26,12 +26,9 @@ fn retail_tibtre_decode_and_atlas_pairs_match_original_shape_draw() {
     let registry = OverlayTypeRegistry::from_ini(&retail.processed_rules, Some(&retail.fixed_art));
     for name in ["TEMPERATE", "SNOW", "URBAN", "NEWURBAN", "DESERT", "LUNAR"] {
         let theater = crate::map::theater::load_theater(&mut assets, name).unwrap();
-        retail.rules.bind_terrain_spawner_assets(
-            &retail.processed_rules,
-            &assets,
-            theater.extension,
-            name,
-        );
+        retail
+            .rules
+            .bind_terrain_assets(&retail.processed_rules, &assets, theater.extension, name);
         let objects: Vec<_> = (1..=3)
             .map(|number| TerrainObject {
                 rx: 0,

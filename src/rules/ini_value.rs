@@ -862,20 +862,35 @@ impl IniSection {
         mut scan_locals: Option<&mut [i32; 3]>,
     ) -> [u8; 3] {
         self.fold_rules_values(key, default, |current, raw| {
-            let value = strtrim_ascii(truncate_native_bytes(raw, 63));
-            if value.is_empty() {
-                return current;
-            }
-            let retained = scan_locals.is_some();
-            let mut fresh = [0; 3];
-            let out = scan_locals.as_deref_mut().unwrap_or(&mut fresh);
-            let assigned = scan_int_fields(value, out);
-            if retained || assigned == out.len() {
-                out.map(|component| component as u8)
-            } else {
-                current
-            }
+            Self::read_color_rgb_raw(raw, current, scan_locals.as_deref_mut())
         })
+    }
+
+    /// One native ReadColorRGB @0x00474B50 input with the caller's current
+    /// color as its default. TerrainTypeClass defers this read until its
+    /// Image's SHP frame-0 header color has been bound.
+    pub(crate) fn read_color_rgb_value(raw: &str, default: [u8; 3]) -> [u8; 3] {
+        Self::read_color_rgb_raw(raw, default, None)
+    }
+
+    fn read_color_rgb_raw(
+        raw: &str,
+        current: [u8; 3],
+        mut scan_locals: Option<&mut [i32; 3]>,
+    ) -> [u8; 3] {
+        let value = strtrim_ascii(truncate_native_bytes(raw, 63));
+        if value.is_empty() {
+            return current;
+        }
+        let retained = scan_locals.is_some();
+        let mut fresh = [0; 3];
+        let out = scan_locals.as_deref_mut().unwrap_or(&mut fresh);
+        let assigned = scan_int_fields(value, out);
+        if retained || assigned == out.len() {
+            out.map(|component| component as u8)
+        } else {
+            current
+        }
     }
 
     /// ReadSpeed (P19): `read_int(-1)` sentinel; -1 -> default; else clamp 0..100,

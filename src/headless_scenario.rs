@@ -370,7 +370,7 @@ pub fn load_with_launch_and_ini(
     rules.bind_effect_assets(&assets, theater.extension, &map.header.theater);
     rules.bind_building_buildup_assets(&assets, &map.header.theater);
     rules.bind_building_rubble_assets(&assets, theater.extension, &map.header.theater);
-    rules.bind_terrain_spawner_assets(&rules_ini, &assets, theater.extension, &map.header.theater);
+    rules.bind_terrain_assets(&rules_ini, &assets, theater.extension, &map.header.theater);
     rules.bind_animation_sequences(&infantry_sequences);
     let overlay_shp_ids = crate::rules::effect_asset_catalog::resolved_overlay_shp_ids(
         &overlay_registry,

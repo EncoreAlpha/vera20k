@@ -2243,7 +2243,7 @@ impl MapLoadInitial {
         rules.bind_effect_assets(asset_manager, theater_ext, &map_data.header.theater);
         rules.bind_building_buildup_assets(asset_manager, &map_data.header.theater);
         rules.bind_building_rubble_assets(asset_manager, theater_ext, &map_data.header.theater);
-        rules.bind_terrain_spawner_assets(
+        rules.bind_terrain_assets(
             &rules_ini,
             asset_manager,
             theater_ext,

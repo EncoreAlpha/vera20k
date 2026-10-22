@@ -4284,7 +4284,7 @@ pub struct RuleSet {
     rubble_assets: crate::rules::building_rubble::RubbleAssetCatalog,
     /// Raw terrain SHP counts used by authoritative TIBTRE animation timing.
     /// Presentation keeps its separate body-frame projection.
-    terrain_spawner_assets: crate::rules::terrain_asset_catalog::TerrainSpawnerAssetCatalog,
+    terrain_assets: crate::rules::terrain_asset_catalog::TerrainAssetCatalog,
     /// Complete immutable per-object animation timing catalog. Gameplay reads
     /// this rules-owned resource directly; presentation cannot replace timing
     /// on an individual frame.
@@ -4364,6 +4364,14 @@ impl RuleSet {
                 processed.side_projection(),
             ),
         )?;
+        for (name, reads) in processed.terrain_radar_color_read_states() {
+            if let Some(terrain) = rules
+                .terrain_object_types
+                .get_mut(&name.to_ascii_uppercase())
+            {
+                terrain.radar_color_read_passes = reads.to_vec();
+            }
+        }
         let mut native_identity_counts = HashMap::new();
         for (category, id, _) in processed.techno_type_states() {
             *native_identity_counts
@@ -5710,8 +5718,7 @@ impl RuleSet {
             voxel_assets: crate::rules::voxel_asset_catalog::VoxelAssetCatalog::default(),
             buildup_assets: crate::rules::buildup_asset_catalog::BuildupAssetCatalog::default(),
             rubble_assets: crate::rules::building_rubble::RubbleAssetCatalog::default(),
-            terrain_spawner_assets:
-                crate::rules::terrain_asset_catalog::TerrainSpawnerAssetCatalog::default(),
+            terrain_assets: crate::rules::terrain_asset_catalog::TerrainAssetCatalog::default(),
             animation_sequences: BTreeMap::new(),
             animation_sequence_by_handle: Vec::new(),
             unit_shp_read_states: BTreeMap::new(),
@@ -6778,7 +6785,7 @@ impl RuleSet {
         self.voxel_assets.hash(&mut hasher);
         self.buildup_assets.hash(&mut hasher);
         self.rubble_assets.hash(&mut hasher);
-        self.terrain_spawner_assets.hash(&mut hasher);
+        self.terrain_assets.hash(&mut hasher);
         b"art-smudge-config-v2".hash(&mut hasher);
         let smudge_anim_inputs = self
             .art_registry
@@ -7916,23 +7923,23 @@ impl RuleSet {
         self.voxel_assets.supply_loaded(type_id, object);
     }
 
-    /// Resolve raw terrain SHP frame counts for authoritative TIBTRE midpoint
-    /// timing without consulting a renderer atlas.
-    pub fn bind_terrain_spawner_assets(
+    /// Bind native TerrainType frame-0 RadarColor inputs and raw SHP frame
+    /// counts for TIBTRE timing from the active theater's asset bytes.
+    pub fn bind_terrain_assets(
         &mut self,
         rules_ini: &crate::rules::ini_parser::IniFile,
         asset_manager: &crate::assets::asset_manager::AssetManager,
         theater_ext: &str,
         theater_name: &str,
     ) {
-        self.terrain_spawner_assets =
-            crate::rules::terrain_asset_catalog::TerrainSpawnerAssetCatalog::bind(
-                self,
-                rules_ini,
-                asset_manager,
-                theater_ext,
-                theater_name,
-            );
+        self.terrain_assets = crate::rules::terrain_asset_catalog::TerrainAssetCatalog::bind(
+            &self.art_registry,
+            &mut self.terrain_object_types,
+            rules_ini,
+            asset_manager,
+            theater_ext,
+            theater_name,
+        );
     }
 
     /// Resolve every building type's Buildup SHP from the active theater's
@@ -8013,7 +8020,7 @@ impl RuleSet {
 
     /// Raw SHP header count used by `TerrainClass::AI` midpoint timing.
     pub fn terrain_spawner_frame_count(&self, name: &str) -> Option<u16> {
-        self.terrain_spawner_assets.frame_count(name)
+        self.terrain_assets.frame_count(name)
     }
 
     fn rebuild_animation_sequences(
@@ -8078,7 +8085,7 @@ impl RuleSet {
         name: &str,
         frame_count: u16,
     ) {
-        self.terrain_spawner_assets.set_for_test(name, frame_count);
+        self.terrain_assets.set_for_test(name, frame_count);
     }
 
     /// Total number of game objects across all categories.

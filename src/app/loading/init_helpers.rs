@@ -370,7 +370,7 @@ pub(crate) fn bind_rules_asset_closure(
     rules.bind_effect_assets(assets, theater_ext, theater_name);
     rules.bind_building_buildup_assets(assets, theater_name);
     rules.bind_building_rubble_assets(assets, theater_ext, theater_name);
-    rules.bind_terrain_spawner_assets(processed_ini, assets, theater_ext, theater_name);
+    rules.bind_terrain_assets(processed_ini, assets, theater_ext, theater_name);
     let sequences = crate::rules::infantry_sequence::parse_infantry_sequence_registry(fixed_art);
     rules.bind_animation_sequences(&sequences);
     Ok(())

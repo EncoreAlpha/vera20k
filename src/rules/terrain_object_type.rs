@@ -50,6 +50,16 @@ pub struct TerrainObjectType {
     pub insignificant: bool,
     /// Inherited `RadarInvisible=`. TerrainTypeClass constructor defaults true.
     pub radar_invisible: bool,
+    /// TerrainTypeClass constructor `0x0071DA80` clears +0x29C..+0x29E.
+    /// Each successful TerrainTypeClass::ReadINI pass `0x0071DEA0` replaces
+    /// this with Image frame 0's SHP header RGB before reading `RadarColor`.
+    /// No player-visible consumer is asserted by this retained type state.
+    pub radar_color: [u8; 3],
+    /// Ordered per-pass inputs projected from NativeRulesProcessOwner until
+    /// the terrain asset binder applies the deferred SHP-derived defaults.
+    /// `radar_color` remains the only final typed value.
+    #[serde(skip)]
+    pub(crate) radar_color_read_passes: Vec<TerrainRadarColorReadPass>,
     /// `WaterBound=`.
     pub water_bound: bool,
     /// `IsVeinhole=`; when true, gamemd also forces `LegalTarget=true`.
@@ -113,6 +123,8 @@ impl TerrainObjectType {
             bombable: section.read_bool("Bombable", true),
             insignificant: section.read_bool("Insignificant", true),
             radar_invisible: section.read_bool("RadarInvisible", true),
+            radar_color: [0; 3],
+            radar_color_read_passes: Vec::new(),
             water_bound: section.read_bool("WaterBound", false),
             is_veinhole,
             temperate_occupation_bits: section.read_int("TemperateOccupationBits", 7).clamp(0, 7)
@@ -132,6 +144,54 @@ impl TerrainObjectType {
 
     pub(crate) fn bind_armor(&mut self, armor: crate::rules::armor::ArmorId) {
         self.armor_id = armor;
+    }
+}
+
+/// The two relevant native inputs in one admitted TerrainTypeClass::ReadINI
+/// pass. Image is the inherited ObjectTypeClass `+0x1F8` buffer; its asset
+/// color is deferred until the existing terrain asset binding phase.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TerrainRadarColorReadPass {
+    pub(crate) image: String,
+    pub(crate) radar_color: Option<String>,
+}
+
+/// Process-owned Image current value and ordered TerrainType reader inputs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TerrainRadarColorReadState {
+    #[serde(default)]
+    image: String,
+    #[serde(default)]
+    reads: Vec<TerrainRadarColorReadPass>,
+}
+
+impl TerrainRadarColorReadState {
+    /// ObjectTypeClass::Constructor @0x005F7090 copies the stored type ID into
+    /// the inherited ImageFile buffer at +0x1F8 before the first ReadINI.
+    pub(crate) fn new(type_id: &str) -> Self {
+        Self {
+            image: type_id.to_string(),
+            reads: Vec::new(),
+        }
+    }
+
+    /// TerrainTypeClass::ReadINI @0x0071DEA0 first calls inherited
+    /// ObjectTypeClass::ReadINI @0x005F92D0, whose current Image buffer is
+    /// the default to ReadString("Image", ..., 0x19). The derived reader then
+    /// loads frame 0 and reads RadarColor with that current RGB as default.
+    pub(crate) fn read_pass(&mut self, section: &crate::rules::ini_parser::IniSection) {
+        self.image = section
+            .read_name("Image", 0x19)
+            .unwrap_or(&self.image)
+            .to_string();
+        self.reads.push(TerrainRadarColorReadPass {
+            image: self.image.clone(),
+            radar_color: section.raw_value("RadarColor").map(str::to_string),
+        });
+    }
+
+    pub(crate) fn reads(&self) -> &[TerrainRadarColorReadPass] {
+        &self.reads
     }
 }
 
