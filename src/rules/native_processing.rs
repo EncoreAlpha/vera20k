@@ -953,6 +953,26 @@ impl ProcessedRulesLayers {
             })
     }
 
+    /// BuildingType's retained HalfDamageSmokeLocation1/2 after the last
+    /// admitted Rules body, projected from the same native type owner.
+    pub(crate) fn building_half_damage_smoke_locations(
+        &self,
+    ) -> impl Iterator<Item = (&str, [i32; 3], [i32; 3])> {
+        self.native_type_construction_trace
+            .registry_state()
+            .families
+            .get(&RulesTypeFamily::Building)
+            .into_iter()
+            .flatten()
+            .map(|member| {
+                (
+                    member.native_stored_id.as_str(),
+                    member.building_half_damage_smoke_location1,
+                    member.building_half_damage_smoke_location2,
+                )
+            })
+    }
+
     /// Unit747620's retained frame fields after the last reached Rules body.
     /// Missing Rules sections skip ART; the fixed ART itself is never layered.
     pub(crate) fn unit_shp_read_states(
@@ -3061,6 +3081,12 @@ struct ProcessedType {
     building_foundation: u8,
     /// Constructor45DEBC..45DEC8 clears BuildingType+EBC/EC0/EC4.
     building_target_coord_offset: [i32; 3],
+    /// BuildingTypeClass ctor45DD90 clears both triples; reached
+    /// ReadINI45FE50 calls Read3Int at45FF13 and45FF3C with current defaults.
+    #[serde(default)]
+    building_half_damage_smoke_location1: [i32; 3],
+    #[serde(default)]
+    building_half_damage_smoke_location2: [i32; 3],
     /// BuildingType ctor45DFDA=false; ReadBool45FEE5..45FF0D, current default.
     building_has_spotlight: bool,
     /// BuildingType+EE8/+EEC, retained across reached ReadINI4610A0 passes.
@@ -3506,6 +3532,8 @@ impl ProcessedType {
             terrain_radar_color_reads: None,
             building_foundation: 0,
             building_target_coord_offset: [0; 3],
+            building_half_damage_smoke_location1: [0; 3],
+            building_half_damage_smoke_location2: [0; 3],
             building_has_spotlight: false,
             building_extra_power: Default::default(),
             building_light: Default::default(),
@@ -5184,6 +5212,17 @@ impl RulesPassProcessor {
                             .read_pass(&raw, fixed_art.section_or_empty(&image));
                         member.building_target_coord_offset = raw
                             .read_coord3("TargetCoordOffset", member.building_target_coord_offset);
+                        // BuildingTypeClass::ReadINI @0x0045FE50 reads these in
+                        // order with the current triples as Read3Int defaults
+                        // (0x00529CA0 at0x0045FF13/0x0045FF3C).
+                        member.building_half_damage_smoke_location1 = raw.read_coord3(
+                            "HalfDamageSmokeLocation1",
+                            member.building_half_damage_smoke_location1,
+                        );
+                        member.building_half_damage_smoke_location2 = raw.read_coord3(
+                            "HalfDamageSmokeLocation2",
+                            member.building_half_damage_smoke_location2,
+                        );
                         member.building_foundation =
                             crate::rules::foundation::read_building_foundation(
                                 member.building_foundation,

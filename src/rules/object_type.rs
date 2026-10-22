@@ -328,6 +328,14 @@ pub struct ObjectType {
     /// Constructor45DEBC..45DEC8 clears it; ReadINI460F87 uses ReadCoord529CA0
     /// with the current triple as default. Other type classes do not read it.
     target_coord_offset: [i32; 3],
+    /// `HalfDamageSmokeLocation1/2=`: BuildingTypeClass constructor initializes
+    /// both triples to zero; `BuildingTypeClass::ReadINI @ 0x0045FE50` reads
+    /// them in order through `Read3Int @ 0x00529CA0` at `0x0045FF13` and
+    /// `0x0045FF3C`, using each current triple as the next pass's default.
+    /// `RulesPassProcessor` owns these Building-family reads and publishes the
+    /// retained values here; other techno families do not read these keys.
+    half_damage_smoke_location1: [i32; 3],
+    half_damage_smoke_location2: [i32; 3],
     /// Display name (CSF string table key or raw text). None if not specified.
     pub name: Option<String>,
     /// Localized display-name CSF key from `UIName=` (e.g. "Name:MTNK").
@@ -2477,6 +2485,17 @@ impl ObjectType {
         self.target_coord_offset = offset;
     }
 
+    /// Publish the Building-family ReadINI owner's retained smoke locations.
+    pub(crate) fn set_half_damage_smoke_locations(
+        &mut self,
+        location1: [i32; 3],
+        location2: [i32; 3],
+    ) {
+        debug_assert_eq!(self.category, ObjectCategory::Building);
+        self.half_damage_smoke_location1 = location1;
+        self.half_damage_smoke_location2 = location2;
+    }
+
     pub fn voice_harvest(&self) -> Option<&str> {
         self.voice_harvest.as_deref()
     }
@@ -2865,6 +2884,8 @@ impl ObjectType {
             // The process-resident Building reader publishes this below the
             // projection; merged text must not perform a second coordinate read.
             target_coord_offset: [0; 3],
+            half_damage_smoke_location1: [0; 3],
+            half_damage_smoke_location2: [0; 3],
             name: section.read_name("Name", 0x31).map(str::to_owned),
             ui_name: section.read_name("UIName", 0x20).map(str::to_owned),
             cost: section.read_int("Cost", 0),
@@ -3773,6 +3794,60 @@ mod absorber_pip_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn half_damage_smoke_location_retains_stock_battle_building_values() {
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let authored = retail
+            .authored_rules
+            .section("GAREFN")
+            .expect("stock Allied refinery section");
+        assert_eq!(
+            authored.read_coord3("HalfDamageSmokeLocation1", [9, 9, 9]),
+            [0, 0, 0]
+        );
+        assert!(!authored.is_present("HalfDamageSmokeLocation2"));
+
+        let building = retail
+            .rules
+            .object("GAREFN")
+            .expect("stock Allied refinery BuildingType");
+        assert_eq!(building.category, super::ObjectCategory::Building);
+        assert_eq!(building.half_damage_smoke_location1, [0, 0, 0]);
+        assert_eq!(building.half_damage_smoke_location2, [0, 0, 0]);
+    }
+
+    #[test]
+    fn half_damage_smoke_location_retains_native_current_values_across_rules_layers() {
+        use crate::rules::ini_parser::IniFile;
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[BuildingTypes]\n0=HUT\n[VehicleTypes]\n0=HUTVEH\n[HUT]\nHalfDamageSmokeLocation1=11,22,33\n\
+             HalfDamageSmokeLocation2=-4,5,6\n[HUTVEH]\n\
+             HalfDamageSmokeLocation1=91,92,93\nHalfDamageSmokeLocation2=-94,95,96\n",
+        ));
+        layers.push(
+            RulesLayerKind::GameMode,
+            IniFile::from_str("[HUT]\nHalfDamageSmokeLocation1=-7,8,9\n"),
+        );
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[HUT]\nStrength=100\n"),
+        );
+
+        let rules = RuleSet::from_rules_layers(&layers).expect("production layered rules");
+        let building = rules.object("HUT").expect("registered BuildingType");
+        assert_eq!(building.half_damage_smoke_location1, [-7, 8, 9]);
+        assert_eq!(building.half_damage_smoke_location2, [-4, 5, 6]);
+        let vehicle = rules.object("HUTVEH").expect("registered VehicleType");
+        assert_eq!(vehicle.category, super::ObjectCategory::Vehicle);
+        assert_eq!(vehicle.half_damage_smoke_location1, [0; 3]);
+        assert_eq!(vehicle.half_damage_smoke_location2, [0; 3]);
+    }
+
     #[test]
     fn invisible_in_game_forces_building_flags_and_retains_them_across_layers() {
         use crate::rules::ini_parser::IniFile;

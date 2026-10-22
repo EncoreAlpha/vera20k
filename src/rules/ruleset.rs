@@ -4795,6 +4795,15 @@ impl RuleSet {
                 building.set_target_coord_offset(offset);
             }
         }
+        for (name, location1, location2) in processed.building_half_damage_smoke_locations() {
+            if let Some(building) = rules
+                .object_list
+                .iter_mut()
+                .find(|object| object.category == ObjectCategory::Building && object.id == name)
+            {
+                building.set_half_damage_smoke_locations(location1, location2);
+            }
+        }
         // The registry processor owns native read timing and retained values;
         // the runtime definition receives that result, not another ART read.
         for (name, art) in processed.projectile_art_states() {
