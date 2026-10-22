@@ -280,6 +280,8 @@ pub struct OverlayTypeRegistry {
     names: Vec<String>,
     /// Per-type rendering flags (same indexing as names).
     flags: Vec<OverlayTypeFlags>,
+    /// Inherited ObjectTypeClass AlphaImage buffer (`+0x213`, char[25]), by ID.
+    alpha_images: Vec<String>,
 }
 
 impl OverlayTypeRegistry {
@@ -297,6 +299,7 @@ impl OverlayTypeRegistry {
                 return OverlayTypeRegistry {
                     names: Vec::new(),
                     flags: Vec::new(),
+                    alpha_images: Vec::new(),
                 };
             }
         };
@@ -311,6 +314,7 @@ impl OverlayTypeRegistry {
             return OverlayTypeRegistry {
                 names: Vec::new(),
                 flags: Vec::new(),
+                alpha_images: Vec::new(),
             };
         }
 
@@ -336,6 +340,7 @@ impl OverlayTypeRegistry {
             })
             .unwrap_or_default();
         let mut flags: Vec<OverlayTypeFlags> = Vec::with_capacity(names.len());
+        let mut alpha_images: Vec<String> = Vec::with_capacity(names.len());
         for (idx, name) in names.iter().enumerate() {
             let upper_name = name.to_ascii_uppercase();
             // Bridge overlays are identified by hardcoded index position in
@@ -343,6 +348,7 @@ impl OverlayTypeRegistry {
             let bridge_deck = is_bridge_overlay_index(idx as u8);
             let track = upper_name.starts_with("TRACKS");
             if let Some(type_section) = ini.section(name) {
+                alpha_images.push(type_section.read_object_alpha_image(""));
                 let tiberium = type_section.read_bool("Tiberium", false);
                 // `0x005FE7AC`: ReadString 0x80 ahead of the land-name lookup.
                 let mut land = type_section
@@ -413,6 +419,7 @@ impl OverlayTypeRegistry {
                     damage_levels,
                 });
             } else {
+                alpha_images.push(String::new());
                 flags.push(OverlayTypeFlags {
                     bridge_deck,
                     track,
@@ -431,7 +438,11 @@ impl OverlayTypeRegistry {
             names.len(),
             max_index,
         );
-        OverlayTypeRegistry { names, flags }
+        OverlayTypeRegistry {
+            names,
+            flags,
+            alpha_images,
+        }
     }
 
     /// Create an empty registry (used as fallback when map loading fails).
@@ -439,7 +450,13 @@ impl OverlayTypeRegistry {
         OverlayTypeRegistry {
             names: Vec::new(),
             flags: Vec::new(),
+            alpha_images: Vec::new(),
         }
+    }
+
+    /// AlphaImage strings retained by the allocated OverlayType entries.
+    pub(crate) fn alpha_images(&self) -> impl Iterator<Item = &str> {
+        self.alpha_images.iter().map(String::as_str)
     }
 
     /// Look up the name for an overlay ID. Returns None if out of range.

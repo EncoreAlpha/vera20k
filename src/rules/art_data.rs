@@ -373,6 +373,9 @@ pub struct AnimTypeRuntimeConfig {
     /// section with a 25-byte buffer and the constructor's type ID default.
     /// Keep this animation value separate from generic object-art resolution.
     image: String,
+    /// Inherited ObjectType::ReadINI AlphaImage value (`+0x213`, 25 bytes),
+    /// distinct from Image and present only for a type whose ART body was read.
+    pub(crate) alpha_image: String,
     pub start: i32,
     pub loop_start: i32,
     pub loop_end: i32,
@@ -790,6 +793,7 @@ fn parse_anim_runtime_config(section: &IniSection) -> AnimTypeRuntimeConfig {
     AnimTypeRuntimeConfig {
         art_body_read: true,
         image: section.read_string("Image", &section.name, 0x19),
+        alpha_image: section.read_object_alpha_image(""),
         start: section.read_int("Start", 0),
         loop_start: section.read_int("LoopStart", 0),
         loop_end: explicit_loop_end.unwrap_or(0),

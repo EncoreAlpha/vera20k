@@ -30,6 +30,9 @@ use crate::rules::ini_parser::{IniFile, IniSection};
 pub struct ProjectileType {
     /// Section name in rules.ini (e.g., "InvisibleLow", "MissileAA").
     pub id: String,
+    /// Inherited `ObjectTypeClass::ReadINI @ 0x005F92D0` AlphaImage buffer
+    /// (`+0x213`, `char[25]`); BulletType reads its base at `0x0046BEE0`.
+    pub(crate) alpha_image: String,
 
     // --- Targeting flags ---
     /// Can hit aircraft. Anti-air weapons need this flag.
@@ -380,6 +383,7 @@ impl ProjectileType {
     ) -> Self {
         let mut result = Self {
             id: id.to_string(),
+            alpha_image: section.read_object_alpha_image(""),
             // Targeting
             aa: section.read_bool("AA", false),
             ag: section.read_bool("AG", true),

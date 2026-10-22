@@ -131,6 +131,10 @@ impl PreparedSavedGame {
         let mut rules = view
             .rules_owner
             .project_saved_scenario_rules(saved.processed_rules())?;
+        let overlay_registry = crate::rules::overlay_types::OverlayTypeRegistry::from_ini(
+            saved.processed_rules().ini(),
+            Some(view.rules_owner.fixed_art()),
+        );
         init_helpers::bind_rules_art_metadata(
             &mut rules,
             view.rules_owner.fixed_art(),
@@ -142,6 +146,7 @@ impl PreparedSavedGame {
             &mut rules,
             saved.processed_rules().ini(),
             view.rules_owner.fixed_art(),
+            &overlay_registry,
             saved.scheduler_anim_roots(),
             assets,
             theater.extension,
@@ -158,10 +163,6 @@ impl PreparedSavedGame {
             }
             .into());
         }
-        let overlay_registry = crate::rules::overlay_types::OverlayTypeRegistry::from_ini(
-            saved.processed_rules().ini(),
-            Some(view.rules_owner.fixed_art()),
-        );
         let (mut resources, processed_rules, map) =
             saved.into_restored_parts(rules, overlay_registry, SharedCellDummy::fresh())?;
         let rules = &resources.rules;

@@ -371,6 +371,8 @@ pub fn load_with_launch_and_ini(
     rules.bind_building_buildup_assets(&assets, &map.header.theater);
     rules.bind_building_rubble_assets(&assets, theater.extension, &map.header.theater);
     rules.bind_terrain_assets(&rules_ini, &assets, theater.extension, &map.header.theater);
+    let _alpha_image_bindings =
+        crate::rules::alpha_image_assets::bind(&rules, &overlay_registry, &assets);
     rules.bind_animation_sequences(&infantry_sequences);
     let overlay_shp_ids = crate::rules::effect_asset_catalog::resolved_overlay_shp_ids(
         &overlay_registry,

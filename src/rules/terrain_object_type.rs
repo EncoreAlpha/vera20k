@@ -18,6 +18,9 @@ use crate::util::native_x87::NativeF32Bits;
 pub struct TerrainObjectType {
     /// Section name, e.g. "TIBTRE01".
     pub name: String,
+    /// Inherited `ObjectTypeClass::ReadINI @ 0x005F92D0` AlphaImage buffer
+    /// (`+0x213`, `char[25]`), separate from TerrainType art metadata.
+    pub(crate) alpha_image: String,
     /// `SpawnsTiberium=yes` — periodically spawns ore in adjacent cells.
     pub spawns_tiberium: bool,
     /// `IsAnimated=yes` — required gate for SpawnsTiberium logic.
@@ -104,6 +107,7 @@ impl TerrainObjectType {
 
         Self {
             name: name.to_string(),
+            alpha_image: section.read_object_alpha_image(""),
             spawns_tiberium: section.read_bool("SpawnsTiberium", false),
             is_animated: section.read_bool("IsAnimated", false),
             animation_rate: section.read_int("AnimationRate", 0),

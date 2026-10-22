@@ -574,6 +574,15 @@ impl IniSection {
         Some(strtrim_ascii(truncate_native_bytes(raw, payload)))
     }
 
+    /// `ObjectTypeClass::ReadINI @ 0x005F92D0` reads AlphaImage into its
+    /// 25-byte field with the current text as default; missing/empty reads
+    /// retain it, while literals such as `NONE` remain ordinary names.
+    pub(crate) fn read_object_alpha_image(&self, current: &str) -> String {
+        self.read_string_with("AlphaImage", 0x19, current.to_owned(), |_, value| {
+            value.to_owned()
+        })
+    }
+
     /// Ares 3.0 PCXFile reader100762C0: ReadString through the shared 2048-byte
     /// buffer, then copy31 bytes into char[32] and lowercase. An absent/empty
     /// read retains the previous filename (the projected read_name policy).

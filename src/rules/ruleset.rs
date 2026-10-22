@@ -8126,6 +8126,48 @@ impl RuleSet {
     pub fn all_objects(&self) -> impl Iterator<Item = &ObjectType> {
         self.object_list.iter()
     }
+
+    /// Visit AlphaImage names only for typed families whose native
+    /// ObjectTypeClass reader has an allocated Rust owner. AnimType names are
+    /// restricted to ART bodies admitted by the Rules processor.
+    pub(crate) fn visit_alpha_image_names(
+        &self,
+        overlays: &crate::rules::overlay_types::OverlayTypeRegistry,
+        mut visit: impl FnMut(&str),
+    ) {
+        for object in &self.object_list {
+            visit(&object.alpha_image);
+        }
+        for projectile in self.projectiles.values() {
+            visit(&projectile.alpha_image);
+        }
+        for particle in &self.particle_types {
+            visit(&particle.alpha_image);
+        }
+        for system in &self.particle_system_types {
+            visit(&system.alpha_image);
+        }
+        for (_, smudge) in self.smudge_types.iter_with_id() {
+            visit(&smudge.alpha_image);
+        }
+        for terrain in self.terrain_object_types.values() {
+            visit(&terrain.alpha_image);
+        }
+        for voxel_anim in &self.voxel_anim_types {
+            visit(&voxel_anim.alpha_image);
+        }
+        for image_name in overlays.alpha_images() {
+            visit(image_name);
+        }
+        for (name, admitted) in &self.anim_type_art_read_states {
+            if *admitted
+                && let Some(config) = self.art_registry.anim_runtime_config(name)
+                && config.art_body_read
+            {
+                visit(&config.alpha_image);
+            }
+        }
+    }
 }
 
 /// Parse a type registry section (e.g., [InfantryTypes]) into a list of IDs.

@@ -315,6 +315,10 @@ pub struct ObjectType {
     /// Section name in rules.ini (e.g., "MTNK", "E1", "GAWEAP").
     /// This is the unique identifier used throughout the engine.
     pub id: String,
+    /// Inherited `ObjectTypeClass::ReadINI @ 0x005F92D0` AlphaImage buffer
+    /// (`+0x213`, `char[25]`); the constructor starts empty and later empty
+    /// reads keep the current name.
+    pub(crate) alpha_image: String,
     /// Which type registry this object belongs to.
     pub category: ObjectCategory,
     /// Native `TechnoTypeClass::ReadINI @ 0x00712170` `Category=` result at
@@ -2855,6 +2859,7 @@ impl ObjectType {
 
         Self {
             id: id.to_string(),
+            alpha_image: section.read_object_alpha_image(""),
             category,
             techno_category: section.read_techno_type_category(TechnoTypeCategory::Unknown),
             // The process-resident Building reader publishes this below the

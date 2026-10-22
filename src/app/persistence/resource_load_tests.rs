@@ -93,6 +93,7 @@ fn bound_saved_world(
         &mut rules,
         &processed,
         &fixed_art,
+        &overlay_registry,
         &roots,
         assets,
         theater.extension,

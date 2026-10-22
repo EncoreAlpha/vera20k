@@ -3154,6 +3154,7 @@ pub(crate) fn load_map_from_initial(
         &mut rules,
         &rules_ini,
         &fixed_art_ini,
+        &overlay_registry,
         &roots,
         asset_manager,
         theater_ext,

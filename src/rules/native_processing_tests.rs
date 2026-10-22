@@ -112,6 +112,37 @@ fn nominal_type_reader_matches_executed_physical_history() {
     }
 }
 
+#[test]
+fn object_alpha_image_uses_retail_values_and_retains_current_per_rules_pass() {
+    use crate::rules::ruleset::RuleSet;
+
+    let Some((retail_rules, fixed_art)) = crate::rules::retail_ini_fixture::retail_rules_and_art()
+    else {
+        return;
+    };
+    let mut layers = RulesLayerStack::new(retail_rules);
+    let read = |layers: &RulesLayerStack| {
+        let processed = layers.process_with_fixed_art(&fixed_art).unwrap();
+        let rules = RuleSet::from_processed_rules(&processed).unwrap();
+        (
+            rules.object("TSTLAMP").unwrap().alpha_image.clone(),
+            rules.object("GALITE").unwrap().alpha_image.clone(),
+        )
+    };
+
+    assert_eq!(read(&layers), ("ALPHATST".into(), "NONE".into()));
+    layers.push(
+        RulesLayerKind::GameMode,
+        IniFile::from_str("[TSTLAMP]\nAlphaImage=LIGHTPOST\n[GALITE]\nAlphaImage=LIGHTNONE\n"),
+    );
+    assert_eq!(read(&layers), ("LIGHTPOST".into(), "LIGHTNONE".into()));
+    layers.push(
+        RulesLayerKind::Scenario,
+        IniFile::from_str("[TSTLAMP]\nStrength=601\n[GALITE]\nAlphaImage=\n"),
+    );
+    assert_eq!(read(&layers), ("LIGHTPOST".into(), "LIGHTNONE".into()));
+}
+
 ///71592A reads exact-case ART ShadowIndex with the current field as default,
 ///after each retained Rules Image read. Neither retail zero nor final-image
 ///defaults can replace the previous section's selected value.
