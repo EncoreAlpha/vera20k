@@ -554,11 +554,11 @@ impl Simulation {
             }
         } else {
             self.infantry_do_action(id, 27, true, rules, effects)?;
-            //70E120 uses the SprayAttack slot70DD70, not GetCurrentWeapon
-            //70E1A0. The existing GetWeapon owner resolves the live tier.
+            //70E120 uses the SprayAttack selector70DD70, not GetCurrentWeapon
+            //70E1A0. The shared owner forwards it through GetWeapon70E140.
             let actor = self.substrate.entities.get(id).expect("same Unload actor");
-            let slot = if object.spray_attack { 0 } else { 1 };
-            let area_fire = combat_weapon::weapon_for_index(object, actor.veterancy.rank(), slot)
+            let (_, deployed_weapon) = combat_weapon::deploy_weapon(object, actor.veterancy.rank());
+            let area_fire = deployed_weapon
                 .and_then(|(weapon, _)| rules.weapon(weapon))
                 .is_some_and(|weapon| weapon.area_fire);
             if area_fire {

@@ -54,6 +54,11 @@ pub struct WarheadType {
     /// `0x00847ea0`), widened exactly to f64. Its splash scan reads are in
     /// `sim::combat::cell_spread`.
     pub cell_spread_f64: f64,
+    /// Native binary32 `CellInset=` at `WarheadTypeClass+0x128`, read by
+    /// `WarheadTypeClass::ReadINI @ 0x0075D3A0` after `CellSpread` and defaulted
+    /// to the constructor's zero. Kept as f32 because the native field is a
+    /// float and `TriggersCellInset @ 0x006F7660` subtracts it from CellSpread.
+    pub cell_inset_f32: f32,
     /// Damage fraction at maximum spread distance. Native `PercentAtMax=` is
     /// a **float** at `WarheadTypeClass+0x12C` (ReadDouble at `0x0075d424`,
     /// `FSTP float ptr` at `0x0075d429`, key string `0x00847e84`), widened to
@@ -379,6 +384,7 @@ impl WarheadType {
 
         // Float fields (`FSTP dword` at `0x0075D3E6`, `0x0075D424`, `0x0075D477`).
         let cell_spread_f64 = f64::from(section.read_float("CellSpread", 0.0));
+        let cell_inset_f32 = section.read_float("CellInset", 0.0);
         let percent_at_max_native = section.read_float("PercentAtMax", 1.0);
         let percent_at_max_f64 = f64::from(percent_at_max_native);
         let delay_kill_at_max_f64 = f64::from(section.read_float("DelayKillAtMax", 1.0));
@@ -411,6 +417,7 @@ impl WarheadType {
             ares_verses: cfg!(feature = "ares").then(AresWarheadVerses::default),
             ares: None,
             cell_spread_f64,
+            cell_inset_f32,
             percent_at_max_f64,
             causes_delay_kill: section.read_bool("CausesDelayKill", false),
             delay_kill_frames: section.read_int("DelayKillFrames", 5),

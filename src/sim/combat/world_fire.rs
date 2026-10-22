@@ -1341,7 +1341,7 @@ pub(super) fn emit_admitted_fire(
     // an AreaFire shot off its own cell (`0x0051CB08`); a Unit fires it from
     // range, so a Chaos Drone's gas rises around the drone, not the victim. A
     // fixture without terrain has no cell and keeps the victim.
-    let area_fire_cell = (weapon.area_fire && !obj.spray_attack)
+    let area_fire_cell = (weapon.area_fire && combat_weapon::is_not_spray_attack(obj))
         .then(|| object_get_coords(world, snap.stable_id))
         .flatten()
         .and_then(|coord| world.packed_map_cell(coord.x, coord.y));

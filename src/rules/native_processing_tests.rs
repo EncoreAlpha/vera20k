@@ -3453,6 +3453,40 @@ fn waypoint_cue_drop_zone_rules_keep_native_defaults_layers_and_saved_state() {
 }
 
 #[test]
+fn warhead_cell_inset_uses_layered_float_reader_and_stock_battle_value() {
+    use crate::rules::ruleset::RuleSet;
+
+    let mut layers = RulesLayerStack::new(IniFile::from_str(
+        "[Warheads]\n0=WH\n[WH]\nCellInset=1.25\n",
+    ));
+    let first = RuleSet::from_processed_rules(&layers.process().unwrap()).unwrap();
+    assert_eq!(first.warhead("WH").unwrap().cell_inset_f32, 1.25);
+
+    layers.push(
+        RulesLayerKind::GameMode,
+        IniFile::from_str("[WH]\nCellInset=2.5\n"),
+    );
+    layers.push(
+        RulesLayerKind::Scenario,
+        IniFile::from_str("[WH]\nCellSpread=4\n"),
+    );
+    let layered = RuleSet::from_processed_rules(&layers.process().unwrap()).unwrap();
+    assert_eq!(layered.warhead("WH").unwrap().cell_inset_f32, 2.5);
+
+    let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+        return;
+    };
+    assert_eq!(
+        retail
+            .rules
+            .warhead("RadEruptionWarhead")
+            .expect("stock Battle RadEruptionWarhead")
+            .cell_inset_f32,
+        3.0
+    );
+}
+
+#[test]
 fn spotlight_rules_keep_constructor_bits_native_parser_and_retained_pass_defaults() {
     use crate::rules::ruleset::{RuleSet, SpotlightRules};
     let mut layers = RulesLayerStack::new(IniFile::from_str("[General]\n"));
