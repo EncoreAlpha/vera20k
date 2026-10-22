@@ -64,6 +64,12 @@ pub struct ParticleType {
     // ── Object-base (from ObjectTypeClass) ───────────────────────────
     /// SHP image for animated particles. Resolved later via the SHP cache.
     pub image: Option<String>,
+    /// Native `StartFrame=` (`ParticleTypeClass+0x2EC`): the constructor at
+    /// `ParticleTypeClass::Constructor @ 0x00644BE0` starts it at zero;
+    /// `ParticleTypeClass::ReadINI @ 0x00644F50` passes its current value
+    /// (`0x00645067`) to `CCINIClass::ReadInt @ 0x005276D0` (`0x0064507C`);
+    /// `ParticleTypeClass::ComputeCRC @ 0x006454E0` reads it at `0x00645518`.
+    pub start_frame: i32,
 
     // ── [Particles] direct keys (§2.2) ───────────────────────────────
     /// Damage countdown reset value: frames between damage ticks (Gas/Fire).
@@ -75,9 +81,13 @@ pub struct ParticleType {
     /// `Warhead=`, the stored ID the ordered Rules processor's WarheadType
     /// factory answered; resolved later against the warhead registry.
     pub warhead: Option<String>,
-    /// Frames per animation loop.
-    #[cfg(test)]
-    pub num_loop_frames: u16,
+    /// Native `NumLoopFrames=` (`ParticleTypeClass+0x2F0`): the constructor at
+    /// `ParticleTypeClass::Constructor @ 0x00644BE0` starts it at one;
+    /// `ParticleTypeClass::ReadINI @ 0x00644F50` passes its current value
+    /// (`0x00645087`) to `CCINIClass::ReadInt @ 0x005276D0` (`0x00645096`).
+    /// Signed values are retained without a clamp; `ParticleTypeClass::
+    /// ComputeCRC @ 0x006454E0` reads it at `0x00645526`.
+    pub num_loop_frames: i32,
     /// Base translucency level: 0, 25, or 50.
     pub translucency: u8,
     /// Native full signed WindEffect, multiplied by the Smoke wind table.
@@ -183,6 +193,7 @@ impl ParticleType {
             name: name.to_string(),
             behaves_like,
             image: section.read_name("Image", 0x19).map(str::to_owned),
+            start_frame: section.read_int("StartFrame", 0),
 
             // ParticleType644BE0/644F50 retain full signed words; the
             // instance constructor62B890 alone narrows RemainingEC to16bits.
@@ -191,10 +202,7 @@ impl ParticleType {
             damage: section.read_int("Damage", 0),
             // Constructor null; only the ordered Process owner reads it.
             warhead: None,
-            #[cfg(test)]
-            num_loop_frames: section
-                .read_int("NumLoopFrames", 1)
-                .clamp(0, u16::MAX as i32) as u16,
+            num_loop_frames: section.read_int("NumLoopFrames", 1),
             translucency: section.read_int("Translucency", 0) as u8,
             wind_effect: section.read_int("WindEffect", 0),
             // Float fields (`FSTP dword` at `0x006450E9`, `0x00645108`).
@@ -267,6 +275,7 @@ mod tests {
         assert_eq!(pt.next_particle_offset, IVec3::ZERO);
         assert_eq!(pt.velocity, NativeF32Bits::POSITIVE_ZERO);
         assert_eq!(pt.max_ec, 1);
+        assert_eq!(pt.start_frame, 0);
         assert_eq!(pt.num_loop_frames, 1);
         assert_eq!(pt.color_speed, NativeF64Bits::POSITIVE_ZERO);
     }
