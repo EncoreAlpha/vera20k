@@ -483,16 +483,6 @@ pub(crate) enum PanelArt {
     ScrBackdrop,
 }
 
-/// Top-left of a column row's SDBTNANM frame `shape_w` wide: right-aligned
-/// over the row's tile, as `0x006071E0` draws it (the executed positions in
-/// `tools/storage_oracle/shell_slide_engine.json`).
-pub(crate) fn column_draw_origin(panel: RightPanelRects, row: u32, shape_w: i32) -> (i32, i32) {
-    (
-        panel.tile.x + panel.tile.w - shape_w,
-        panel.tile.y + row as i32 * panel.tile.h,
-    )
-}
-
 /// Top-left of a top-panel shape of `shape_w` x `shape_h`: SDTP and SDWRNTMP
 /// at the panel top; SDMPBTN right-aligned with its bottom on the first tile
 /// row's bottom, where the steady map button also sits.
@@ -1010,8 +1000,8 @@ mod tests {
     /// position helper, as `CC_Draw_Shape` receives it: `[x, y, frame]`.
     fn button_draw_at(screen: (i32, i32), draw: ColumnDraw) -> [i64; 3] {
         let panel = geom::right_panel_rects(screen.0, screen.1);
-        let (x, y) = column_draw_origin(panel, draw.row, SDBTNANM_SIZE.0);
-        [i64::from(x), i64::from(y), draw.frame as i64]
+        let cell = panel.row_cell(draw.row as i32, SDBTNANM_SIZE.0, SDBTNANM_SIZE.1);
+        [i64::from(cell.x), i64::from(cell.y), draw.frame as i64]
     }
 
     fn art_at(screen: (i32, i32), art: PanelArt) -> (String, i64, i64, i64) {

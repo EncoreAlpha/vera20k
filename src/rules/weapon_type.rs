@@ -72,6 +72,10 @@ pub struct WeaponType {
     /// Terrain object unforced (`TechnoClass` vt+0x398, `0x0070EF00`).
     /// Retail authors it only on the unused `TankMakeupKit`.
     pub terrain_fire: bool,
+    /// `DisguiseFireOnly=` (`+0x13B`, constructor default false at
+    /// `WeaponTypeClass::Constructor @ 0x00771C70`); `ReadBool` is called by
+    /// `WeaponTypeClass::ReadINI @ 0x00772080` at `0x007721F9`.
+    pub disguise_fire_only: bool,
     /// Infantry WhatAction51EA80: Attack becomes action64 (C4 cursor).
     pub sabotage_cursor: bool,
     /// Infantry WhatAction51EAD2: eligible buildings show action71 (air strike).
@@ -120,6 +124,10 @@ pub struct WeaponType {
     pub use_spark_particles: bool,
     /// Fires in all directions regardless of facing (+0x12b).
     pub omni_fire: bool,
+    /// `DistributedWeaponFire=` (`+0x12C`, constructor default false at
+    /// `WeaponTypeClass::Constructor @ 0x00771C70`); `ReadBool` is called by
+    /// `WeaponTypeClass::ReadINI @ 0x00772080` at `0x0077271D`.
+    pub distributed_weapon_fire: bool,
     /// Weapon is a railgun (special projectile visual) (+0x12d).
     pub is_railgun: bool,
     /// Projectile follows a lobbed arc trajectory (+0x12e).
@@ -233,6 +241,7 @@ impl WeaponType {
             // ReadINI7721A3..7721E4 passes the retained bytes to the native
             // boolean reader5295F0.
             terrain_fire: section.read_bool("TerrainFire", false),
+            disguise_fire_only: section.read_bool("DisguiseFireOnly", false),
             sabotage_cursor: section.read_bool("SabotageCursor", false),
             mig_attack_cursor: section.read_bool("MigAttackCursor", false),
 
@@ -268,6 +277,7 @@ impl WeaponType {
             use_fire_particles: section.read_bool("UseFireParticles", false),
             use_spark_particles: section.read_bool("UseSparkParticles", false),
             omni_fire: section.read_bool("OmniFire", false),
+            distributed_weapon_fire: section.read_bool("DistributedWeaponFire", false),
             is_railgun: section.read_bool("IsRailgun", false),
             lobber: section.read_bool("Lobber", false),
             bright: section.read_bool("Bright", false),
@@ -555,9 +565,67 @@ mod tests {
         assert!(!weapon.is_sonic);
         assert!(!weapon.is_laser);
         assert!(!weapon.is_electric_bolt);
+        assert!(!weapon.distributed_weapon_fire);
+        assert!(!weapon.disguise_fire_only);
         assert!(weapon.anim.is_empty());
         assert_eq!(weapon.laser_inner_color, [0, 0, 0]);
         assert!(weapon.decloak_to_fire, "native omitted-key default is yes");
+    }
+
+    #[test]
+    fn weapon_fire_flags_keep_read_bool_defaults_across_rules_passes() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[VehicleTypes]\n0=UNIT\n[UNIT]\nPrimary=Probe\nSecondary=Defaults\n\
+             [Probe]\nDistributedWeaponFire=yes\nDisguiseFireOnly=yes\n\
+             [Defaults]\nDamage=1\n",
+        ));
+        layers.push(
+            RulesLayerKind::GameMode,
+            IniFile::from_str("[Probe]\nDistributedWeaponFire=on\nDisguiseFireOnly=no\n"),
+        );
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[Probe]\nDisguiseFireOnly=on\n"),
+        );
+
+        let rules = RuleSet::from_rules_layers(&layers).unwrap();
+        let probe = rules.weapon("Probe").unwrap();
+        assert!(
+            probe.distributed_weapon_fire,
+            "invalid 'on' keeps the current true value"
+        );
+        assert!(
+            !probe.disguise_fire_only,
+            "valid no followed by invalid 'on' keeps the current false value"
+        );
+        let defaults = rules.weapon("Defaults").unwrap();
+        assert!(!defaults.distributed_weapon_fire);
+        assert!(!defaults.disguise_fire_only);
+    }
+
+    #[test]
+    fn weapon_fire_flags_retail_battle_defaults_and_map_overrides() {
+        let Some(stock) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        for id in ["105mm", "MirageGun", "MirageGunE"] {
+            let weapon = stock.rules.weapon(id).expect("stock WeaponType");
+            assert!(!weapon.distributed_weapon_fire, "{id}");
+            assert!(!weapon.disguise_fire_only, "{id}");
+        }
+
+        let patch = IniFile::from_str("[105mm]\nDistributedWeaponFire=yes\nDisguiseFireOnly=yes\n");
+        let Some(patched) =
+            crate::rules::retail_ini_fixture::retail_battle_rules_with_map_patch(&patch)
+        else {
+            return;
+        };
+        let weapon = patched.rules.weapon("105mm").unwrap();
+        assert!(weapon.distributed_weapon_fire);
+        assert!(weapon.disguise_fire_only);
     }
 
     /// `CCINIClass::ReadRange` 0x00474620 multiplies by `256.0` and THEN chops,

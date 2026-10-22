@@ -983,12 +983,6 @@ pub(crate) fn build_overlay_instances(
     );
 
     // Terrain objects from [Terrain] section.
-    // Residual raw/animated terrain paths retain the old editor adjustment.
-    // The proven ordinary extended body/shadow branch below does not use it.
-    // FA2 IsoView.cpp:6389 applies a -3px Y fudge to terrain objects (trees, rocks):
-    //   drawy = ... + f_y/2 - 3 - pic.wMaxHeight/2
-    const TERRAIN_OBJECT_Y_FUDGE: f32 = -3.0;
-
     let Some(sim) = state
         .match_state
         .sim_runtime
@@ -1020,21 +1014,26 @@ pub(crate) fn build_overlay_instances(
             continue;
         }
 
+        let terrain_type = state
+            .rules()
+            .and_then(|rules| rules.terrain_object_type_case_insensitive(name));
+        let is_animated = terrain_type.is_some_and(|terrain_type| terrain_type.is_animated);
+        let spawns_tiberium = terrain_type.is_some_and(|terrain_type| terrain_type.spawns_tiberium);
         // Terrain DrawIt71C208 selects the Stage written by Terrain AI.
         // Wall-clock presentation cannot advance or restart a spawner.
-        let frame = sim
-            .terrain_objects()
-            .animations()
-            .get(&obj.cell())
-            .map_or(Some(0), |animation| {
-                u8::try_from(animation.current_frame()).ok()
-            });
-        let Some(frame) = frame else { continue };
-        let key = OverlaySpriteKey {
-            name: name.to_string(),
-            frame,
+        let stage = is_animated.then(|| {
+            sim.terrain_objects()
+                .animations()
+                .get(&obj.cell())
+                .map_or(0, |animation| animation.current_frame())
+        });
+        let Some(frame) = terrain_draw_frame(stage, obj.health()) else {
+            continue;
         };
-        let Some(spr) = atlas.get(&key) else { continue };
+        let (body, shadow) = atlas.terrain_pieces(name, frame);
+        if body.is_none() && shadow.is_none() {
+            continue;
+        }
 
         let depth = super::helpers::compute_sprite_depth_params_lifted(
             origin_y,
@@ -1042,11 +1041,6 @@ pub(crate) fn build_overlay_instances(
             screen_y,
             lift_px,
         );
-        let spawns_tiberium = state
-            .rules()
-            .and_then(|rules| rules.terrain_object_type_case_insensitive(name))
-            .map(|terrain_type| terrain_type.spawns_tiberium)
-            .unwrap_or(false);
         let tint: [f32; 3] = state
             .match_state
             .match_presentation
@@ -1067,87 +1061,76 @@ pub(crate) fn build_overlay_instances(
             crate::render::palette_light::PaletteLight::cell(light_grid, obj.cell(), false)
         };
 
-        let Some(parent) = ground_order.object_draw(obj.stable_id(), SpriteEncoding::Terrain)
+        let Some(mut parent) = ground_order.object_draw(obj.stable_id(), SpriteEncoding::Terrain)
         else {
             continue;
         };
-        if let Some((body, shadow)) = atlas.native_terrain_pair(name, frame) {
-            use crate::app::presentation::render::draw_plan_lowering::{
-                ObjectPieceInstance, ObjectTexture, PlannedObjectInstance,
-            };
-            use crate::render::tactical_draw_plan::RenderZPolicy;
-            use crate::render::terrain_draw::TerrainPiece;
-            // Terrain DrawIt 0071C304/0071C34E preserves one draw point for
-            // body and shadow. Each SHP's own integer canvas/frame offsets
-            // then locate the stored rectangle. No FA2 editor Y adjustment.
-            let point = [
-                screen_x + TILE_WIDTH / 2.0,
-                screen_y + TILE_HEIGHT / 2.0 - if spawns_tiberium { 16.0 } else { 0.0 },
-            ];
-            let [body_instance, shadow_instance] =
-                native_terrain_instances(body, shadow, point, lift_px, depth, tint, palette_light);
-            let mut parent = parent;
-            let render_z = if sim.terrain_objects().animations().contains_key(&obj.cell()) {
-                RenderZPolicy::ReadOnly
-            } else {
-                RenderZPolicy::ReadWrite
-            };
-            parent.policy.render_z = render_z;
-            ground_objects.push(PlannedObjectInstance::object(
-                parent,
-                vec![
-                    ObjectPieceInstance {
-                        target: ObjectTexture::TerrainShp(TerrainPiece::Body),
-                        render_z,
-                        instance: body_instance,
-                    },
-                    ObjectPieceInstance {
-                        target: ObjectTexture::TerrainShp(TerrainPiece::Shadow),
-                        render_z,
-                        instance: shadow_instance,
-                    },
-                ],
-            ));
-            continue;
-        }
-        ground_objects.push(
-            crate::app::presentation::render::draw_plan_lowering::PlannedObjectInstance::object(
-                parent,
-                vec![crate::app::presentation::render::draw_plan_lowering::ObjectPieceInstance {
-                    target: crate::app::presentation::render::draw_plan_lowering::ObjectTexture::OverlayAtlas,
-                    render_z: parent.policy.render_z,
-                    instance: SpriteInstance {
-                        position: [
-                            screen_x + TILE_WIDTH / 2.0 + spr.offset_x,
-                            screen_y + TILE_HEIGHT / 2.0 + spr.offset_y + TERRAIN_OBJECT_Y_FUDGE,
-                        ],
-                        size: spr.pixel_size,
-                        uv_origin: spr.uv_origin,
-                        uv_size: spr.uv_size,
+        use crate::app::presentation::render::draw_plan_lowering::{
+            ObjectPieceInstance, ObjectTexture, PlannedObjectInstance,
+        };
+        use crate::render::tactical_draw_plan::RenderZPolicy;
+        use crate::render::terrain_draw::TerrainPiece;
+        // Terrain DrawIt 0071C304/0071C34E preserves one draw point for
+        // body and shadow. Each SHP's own integer canvas/frame offsets
+        // then locate the stored rectangle.
+        let point = [
+            screen_x + TILE_WIDTH / 2.0,
+            screen_y + TILE_HEIGHT / 2.0 - if spawns_tiberium { 16.0 } else { 0.0 },
+        ];
+        // DrawIt flags 2E00 read Z only for an animated type; 4E00 also write.
+        let render_z = if is_animated {
+            RenderZPolicy::ReadOnly
+        } else {
+            RenderZPolicy::ReadWrite
+        };
+        parent.policy.render_z = render_z;
+        let pieces = [(TerrainPiece::Body, body), (TerrainPiece::Shadow, shadow)]
+            .into_iter()
+            .filter_map(|(piece, sprite)| {
+                Some(ObjectPieceInstance {
+                    target: ObjectTexture::TerrainShp(piece),
+                    render_z,
+                    instance: native_terrain_instance(
+                        sprite?,
+                        piece,
+                        point,
+                        lift_px,
                         depth,
                         tint,
                         palette_light,
-                        alpha: 1.0,
-                        ..Default::default()
-                    },
-                }],
-            ),
-        );
+                    ),
+                })
+            })
+            .collect();
+        ground_objects.push(PlannedObjectInstance::object(parent, pieces));
     }
 }
 
+/// Terrain DrawIt (0x71C1B0) frame: an IsAnimated type's stage, else frame 1
+/// below 2 health, else 0. Its crumbling arm never draws: Take_Damage
+/// (0x71B920) starts crumbling on a lethal hit and uninits the object in the
+/// same call.
+fn terrain_draw_frame(stage: Option<i32>, health: i32) -> Option<u8> {
+    stage.map_or(Some(u8::from(health < 2)), |stage| u8::try_from(stage).ok())
+}
+
 /// Ordinary Terrain DrawIt 0071C304/0071C34E: both stored frames share one
-/// projected draw point. Native class terms and gradients remain piece data.
-fn native_terrain_instances(
-    body: &crate::render::overlay_atlas::OverlaySpriteEntry,
-    shadow: &crate::render::overlay_atlas::OverlaySpriteEntry,
+/// projected draw point. The body takes gradient 2 and class Z -12, the
+/// shadow gradient 0 and -3.
+fn native_terrain_instance(
+    sprite: &crate::render::overlay_atlas::OverlaySpriteEntry,
+    piece: crate::render::terrain_draw::TerrainPiece,
     point: [f32; 2],
     lift_px: i32,
     depth: f32,
     tint: [f32; 3],
     palette_light: crate::render::palette_light::PaletteLight,
-) -> [SpriteInstance; 2] {
-    [(body, 2, -12), (shadow, 0, -3)].map(|(sprite, gradient, class_z)| SpriteInstance {
+) -> SpriteInstance {
+    let (gradient, class_z) = match piece {
+        crate::render::terrain_draw::TerrainPiece::Body => (2, -12),
+        crate::render::terrain_draw::TerrainPiece::Shadow => (0, -3),
+    };
+    SpriteInstance {
         position: [point[0] + sprite.offset_x, point[1] + sprite.offset_y],
         size: sprite.pixel_size,
         uv_origin: sprite.uv_origin,
@@ -1159,7 +1142,7 @@ fn native_terrain_instances(
         z_gradient: gradient,
         z_adjust: super::helpers::lifted_z_adjust(lift_px, class_z),
         ..Default::default()
-    })
+    }
 }
 
 /// Sample the upstream polygon without rebuilding its native shape. History

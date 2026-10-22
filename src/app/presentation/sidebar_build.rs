@@ -146,8 +146,8 @@ pub fn build_sidebar_chrome_instances_for_layout(
     }
 
     // --- Sell / Repair buttons (inside the side1 area). ---
-    // The 5-frame state machine matches gamemd's SBGadgetClass::Draw conditional;
-    // the frame index is computed by SidebarGadgetState::repair_frame / sell_frame.
+    // `shape_button_frame` (ShapeButtonClass::Draw 0x0069DEB0) picks the frame
+    // through SidebarGadgetState::repair_frame / sell_frame.
     let btn_depth = d - 0.00002;
     let sell_frame = view.sell_button.frame_index as usize;
     if let Some(sell) = atlas.sell_frames[sell_frame].or(atlas.sell_frames[0]) {

@@ -8,11 +8,14 @@ import Foundation
 import ImageIO
 
 let args = CommandLine.arguments
-guard args.count == 3,
-  let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
+guard args.count == 3 else {
+  FileHandle.standardError.write(Data("usage: icon_tile.swift <star.png> <out.png>\n".utf8))
+  exit(1)
+}
+guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
   let star = CGImageSourceCreateImageAtIndex(source, 0, nil)
 else {
-  FileHandle.standardError.write(Data("usage: icon_tile.swift <star.png> <out.png>\n".utf8))
+  FileHandle.standardError.write(Data("icon_tile.swift: cannot read \(args[1])\n".utf8))
   exit(1)
 }
 let space = CGColorSpace(name: CGColorSpace.sRGB)!

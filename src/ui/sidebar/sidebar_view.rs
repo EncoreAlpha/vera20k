@@ -301,26 +301,18 @@ pub(crate) fn build_sidebar_view_with_spec(
                 h,
             },
             disabled: false,
-            frame_index: u8::from(gadget_state.top_pressed[i]),
+            frame_index: gadget_state.top_button_frame(i),
         }
     });
     let scroll_down_button = SidebarScrollButton {
         rect: scroll_down_rect,
         disabled: scroll_disabled,
-        frame_index: if scroll_disabled {
-            2
-        } else {
-            gadget_state.scroll_down_frame()
-        },
+        frame_index: gadget_state.scroll_down_frame(scroll_disabled),
     };
     let scroll_up_button = SidebarScrollButton {
         rect: scroll_up_rect,
         disabled: scroll_disabled,
-        frame_index: if scroll_disabled {
-            2
-        } else {
-            gadget_state.scroll_up_frame()
-        },
+        frame_index: gadget_state.scroll_up_frame(scroll_disabled),
     };
 
     // Cameo grid positioning.

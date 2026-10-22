@@ -199,13 +199,11 @@ pub struct SuperWeaponType {
     /// stores VocClass::FindIndex (`0x007514D0`) of the name; an absent key
     /// or an unknown name keeps the field (`0x006CEB96`), the constructor's
     /// -1 or an earlier layer's sound.
-    /// RESIDUAL: the last non-empty name wins here, so a later layer naming
-    /// an unknown sound silences a cue an earlier layer set, where native
-    /// keeps it. Trigger: a mode INI or map naming an unknown sound after an
-    /// earlier layer named a known one. Effect: the cue does not play.
+    /// The process audio binder resolves the reached read history against
+    /// the fixed SOUNDMD catalog, retaining the last valid cue.
     pub special_sound: Option<String>,
     /// `StartSound=` (`+0xC4`, `0x006CEBB0`, read as `SpecialSound=` with
-    /// the same residual, `0x006CEBD8`): the cue the Force Shield's launch
+    /// the same retention, `0x006CEBD8`): the cue the Force Shield's launch
     /// plays (`0x006CD176`).
     pub start_sound: Option<String>,
     /// `AIDefendAgainst=` (`+0xEC`, ReadBool at `0x006CEAF7`, constructor
@@ -234,8 +232,11 @@ impl SuperWeaponType {
         // owns the zero defaults; keep the same current-value defaults here.
         let range = section.read_float("Range", 0.0);
         let line_multiplier = section.read_int("LineMultiplier", 0);
-        // ReadString 0x28 ahead of the kind lookup (`0x006CEC2D`).
-        let kind = SuperWeaponKind::from_ini_str(section.read_name("Type", 0x28)?)?;
+        // ReadINI6CEC2D..6CEC7E: each 0x28-byte ReadString is compared
+        // against the kind names; a rejected name leaves the prior field.
+        let kind = section.read_string_with("Type", 0x28, None, |current, value| {
+            SuperWeaponKind::from_ini_str(value).or(current)
+        })?;
         #[cfg(feature = "ares")]
         let extension_kind = matches!(
             kind,
@@ -296,15 +297,16 @@ impl SuperWeaponType {
             // not user tags. GenericWarhead is an ordinary one-click type.
             pre_click: !extension_kind && section.read_bool("PreClick", false),
             post_click: !extension_kind && section.read_bool("PostClick", false),
-            // ReadString 0x28 (`0x006CEC98`).
+            // ReadINI6CEC98..6CECE9 keeps the prior pair index when its
+            // 0x28-byte ReadString does not match one of the 12 native names.
             pre_dependent: if extension_kind {
                 -1
             } else {
-                section
-                    .read_name("PreDependent", 0x28)
-                    .and_then(SuperWeaponKind::from_ini_str)
-                    .filter(|kind| (0..12).contains(&kind.native_index()))
-                    .map_or(-1, SuperWeaponKind::native_index)
+                section.read_string_with("PreDependent", 0x28, -1, |current, value| {
+                    SuperWeaponKind::from_ini_str(value)
+                        .filter(|kind| (0..12).contains(&kind.native_index()))
+                        .map_or(current, SuperWeaponKind::native_index)
+                })
             },
             // Constructor nulls; only the ordered Process owner reads them.
             weapon_type: None,

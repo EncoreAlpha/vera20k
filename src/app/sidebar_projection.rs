@@ -838,6 +838,32 @@ impl SidebarProjectionState {
             .set_scroll_row(tab, row);
     }
 
+    /// A fired scroll arrow; see [`CameoStrips::queue_page_scroll`].
+    pub(crate) fn queue_page_scroll(
+        &mut self,
+        tab: crate::ui::sidebar::SidebarTab,
+        down: bool,
+        visible_rows: usize,
+    ) -> bool {
+        self.cameos
+            .as_mut()
+            .is_some_and(|(_, strips)| strips.queue_page_scroll(tab, down, visible_rows))
+    }
+
+    /// Roll queued scroll rows for `visits` Sidebar Actions (one per
+    /// simulation frame); see [`CameoStrips::step_pending_scroll`].
+    pub(crate) fn step_pending_scroll(&mut self, visible_rows: usize, visits: u64) {
+        let Some((_, strips)) = self.cameos.as_mut() else {
+            return;
+        };
+        for _ in 0..visits {
+            if !strips.has_pending_scroll() {
+                break;
+            }
+            strips.step_pending_scroll(visible_rows);
+        }
+    }
+
     /// Return the owner's retained display value, seeding a newly observed
     /// owner from the actual balance without animating during projection build.
     pub(crate) fn displayed_credits_or_seed(&mut self, owner: &str, actual: i32) -> i32 {

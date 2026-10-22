@@ -66,8 +66,9 @@ pub struct ProjectileType {
     pub level: bool,
     /// Invisible projectile (no sprite drawn). (+0x29E)
     pub inviso: bool,
-    /// Detonates near the target rather than on contact. (+0x29F)
-    #[cfg(test)]
+    /// Native `Proximity=` (`BulletTypeClass::ReadINI @ 0x0046BEE0`, +0x29F).
+    /// The reader passes the current byte as `CCINIClass::ReadBool @ 0x005295F0`
+    /// default (`0x0046C0AE`); the constructor at `0x0046BBC0` starts false.
     pub proximity: bool,
     /// Has a maximum range (non-homing). (+0x2A0)
     pub ranged: bool,
@@ -79,8 +80,9 @@ pub struct ProjectileType {
     /// Bullet AI467C86 decrements raw damage on continuing flights above five.
     /// ReadBooleanByte46BEE0 retains the previous value across Rules passes.
     pub degenerates: bool,
-    /// Bounces off terrain on impact. (+0x2A7)
-    #[cfg(test)]
+    /// Native `Bouncy=` (`BulletTypeClass::ReadINI @ 0x0046BEE0`, +0x2A7).
+    /// The reader passes the current byte as `CCINIClass::ReadBool @ 0x005295F0`
+    /// default (`0x0046C16A`); the constructor at `0x0046BBC0` starts false.
     pub bouncy: bool,
     /// Uses a custom animation palette instead of the unit palette. (+0x2A8)
     pub anim_palette: bool,
@@ -396,13 +398,11 @@ impl ProjectileType {
             dropping: section.read_bool("Dropping", false),
             level: section.read_bool("Level", false),
             inviso: section.read_bool("Inviso", false),
-            #[cfg(test)]
             proximity: section.read_bool("Proximity", false),
             ranged: section.read_bool("Ranged", false),
             rotates: true,
             flak_scatter: section.read_bool("FlakScatter", false),
             degenerates: section.read_bool("Degenerates", false),
-            #[cfg(test)]
             bouncy: section.read_bool("Bouncy", false),
             anim_palette: false,
             firers_palette: section.read_bool("FirersPalette", false),

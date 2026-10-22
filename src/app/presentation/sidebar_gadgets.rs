@@ -47,10 +47,13 @@ pub(crate) fn exit_sell_mode_without_buildings(
     }
 }
 
-/// Poll the retained strip links before the current frame's tab FlashAI.
+/// Roll queued strip scrolls, then poll the retained strip links before the
+/// current frame's tab FlashAI.
 /// Original StripAI 0x006A8D07..0x006A8D7A admits completed Building objects
 /// on tabs0/1, independently of which tab is selected. The Defense predicate
 /// also includes ready Supers; the shared gadget owner supplies phase/timing.
+/// The scroll roll moves one row per simulation frame; the view is rebuilt
+/// from the moved row by the idle tick that follows.
 pub(crate) fn update_sidebar_gadget_state(state: &mut AppState) {
     let Some(sim) = state
         .match_state
@@ -78,9 +81,19 @@ pub(crate) fn update_sidebar_gadget_state(state: &mut AppState) {
         false,
     ];
     let (tick, frame) = (sim.session().tick(), sim.session().binary_frame() as i32);
-    state
-        .match_state
-        .match_presentation
+    let presentation = &mut state.match_state.match_presentation;
+    // StripClass::AI scrolls before its tab poll, once per Sidebar Action.
+    if let Some(rows) = presentation
+        .sidebar_projection
+        .view()
+        .map(|view| view.layout.side2_tile_count)
+    {
+        let visits = tick.saturating_sub(presentation.sidebar_gadget_state.last_sim_tick);
+        presentation
+            .sidebar_projection
+            .step_pending_scroll(rows, visits);
+    }
+    presentation
         .sidebar_gadget_state
         .update_tab_flashes(tick, frame, flags);
 }

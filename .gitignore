@@ -19,7 +19,7 @@ Thumbs.db
 !tools/requirements-test.txt
 !tools/telemetry-dashboard/vendor/THREE-LICENSE.txt
 !.github/release/macos/requirements.txt
-!.github/release/windows/wizard-small.png
+!.github/release/icon.png
 *.tmp
 *.map
 *_todo.md

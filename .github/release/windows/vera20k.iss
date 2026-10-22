@@ -21,6 +21,9 @@
 #ifndef AppVersion
   #error Define AppVersion, Build, PackageDir, OutputDir and OutputBaseFilename
 #endif
+#if Ver < EncodeVer(6, 7, 0)
+  #error Compile with Inno Setup 6.7.0 or later, the first to accept the blank WizardSmallImageFile below
+#endif
 
 [Setup]
 ; Fixed for the life of the program: upgrades find the previous install by it.
@@ -44,10 +47,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 WizardStyle=modern
 ShowLanguageDialog=auto
-; Red Alert 2's own icon: the 32-bit images of retail game.exe's icon group, and
-; its 512 px image (../icon.png) at 159 px for the installer's pages.
+; Red Alert 2's own icon: the 32-bit images of retail game.exe's icon group.
 SetupIconFile={#SourcePath}vera20k.ico
-WizardSmallImageFile={#SourcePath}wizard-small.png
+; No picture at the top right of the wizard's pages.
+WizardSmallImageFile=
 UninstallDisplayIcon={app}\vera20k.exe
 UninstallDisplayName=VERA20K
 SourceDir={#PackageDir}
