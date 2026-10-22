@@ -1168,6 +1168,7 @@ impl ProcessedRulesLayers {
                         .warhead
                         .map(|index| name(RulesTypeFamily::Warhead, index)),
                     anim: &member.weapon.anim,
+                    assault_anim: member.weapon.assault_anim.as_deref(),
                     occupant_anim: member.weapon.occupant_anim.as_deref(),
                     open_topped_anim: member.weapon.open_topped_anim.as_deref(),
                     attached_particle_system: member.weapon.attached_particle_system.as_deref(),
@@ -3299,6 +3300,7 @@ pub(crate) struct WeaponState<'a> {
     pub(crate) projectile: Option<&'a str>,
     pub(crate) warhead: Option<&'a str>,
     pub(crate) anim: &'a [String],
+    pub(crate) assault_anim: Option<&'a str>,
     pub(crate) occupant_anim: Option<&'a str>,
     pub(crate) open_topped_anim: Option<&'a str>,
     pub(crate) attached_particle_system: Option<&'a str>,
@@ -3324,6 +3326,10 @@ struct WeaponReadState {
     /// `Anim=` (`0x00772471`): ReadString128, then each `strtok` token's
     /// non-null AnimType (`0x00428B80`) replaces the list.
     anim: Vec<String>,
+    /// `WeaponTypeClass::ReadINI @ 0x00772080` reads `AssaultAnim=` with
+    /// ReadString128 (`0x00528A10`) and uses AnimTypeClass::FindOrAllocate
+    /// (`0x00428B80`) for nonempty names; empty retains the current reference.
+    assault_anim: Option<String>,
     /// `OccupantAnim=` (+110, `0x007725A1..0x007725CB`) and `OpenToppedAnim=`
     /// (+118, `0x007725E6`): ReadString128, then the AnimType factory, which
     /// answers null for `none` and `<none>`; an empty read keeps the field.
@@ -5354,10 +5360,17 @@ impl RulesPassProcessor {
                 {
                     self.family_mut(RulesTypeFamily::Weapon)[index].weapon.anim = anims;
                 }
-                // AssaultAnim (`0x00772574`) is allocated but not retained:
-                // VERA ports no reader of the WeaponType+114 it stores.
-                let _ =
-                    self.resolve_scalar_from(&raw, "AssaultAnim", RulesTypeFamily::Animation, 0x80);
+                // WeaponTypeClass::ReadINI @ `0x00772080` reads AssaultAnim
+                // (`ReadString @ 0x00528A10`, `0x0077257C`), resolves nonempty
+                // names with FindOrAllocate @ `0x00428B80` (`0x00772589`), and
+                // stores the pointer at +0x114 (`0x007725A6`).
+                if let Some(anim) =
+                    self.resolve_scalar_from(&raw, "AssaultAnim", RulesTypeFamily::Animation, 0x80)
+                {
+                    self.family_mut(RulesTypeFamily::Weapon)[index]
+                        .weapon
+                        .assault_anim = anim;
+                }
                 if let Some(anim) =
                     self.resolve_scalar_from(&raw, "OccupantAnim", RulesTypeFamily::Animation, 0x80)
                 {
