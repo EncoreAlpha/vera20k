@@ -2080,8 +2080,10 @@ fn disguise_inputs(
                     .match_presentation
                     .overlay_atlas
                     .as_ref()
-                    .and_then(|atlas| atlas.native_terrain_pair(&chosen, frame))
-                    .is_some()
+                    .is_some_and(|atlas| {
+                        let (body, shadow) = atlas.terrain_pieces(&chosen, frame);
+                        body.is_some() || shadow.is_some()
+                    })
             });
         let decision = crate::render::draw_state::DrawState::for_entity(
             entity,

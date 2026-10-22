@@ -1826,7 +1826,9 @@ fn emit_unit_terrain_body(
     let Ok(frame) = u8::try_from(frame) else {
         return;
     };
-    let Some((body, shadow)) = atlas.native_terrain_pair(type_id, frame) else {
+    // CC_Draw_Shape draws nothing for a missing or empty frame.
+    let (body, shadow) = atlas.terrain_pieces(type_id, frame);
+    let Some(anchor) = body.or(shadow) else {
         return;
     };
     let Some(parent) = order.object_draw(entity.stable_id(), SpriteEncoding::Plain) else {
@@ -1850,7 +1852,7 @@ fn emit_unit_terrain_body(
     let depth = compute_sprite_depth_params(
         input.axis.origin_y,
         input.axis.world_height,
-        ground_sort_row(entity, point[1] + body.offset_y + body.pixel_size[1]),
+        ground_sort_row(entity, point[1] + anchor.offset_y + anchor.pixel_size[1]),
         entity.position.z(),
     );
     let bridge_fudge = super::foot_depth::shp_unit_bridge_fudge_in_runtime(Some(runtime), entity);
@@ -1886,6 +1888,7 @@ fn emit_unit_terrain_body(
             DrawState::default(),
         ),
     ] {
+        let Some(sprite) = sprite else { continue };
         if piece == TerrainPiece::Shadow && !shadow_admitted {
             continue;
         }

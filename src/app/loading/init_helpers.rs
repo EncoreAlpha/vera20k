@@ -1015,6 +1015,67 @@ mod tests {
         );
     }
 
+    fn retail_rulesmd_with_bullet_reader_triggers() -> Option<IniFile> {
+        let mut rulesmd = crate::rules::retail_ini_fixture::retail_ini("rulesmd.ini")?;
+        // ChemLauncher and Grenade are retail weapons whose projectiles this
+        // rules fixture needs to allocate before the BulletType body reads.
+        rulesmd.merge(&IniFile::from_str(
+            "[E1]\nPrimary=ChemLauncher\nSecondary=Grenade\n",
+        ));
+        Some(rulesmd)
+    }
+
+    #[test]
+    fn projectile_rule_state_retains_stock_reader_fields() {
+        let Some(rulesmd) = retail_rulesmd_with_bullet_reader_triggers() else {
+            return;
+        };
+        let rules = RuleSet::from_ini(&rulesmd).expect("retail RULESMD through production reader");
+
+        assert!(
+            rules
+                .projectile("ChemMissile")
+                .expect("stock ChemMissile projectile")
+                .proximity
+        );
+        assert!(
+            rules
+                .projectile("Lobbed")
+                .expect("stock Lobbed projectile")
+                .bouncy
+        );
+    }
+
+    #[test]
+    fn projectile_rule_state_retains_bools_across_invalid_and_missing_pass_keys() {
+        let Some(rulesmd) = retail_rulesmd_with_bullet_reader_triggers() else {
+            return;
+        };
+        let patch =
+            IniFile::from_str("[ChemMissile]\nProximity=invalid\n[Lobbed]\nFixtureOnly=1\n");
+        let mut layers = RulesLayerStack::new(rulesmd);
+        layers.push(
+            crate::rules::native_processing::RulesLayerKind::Scenario,
+            patch,
+        );
+        let rules = RuleSet::from_rules_layers(&layers).expect("retail layered rules parse");
+
+        assert!(
+            rules
+                .projectile("ChemMissile")
+                .expect("stock ChemMissile projectile")
+                .proximity,
+            "the map pass's invalid value retains the prior stock Proximity=yes"
+        );
+        assert!(
+            rules
+                .projectile("Lobbed")
+                .expect("stock Lobbed projectile")
+                .bouncy,
+            "the map pass's section without Bouncy retains the prior stock Bouncy=yes"
+        );
+    }
+
     /// The match load's rules path over in-memory layers: cold startup, then
     /// the noncampaign scenario rebuild.
     fn scenario_rules(
