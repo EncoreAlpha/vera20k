@@ -506,9 +506,7 @@ fn authoritative_effect_roots(rules: &RuleSet) -> BTreeSet<String> {
     // (`sim::particles::system_ai`). Every animation producer constructs an
     // `AnimClass`, whose frame bounds come from `bind_anim_class_assets`.
     for particle in rules.particle_types_iter() {
-        if let Some(name) = particle.image.as_deref() {
-            insert(name);
-        }
+        insert(&particle.image);
     }
 
     roots

@@ -62,8 +62,11 @@ pub struct ParticleType {
     pub behaves_like: ParticleBehavesLike,
 
     // ── Object-base (from ObjectTypeClass) ───────────────────────────
-    /// SHP image for animated particles. Resolved later via the SHP cache.
-    pub image: Option<String>,
+    /// ObjectType+0x1F8 Image buffer. `ObjectTypeClass::Constructor @
+    /// 0x005F7090` starts with the AbstractType ID; `ParticleTypeClass::ReadINI
+    /// @ 0x00644F50` reaches `ObjectTypeClass::ReadINI @ 0x005F92D0`, which
+    /// retains the current 25-byte string when Image is missing or empty.
+    pub image: String,
 
     // ── [Particles] direct keys (§2.2) ───────────────────────────────
     /// Damage countdown reset value: frames between damage ticks (Gas/Fire).
@@ -182,7 +185,7 @@ impl ParticleType {
         let partial = Self {
             name: name.to_string(),
             behaves_like,
-            image: section.read_name("Image", 0x19).map(str::to_owned),
+            image: section.read_name("Image", 0x19).unwrap_or(name).to_owned(),
 
             // ParticleType644BE0/644F50 retain full signed words; the
             // instance constructor62B890 alone narrows RemainingEC to16bits.
@@ -293,7 +296,7 @@ mod tests {
 
         assert_eq!(pt.name, "GasCloudM1");
         assert_eq!(pt.behaves_like, ParticleBehavesLike::Gas);
-        assert_eq!(pt.image.as_deref(), Some("GASLRGMK"));
+        assert_eq!(pt.image, "GASLRGMK");
         assert_eq!(pt.max_dc, 60);
         assert_eq!(pt.max_ec, 448);
         assert_eq!(pt.damage, 0);

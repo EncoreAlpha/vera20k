@@ -551,9 +551,7 @@ fn collect_effect_names(rules: &RuleSet) -> Vec<String> {
     // Particle SHPs: ParticleType.Image= goes through the ObjectTypeClass
     // Image= path -> anim.pal palette. Register every distinct name.
     for pt in rules.particle_types_iter() {
-        if let Some(image) = pt.image.as_deref() {
-            push_effect_name(&mut effect_names, image);
-        }
+        push_effect_name(&mut effect_names, &pt.image);
     }
     effect_names
 }
