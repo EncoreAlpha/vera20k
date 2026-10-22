@@ -110,6 +110,73 @@ fn buildup_shp_candidates(
         .unwrap_or_default()
 }
 
+/// Collect make-SHP frame requests for this atlas refresh. The BState-0 gate
+/// branch in `BuildingClass::GetCurrentFrame @0x0043EF90` selects the frame;
+/// `_MAKE` is the atlas key for the registered BuildingType's ART `Buildup=`.
+fn collect_building_make_asset_requests(
+    needed: &mut HashSet<ShpSpriteKey>,
+    make_frame_counts: &mut HashMap<String, u16>,
+    object_shp_frame_counts: &mut HashMap<String, u16>,
+    shp_files: &mut HashMap<String, String>,
+    new_objects: &HashSet<(String, HouseColorIndex)>,
+    asset_manager: &AssetManager,
+    rules: Option<&RuleSet>,
+    art: &ArtRegistry,
+    theater_name: &str,
+) {
+    for (type_id, color) in new_objects {
+        // Only registered BuildingTypes have a `BuildingClass` make sequence;
+        // many real building IDs contain `_` (for example GAGATE_A).
+        if !rules
+            .and_then(|rules| rules.object(type_id))
+            .is_some_and(|object| {
+                object.category == crate::rules::object_type::ObjectCategory::Building
+            })
+        {
+            continue;
+        }
+        let make_key: String = format!("{}_MAKE", type_id);
+        let count = match make_frame_counts.get(&make_key) {
+            Some(&count) => count,
+            None => {
+                let candidates = buildup_shp_candidates(art, rules, type_id, theater_name);
+                let Some((file, data)) = find_shp(asset_manager, &candidates) else {
+                    continue;
+                };
+                let Ok(raw_count) = ShpFile::frame_count_from_bytes(data) else {
+                    continue;
+                };
+                // RA2 make SHPs have shadow frames in the second half — only use the first half.
+                let count = if raw_count / 2 > 0 {
+                    raw_count / 2
+                } else {
+                    raw_count
+                };
+                log::debug!("Make SHP for {type_id}: {count} frames from {file}");
+                shp_files.insert(make_key.to_ascii_uppercase(), file.to_string());
+                object_shp_frame_counts.insert(make_key.to_ascii_uppercase(), raw_count);
+                make_frame_counts.insert(make_key.clone(), count);
+                count
+            }
+        };
+        // The shadow half too: DrawSHP's shadow arm (`0x00705E00`) draws
+        // frame + count/2 of the Buildup like any body image.
+        let raw_count = object_shp_frame_counts
+            .get(&make_key.to_ascii_uppercase())
+            .copied()
+            .unwrap_or(count);
+        for frame in 0..raw_count {
+            needed.insert(ShpSpriteKey {
+                palette_context: ShpPaletteContext::Legacy,
+                type_id: make_key.clone(),
+                facing: 0,
+                frame,
+                house_color: *color,
+            });
+        }
+    }
+}
+
 fn find_shp<'a, 'n>(
     asset_manager: &'a AssetManager,
     candidates: &'n [String],
@@ -1831,54 +1898,20 @@ pub fn build_sprite_atlas(
         active_anim_frame_counts.entry(anim_type).or_insert(count);
     }
 
-    // Step 1c: every frame of each building's make (build-up) SHP, a separate
-    // file (e.g., GTCNSTMK.SHP) showing the building assembling.
+    // Step 1c: every frame of each registered building's make (build-up) SHP,
+    // a separate file (e.g., GTCNSTMK.SHP) showing the building assembling.
     if let Some(art_reg) = art {
-        for (type_id, color) in &new_objects {
-            // Skip anim overlay types (they don't have make SHPs).
-            if type_id.contains('_') {
-                continue;
-            }
-            let make_key: String = format!("{}_MAKE", type_id);
-            let count = match make_frame_counts.get(&make_key) {
-                Some(&count) => count,
-                None => {
-                    let candidates = buildup_shp_candidates(art_reg, rules, type_id, theater_name);
-                    let Some((file, data)) = find_shp(asset_manager, &candidates) else {
-                        continue;
-                    };
-                    let Ok(raw_count) = ShpFile::frame_count_from_bytes(data) else {
-                        continue;
-                    };
-                    // RA2 make SHPs have shadow frames in the second half — only use the first half.
-                    let count = if raw_count / 2 > 0 {
-                        raw_count / 2
-                    } else {
-                        raw_count
-                    };
-                    log::debug!("Make SHP for {type_id}: {count} frames from {file}");
-                    shp_files.insert(make_key.to_ascii_uppercase(), file.to_string());
-                    object_shp_frame_counts.insert(make_key.to_ascii_uppercase(), raw_count);
-                    make_frame_counts.insert(make_key.clone(), count);
-                    count
-                }
-            };
-            // The shadow half too: DrawSHP's shadow arm (`0x00705E00`) draws
-            // frame + count/2 of the Buildup like any body image.
-            let raw_count = object_shp_frame_counts
-                .get(&make_key.to_ascii_uppercase())
-                .copied()
-                .unwrap_or(count);
-            for frame in 0..raw_count {
-                needed.insert(ShpSpriteKey {
-                    palette_context: ShpPaletteContext::Legacy,
-                    type_id: make_key.clone(),
-                    facing: 0,
-                    frame,
-                    house_color: *color,
-                });
-            }
-        }
+        collect_building_make_asset_requests(
+            &mut needed,
+            &mut make_frame_counts,
+            &mut object_shp_frame_counts,
+            &mut shp_files,
+            &new_objects,
+            asset_manager,
+            rules,
+            art_reg,
+            theater_name,
+        );
     }
 
     // Step 1c': a war factory's unload art (`ArtEntry::factory_door`), every

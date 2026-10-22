@@ -320,9 +320,18 @@ pub(crate) fn build_shp_instances_from_inputs(
         let draws_buildup =
             image.is_some_and(|image| image != crate::sim::building_art::BuildingImage::Body);
         let unopened_buildup = draws_buildup && !is_building_up && !is_building_down;
-        // The construction animation's stage is the Buildup frame drawn,
-        // reversed while selling (`BuildingClass::GetCurrentFrame`'s BState 0
-        // arm, `sim::building_art::body_frame`).
+        let object_type = rules.and_then(|rules| rules.object(type_str));
+        let art_entry = object_type.and_then(|object| {
+            art_reg.and_then(|registry| registry.resolve_metadata_entry(type_str, &object.image))
+        });
+        // `BuildingClass::GetCurrentFrame @ 0x0043EF90` reflects a gate's
+        // BState-0 frame first, then reflects again for Selling. Pass the same
+        // ART GateStages used by the completed-body path into the shared frame owner.
+        let gate_stages = object_type
+            .filter(|object| object.gate)
+            .map(|_| art_entry.map_or(9, |entry| entry.building_gate_stages));
+        // The construction animation's stage is the Buildup frame drawn; the
+        // shared body_frame owner applies the gate and sale reflections.
         let make_frame = |selling: bool| {
             let make_key: String = format!("{}_MAKE", type_str);
             let total_make_frames: u16 =
@@ -339,7 +348,7 @@ pub(crate) fn build_shp_instances_from_inputs(
                     buildup: [control[0], control[1]],
                     laser_frame: None,
                     firestorm_frame: None,
-                    gate_stages: None,
+                    gate_stages,
                     occupants: None,
                     tech_level: 0,
                     ordinary: [[0, 1]; 4],
@@ -359,18 +368,13 @@ pub(crate) fn build_shp_instances_from_inputs(
         } else {
             match entity.category() {
                 EntityCategory::Structure => {
-                    let frame = if let Some((rules, obj)) =
-                        rules.and_then(|rules| rules.object(type_str).map(|obj| (rules, obj)))
-                    {
-                        let art = art_reg.and_then(|registry| {
-                            registry.resolve_metadata_entry(type_str, &obj.image)
-                        });
+                    let frame = if let (Some(rules), Some(obj)) = (rules, object_type) {
                         // DrawBody's gate branch replaces GetCurrentFrame while
                         // the gate opens, stands open or closes.
-                        let gate_frame = obj.gate.then(|| {
+                        let gate_frame = gate_stages.map(|gate_stages| {
                             crate::sim::building_art::gate_open_body_frame(
                                 entity,
-                                art.map_or(9, |entry| entry.building_gate_stages),
+                                gate_stages,
                                 obj.strength,
                                 rules.general.condition_yellow,
                                 sim.session().binary_frame(),

@@ -591,6 +591,93 @@ fn building_body_atlas_rules(art_text: &str) -> RuleSet {
     rules
 }
 
+#[test]
+fn registered_underscore_building_requests_make_frames_from_buildup_asset() {
+    use crate::rules::ini_parser::IniFile;
+    use crate::rules::object_type::ObjectCategory;
+
+    let art_ini = IniFile::from_str(
+        "[GAGATE_A]\nImage=GAGATE_A\nBuildup=GAGATE_A\nGateStages=9\n\
+         [YAMOBILE]\nImage=YAMOBILE\nBuildup=GAGATE_A\n",
+    );
+    let mut rules = RuleSet::from_ini_with_fixed_art_for_test(
+        &IniFile::from_str(
+            "[BuildingTypes]\n0=GAGATE_A\n[VehicleTypes]\n0=YAMOBILE\n\
+             [GAGATE_A]\nStrength=1000\n[YAMOBILE]\nStrength=100\n",
+        ),
+        &art_ini,
+    )
+    .expect("make-atlas rules");
+    rules.install_art_data(ArtRegistry::from_ini(&art_ini));
+    assert_eq!(
+        rules.object("GAGATE_A").unwrap().category,
+        ObjectCategory::Building
+    );
+    assert_eq!(
+        rules.object("YAMOBILE").unwrap().category,
+        ObjectCategory::Vehicle
+    );
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&root).expect("create workspace SHP fixture root");
+    let directory = StoredFrameTestDirectory(root.join(format!(
+        "gagate-make-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    )));
+    std::fs::create_dir(&directory.0).expect("create workspace SHP fixture directory");
+    let frames: Vec<_> = (0..20).map(|frame| ([2, 2], (frame + 1) as u8)).collect();
+    std::fs::write(directory.0.join("GTGATE_A.SHP"), raw_shp(&frames))
+        .expect("write make SHP fixture");
+    let assets = AssetManager::from_loose_root_for_test(&directory.0);
+    let colors = HouseColorMap::from([("Americans".to_string(), HouseColorIndex(2))]);
+    let (mut world, _) = one_object_world("GAGATE_A", EntityCategory::Structure);
+    let mut vehicle =
+        crate::sim::game_entity::GameEntity::test_default(2, "YAMOBILE", "Americans", 6, 5);
+    vehicle.set_category_for_test(EntityCategory::Unit);
+    vehicle.set_is_voxel_for_test(false);
+    world.insert(vehicle);
+    let interner = crate::sim::intern::test_interner();
+    let new_objects: HashSet<_> = object_pairs(&world, &colors, &[], Some(&interner))
+        .map(|(type_id, color)| (type_id.to_owned(), color))
+        .collect();
+
+    let mut needed = HashSet::new();
+    let mut make_frame_counts = HashMap::new();
+    let mut object_shp_frame_counts = HashMap::new();
+    let mut shp_files = HashMap::new();
+    collect_building_make_asset_requests(
+        &mut needed,
+        &mut make_frame_counts,
+        &mut object_shp_frame_counts,
+        &mut shp_files,
+        &new_objects,
+        &assets,
+        Some(&rules),
+        rules.art(),
+        "TEMPERATE",
+    );
+
+    assert_eq!(make_frame_counts.get("GAGATE_A_MAKE"), Some(&10));
+    assert_eq!(object_shp_frame_counts.get("GAGATE_A_MAKE"), Some(&20));
+    assert_eq!(
+        shp_files.get("GAGATE_A_MAKE").map(String::as_str),
+        Some("GTGATE_A.SHP")
+    );
+    for frame in 0..20 {
+        assert!(needed.contains(&ShpSpriteKey {
+            palette_context: ShpPaletteContext::Legacy,
+            type_id: "GAGATE_A_MAKE".to_string(),
+            facing: 0,
+            frame,
+            house_color: HouseColorIndex(2),
+        }));
+    }
+    assert!(!make_frame_counts.contains_key("YAMOBILE_MAKE"));
+}
+
 /// BuildingType45F230's final image pass, after the base ObjectType load.
 /// Stock YAYARD omits NewTheater: the original requests YTYARD.SHP, then
 /// YGYARD.SHP. A plain-name file or a different extension is not a third try.
