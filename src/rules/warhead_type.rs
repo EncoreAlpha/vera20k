@@ -32,6 +32,11 @@ use crate::util::native_x87::X87Chop53;
 pub struct WarheadType {
     /// Section name in rules.ini (e.g., "AP", "HE", "SA").
     pub id: String,
+    /// The resolved `Particle=` pointer at WarheadTypeClass+0x140. Constructor
+    /// 0x0075CF4D starts null; ReadINI @0x0075D4BE retains it for an empty
+    /// ReadString and stores ParticleSystemTypeClass::FindOrAllocate's answer
+    /// @0x00644890 for a nonempty name (`none`/`<none>` resolve null).
+    pub particle_system: Option<String>,
     /// Damage effectiveness per armor type, full f64 precision (gamemd stores
     /// Verses as a `double[11]` at warhead+0xA0 and keeps full precision through
     /// the damage kernel — the single float exception). Index order: 0=none,
@@ -64,22 +69,17 @@ pub struct WarheadType {
     /// at `0x0075d47c`, key string `0x00847e54`).
     pub delay_kill_at_max_f64: f64,
     /// Whether this warhead can damage walls/bridges (Wall=yes).
-    /// NO-DIFF (GSI-08.33) — VERA reads none of `Sparky=`, `Bullets=`,
-    /// `Deform=` and `DeformThreshhold=`, which `WarheadTypeClass::ReadINI @
-    /// 0x0075D3A0` stores at `+0x14A` (ReadBool at `0x0075D585`, key string
-    /// `0x00847DF8`), `+0x17A`, `+0x98` and `+0x100`. Exhaustive displacement
-    /// sweeps find `Deform` and `DeformThreshhold` reaching only
-    /// `WarheadTypeClass::Compute_CRC @ 0x0075DEC0` (`Deform` is Tiberian Sun
-    /// cell-height deformation with its consumer deleted) and `Bullets`
-    /// reaching nothing at all. `Sparky` has one consumer:
+    /// `Sparky=`, `Bullets=`, `Deform=` and `DeformThreshhold=` are retained
+    /// from their WarheadTypeClass ReadINI fields; their gameplay effects are
+    /// outside these state-retention issues. `Sparky` has one consumer:
     /// `BuildingClass::ReceiveDamage @ 0x00442230` tests it for each
     /// foundation cell of its NowYellow/NowRed loop (`0x00442785`) and, by
     /// Scenario `RandomRanged` draws (`0x004427C0`, `0x00442804`), may build
     /// one of Rules' `OnFire` anims (`+0xB78`) there. That arm is dormant:
     /// the constructor stores `false` (`0x0075CF77`), and all 28 stock
-    /// `Sparky=` entries are `no`, including `[Fire]` and `[Fire2]`. `Apply_area_damage @ 0x00489280`, which owns every warhead
-    /// effect on ore, walls, bridges, barrels and the rocker, touches none of
-    /// the four.
+    /// `Sparky=` entries are `no`, including `[Fire]` and `[Fire2]`. The
+    /// `Apply_area_damage @ 0x00489280` helper does not read the retained
+    /// metadata above.
     ///
     /// The field itself is `WarheadTypeClass+0x144` (ReadINI `0x0075d508`,
     /// key string `0x0081ac58`).
@@ -122,6 +122,20 @@ pub struct WarheadType {
     /// nor anim (`0x005185C8` -> `0x00518B9A`). Retail `[CometWH]` (the
     /// Prism Tank's beam and fragments) and `[GrandCannonWH]` keep the 0.
     pub inf_death: i32,
+    /// Retained native metadata: `Deform=` is a double at WarheadTypeClass+
+    /// 0x98, read by ReadDouble @0x005283D0 from ReadINI @0x0075D78D over the
+    /// constructor's 0.0 (`0x0075CED8`).
+    pub deform_f64: f64,
+    /// Exact native key spelling is `DeformThreshhold=`. ReadInt
+    /// @0x005276D0 at ReadINI @0x0075D7A7 stores the signed value at +0x100;
+    /// constructor default is 0 (`0x0075CEF8`) and there is no post-read clamp.
+    pub deform_threshold: i32,
+    /// `Bullets=` at +0x17A, ReadBool @0x005295F0 called from ReadINI
+    /// @0x0075DA01; constructor default false (`0x0075D04A`).
+    pub bullets: bool,
+    /// `Veinhole=` at +0x17B, ReadBool @0x005295F0 called from ReadINI
+    /// @0x0075DA1B; constructor default false (`0x0075D050`).
+    pub veinhole: bool,
 
     // --- Bool fields (verified offsets from WarheadTypeClass::ReadINI) ---
     /// Conventional warhead — no special effects. `WarheadTypeClass+0x14D`,
@@ -392,6 +406,7 @@ impl WarheadType {
 
         Self {
             id: id.to_string(),
+            particle_system: None,
             verses_f64,
             ares_verses: cfg!(feature = "ares").then(AresWarheadVerses::default),
             ares: None,
@@ -411,6 +426,10 @@ impl WarheadType {
             // processor owns those reads and RuleSet publishes its result.
             anim_list: Vec::new(),
             inf_death: section.read_int("InfDeath", Self::DEFAULT_INF_DEATH),
+            deform_f64: section.read_double("Deform", 0.0),
+            deform_threshold: section.read_int("DeformThreshhold", 0),
+            bullets: section.read_bool("Bullets", false),
+            veinhole: section.read_bool("Veinhole", false),
 
             // Bool fields — all default false
             conventional: false,

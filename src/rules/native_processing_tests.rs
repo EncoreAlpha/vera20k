@@ -2597,6 +2597,92 @@ fn warhead_particle_system_and_voxel_children_obey_passed_family_timing() {
 }
 
 #[test]
+fn warhead_retained_fields_match_stock_and_constructor_defaults() {
+    use crate::rules::ruleset::RuleSet;
+
+    let defaults = RulesLayerStack::new(IniFile::from_str("[Warheads]\n0=DEFAULT\n[DEFAULT]\n"))
+        .process()
+        .expect("default warhead process");
+    let default_rules = RuleSet::from_processed_rules(&defaults).unwrap();
+    let default = default_rules.warhead("DEFAULT").unwrap();
+    assert_eq!(default.particle_system, None);
+    assert_eq!(default.deform_f64, 0.0);
+    assert_eq!(default.deform_threshold, 0);
+    assert!(!default.bullets);
+    assert!(!default.veinhole);
+
+    let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+        return;
+    };
+    let he = retail.rules.warhead("HE").expect("stock HE warhead");
+    assert!((he.deform_f64 - 0.1).abs() < 1.0e-7);
+    assert_eq!(he.deform_threshold, 300);
+    assert_eq!(
+        retail
+            .rules
+            .warhead("Gas")
+            .expect("stock Battle Gas warhead")
+            .particle_system
+            .as_deref(),
+        Some("GasCloudSys")
+    );
+    assert!(
+        retail
+            .rules
+            .warhead("SA")
+            .expect("stock Battle SA warhead")
+            .bullets
+    );
+    assert!(
+        retail
+            .rules
+            .warhead("VeinholeWH")
+            .expect("stock VeinholeWH warhead")
+            .veinhole
+    );
+}
+
+#[test]
+fn warhead_particle_pointer_retains_on_empty_and_clears_on_native_none() {
+    use crate::rules::ruleset::RuleSet;
+
+    let root = "[Warheads]\n0=WH\n[ParticleSystems]\n0=PS\n[WH]\nParticle=PS\n";
+    let retained = process_rules_passes(root, "[WH]\nParticle=\n");
+    let retained = RuleSet::from_processed_rules(&retained)
+        .unwrap()
+        .warhead("WH")
+        .unwrap()
+        .particle_system
+        .clone();
+    assert_eq!(retained.as_deref(), Some("PS"));
+
+    let cleared = process_rules_passes(root, "[WH]\nParticle=none\n");
+    let cleared = RuleSet::from_processed_rules(&cleared)
+        .unwrap()
+        .warhead("WH")
+        .unwrap()
+        .particle_system
+        .clone();
+    assert_eq!(cleared, None);
+}
+
+#[test]
+fn warhead_retained_scalars_follow_native_layer_order_and_parser() {
+    use crate::rules::ruleset::RuleSet;
+
+    let processed = process_rules_passes(
+        "[Warheads]\n0=WH\n[WH]\nDeform=10%\nDeformThreshhold=300\nBullets=yes\nVeinhole=no\n",
+        "[WH]\nDeform=15%\nDeformThreshhold=-7\nBullets=no\nVeinhole=yes\n",
+    );
+    let rules = RuleSet::from_processed_rules(&processed).unwrap();
+    let wh = rules.warhead("WH").unwrap();
+    assert!((wh.deform_f64 - 0.15).abs() < 1.0e-7);
+    assert_eq!(wh.deform_threshold, -7);
+    assert!(!wh.bullets);
+    assert!(wh.veinhole);
+}
+
+#[test]
 fn negative_tiberium_slot_is_an_explicit_safe_load_error() {
     let error = RulesLayerStack::new(IniFile::from_str("[Tiberiums]\n-1=BadSlot\n"))
         .process()

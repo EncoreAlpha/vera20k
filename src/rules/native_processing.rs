@@ -1412,6 +1412,23 @@ impl ProcessedRulesLayers {
             })
     }
 
+    /// WarheadTypeClass+0x140 `Particle=` after every reached
+    /// ReadINI75D4BE..75D4D4.
+    pub(crate) fn warhead_particle_states(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.native_type_construction_trace
+            .registry_state()
+            .families
+            .get(&RulesTypeFamily::Warhead)
+            .into_iter()
+            .flatten()
+            .map(|member| {
+                (
+                    member.native_stored_id.as_str(),
+                    member.warhead_particle.as_deref(),
+                )
+            })
+    }
+
     pub(crate) fn emp_type_states(
         &self,
     ) -> impl Iterator<
@@ -2977,6 +2994,12 @@ struct ProcessedType {
     techno_references: TechnoTypeReferences,
     weapon: WeaponReadState,
     warhead_anim: WarheadAnimReadState,
+    /// WarheadTypeClass+0x140 `Particle=`. Constructor75CF4D starts null;
+    /// ReadINI75D4BE uses ReadString's empty default and then
+    /// ParticleSystemTypeClass::FindOrAllocate @0x00644890, so empty keeps
+    /// this pointer while `none`/`<none>` stores null.
+    #[serde(default)]
+    warhead_particle: Option<String>,
     /// Warhead ctor75CEC0 starts every +A0 slot at1.0. Each reached
     /// ReadINI75DDCC..75DE5A uses its literal all-100% missing-key default;
     /// no section leaves this live table alone. The retained registry owns
@@ -3381,6 +3404,7 @@ impl ProcessedType {
             weapon_slots: WeaponSlots::default(),
             weapon: WeaponReadState::default(),
             warhead_anim: WarheadAnimReadState::default(),
+            warhead_particle: None,
             warhead_verses: [NativeF64Bits::ONE; 11],
             ares_verses: None,
             ares_warhead: None,
@@ -5470,12 +5494,15 @@ impl RulesPassProcessor {
             if let Some((_id, raw, _effective)) =
                 self.begin_rules_member_read(RulesTypeFamily::Warhead, index, pass)
             {
-                let _ = self.resolve_scalar_from(
+                let particle = self.resolve_scalar_from(
                     &raw,
                     "Particle",
                     RulesTypeFamily::ParticleSystem,
                     0x80,
                 );
+                if let Some(particle) = particle {
+                    self.family_mut(RulesTypeFamily::Warhead)[index].warhead_particle = particle;
+                }
                 // Warhead ctor75CF89/75CFB3 initializes both false. The
                 // original reader uses the live field as its ReadBool default.
                 let current = &mut self.family_mut(RulesTypeFamily::Warhead)[index].warhead_anim;

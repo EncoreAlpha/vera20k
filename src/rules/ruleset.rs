@@ -4351,6 +4351,15 @@ impl RuleSet {
                 warhead.install_ares_verses(ares_verses);
             }
         }
+        for (name, particle_system) in processed.warhead_particle_states() {
+            if let Some(warhead) = rules
+                .warheads
+                .values_mut()
+                .find(|warhead| warhead.id.eq_ignore_ascii_case(name))
+            {
+                warhead.particle_system = particle_system.map(str::to_owned);
+            }
+        }
         for (category, name, emp) in processed.emp_type_states() {
             if let Some(object) = rules
                 .object_list
