@@ -2758,6 +2758,21 @@ impl Simulation {
         std::array::from_fn(|index| self.trigger_runtime.globals_set.contains(&(index as u32)))
     }
 
+    /// Controlled campaign capture input through SetGlobal689670, including
+    /// its ordinary Tag timer resets. This does not replace the incoming
+    /// carry-over record; Victory4C6180 must capture it normally.
+    #[cfg(feature = "dev-overlays")]
+    pub fn dev_set_scenario_global(&mut self, index: i32, set: bool) {
+        Self::set_trigger_variable(
+            &self.session,
+            &mut self.scenario_rng,
+            &mut self.trigger_runtime,
+            true,
+            index,
+            set,
+        );
+    }
+
     /// Shared Scenario SetGlobal689670/SetLocal689910 mutation, including
     /// Tag timer resets. Trigger and Team scripts use this same owner.
     pub(crate) fn set_trigger_variable(
@@ -4121,6 +4136,9 @@ impl Simulation {
             }
             110 => {
                 effects.extend(self.session.pause_scenario(value.unwrap_or(0)));
+                // ScenarioPause684060 pauses elapsed time and Vox inline,
+                // before a following result action or House's Vox poll.
+                frame_effects.consume_prefix_effects(effects);
             }
             87 => {
                 // Steam gamemd, Execute6DDBD5..6DDBF3.
@@ -5161,6 +5179,14 @@ mod restore_tests;
 #[cfg(test)]
 #[path = "trigger_runtime_scenario_pause_tests.rs"]
 mod scenario_pause_tests;
+
+#[cfg(test)]
+#[path = "trigger_runtime_outcome_tests.rs"]
+mod outcome_tests;
+
+#[cfg(test)]
+#[path = "trigger_runtime_digest_ini_tests.rs"]
+mod digest_ini_tests;
 
 #[cfg(test)]
 #[path = "world/building_sale_trigger_tests.rs"]

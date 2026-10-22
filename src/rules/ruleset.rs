@@ -4351,6 +4351,15 @@ impl RuleSet {
                 warhead.install_ares_verses(ares_verses);
             }
         }
+        for (name, particle_system) in processed.warhead_particle_states() {
+            if let Some(warhead) = rules
+                .warheads
+                .values_mut()
+                .find(|warhead| warhead.id.eq_ignore_ascii_case(name))
+            {
+                warhead.particle_system = particle_system.map(str::to_owned);
+            }
+        }
         for (category, name, emp) in processed.emp_type_states() {
             if let Some(object) = rules
                 .object_list
@@ -4892,6 +4901,18 @@ impl RuleSet {
         self.general.scold_sound = ini
             .section("AudioVisual")
             .and_then(|section| sounds.read_rules_reference(section, "ScoldSound"));
+        // WeaponTypeClass::ReadINI @ `0x00772080` calls
+        // CCINIClass::ReadSoundList @ `0x00525430` for Report/DownReport at
+        // `0x00772394`/`0x0077241A`; use its shared catalog/list owner.
+        for weapon in self.weapons.values_mut() {
+            let section = ini.section(&weapon.id);
+            weapon.report = section.map_or_else(Vec::new, |section| {
+                sounds.read_rules_sound_list(section, "Report")
+            });
+            weapon.down_report = section.map_or_else(Vec::new, |section| {
+                sounds.read_rules_sound_list(section, "DownReport")
+            });
+        }
         for sw in self.super_weapons.values_mut() {
             let section = ini.section(&sw.id);
             // Original6CEB74..6CEBD8 keeps each current Voc ID when
@@ -5195,7 +5216,8 @@ impl RuleSet {
         // even when nothing current references it: Action42 indexes this
         // family directly (6E2390). Its retained Damage, Speed, Range,
         // Projectile, Warhead, Anim, OccupantAnim, OpenToppedAnim and
-        // AttachedParticleSystem are the only reads of those keys.
+        // AttachedParticleSystem are retained here; AssaultAnim is retained by
+        // this pass too, and Report lists bind below through the SOUNDMD catalog.
         let mut weapons: LookupMap<String, WeaponType> = LookupMap::default();
         for state in processed.weapon_states() {
             let Some(section) = ini.section(state.id) else {
@@ -5209,6 +5231,7 @@ impl RuleSet {
             weapon.damage = state.damage;
             weapon.warhead = state.warhead.map(str::to_owned);
             weapon.anim = state.anim.to_vec();
+            weapon.assault_anim = state.assault_anim.map(str::to_owned);
             weapon.occupant_anim = state.occupant_anim.map(str::to_owned);
             weapon.open_topped_anim = state.open_topped_anim.map(str::to_owned);
             weapon.attached_particle_system = state.attached_particle_system.map(str::to_owned);

@@ -58,9 +58,13 @@ pub struct WeaponType {
     pub projectile: Option<String>,
     /// Warhead type ID (`+0xAC`, references a [WarheadName] section).
     pub warhead: Option<String>,
-    /// `Report=` firing sounds (references [SoundName] sections in
-    /// soundmd.ini). Played each time this weapon fires.
+    /// `Report=` firing sounds read by `WeaponTypeClass::ReadINI @ 0x00772080`
+    /// through `ReadSoundList @ 0x00525430`, resolved against the fixed registry.
     pub report: Vec<String>,
+    /// `DownReport=` read through `ReadSoundList @ 0x00525430` by
+    /// `WeaponTypeClass::ReadINI @ 0x00772080`; the constructor starts with an
+    /// empty list (`WeaponTypeClass::Constructor @ 0x00771C70`).
+    pub down_report: Vec<String>,
     /// Number of rapid shots per attack cycle (default 1).
     /// After the full burst, the ROF cooldown begins.
     pub burst: i32,
@@ -100,6 +104,8 @@ pub struct WeaponType {
     // ── String/reference fields ──────────────────────────────────────
     // The Type references are the stored IDs the ordered Rules processor's
     // factories answered (`native_processing`); `RuleSet` publishes them.
+    /// Animation for the native `AssaultAnim=` pointer at +0x114.
+    pub assault_anim: Option<String>,
     /// Animation played by occupants when firing from a building.
     pub occupant_anim: Option<String>,
     /// Animation played by units firing from an open-topped transport.
@@ -233,6 +239,7 @@ impl WeaponType {
             projectile: None,
             warhead: None,
             report: sound_list(section, "Report"),
+            down_report: Vec::new(),
             burst: section.read_int("Burst", 1),
             // Constructor 1 (`0x00771DBB`); ReadINI passes it as the default
             // (`0x00772182..0x00772196`).
@@ -258,9 +265,9 @@ impl WeaponType {
             laser_duration: i32::from(section.read_int("LaserDuration", 10) as i8),
             rad_level: section.read_int("RadLevel", 0),
 
-            // The constructor's nulls and empty list (`0x00771C70`); only the
-            // ordered Process owner reads `OccupantAnim=`, `OpenToppedAnim=`,
-            // `AttachedParticleSystem=` and `Anim=`.
+            // The constructor's nulls and empty list (`0x00771C70`); the
+            // ordered Process owner reads the Animation references.
+            assault_anim: None,
             occupant_anim: None,
             open_topped_anim: None,
             attached_particle_system: None,
@@ -318,8 +325,8 @@ impl WeaponType {
     }
 }
 
-/// `Report=`/`DownReport=` through ReadSoundList (`0x00772394`,
-/// `0x0077241A`); absent leaves the constructor's empty list.
+/// `Report=` through ReadSoundList (`0x00772394`); production binding resolves
+/// both report lists through the fixed SOUNDMD registry.
 fn sound_list(section: &IniSection, key: &str) -> Vec<String> {
     section
         .read_sound_list(key)
@@ -570,6 +577,128 @@ mod tests {
         assert!(weapon.anim.is_empty());
         assert_eq!(weapon.laser_inner_color, [0, 0, 0]);
         assert!(weapon.decloak_to_fire, "native omitted-key default is yes");
+    }
+
+    #[test]
+    fn retail_battle_retains_native_weapon_reference_fields() {
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        let akm = retail.rules.weapon("AKM").unwrap();
+        assert_eq!(akm.assault_anim.as_deref(), Some("UCBLOOD"));
+        assert!(akm.down_report.is_empty(), "constructor list is empty");
+
+        let electric_bolt = retail.rules.weapon("CRElectricBolt").unwrap();
+        assert_eq!(electric_bolt.assault_anim.as_deref(), Some("UCELEC"));
+        assert!(
+            electric_bolt.down_report.is_empty(),
+            "stock has no DownReport"
+        );
+    }
+
+    #[test]
+    fn assault_anim_keeps_current_on_empty_and_uses_the_native_factory() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[VehicleTypes]\n0=KEEP_MISSING\n1=KEEP_EMPTY\n2=CLEAR\n3=CREATE\n\
+             [KEEP_MISSING]\nPrimary=KeepMissing\n[KEEP_EMPTY]\nPrimary=KeepEmpty\n\
+             [CLEAR]\nPrimary=Clear\n[CREATE]\nPrimary=Create\n\
+             [KeepMissing]\nDamage=1\nAssaultAnim=UCFLASH\n\
+             [KeepEmpty]\nDamage=1\nAssaultAnim=UCFLASH\n\
+             [Clear]\nDamage=1\nAssaultAnim=UCFLASH\n\
+             [Create]\nDamage=1\nAssaultAnim=UCFLASH\n",
+        ));
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str(
+                "[KEEP_MISSING]\nSecondary=KeepMissing\n\
+                 [KeepMissing]\nDamage=1\n\
+                 [KeepEmpty]\nAssaultAnim=\n\
+                 [Clear]\nAssaultAnim=none\n\
+                 [Create]\nAssaultAnim=LateAnim\n",
+            ),
+        );
+        let processed = layers.process().unwrap();
+        let rules = RuleSet::from_processed_rules(&processed).unwrap();
+
+        assert_eq!(
+            rules.weapon("KeepMissing").unwrap().assault_anim.as_deref(),
+            Some("UCFLASH"),
+            "a later missing key retains the current animation"
+        );
+        assert_eq!(
+            rules.weapon("KeepEmpty").unwrap().assault_anim.as_deref(),
+            Some("UCFLASH"),
+            "an empty ReadString result retains the current animation"
+        );
+        assert_eq!(rules.weapon("Clear").unwrap().assault_anim, None);
+        assert_eq!(
+            rules.weapon("Create").unwrap().assault_anim.as_deref(),
+            Some("LateAnim"),
+            "the native factory allocates an unknown nonempty name"
+        );
+    }
+
+    #[test]
+    fn weapon_report_lists_use_the_sound_registry_filter_and_native_reset_rules() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+        use crate::rules::sound_ini::SoundRegistry;
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[VehicleTypes]\n0=UNIT\n[UNIT]\nPrimary=Filtered\nSecondary=Cleared\n\
+             [Filtered]\nDamage=1\nReport=A,Unknown,<none>,B,A\n\
+             DownReport=A,Unknown,<none>,B,A\n\
+             [Cleared]\nDamage=1\nReport=A,B\nDownReport=A,B\n",
+        ));
+        layers.push(
+            RulesLayerKind::GameMode,
+            IniFile::from_str("[Filtered]\nReport=\nDownReport=\n"),
+        );
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[Cleared]\nReport=Unknown,<none>\nDownReport=,,,\n"),
+        );
+
+        let processed = layers.process().unwrap();
+        let mut rules = RuleSet::from_processed_rules(&processed).unwrap();
+        let sounds = SoundRegistry::from_ini(&IniFile::from_str(
+            "[SoundList]\n0=A\n1=B\n[A]\nSounds=a.wav\n[B]\nSounds=b.wav\n",
+        ));
+        rules.bind_type_sound_references(processed.ini(), &sounds);
+
+        let filtered = rules.weapon("Filtered").unwrap();
+        assert_eq!(
+            filtered
+                .report
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "A"],
+            "registered sounds retain native order and duplicate entries"
+        );
+        assert_eq!(
+            filtered
+                .down_report
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "A"]
+        );
+        assert_eq!(filtered.report_count(), 3);
+
+        let cleared = rules.weapon("Cleared").unwrap();
+        assert_eq!(
+            cleared.report_count(),
+            0,
+            "unknown-only replaces with empty"
+        );
+        assert!(
+            cleared.down_report.is_empty(),
+            "comma-only replaces with empty"
+        );
     }
 
     #[test]

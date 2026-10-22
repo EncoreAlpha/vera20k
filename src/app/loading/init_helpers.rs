@@ -1015,6 +1015,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn particle_frame_reader_keeps_prior_values_when_scenario_omits_keys() {
+        use crate::rules::native_processing::RulesLayerKind;
+
+        let Some(rulesmd) = crate::rules::retail_ini_fixture::retail_ini("rulesmd.ini") else {
+            return;
+        };
+        let probe_rules = RuleSet::from_ini(&rulesmd).expect("retail root rules parse");
+        let particle_name = "GasCloud1";
+        let stock_particle_id = probe_rules
+            .p_type_id_by_name(particle_name)
+            .expect("retail root allocates GasCloud1");
+        let stock_particle = probe_rules.particle_type(stock_particle_id);
+        assert_eq!(stock_particle.start_frame, 0);
+        assert_eq!(stock_particle.num_loop_frames, 1);
+        let mut layers = RulesLayerStack::new(rulesmd);
+        layers.push(
+            RulesLayerKind::GameMode,
+            IniFile::from_str(&format!(
+                "[{particle_name}]\nStartFrame=-3\nNumLoopFrames=-5\n"
+            )),
+        );
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str(&format!(
+                "[{particle_name}]\nStartFrame=not-a-hexH\nFixtureOnly=1\n"
+            )),
+        );
+
+        let rules = RuleSet::from_rules_layers(&layers).expect("retail layered rules parse");
+        let particle_id = rules
+            .p_type_id_by_name(&particle_name)
+            .expect("the same root-registered ParticleType survives projection");
+        let particle = rules.particle_type(particle_id);
+        assert_eq!(particle.start_frame, -3);
+        assert_eq!(particle.num_loop_frames, -5);
+    }
+
     fn retail_rulesmd_with_bullet_reader_triggers() -> Option<IniFile> {
         let mut rulesmd = crate::rules::retail_ini_fixture::retail_ini("rulesmd.ini")?;
         // ChemLauncher and Grenade are retail weapons whose projectiles this

@@ -282,11 +282,13 @@ impl App {
                 return;
             }
         };
-        //5BEDFB..5BEE38 enters the same ABF35C movie hold as radar5BF580:
-        //Vox/streams pause, both VolumeInterp targets become0x2000.
-        //The separate menu pause owner must not acquire another movie credit.
+        // 5BEDFB..5BEE38 enters the same ABF35C movie hold as radar 5BF580
+        // (Vox/streams pause, both masters glide to 0x2000), then 5BEE3E
+        // suspends the sound events, which the radar movie does not. The
+        // separate menu pause owner must not acquire another movie credit.
         let wall_ms = crate::app::match_runtime::frame_pacer::wall_clock_ms();
         state.audio.set_movie_audio_held(true, wall_ms);
+        state.audio.set_movie_sounds_suspended(true, wall_ms);
         // The Bink soundtrack plays at VoiceVolume: BinkSetVolume(ftol(
         // VoiceVolume * 32768.0)) at `0x00432897` (32768 = unity gain).
         let voice_volume = state

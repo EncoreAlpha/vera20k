@@ -605,7 +605,7 @@ impl App {
             sfx_player,
             launcher_audio_available,
             theme_startup_suppressed: false,
-            movie_audio: Default::default(),
+            master_groups: Default::default(),
         };
         if let Some(assets) = startup_asset_manager.as_ref() {
             startup_audio_runtime.initialize_theme(assets);

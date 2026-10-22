@@ -188,6 +188,17 @@ impl SimRuntime {
             effects,
         )
     }
+    pub fn resume_outcome_wait(
+        &mut self,
+        effects: crate::sim::world::FrameEffects<'_>,
+    ) -> Result<crate::sim::world::SimFrameOutput, crate::sim::world::FrameAdvanceError> {
+        self.simulation.resume_outcome_wait(
+            &self.resources.rules,
+            Some(&self.resources.overlay_registry),
+            effects,
+        )
+    }
+
     /// Complete a frame suspended by a checksum modal, using the same bound
     /// resources and without re-entering Logic or synchronized dispatch.
     pub fn resume_after_network_failure(
@@ -1265,7 +1276,7 @@ pub fn finalize_constructed_scenario(
     }
     // The caller submits one immutable initialization command; Simulation owns
     // every match-affecting write and Scenario RNG draw in the post-map tail.
-    let campaign_new_game_map = sim
+    let campaign_map = sim
         .session
         .campaign_mission_counter()
         .filter(|_| !sim.session.game_mode_nonzero())
@@ -1279,7 +1290,7 @@ pub fn finalize_constructed_scenario(
             overlay_registry,
             house_roster,
             skirmish_session,
-            campaign_new_game_map,
+            campaign_map,
         });
     sim.lighting_sources.discard_pending();
     output

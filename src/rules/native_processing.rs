@@ -1168,6 +1168,7 @@ impl ProcessedRulesLayers {
                         .warhead
                         .map(|index| name(RulesTypeFamily::Warhead, index)),
                     anim: &member.weapon.anim,
+                    assault_anim: member.weapon.assault_anim.as_deref(),
                     occupant_anim: member.weapon.occupant_anim.as_deref(),
                     open_topped_anim: member.weapon.open_topped_anim.as_deref(),
                     attached_particle_system: member.weapon.attached_particle_system.as_deref(),
@@ -1408,6 +1409,23 @@ impl ProcessedRulesLayers {
                     member.warhead_anim.debris_types.as_slice(),
                     &member.warhead_verses,
                     member.ares_verses.as_ref(),
+                )
+            })
+    }
+
+    /// WarheadTypeClass+0x140 `Particle=` after every reached
+    /// ReadINI75D4BE..75D4D4.
+    pub(crate) fn warhead_particle_states(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.native_type_construction_trace
+            .registry_state()
+            .families
+            .get(&RulesTypeFamily::Warhead)
+            .into_iter()
+            .flatten()
+            .map(|member| {
+                (
+                    member.native_stored_id.as_str(),
+                    member.warhead_particle.as_deref(),
                 )
             })
     }
@@ -2977,6 +2995,12 @@ struct ProcessedType {
     techno_references: TechnoTypeReferences,
     weapon: WeaponReadState,
     warhead_anim: WarheadAnimReadState,
+    /// WarheadTypeClass+0x140 `Particle=`. Constructor75CF4D starts null;
+    /// ReadINI75D4BE uses ReadString's empty default and then
+    /// ParticleSystemTypeClass::FindOrAllocate @0x00644890, so empty keeps
+    /// this pointer while `none`/`<none>` stores null.
+    #[serde(default)]
+    warhead_particle: Option<String>,
     /// Warhead ctor75CEC0 starts every +A0 slot at1.0. Each reached
     /// ReadINI75DDCC..75DE5A uses its literal all-100% missing-key default;
     /// no section leaves this live table alone. The retained registry owns
@@ -3299,6 +3323,7 @@ pub(crate) struct WeaponState<'a> {
     pub(crate) projectile: Option<&'a str>,
     pub(crate) warhead: Option<&'a str>,
     pub(crate) anim: &'a [String],
+    pub(crate) assault_anim: Option<&'a str>,
     pub(crate) occupant_anim: Option<&'a str>,
     pub(crate) open_topped_anim: Option<&'a str>,
     pub(crate) attached_particle_system: Option<&'a str>,
@@ -3324,6 +3349,10 @@ struct WeaponReadState {
     /// `Anim=` (`0x00772471`): ReadString128, then each `strtok` token's
     /// non-null AnimType (`0x00428B80`) replaces the list.
     anim: Vec<String>,
+    /// `WeaponTypeClass::ReadINI @ 0x00772080` reads `AssaultAnim=` with
+    /// ReadString128 (`0x00528A10`) and uses AnimTypeClass::FindOrAllocate
+    /// (`0x00428B80`) for nonempty names; empty retains the current reference.
+    assault_anim: Option<String>,
     /// `OccupantAnim=` (+110, `0x007725A1..0x007725CB`) and `OpenToppedAnim=`
     /// (+118, `0x007725E6`): ReadString128, then the AnimType factory, which
     /// answers null for `none` and `<none>`; an empty read keeps the field.
@@ -3381,6 +3410,7 @@ impl ProcessedType {
             weapon_slots: WeaponSlots::default(),
             weapon: WeaponReadState::default(),
             warhead_anim: WarheadAnimReadState::default(),
+            warhead_particle: None,
             warhead_verses: [NativeF64Bits::ONE; 11],
             ares_verses: None,
             ares_warhead: None,
@@ -5354,10 +5384,17 @@ impl RulesPassProcessor {
                 {
                     self.family_mut(RulesTypeFamily::Weapon)[index].weapon.anim = anims;
                 }
-                // AssaultAnim (`0x00772574`) is allocated but not retained:
-                // VERA ports no reader of the WeaponType+114 it stores.
-                let _ =
-                    self.resolve_scalar_from(&raw, "AssaultAnim", RulesTypeFamily::Animation, 0x80);
+                // WeaponTypeClass::ReadINI @ `0x00772080` reads AssaultAnim
+                // (`ReadString @ 0x00528A10`, `0x0077257C`), resolves nonempty
+                // names with FindOrAllocate @ `0x00428B80` (`0x00772589`), and
+                // stores the pointer at +0x114 (`0x007725A6`).
+                if let Some(anim) =
+                    self.resolve_scalar_from(&raw, "AssaultAnim", RulesTypeFamily::Animation, 0x80)
+                {
+                    self.family_mut(RulesTypeFamily::Weapon)[index]
+                        .weapon
+                        .assault_anim = anim;
+                }
                 if let Some(anim) =
                     self.resolve_scalar_from(&raw, "OccupantAnim", RulesTypeFamily::Animation, 0x80)
                 {
@@ -5470,12 +5507,15 @@ impl RulesPassProcessor {
             if let Some((_id, raw, _effective)) =
                 self.begin_rules_member_read(RulesTypeFamily::Warhead, index, pass)
             {
-                let _ = self.resolve_scalar_from(
+                let particle = self.resolve_scalar_from(
                     &raw,
                     "Particle",
                     RulesTypeFamily::ParticleSystem,
                     0x80,
                 );
+                if let Some(particle) = particle {
+                    self.family_mut(RulesTypeFamily::Warhead)[index].warhead_particle = particle;
+                }
                 // Warhead ctor75CF89/75CFB3 initializes both false. The
                 // original reader uses the live field as its ReadBool default.
                 let current = &mut self.family_mut(RulesTypeFamily::Warhead)[index].warhead_anim;

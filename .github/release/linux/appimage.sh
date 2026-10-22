@@ -5,9 +5,9 @@
 # Needs desktop-file-validate (desktop-file-utils).
 #
 # The AppImage keeps its files in ~/.local/share/VERA20k and finds or asks for
-# the Yuri's Revenge folder on its first launch (src/app/app_bundle.rs). Like the
-# archive, it holds only the program, which uses the system's ALSA, Vulkan and
-# window libraries. README.txt and the licenses are in usr/share/doc/vera20k.
+# the Yuri's Revenge folder on its first launch (src/app/app_bundle.rs). It holds
+# only the program, which uses the system's ALSA, Vulkan and window libraries.
+# README.txt and the licenses are in usr/share/doc/vera20k.
 set -euo pipefail
 package="$1"
 output="$2"

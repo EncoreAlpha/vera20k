@@ -297,6 +297,13 @@ impl VolumeInterp {
     pub fn target_value(&self) -> i32 {
         (self.target >> 16) as i32
     }
+
+    /// Whether the value is still gliding toward its target: the
+    /// `current != target` test of `Audio__IsStreamPlayerVolumeInterpolating
+    /// @ 0x004080D0` (`0x004080D9..0x004080DF`) and `0x00408410`.
+    pub fn moving(&self) -> bool {
+        self.current != self.target
+    }
 }
 
 /// Identifier of one live `SoundEvent`. VERA-internal: native uses the record

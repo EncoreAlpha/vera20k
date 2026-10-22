@@ -1,10 +1,10 @@
 ; Windows installer for VERA20K. The Release workflow (.github/workflows/release.yml)
 ; compiles it with the Inno Setup 6 compiler on GitHub's Windows runner:
 ;
-;   ISCC /DAppVersion=<x.y.z> /DBuild=<YYYYMMDD-HHMMSS> /DPackageDir=<unpacked archive>
+;   ISCC /DAppVersion=<x.y.z> /DBuild=<YYYYMMDD-HHMMSS> /DPackageDir=<package folder>
 ;        /DOutputDir=<dir> /DOutputBaseFilename=<name> vera20k.iss
 ;
-; It installs the files of the Windows archive for the current user, without an
+; It installs the files of the package folder for the current user, without an
 ; administrator prompt, and asks for the Yuri's Revenge folder, offering the one
 ; it finds (DetectGameDir). It writes config.toml beside the program with that
 ; folder as ra2_dir and the install folder as settings_dir. Shortcuts start the
