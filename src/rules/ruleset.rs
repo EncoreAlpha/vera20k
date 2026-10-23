@@ -1989,6 +1989,14 @@ pub struct GeneralRules {
     /// the warhead of case 9's area damage. The constructor's null
     /// (`0x00666B40`): empty.
     pub mutate_explosion_warhead: String,
+    /// `[SpecialWeapons] EMPulseWarhead=` (`Rules+0xFA0`): the constructor
+    /// stores null at `0x00666B46`. `RulesClass::ReadSpecialWeapons`
+    /// (`0x00668FB0`) loads the prior pointer before `ReadString`
+    /// (`0x00528A10`, call at `0x00669138`); an empty read keeps it, while a
+    /// name goes through `WarheadTypeClass::FindOrAllocate`
+    /// (`0x0075E3B0`, call at `0x00669145`). Retained for native state parity;
+    /// no gameplay consumer is claimed.
+    pub empulse_warhead: Option<String>,
     /// `[General] MutateExplosion=` (`+0x17C8`, `0x00671125`): case 9 deals
     /// area damage instead of walking the 3x3 block. The constructor's false
     /// (`0x006676ED`); retail sets yes.
@@ -2682,6 +2690,7 @@ impl Default for GeneralRules {
             psychic_reveal_radius: 3,
             mutate_warhead: String::new(),
             mutate_explosion_warhead: String::new(),
+            empulse_warhead: None,
             mutate_explosion: false,
             metallic_debris: Vec::new(),
             weather_con_clouds: Vec::new(),
@@ -3972,6 +3981,7 @@ impl GeneralRules {
             // them (`RulesTypeReferences`).
             mutate_warhead: String::new(),
             mutate_explosion_warhead: String::new(),
+            empulse_warhead: None,
             mutate_explosion: general.read_bool("MutateExplosion", false),
             // The processed RulesClass vector is authoritative; a merged INI
             // cannot reproduce successful-read replacement or factory identity.
@@ -6732,6 +6742,7 @@ impl RuleSet {
             &self.radiation.site_warhead,
             &self.general.mutate_warhead,
             &self.general.mutate_explosion_warhead,
+            &self.general.empulse_warhead,
         )
             .hash(&mut hasher);
         let general = &self.general;
@@ -8763,6 +8774,54 @@ SpawnCount=3
         if let Some(battle) = crate::rules::retail_ini_fixture::retail_battle_rules() {
             assert_eq!(battle.rules.general.shell_button_slide_sound, None);
         }
+    }
+
+    #[test]
+    fn retail_battle_hills_retains_empulse_warhead_from_rulesmd() {
+        let Some(retail) =
+            crate::rules::retail_ini_fixture::retail_battle_rules_for_map("Hills.mmx")
+        else {
+            return;
+        };
+        assert_eq!(
+            retail.rules.general.empulse_warhead.as_deref(),
+            Some("EMPuls"),
+            "RulesMD EMPulseWarhead survives Battle and map passes without an override"
+        );
+    }
+
+    #[test]
+    fn empulse_warhead_pointer_keeps_native_empty_reads_and_clears_none() {
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+
+        assert_eq!(
+            RuleSet::from_ini(&IniFile::empty())
+                .unwrap()
+                .general
+                .empulse_warhead,
+            None,
+            "native constructor initializes Rules+0xFA0 to null"
+        );
+        let root = IniFile::from_str(
+            "[Warheads]\n0=EMPuls\n[EMPuls]\n\
+             Verses=100%,90%,80%,70%,60%,50%,40%,30%,20%,10%,0%\n\
+             [SpecialWeapons]\nEMPulseWarhead=EMPuls\n",
+        );
+        let mut layers = RulesLayerStack::new(root);
+        layers.push(
+            RulesLayerKind::GameMode,
+            IniFile::from_str("[SpecialWeapons]\nEMPulseWarhead=\n"),
+        );
+        layers.push(RulesLayerKind::Scenario, IniFile::from_str("[General]\n"));
+        let retained = RuleSet::from_processed_rules(&layers.process().unwrap()).unwrap();
+        assert_eq!(retained.general.empulse_warhead.as_deref(), Some("EMPuls"));
+
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[SpecialWeapons]\nEMPulseWarhead=none\n"),
+        );
+        let cleared = RuleSet::from_processed_rules(&layers.process().unwrap()).unwrap();
+        assert_eq!(cleared.general.empulse_warhead, None);
     }
 
     #[test]
@@ -12754,6 +12813,10 @@ Projectile=Invisible
             (
                 "MutateExplosionWarhead",
                 Box::new(|rules| rules.general.mutate_explosion_warhead = "NAME".into()),
+            ),
+            (
+                "EMPulseWarhead",
+                Box::new(|rules| rules.general.empulse_warhead = Some("NAME".into())),
             ),
             (
                 "OreTwinkle",

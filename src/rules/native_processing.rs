@@ -6420,8 +6420,10 @@ impl RulesPassProcessor {
             ("EMPulseWarhead", RulesTypeFamily::Warhead),
             ("EMPulseProjectile", RulesTypeFamily::Projectile),
         ] {
-            // VERA ports no reader of the Nuke and EMPulse pointers; only
-            // their allocations are kept.
+            // ReadSpecialWeapons @ 0x00668FB0 keeps EMPulseWarhead at +0xFA0;
+            // retain that typed ID through RulesTypeReferences. NukeWarhead,
+            // NukeProjectile, NukeDown and EMPulseProjectile remain
+            // allocation-only; no gameplay effect is claimed for this state.
             let resolved = self.resolve_scalar_from(section, key, family, 0x80);
             self.rules_type_references.read_pointer(key, resolved);
         }
