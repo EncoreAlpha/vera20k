@@ -171,7 +171,7 @@ fn frozen_building_pieces(
         if zshape {
             let origin = native_z::zshape_origin(
                 (x as i32, y as i32),
-                crate::rules::foundation::foundation_dimensions(&object.foundation),
+                object.foundation.dimensions(),
                 art.map_or((0, 0), |art| art.z_shape_point_move),
             );
             instance.zshape_origin = [origin.0 as f32, origin.1 as f32];
