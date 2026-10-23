@@ -34,6 +34,11 @@ use crate::rules::locomotor_type::{LocomotorKind, MovementZone, SpeedType};
 use crate::rules::sound_ini::SoundRegistry;
 use crate::rules::terrain_rules::LandType;
 use crate::util::fixed_math::SimFixed;
+use crate::util::native_x87::NativeF64Bits;
+
+/// The pi/180 double multiplied by `TechnoTypeClass::ReadINI @ 0x00712170`
+/// when storing RollAngle at `+0x3A0` (`FMUL [0x007F4FB8] @ 0x007123BC`).
+const TECHNOTYPE_DEGREES_TO_RADIANS: f64 = f64::from_bits(0x3f91_df46_a252_9d39);
 
 /// ObjectTypeClass::ReadINI5F95DC..5F9616 reads fixed ART under its retained
 /// ImageFile. Missing/invalid values preserve each current constructor/read byte.
@@ -519,6 +524,18 @@ pub struct ObjectType {
     /// TechnoType+7FC, read from the current Image section of fixed ARTMD.
     /// The ordered processor owns its retained default (constructor0).
     voxel_shadow_index: i32,
+    /// `PitchSpeed=` (`TechnoType+0x3A8`): constructor `0.25`; each
+    /// `TechnoTypeClass::ReadINI @ 0x00712170` pass uses this current double
+    /// as `ReadDouble`'s default (`0x007123DA..0x007123E8`). Normal Fly
+    /// `Draw_Matrix @ 0x004CF610` gates PitchAngle/RollAngle on current speed
+    /// strictly exceeding this value.
+    pitch_speed: NativeF64Bits,
+    /// `RollAngle=` (`TechnoType+0x3A0`): constructor 30 degrees in radians.
+    /// ReadDouble uses -1 as a sentinel; each pass converts other degrees to
+    /// radians and retains the current value for -1 (`ReadINI @ 0x00712170`,
+    /// `0x007123A2..0x007123C2`). Normal Fly `Draw_Matrix @ 0x004CF610`
+    /// applies it about X while SecondaryFacing's rotation is active.
+    roll_angle: NativeF64Bits,
     /// TechnoType+3B0, ReadINI712379..712391: degrees converted to radians;
     /// -1 preserves the constructor value (20 degrees). Used by Fly approach.
     pub(crate) pitch_angle: SimFixed,
@@ -2156,6 +2173,22 @@ fn native_minutes_to_ticks(value: f64) -> u32 {
 }
 
 impl ObjectType {
+    /// Native TechnoType `PitchSpeed` double used by the normal Fly draw gate.
+    pub fn fly_pitch_speed(&self) -> f64 {
+        f64::from_bits(self.pitch_speed.bits())
+    }
+
+    /// Native TechnoType `RollAngle` in radians for normal Fly presentation.
+    pub fn fly_roll_angle_radians(&self) -> f64 {
+        f64::from_bits(self.roll_angle.bits())
+    }
+
+    /// Existing typed PitchAngle value shared with Fly approach and normal
+    /// Fly rendering. Rendering converts only at the f32 matrix boundary.
+    pub fn fly_pitch_angle_radians(&self) -> f32 {
+        self.pitch_angle.to_num::<f32>()
+    }
+
     pub(crate) fn project_image_state(
         &mut self,
         state: &crate::rules::object_image::ObjectImageState,
@@ -2987,13 +3020,41 @@ impl ObjectType {
             flight_level: section.read_int("FlightLevel", -1),
             is_dropship: section.read_bool("IsDropship", false),
             voxel_shadow_index: 0,
-            // `ReadDouble(-1)` (`0x00712364..0x00712399`): -1 keeps the
-            // constructor's 20 degrees.
-            pitch_angle: SimFixed::from_num(
-                match section.read_double("PitchAngle", -1.0) {
-                    -1.0 => 20.0,
-                    degrees => degrees as f32,
-                } * (std::f32::consts::PI / 180.0),
+            pitch_speed: section.read_double_bits(
+                "PitchSpeed",
+                NativeF64Bits::from_bits(0x3fd0_0000_0000_0000),
+            ),
+            // Constructor +0x3A0 is 30 degrees in radians. Native ReadINI
+            // passes -1.0 to ReadDouble then preserves the current field for
+            // that sentinel on every RulesClass::Process pass.
+            roll_angle: NativeF64Bits::from_bits(
+                section
+                    .read_double_with(
+                        "RollAngle",
+                        f64::from_bits(0x3fe0_c152_382d_7365),
+                        |current, degrees| {
+                            if degrees == -1.0 {
+                                current
+                            } else {
+                                degrees * TECHNOTYPE_DEGREES_TO_RADIANS
+                            }
+                        },
+                    )
+                    .to_bits(),
+            ),
+            // `ReadDouble(-1)` in each TechnoTypeClass::ReadINI pass
+            // (`0x00712170`): -1 keeps the current radians, otherwise convert
+            // the degrees before the existing SimFixed storage boundary.
+            pitch_angle: section.read_double_with(
+                "PitchAngle",
+                SimFixed::from_num(20.0_f32 * (std::f32::consts::PI / 180.0)),
+                |current, degrees| {
+                    if degrees == -1.0 {
+                        current
+                    } else {
+                        SimFixed::from_num((degrees as f32) * (std::f32::consts::PI / 180.0))
+                    }
+                },
             ),
             aux_sound1: section
                 .read_name("AuxSound1", 0x80)
@@ -3828,6 +3889,45 @@ mod absorber_pip_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fly_bank_rules_read_stock_values_and_keep_each_pass_sentinels() {
+        use crate::rules::ini_parser::IniFile;
+        use crate::rules::native_processing::{RulesLayerKind, RulesLayerStack};
+        use crate::rules::ruleset::RuleSet;
+
+        let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
+            return;
+        };
+        for id in ["BPLN", "SPYP"] {
+            let object = retail.rules.object(id).expect("stock aircraft type");
+            assert_eq!(object.fly_pitch_speed(), 0.25, "{id} default PitchSpeed");
+            assert_eq!(object.fly_pitch_angle_radians(), 0.0, "{id} PitchAngle");
+            assert!(
+                (object.fly_roll_angle_radians() - 30.0_f64.to_radians()).abs() < 1.0e-12,
+                "{id} constructor RollAngle"
+            );
+        }
+
+        let mut layers = RulesLayerStack::new(IniFile::from_str(
+            "[VehicleTypes]\n0=BPLN\n[BPLN]\nPitchSpeed=0.5\nRollAngle=45\nPitchAngle=12\n",
+        ));
+        layers.push(
+            RulesLayerKind::Scenario,
+            IniFile::from_str("[BPLN]\nRollAngle=-1\nPitchAngle=-1\n"),
+        );
+        let rules = RuleSet::from_rules_layers(&layers).expect("production layered rules");
+        let object = rules.object("BPLN").expect("registered aircraft type");
+        assert_eq!(object.fly_pitch_speed(), 0.5, "omitted later key retains");
+        assert!(
+            (object.fly_roll_angle_radians() - 45.0_f64.to_radians()).abs() < 1.0e-12,
+            "later -1 retains the earlier angle"
+        );
+        assert!(
+            (object.fly_pitch_angle_radians() - 12.0_f32.to_radians()).abs() < 1.0e-5,
+            "later PitchAngle=-1 retains the earlier angle"
+        );
+    }
+
     #[test]
     fn half_damage_smoke_location_retains_stock_battle_building_values() {
         let Some(retail) = crate::rules::retail_ini_fixture::retail_battle_rules() else {
