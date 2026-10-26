@@ -36,11 +36,10 @@ use self::ini_value::strtrim_ascii;
 
 const READ_LINE_PAYLOAD: usize = 511;
 
-/// Result of `ReadCCFile(..., checkDigest = true)`'s optional Digest read.
-/// Physical file absence is represented by the source selector's `None`; this
-/// status also records the selected source's physical byte length. Status 2
-/// does not universally suppress Rules processing: Full_Init's TMCJ4F caller
-/// ignores it and still calls RulesClass::Process.
+/// Result of `ReadCCFile(..., checkDigest = true)`'s Digest check, which only
+/// the LANGRULE reads make. Physical file absence is represented by the source
+/// selector's `None`; this status also records the selected source's physical
+/// byte length.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DigestVerification {
     Empty,
@@ -595,15 +594,13 @@ impl IniFile {
         self.remove_section_at(position);
     }
 
-    /// Verify and remove the selected `[Digest]` section as
-    /// `ReadCCFile4741F0` does for LANGRULE (`0x004741F0`). It consumes the
-    /// same packed physical values as `ReadUUBlock526FB0`, then compares the
-    /// first 20 decoded bytes with `SaveToPipe526470`'s SHA-1 after excluding
-    /// the selected Digest section. `ReadCCFile` bypasses Digest for a
-    /// zero-byte physical file. The caller retains the original `IniFile`
-    /// snapshot and invokes this on a clone for every cold start or scenario
-    /// reset.
-    pub(crate) fn verify_digest_and_remove(&mut self, payload_len: usize) -> DigestVerification {
+    /// Verify the selected `[Digest]` section as `ReadCCFile4741F0` does for
+    /// LANGRULE (`0x004741F0`). It consumes the same packed physical values as
+    /// `ReadUUBlock526FB0`, then compares the first 20 decoded bytes with
+    /// `SaveToPipe526470`'s SHA-1 after excluding the selected Digest section.
+    /// `ReadCCFile` bypasses Digest for a zero-byte physical file. The section
+    /// removal that follows a positive read is `remove_digest_for_checked_load`.
+    pub(crate) fn verify_digest(&self, payload_len: usize) -> DigestVerification {
         if payload_len == 0 {
             return DigestVerification::Empty;
         }
@@ -616,9 +613,8 @@ impl IniFile {
         }
 
         let decoded = crate::util::base64::base64_decode(&packed);
-        let read_any_digest_bytes = matches!(&decoded, Ok(bytes) if !bytes.is_empty());
         let expected = crate::util::sha1::sha1_bytes(&self.save_to_pipe(Some("Digest")));
-        let verification = match decoded {
+        match decoded {
             Ok(decoded) if decoded.len() >= expected.len() => {
                 if decoded[..expected.len()] == expected[..] {
                     DigestVerification::Valid
@@ -630,17 +626,7 @@ impl IniFile {
             // native 20-byte compare reads its uninitialized stack tail. Do
             // not claim the map decoder's strict error as native rejection.
             Ok(_) | Err(_) => DigestVerification::Indeterminate,
-        };
-
-        // ReadCCFile clears Digest only after ReadUUBlock reports a positive
-        // byte count, before comparing the checksum. A zero-byte/invalid
-        // Base64 read returns status2 without this mutation. The strict Rust
-        // decoder cannot report a partially decoded malformed prefix, which
-        // remains an input-specific native residual.
-        if read_any_digest_bytes {
-            self.remove_section_at(position);
         }
-        verification
     }
 
     fn remove_section_at(&mut self, position: usize) {

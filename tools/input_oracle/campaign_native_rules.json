@@ -215,7 +215,7 @@
           0
         ]
       ],
-      "digest_key_present_after": false,
+      "digest_key_present_after": true,
       "input": {
         "case": "admitted_valid_file",
         "file": {
@@ -270,7 +270,7 @@
         "mode": 5
       },
       "process_reached": true,
-      "readccfile_status": 2,
+      "readccfile_status": 1,
       "requested_filename": "TMCJ4F.INI"
     },
     {
@@ -299,7 +299,7 @@
           0
         ]
       ],
-      "digest_key_present_after": false,
+      "digest_key_present_after": true,
       "input": {
         "case": "admitted_wrong_digest",
         "file": {
@@ -312,7 +312,7 @@
         "mode": 5
       },
       "process_reached": true,
-      "readccfile_status": 2,
+      "readccfile_status": 1,
       "requested_filename": "TMCJ4F.INI"
     }
   ]

@@ -2890,19 +2890,12 @@ fn load_map_first_step(
                 full_init_entry_mode,
                 current_mode_at_campaign_gate,
             )?;
-            let mut selected_tmcj4f = select_tmcj4f_for_full_init(
+            let tmcj4f_ini = select_tmcj4f_for_full_init(
                 asset_manager,
                 full_init_entry_mode,
                 services.the_team_enabled,
             )?;
-            // Full_Init's ReadCCFile call uses checkDigest=1, but does not
-            // test its returned status before RulesClass::Process at
-            // 0x00687B76. Apply its positive-read section mutation while
-            // preserving status 2 as non-gating for this caller.
-            let _read_status = selected_tmcj4f
-                .as_mut()
-                .map(crate::rules::retail_sources::SelectedIni::prepare_for_native_ccfile_read);
-            let tmcj4f_ini = selected_tmcj4f.as_ref().map(|selected| &selected.ini);
+            let tmcj4f_ini = tmcj4f_ini.as_ref();
             #[cfg(feature = "ares")]
             let prepared_prefix = services.prepared_noncampaign_prefix.take();
             let rules_prefix = if materialization == FreshMapMaterialization::AcceptedGenerated {
@@ -4092,8 +4085,8 @@ fn select_campaign_named_ini_for_full_init(
     if asset_manager.resolve_ref(&name).is_none() {
         return Ok(None);
     }
-    // This Full_Init ReadCCFile caller passes zero for both digest options;
-    // unlike TMCJ4F, it leaves any `[Digest]` section in the INIClass.
+    // This Full_Init ReadCCFile caller passes zero for both digest options,
+    // so any `[Digest]` section stays in the INIClass.
     Ok(Some(
         crate::rules::retail_sources::select_ini(asset_manager, &name)
             .map_err(anyhow::Error::msg)?
@@ -4105,14 +4098,16 @@ fn select_tmcj4f_for_full_init(
     asset_manager: &mut AssetManager,
     game_mode: crate::app::match_runtime::session::SessionMode,
     the_team_enabled: bool,
-) -> Result<Option<crate::rules::retail_sources::SelectedIni>> {
+) -> Result<Option<crate::rules::ini_parser::IniFile>> {
     if !should_read_tmcj4f(game_mode, the_team_enabled)
         || asset_manager.resolve_ref("TMCJ4F.INI").is_none()
     {
         return Ok(None);
     }
+    // ReadCCFile at 0x00687B66 takes ESI, zeroed at 0x0068773D, for both
+    // digest options: no Digest check, and `[Digest]` stays in the INIClass.
     crate::rules::retail_sources::select_ini(asset_manager, "TMCJ4F.INI")
-        .map(Some)
+        .map(|selected| Some(selected.ini))
         .map_err(anyhow::Error::msg)
 }
 
@@ -4347,11 +4342,10 @@ mod full_init_rules_gate_tests {
     }
 
     #[test]
-    fn tmcj4f_native_cases_gate_checked_reads_and_process_status_two() {
+    fn tmcj4f_native_cases_gate_the_read_and_ignore_its_digest() {
         use crate::app::match_runtime::session::SessionMode;
         use crate::assets::asset_manager::AssetManager;
         use crate::map::source::test_support::TestDirectory;
-        use crate::rules::ini_parser::DigestVerification;
         use crate::rules::process_owner::NativeScenarioRulesPrefix;
 
         let fixture = native_rules_fixture();
@@ -4373,7 +4367,7 @@ mod full_init_rules_gate_tests {
             let mode = SessionMode::from_game_mode(input["mode"].as_i64().unwrap() as i32);
             let team_flag = input["flag"].as_u64().unwrap() == 1;
             let gate_open = should_read_tmcj4f(mode, team_flag);
-            let mut selected = select_tmcj4f_for_full_init(&mut assets, mode, team_flag).unwrap();
+            let selected = select_tmcj4f_for_full_init(&mut assets, mode, team_flag).unwrap();
             let process_reached = case["process_reached"].as_bool().unwrap();
             assert_eq!(selected.is_some(), process_reached, "{case_name}");
             assert_eq!(
@@ -4391,22 +4385,10 @@ mod full_init_rules_gate_tests {
 
             let mut owner = rules_owner();
             let map_ini = crate::rules::ini_parser::IniFile::empty();
-            let loaded = if let Some(selected) = selected.as_mut() {
-                let status = selected.prepare_for_native_ccfile_read();
-                let expected_status = match (
-                    case["readccfile_status"].as_u64(),
-                    file["digest_variant"].as_str(),
-                ) {
-                    (Some(1), Some("valid")) => DigestVerification::Valid,
-                    (Some(2), Some("missing")) => DigestVerification::Missing,
-                    (Some(2), Some("wrong")) => DigestVerification::Invalid,
-                    value => {
-                        panic!("unexpected native ReadCCFile result for {case_name}: {value:?}")
-                    }
-                };
-                assert_eq!(status, expected_status, "{case_name}");
+            let loaded = if let Some(selected) = selected.as_ref() {
+                assert_eq!(case["readccfile_status"].as_u64(), Some(1), "{case_name}");
                 assert_eq!(
-                    selected.ini.section("Digest").is_some(),
+                    selected.section("Digest").is_some(),
                     case["digest_key_present_after"].as_bool().unwrap(),
                     "{case_name}"
                 );
@@ -4414,7 +4396,7 @@ mod full_init_rules_gate_tests {
                     .load_scenario_with_post_map(
                         NativeScenarioRulesPrefix::NonCampaign(None),
                         &map_ini,
-                        &selected.ini,
+                        selected,
                         |_| (),
                     )
                     .unwrap()

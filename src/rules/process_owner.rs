@@ -69,8 +69,10 @@ impl NativeLangRuleSource {
         match self {
             Self::Prevalidated(ini) => NativeLangRuleRead::Accepted(ini.clone()),
             Self::Selected(selected) => {
-                let mut physical = selected.physical_ini.clone();
-                match physical.verify_digest_and_remove(selected.source.payload_len) {
+                match selected
+                    .physical_ini
+                    .verify_digest(selected.source.payload_len)
+                {
                     DigestVerification::Empty => NativeLangRuleRead::Accepted(selected.ini.clone()),
                     DigestVerification::Valid => {
                         let mut ini = selected.ini.clone();
@@ -825,6 +827,11 @@ impl NativeRulesProcessOwner {
     /// projection so later consumers can retain native read-time identities;
     /// the same native Rules processor then continues into TMCJ4F at
     /// 0x00687B76.
+    ///
+    /// RESIDUAL: Full_Init also runs about 20 map readers between the AI
+    /// readers and the TMCJ4F gate (0x006879E8..0x00687B13). VERA's map
+    /// loading reads the final Rules instead, so a TMCJ4F value one of those
+    /// readers consumes takes effect earlier. Stock YR mounts no TMCJ4F.INI.
     pub fn load_scenario_with_post_map<F, T>(
         &mut self,
         prefix: NativeScenarioRulesPrefix<'_>,

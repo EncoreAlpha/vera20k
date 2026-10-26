@@ -57,46 +57,19 @@ fn langrule_digest_verification_accepts_matching_sha1_and_rejects_changed_sha1()
         "[AudioVisual]\nLaserTargetColor=6\nBerserkColor=9\n",
     );
     const DIGEST: &str = "5Z9CTq3TQS20/wfWQHiRlHIBMME=";
-    let mut valid = IniFile::from_str(&format!("{BODY}[Digest]\n1={DIGEST}\n"));
-    assert_eq!(valid.verify_digest_and_remove(1), DigestVerification::Valid);
-    assert!(valid.section("Digest").is_none());
+    let valid = IniFile::from_str(&format!("{BODY}[Digest]\n1={DIGEST}\n"));
+    assert_eq!(valid.verify_digest(1), DigestVerification::Valid);
 
     let changed = format!("B{}", &DIGEST[1..]);
-    let mut mismatched = IniFile::from_str(&format!("{BODY}[Digest]\n1={changed}\n"));
-    assert_eq!(
-        mismatched.verify_digest_and_remove(1),
-        DigestVerification::Invalid
-    );
-    assert!(
-        mismatched.section("Digest").is_none(),
-        "ReadCCFile clears Digest even when its comparison rejects the file"
-    );
+    let mismatched = IniFile::from_str(&format!("{BODY}[Digest]\n1={changed}\n"));
+    assert_eq!(mismatched.verify_digest(1), DigestVerification::Invalid);
 
-    let mut missing = IniFile::from_str(BODY);
-    assert_eq!(
-        missing.verify_digest_and_remove(1),
-        DigestVerification::Missing
-    );
+    let missing = IniFile::from_str(BODY);
+    assert_eq!(missing.verify_digest(1), DigestVerification::Missing);
+    assert_eq!(IniFile::empty().verify_digest(0), DigestVerification::Empty);
 
-    let mut empty = IniFile::empty();
-    assert_eq!(empty.verify_digest_and_remove(0), DigestVerification::Empty);
-
-    let mut short = IniFile::from_str("[Digest]\n1=A\n");
-    assert_eq!(
-        short.verify_digest_and_remove(8),
-        DigestVerification::Indeterminate
-    );
-    assert!(
-        short.section("Digest").is_some(),
-        "a malformed Base64 value with no proven decoded bytes does not establish ReadUUBlock's positive-read mutation"
-    );
-
-    let mut short_positive_read = IniFile::from_str("[Digest]\n1=QQ==\n");
-    assert_eq!(
-        short_positive_read.verify_digest_and_remove(8),
-        DigestVerification::Indeterminate
-    );
-    assert!(short_positive_read.section("Digest").is_none());
+    let short = IniFile::from_str("[Digest]\n1=QQ==\n");
+    assert_eq!(short.verify_digest(8), DigestVerification::Indeterminate);
 }
 
 #[test]

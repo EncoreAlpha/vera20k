@@ -93,9 +93,8 @@
 //!   on cold start and scenario reset, and Processes TMCJ4F after post-map AI
 //!   reads only for GameMode 5 + THETEAM + available file. LANGRULE status 2
 //!   skips its reset tail; malformed LANG Digest is indeterminate and VERA
-//!   fails closed. TMCJ's caller Processes even when ReadCCFile returns 2, so
-//!   that status never gates the layer; a malformed zero-decode Digest may
-//!   leave section-removal behavior indeterminate. Normal campaign mode 0
+//!   fails closed. TMCJ4F, like the campaign basename, is read without a
+//!   Digest check and keeps its `[Digest]` section. Normal campaign mode 0
 //!   skips the basename pass. An active entry-nonzero-to-current-zero writer
 //!   remains unproven; bounded TMCJ and campaign-gate witnesses do not execute
 //!   the complete Full_Init scenario path.

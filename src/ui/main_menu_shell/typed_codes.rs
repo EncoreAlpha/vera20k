@@ -19,7 +19,8 @@ pub enum MainMenuTypedCode {
     /// `THETEAM` (`0x00825CBC`) toggles `0x00A8ED91`. In skirmish (game mode
     /// 5) `ScenarioClass::Full_Init` reads it at `0x00687B21`, checks
     /// `TMCJ4F.INI` availability at `0x00687B2A..0x00687B58`, then Processes
-    /// it at `0x00687B76`, after the AIMD/map AI readers.
+    /// it at `0x00687B76`, after the AIMD/map AI readers. Only RA2's
+    /// MAPS01/02.MIX carry it; stock YR mounts neither.
     TheTeam,
     /// `HIRES` (`0x00825CB4`) toggles OptionsClass+0x35 (`0x00A8EB95`), the
     /// `[Video] AllowHiResModes` byte.

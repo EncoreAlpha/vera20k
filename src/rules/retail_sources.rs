@@ -43,39 +43,6 @@ pub struct SelectedIni {
     pub directive_diagnostics: Vec<DirectiveDiagnostic>,
 }
 
-impl SelectedIni {
-    /// Apply the native ReadCCFile digest-section mutation to the effective
-    /// layer without exposing its status to the caller. Some Full_Init callers
-    /// still Process the INI when ReadCCFile returns status 2.
-    ///
-    /// Reuse the existing physical-file verifier to detect whether a positive
-    /// Digest read removed the selected section, then apply that same mutation
-    /// to the effective layer. Full mismatches and short values with decoded
-    /// bytes still remove the section. Malformed zero-decode values remain
-    /// indeterminate because the native decoder may have written a prefix
-    /// before the comparison reads an uninitialized stack tail.
-    pub fn prepare_for_native_ccfile_read(
-        &mut self,
-    ) -> crate::rules::ini_parser::DigestVerification {
-        let mut physical = self.physical_ini.clone();
-        let digest_sections_before = physical
-            .section_names()
-            .into_iter()
-            .filter(|name| *name == "Digest")
-            .count();
-        let verification = physical.verify_digest_and_remove(self.source.payload_len);
-        let digest_sections_after = physical
-            .section_names()
-            .into_iter()
-            .filter(|name| *name == "Digest")
-            .count();
-        if digest_sections_after < digest_sections_before {
-            self.ini.remove_digest_for_checked_load();
-        }
-        verification
-    }
-}
-
 enum OptionalIniSelection {
     Absent,
     Selected(SelectedIni),
@@ -495,65 +462,6 @@ mod tests {
             .expect("a rejected digest is still a present physical source");
         assert_eq!(selected.source.payload_len, invalid.len());
         assert!(selected.ini.section("Digest").is_some());
-    }
-
-    #[test]
-    fn ccfile_digest_projection_removes_only_the_selected_duplicate_section() {
-        use crate::rules::ini_parser::DigestVerification;
-
-        let directory = TestDirectory::new("ccfile-digest-duplicate-sections");
-        directory.write("rulesmd.ini", b"");
-        directory.write("artmd.ini", b"");
-        let bytes = b"[General]\nBuildSpeed=.7\n\
-                     [Digest]\n1=AAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\
-                     [Digest]\n1=BBBBBBBBBBBBBBBBBBBBBBBBBBBB\n";
-        directory.write("tmcj4f.ini", bytes);
-        let assets = AssetManager::from_loose_root_for_test(directory.path());
-        let mut selected = select_ini(&assets, "TMCJ4F.INI").unwrap();
-        let mut physical_after_read = selected.physical_ini.clone();
-        assert_eq!(
-            physical_after_read
-                .section_names()
-                .into_iter()
-                .filter(|name| *name == "Digest")
-                .count(),
-            2
-        );
-        assert_eq!(
-            physical_after_read.verify_digest_and_remove(bytes.len()),
-            DigestVerification::Invalid,
-            "the first selected 21-byte digest is a full checksum mismatch"
-        );
-        assert_eq!(
-            physical_after_read
-                .section_names()
-                .into_iter()
-                .filter(|name| *name == "Digest")
-                .count(),
-            1,
-            "ReadCCFile removes just the selected occurrence"
-        );
-
-        selected.prepare_for_native_ccfile_read();
-        assert_eq!(
-            selected.ini.section_names(),
-            physical_after_read.section_names()
-        );
-        let contents = |ini: &IniFile| {
-            ini.section_names()
-                .into_iter()
-                .map(|name| {
-                    let entries = ini
-                        .section(name)
-                        .unwrap()
-                        .raw_entries()
-                        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                        .collect::<Vec<_>>();
-                    (name.to_owned(), entries)
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(contents(&selected.ini), contents(&physical_after_read));
     }
 
     #[cfg(feature = "ares")]
