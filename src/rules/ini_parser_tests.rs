@@ -48,6 +48,58 @@ fn checked_digest_removal_preserves_the_sorted_duplicate_section_order() {
 }
 
 #[test]
+fn langrule_digest_verification_accepts_matching_sha1_and_rejects_changed_sha1() {
+    // This original LANGRULE control carries the native SaveToPipe SHA-1.
+    // Changing one base64 symbol keeps a well-formed 20-byte digest while
+    // proving mismatch admission is distinct from a missing Digest section.
+    const BODY: &str = concat!(
+        "[ColorAdd]\nLANG0=7,8,9\nLANG1=30,31,32\n",
+        "[AudioVisual]\nLaserTargetColor=6\nBerserkColor=9\n",
+    );
+    const DIGEST: &str = "5Z9CTq3TQS20/wfWQHiRlHIBMME=";
+    let mut valid = IniFile::from_str(&format!("{BODY}[Digest]\n1={DIGEST}\n"));
+    assert_eq!(valid.verify_digest_and_remove(1), DigestVerification::Valid);
+    assert!(valid.section("Digest").is_none());
+
+    let changed = format!("B{}", &DIGEST[1..]);
+    let mut mismatched = IniFile::from_str(&format!("{BODY}[Digest]\n1={changed}\n"));
+    assert_eq!(
+        mismatched.verify_digest_and_remove(1),
+        DigestVerification::Invalid
+    );
+    assert!(
+        mismatched.section("Digest").is_none(),
+        "ReadCCFile clears Digest even when its comparison rejects the file"
+    );
+
+    let mut missing = IniFile::from_str(BODY);
+    assert_eq!(
+        missing.verify_digest_and_remove(1),
+        DigestVerification::Missing
+    );
+
+    let mut empty = IniFile::empty();
+    assert_eq!(empty.verify_digest_and_remove(0), DigestVerification::Empty);
+
+    let mut short = IniFile::from_str("[Digest]\n1=A\n");
+    assert_eq!(
+        short.verify_digest_and_remove(8),
+        DigestVerification::Indeterminate
+    );
+    assert!(
+        short.section("Digest").is_some(),
+        "a malformed Base64 value with no proven decoded bytes does not establish ReadUUBlock's positive-read mutation"
+    );
+
+    let mut short_positive_read = IniFile::from_str("[Digest]\n1=QQ==\n");
+    assert_eq!(
+        short_positive_read.verify_digest_and_remove(8),
+        DigestVerification::Indeterminate
+    );
+    assert!(short_positive_read.section("Digest").is_none());
+}
+
+#[test]
 fn packed_reader_visits_duplicate_physical_keys_through_the_value_index() {
     // ReadUUBlock526FB0 uses the physical entry count at52708C and walks
     // each physical key at5270C5, then resolves its value at527108.
