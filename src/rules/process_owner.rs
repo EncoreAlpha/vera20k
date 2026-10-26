@@ -332,16 +332,18 @@ impl NativeRulesProcessOwner {
         if let Some(NativeLangRuleSource::SelectionFailed(error)) = langrule.as_ref() {
             log::warn!("Optional LANGRULE.INI selection failed: {error}");
         }
-        let startup_langrule =
-            langrule
-                .as_ref()
-                .and_then(|source| match source.read_for_process() {
-                    NativeLangRuleRead::Accepted(ini) => Some(ini),
-                    NativeLangRuleRead::Absent
-                    | NativeLangRuleRead::DigestRejected
-                    | NativeLangRuleRead::DigestIndeterminate
-                    | NativeLangRuleRead::SelectionFailed => None,
-                });
+        // A rejected Digest is fatal at startup. Each reset re-reads this same
+        // snapshot, so the reset tail's rejected branch cannot follow.
+        let startup_langrule = match langrule
+            .as_ref()
+            .map(NativeLangRuleSource::read_for_process)
+        {
+            Some(NativeLangRuleRead::Accepted(ini)) => Some(ini),
+            Some(NativeLangRuleRead::DigestRejected | NativeLangRuleRead::DigestIndeterminate) => {
+                return Err(RulesError::LangRuleDigestRejected);
+            }
+            None | Some(NativeLangRuleRead::Absent | NativeLangRuleRead::SelectionFailed) => None,
+        };
         let cold_trace = process_native_rules_cold_start(
             NativeRulesRegistryState::default(),
             &selected_rules_root,
@@ -1165,8 +1167,8 @@ mod tests {
     }
 
     #[test]
-    fn rejected_langrule_digest_skips_only_the_reset_tail_and_not_the_map() {
-        fn load(with_langrule: bool) -> RuleSet {
+    fn langrule_without_a_digest_fails_startup() {
+        fn load(with_langrule: bool) -> Result<RuleSet, String> {
             let directory = TestDirectory::new(if with_langrule {
                 "langrule-missing-digest"
             } else {
@@ -1180,27 +1182,23 @@ mod tests {
             let assets = AssetManager::from_loose_root_for_test(directory.path());
             let mut owner = RetailRulesSources::select(&assets)
                 .unwrap()
-                .into_owner(Arc::default(), Arc::default())
-                .unwrap();
+                .into_owner(Arc::default(), Arc::default())?;
             let mode = IniFile::from_str("[General]\nBuildSpeed=.5\n");
-            owner
+            Ok(owner
                 .load_scenario(
                     NativeScenarioRulesPrefix::NonCampaign(Some(&mode)),
                     &IniFile::from_str("[General]\nTreeStrength=321\n"),
                 )
                 .unwrap()
-                .rules
+                .rules)
         }
 
-        let rejected = load(true);
-        assert_eq!(
-            rejected.production.build_speed,
-            crate::util::native_x87::NativeF64Bits::from_bits(f64::from(0.8_f32).to_bits()),
-            "a present LANGRULE without Digest skips the mode pass",
+        assert!(
+            load(true)
+                .unwrap_err()
+                .ends_with(&RulesError::LangRuleDigestRejected.to_string())
         );
-        assert_eq!(rejected.general.tree_strength, 321, "map Rules still run");
-
-        let absent = load(false);
+        let absent = load(false).unwrap();
         assert_eq!(
             absent.production.build_speed,
             crate::util::native_x87::NativeF64Bits::from_bits(f64::from(0.5_f32).to_bits()),
@@ -1211,13 +1209,9 @@ mod tests {
 
     #[test]
     fn selected_langrule_digest_gates_cold_start_and_startup_projection() {
-        const VALID_LANGRULE: &str = concat!(
-            "[ColorAdd]\nLANG0=7,8,9\nLANG1=30,31,32\n",
-            "[AudioVisual]\nLaserTargetColor=6\nBerserkColor=9\n",
-            "[Digest]\n1=5Z9CTq3TQS20/wfWQHiRlHIBMME=\n",
-        );
+        use crate::rules::retail_ini_fixture::DIGESTED_LANGRULE_CONTROL as VALID_LANGRULE;
 
-        fn startup_color_add(langrule: &str) -> [u8; 3] {
+        fn startup_color_add(langrule: &str) -> Result<[u8; 3], String> {
             let directory = TestDirectory::new("startup-langrule-digest");
             directory.write("rulesmd.ini", b"[General]\nBuildSpeed=.8\n");
             directory.write("artmd.ini", b"");
@@ -1225,22 +1219,25 @@ mod tests {
             let assets = AssetManager::from_loose_root_for_test(directory.path());
             let owner = RetailRulesSources::select(&assets)
                 .unwrap()
-                .into_owner(Arc::default(), Arc::default())
-                .unwrap();
+                .into_owner(Arc::default(), Arc::default())?;
             let projection = owner.startup_compatibility_projection().unwrap();
-            RuleSet::from_processed_rules(&projection)
+            Ok(RuleSet::from_processed_rules(&projection)
                 .unwrap()
                 .color_add
                 .entries()[0]
-                .rgb
+                .rgb)
         }
 
-        assert_eq!(startup_color_add(VALID_LANGRULE), [7, 8, 9]);
+        assert_eq!(startup_color_add(VALID_LANGRULE).unwrap(), [7, 8, 9]);
         let invalid_langrule = VALID_LANGRULE.replacen(
             "1=5Z9CTq3TQS20/wfWQHiRlHIBMME=",
             "1=AZ9CTq3TQS20/wfWQHiRlHIBMME=",
             1,
         );
-        assert_eq!(startup_color_add(&invalid_langrule), [0, 0, 0]);
+        assert!(
+            startup_color_add(&invalid_langrule)
+                .unwrap_err()
+                .ends_with(&RulesError::LangRuleDigestRejected.to_string())
+        );
     }
 }

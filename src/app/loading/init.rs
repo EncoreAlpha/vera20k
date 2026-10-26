@@ -2876,19 +2876,10 @@ fn load_map_first_step(
                 skirmish_launch_session.map(|launch| launch.mode.override_file.as_str()),
             )
             .map_err(anyhow::Error::msg)?;
-            // Full_Init caches `entry GameMode == 0` at 0x00686B3D, then
-            // checks the current mode at 0x00686C8B. The 0x00686C9D branch
-            // skips the scenario-basename Rules pass unless entry was nonzero
-            // and the current mode is Campaign (0). No intervening mode
-            // transition is established for this loader, so both observations
-            // come from the existing startup/session mode owner. This keeps a
-            // normal Campaign 0 -> 0 load on the native skip path.
-            let current_mode_at_campaign_gate = full_init_entry_mode;
             let campaign_named_ini = select_campaign_named_ini_for_full_init(
                 asset_manager,
                 campaign.as_ref(),
                 full_init_entry_mode,
-                current_mode_at_campaign_gate,
             )?;
             let tmcj4f_ini = select_tmcj4f_for_full_init(
                 asset_manager,
@@ -4051,29 +4042,20 @@ fn load_map_first_step(
     )))
 }
 
-/// Full_Init caches `entry GameMode == 0` at 0x00686B3D and tests current
-/// GameMode again at 0x00686C8B; 0x00686C9D bypasses the basename Rules pass
-/// unless the entry was nonzero and the current mode is Campaign (0).
-const fn should_process_campaign_named_ini(
-    entry_mode: crate::app::match_runtime::session::SessionMode,
-    current_mode: crate::app::match_runtime::session::SessionMode,
-) -> bool {
-    !matches!(
-        entry_mode,
-        crate::app::match_runtime::session::SessionMode::Campaign
-    ) && matches!(
-        current_mode,
-        crate::app::match_runtime::session::SessionMode::Campaign
-    )
-}
-
+/// Full_Init processes the scenario-basename INI whenever the current
+/// GameMode is Campaign (0x00686C8B). Its cached `entry GameMode == 0` flag
+/// (0x00686B3D) only picks the pass: 0x00686C9D skips the file while the flag
+/// is set, then 0x00687599 clears it (0x006875A8) and reruns the body from
+/// 0x00686B5D, whose second pass reads it.
 fn select_campaign_named_ini_for_full_init(
     asset_manager: &mut AssetManager,
     campaign: Option<&crate::app::match_bootstrap::PreparedCampaignStartup>,
-    entry_mode: crate::app::match_runtime::session::SessionMode,
     current_mode: crate::app::match_runtime::session::SessionMode,
 ) -> Result<Option<crate::rules::ini_parser::IniFile>> {
-    if !should_process_campaign_named_ini(entry_mode, current_mode) {
+    if !matches!(
+        current_mode,
+        crate::app::match_runtime::session::SessionMode::Campaign
+    ) {
         return Ok(None);
     }
     let Some(campaign) = campaign else {
@@ -4104,8 +4086,9 @@ fn select_tmcj4f_for_full_init(
     {
         return Ok(None);
     }
-    // ReadCCFile at 0x00687B66 takes ESI, zeroed at 0x0068773D, for both
-    // digest options: no Digest check, and `[Digest]` stays in the INIClass.
+    // ReadCCFile at 0x00687B66 takes ESI for both digest options. Every path
+    // there zeroes it (0x006876F8, 0x0068773D), so there is no Digest check
+    // and `[Digest]` stays in the INIClass.
     crate::rules::retail_sources::select_ini(asset_manager, "TMCJ4F.INI")
         .map(|selected| Some(selected.ini))
         .map_err(anyhow::Error::msg)
@@ -4226,42 +4209,17 @@ mod full_init_rules_gate_tests {
             b"[InfantryTypes]\n0=CAMPAIGNONLY\n[CAMPAIGNONLY]\nStrength=100\nTechLevel=1\n",
         );
         let mut assets = AssetManager::from_loose_root_for_test(directory.path());
-        assert!(
-            assets.resolve_ref("ALL01UMD.INI").is_some(),
-            "the named INI exists even though the native mode gate skips it",
-        );
+        // A Campaign 0 -> 0 start reads the file on Full_Init's second pass.
         let selected = select_campaign_named_ini_for_full_init(
             &mut assets,
             Some(&campaign),
             startup.session_mode(),
-            startup.session_mode(),
         )
         .unwrap();
-        assert!(selected.is_none());
-
+        assert!(selected.is_some());
         let loaded = rules_owner()
             .load_scenario(
                 NativeScenarioRulesPrefix::Campaign(selected.as_ref()),
-                &map.ini,
-            )
-            .unwrap();
-        let (rules, _, _, receipt) = loaded.into_parts();
-        assert_eq!(receipt.pre_reset_event_count(), 0);
-        assert!(!rules.infantry_ids.iter().any(|id| id == "CAMPAIGNONLY"));
-
-        // Controlled mode transition exercises only the native gate boundary;
-        // no active-YR caller for entry-nonzero/current-zero is established.
-        let controlled_selected = select_campaign_named_ini_for_full_init(
-            &mut assets,
-            Some(&campaign),
-            SessionMode::Skirmish,
-            SessionMode::Campaign,
-        )
-        .unwrap();
-        assert!(controlled_selected.is_some());
-        let loaded = rules_owner()
-            .load_scenario(
-                NativeScenarioRulesPrefix::Campaign(controlled_selected.as_ref()),
                 &map.ini,
             )
             .unwrap();
@@ -4300,14 +4258,17 @@ mod full_init_rules_gate_tests {
             let mut assets = AssetManager::from_loose_root_for_test(directory.path());
             let entry_mode = SessionMode::from_game_mode(entry_raw);
             let current_mode = SessionMode::from_game_mode(current_raw);
-            let selected = select_campaign_named_ini_for_full_init(
-                &mut assets,
-                Some(&campaign),
-                entry_mode,
-                current_mode,
-            )
-            .unwrap();
+            let selected =
+                select_campaign_named_ini_for_full_init(&mut assets, Some(&campaign), current_mode)
+                    .unwrap();
+            // Each row is one pass from 0x00686C8B. An entry-0 row's skip is
+            // followed by the 0x00687599 rerun, which reads the file.
             let process_reached = case["process_reached"].as_bool().unwrap();
+            if entry_mode == SessionMode::Campaign && current_mode == SessionMode::Campaign {
+                assert!(!process_reached, "{case_name}: the first pass skips");
+                assert!(selected.is_some(), "{case_name}: the rerun reads it");
+                continue;
+            }
             assert_eq!(selected.is_some(), process_reached, "{case_name}");
             assert_eq!(
                 case["requested_filename"].as_str(),

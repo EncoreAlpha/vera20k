@@ -89,15 +89,16 @@
 //!   each type's `from_ini_section`; `art_data.rs`, `team_ai_ini.rs`, `sound_ini.rs`.
 //! - VERA-only residuals: `sound.ini` under SOUNDMD and fatal missing mode INI
 //!   (native: empty INI, 0x005D67B0). The process Rules owner handles the
-//!   gated campaign basename pre-reset pass, rechecks selected LANGRULE Digest
-//!   on cold start and scenario reset, and Processes TMCJ4F after post-map AI
-//!   reads only for GameMode 5 + THETEAM + available file. LANGRULE status 2
-//!   skips its reset tail; malformed LANG Digest is indeterminate and VERA
-//!   fails closed. TMCJ4F, like the campaign basename, is read without a
-//!   Digest check and keeps its `[Digest]` section. Normal campaign mode 0
-//!   skips the basename pass. An active entry-nonzero-to-current-zero writer
-//!   remains unproven; bounded TMCJ and campaign-gate witnesses do not execute
-//!   the complete Full_Init scenario path.
+//!   gated campaign basename pre-reset pass, checks the selected LANGRULE
+//!   Digest, and Processes TMCJ4F after post-map AI reads only for GameMode 5
+//!   + THETEAM + available file. A rejected LANGRULE Digest fails startup
+//!   (0x0052D302); a malformed one is indeterminate and VERA fails closed.
+//!   Each reset re-checks the same snapshot. TMCJ4F, like the campaign
+//!   basename, is read without a Digest check and keeps its `[Digest]`
+//!   section. Every campaign reads the basename pass: with entry mode 0 on
+//!   Full_Init's second pass (0x00687599 reruns the body). Bounded TMCJ and
+//!   campaign-gate witnesses do not execute the complete Full_Init scenario
+//!   path.
 //!
 //! ### Retail INIs in tests
 //! - `cargo run --bin extract-ini` fills the gitignored `ini/` with selected
