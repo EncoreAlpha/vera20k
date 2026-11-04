@@ -14,7 +14,9 @@
 //! A fresh load retains duplicate nonempty section bodies, and later copies
 //! of a key for `SaveToPipe`. Fresh entry reads use the native CRC index;
 //! compatibility projections keep their explicit exact-key overlay policy.
-//! Empty keys, values, and physical section bodies are not inserted.
+//! Ordinary parsing does not insert empty keys, values, or physical section
+//! bodies. An opt-in external-overlay parser retains empty-value presence only
+//! as metadata invisible to normal readers.
 //! Native registry allocation and ordered RulesClass passes live in
 //! `rules::native_processing`; typed gameplay projection lives in `ruleset`.
 
@@ -61,6 +63,12 @@ pub struct IniSection {
     entries: HashMap<String, String>,
     /// Exact keys in their first insertion order.
     key_order: Vec<String>,
+    /// Empty values retained only by the opt-in external-configuration parser.
+    /// They remain invisible to ordinary readers, matching the active INI
+    /// loader while allowing a higher-level overlay to represent an explicit
+    /// empty name.
+    #[serde(skip)]
+    explicit_empty_values: Vec<String>,
     /// Values presented by successive `RulesClass::Process` passes.
     ///
     /// Raw INIs leave this empty. The compatibility projection retains it so
@@ -92,6 +100,7 @@ impl PartialEq for IniSection {
         self.name == other.name
             && self.entries == other.entries
             && self.key_order == other.key_order
+            && self.explicit_empty_values == other.explicit_empty_values
             && self.projected_values == other.projected_values
             && self.duplicate_entries == other.duplicate_entries
     }
@@ -125,6 +134,7 @@ impl<'de> serde::Deserialize<'de> for IniSection {
             name: saved.name,
             entries: saved.entries,
             key_order: saved.key_order,
+            explicit_empty_values: Vec::new(),
             projected_values: saved.projected_values,
             duplicate_entries: Vec::new(),
             fresh_index: None,
@@ -138,6 +148,7 @@ impl IniSection {
             name,
             entries: HashMap::new(),
             key_order: Vec::new(),
+            explicit_empty_values: Vec::new(),
             projected_values: HashMap::new(),
             duplicate_entries: Vec::new(),
             fresh_index: None,
@@ -203,26 +214,30 @@ impl IniSection {
             let Some(value) = patch.get(key) else {
                 continue;
             };
-            let Some(index) = self.fresh_index.as_ref() else {
-                self.set(key, value);
-                continue;
-            };
-            match find_crc_index_value(index, ini_name_crc(key)).copied() {
-                Some(PhysicalEntry::First(at)) => {
-                    *self.entries.get_mut(&self.key_order[at]).unwrap() = value.to_owned();
-                }
-                Some(PhysicalEntry::Duplicate(at)) => {
-                    self.duplicate_entries[at].2 = value.to_owned();
-                }
-                None => {
-                    let at = self.key_order.len();
-                    self.insert_initial(key, value);
-                    insert_source_index(
-                        self.fresh_index.as_mut().unwrap(),
-                        ini_name_crc(key),
-                        PhysicalEntry::First(at),
-                    );
-                }
+            self.overlay_source_value(key, value);
+        }
+    }
+
+    fn overlay_source_value(&mut self, key: &str, value: &str) {
+        let Some(index) = self.fresh_index.as_ref() else {
+            self.set(key, value);
+            return;
+        };
+        match find_crc_index_value(index, ini_name_crc(key)).copied() {
+            Some(PhysicalEntry::First(at)) => {
+                *self.entries.get_mut(&self.key_order[at]).unwrap() = value.to_owned();
+            }
+            Some(PhysicalEntry::Duplicate(at)) => {
+                self.duplicate_entries[at].2 = value.to_owned();
+            }
+            None => {
+                let at = self.key_order.len();
+                self.insert_initial(key, value);
+                insert_source_index(
+                    self.fresh_index.as_mut().unwrap(),
+                    ini_name_crc(key),
+                    PhysicalEntry::First(at),
+                );
             }
         }
     }
@@ -263,6 +278,15 @@ impl IniSection {
     /// (LoadFromStraw525A60/526177). Value readers still query by name.
     pub fn physical_keys(&self) -> impl Iterator<Item = &str> {
         self.physical_entries().map(|(key, _)| key)
+    }
+
+    pub(crate) fn physical_keys_including_explicit_empty(&self) -> impl Iterator<Item = &str> {
+        self.physical_keys()
+            .chain(self.explicit_empty_values.iter().map(String::as_str))
+    }
+
+    pub(crate) fn has_explicit_empty_value(&self, key: &str) -> bool {
+        self.explicit_empty_values.iter().any(|empty| empty == key)
     }
 
     fn build_fresh_index(&mut self) {
@@ -416,12 +440,32 @@ impl IniFile {
     /// `0x00525BFA` arm, e.g. loose `*.PKT` files at `0x00699B58`) puts that
     /// last entry before testing the flag; VERA has no such merge load.
     pub fn from_bytes(data: &[u8]) -> Result<Self, RulesError> {
-        let complete = data
-            .iter()
-            .rposition(|byte| *byte == b'\n')
-            .map_or(&[][..], |end| &data[..=end]);
+        Self::from_bytes_with_empty_values(data, false)
+    }
+
+    /// Parse an external overlay with the exact same byte widening and line
+    /// parser as [`Self::from_bytes`], while retaining which accepted keys
+    /// had an explicit empty value. Empty values remain absent to normal INI
+    /// readers; the overlay owner may use the marker to clear a prior value.
+    pub(crate) fn from_bytes_preserving_empty_values(data: &[u8]) -> Result<Self, RulesError> {
+        Self::from_bytes_with_empty_values(data, true)
+    }
+
+    fn from_bytes_with_empty_values(
+        data: &[u8],
+        preserve_empty_values: bool,
+    ) -> Result<Self, RulesError> {
+        let complete = if preserve_empty_values {
+            // External coop settings are a small user-authored document;
+            // unlike gamemd's straw reader, accept EOF as the final line end.
+            data
+        } else {
+            data.iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(&[][..], |end| &data[..=end])
+        };
         let text = crate::util::native_string::widen_bytes(complete);
-        Ok(Self::from_str(&text))
+        Ok(Self::parse_text(&text, preserve_empty_values))
     }
 
     #[expect(
@@ -429,6 +473,10 @@ impl IniFile {
         reason = "infallible constructor; FromStr would force a Result on every caller"
     )]
     pub fn from_str(text: &str) -> Self {
+        Self::parse_text(text, false)
+    }
+
+    fn parse_text(text: &str, preserve_empty_values: bool) -> Self {
         let mut ini = Self::empty();
         let mut current_section = None;
 
@@ -460,13 +508,18 @@ impl IniFile {
             // NUL occupies a buffer byte, but subsequent C-string operations
             // make the rest of that physical line invisible to the loader.
             let visible = buffered.split_once('\0').map_or(buffered, |(head, _)| head);
-            Self::parse_line(&mut ini, &mut current_section, visible);
+            Self::parse_line(
+                &mut ini,
+                &mut current_section,
+                visible,
+                preserve_empty_values,
+            );
         }
 
         // Retail provenance: INI lexical loading — `INIClass__LoadFromStraw` @ `0x00525A60`.
         // Active read mode destroys a candidate section unless at least one
         // accepted nonempty entry was linked into it.
-        ini.discard_entryless_sections();
+        ini.discard_entryless_sections(preserve_empty_values);
         for section in &mut ini.sections {
             section.build_fresh_index();
         }
@@ -481,9 +534,12 @@ impl IniFile {
         ini
     }
 
-    fn discard_entryless_sections(&mut self) {
+    fn discard_entryless_sections(&mut self, preserve_empty_values: bool) {
         self.fresh_section_index = None;
-        self.sections.retain(|section| section.entry_count() != 0);
+        self.sections.retain(|section| {
+            section.entry_count() != 0
+                || (preserve_empty_values && !section.explicit_empty_values.is_empty())
+        });
         self.rebuild_first_sections();
     }
 
@@ -496,7 +552,12 @@ impl IniFile {
         }
     }
 
-    fn parse_line(ini: &mut Self, current_section: &mut Option<usize>, raw_line: &str) {
+    fn parse_line(
+        ini: &mut Self,
+        current_section: &mut Option<usize>,
+        raw_line: &str,
+        preserve_empty_values: bool,
+    ) {
         let line = strtrim_ascii(raw_line);
         if line.is_empty() {
             return;
@@ -526,10 +587,18 @@ impl IniFile {
         };
         let key = strtrim_ascii(key);
         let value = strtrim_ascii(value);
-        if key.is_empty() || value.is_empty() {
+        if key.is_empty() {
             return;
         }
         if let Some(index) = *current_section {
+            if value.is_empty() {
+                if preserve_empty_values {
+                    ini.sections[index]
+                        .explicit_empty_values
+                        .push(key.to_owned());
+                }
+                return;
+            }
             ini.sections[index].insert_initial(key, value);
         }
     }
@@ -559,6 +628,13 @@ impl IniFile {
             .iter()
             .map(|section| section.name.as_str())
             .collect()
+    }
+
+    /// Physical section bodies in source order, including repeated names.
+    /// Callers that validate an untrusted patch must inspect every body rather
+    /// than only the native lookup winner returned by [`Self::section`].
+    pub(crate) fn physical_sections(&self) -> impl Iterator<Item = &IniSection> {
+        self.sections.iter()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -663,7 +739,7 @@ impl IniFile {
                 body.projected_values.remove(key);
             }
         }
-        ini.discard_entryless_sections();
+        ini.discard_entryless_sections(false);
         ini
     }
 
@@ -699,6 +775,32 @@ impl IniFile {
                 self.first_section.insert(selected.name.clone(), at);
                 if let Some(index) = self.fresh_section_index.as_mut() {
                     insert_source_index(index, ini_name_crc(&selected.name), at);
+                }
+            }
+        }
+    }
+
+    /// Apply exact source values while retaining this file's physical order,
+    /// duplicate-entry history, and fresh lookup winners. This is the narrow
+    /// write path for validated projections that must not merge arbitrary INI
+    /// sections. Missing sections are appended only when `add_sections` is
+    /// true.
+    pub(crate) fn merge_source_values<'a>(
+        &mut self,
+        values: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+        add_sections: bool,
+    ) {
+        for (section_name, key, value) in values {
+            if let Some(index) = self.section_position(section_name) {
+                self.sections[index].overlay_source_value(key, value);
+            } else if add_sections {
+                let index = self.sections.len();
+                let mut section = IniSection::new(section_name.to_owned());
+                section.set(key, value);
+                self.sections.push(section);
+                self.first_section.insert(section_name.to_owned(), index);
+                if let Some(fresh_index) = &mut self.fresh_section_index {
+                    insert_source_index(fresh_index, ini_name_crc(section_name), index);
                 }
             }
         }
