@@ -29,6 +29,22 @@ pub(crate) fn layout(state: &AppState) -> MultiplayerSetupLayout {
     {
         layout.arrange_extended_rows();
     }
+    if state
+        .match_state
+        .session
+        .network_setup()
+        .and_then(|launch| {
+            crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
+        })
+        .is_some_and(|mode| mode.class.is_vera_cooperative())
+    {
+        crate::ui::coop_lobby::apply(
+            &mut layout,
+            usize::from(state.match_state.session.network_player_row_limit()),
+            w as i32,
+            h as i32,
+        );
+    }
     layout
 }
 

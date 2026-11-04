@@ -103,7 +103,11 @@ pub(crate) fn render_multiplayer_setup(
     } else {
         state.frontend.skirmish_preview_texture = None;
     }
-    let heading = localized_label(state, view.page().title_key, view.page().title_key);
+    let heading = if view.vera_cooperative {
+        "Cooperative Lobby".to_owned()
+    } else {
+        localized_label(state, view.page().title_key, view.page().title_key)
+    };
     let accept_highlight = state
         .frontend
         .multiplayer_setup
@@ -121,6 +125,7 @@ pub(crate) fn render_multiplayer_setup(
                 .show(&heading, &view.mode_label, &view.map_label, now);
             ui.shown = true;
         }
+        ui.statics.set_heading(&heading, now);
         ui.statics
             .set_map_labels(&view.mode_label, &view.map_label, now);
         let shown = ui.statics.paint(now, sliding);
@@ -222,7 +227,17 @@ pub(crate) fn render_multiplayer_setup(
             .filter(|(key, _)| view.team_header || *key != "GUI:Team")
         {
             texts.push(text(
-                &localized_label(state, key, key),
+                &if view.vera_cooperative {
+                    match *key {
+                        "GUI:Players" => "Players".to_owned(),
+                        "GUI:Side" => "Faction".to_owned(),
+                        "GUI:StartPosition" => "Start".to_owned(),
+                        "GUI:Team" => "Co-op Role".to_owned(),
+                        _ => localized_label(state, key, key),
+                    }
+                } else {
+                    localized_label(state, key, key)
+                },
                 *rect,
                 ShellAlign::NONE,
                 SHELL_LABEL_TEXT_RGB,
@@ -312,10 +327,11 @@ pub(crate) fn render_multiplayer_setup(
             let Some(icon) = icon else {
                 continue;
             };
-            if let Some(flag) = icon
-                .country
-                .as_deref()
-                .and_then(|country| atlas.lan_player_side(country))
+            if !view.vera_cooperative
+                && let Some(flag) = icon
+                    .country
+                    .as_deref()
+                    .and_then(|country| atlas.lan_player_side(country))
             {
                 push_flag_entry_clipped_centered(
                     &mut controls,
@@ -350,7 +366,7 @@ pub(crate) fn render_multiplayer_setup(
             }
         }
         // VERA's room keeps its options in Game Options; Difficulty stays.
-        if layout.game_options.is_none() {
+        if layout.game_options.is_none() && !view.vera_cooperative {
             push_option_controls(
                 &mut controls,
                 &mut texts,
@@ -530,10 +546,20 @@ pub(crate) fn render_multiplayer_setup(
                 if let Some(spec) = view.page().button(button.id) {
                     texts.push(shell_text::draw_in_rect_scaled(
                         font,
-                        &view.dialog.button_label(button.id).map_or_else(
-                            || localized_label(state, spec.csf_key, spec.csf_key),
-                            str::to_owned,
-                        ),
+                        &if view.vera_cooperative {
+                            match button.id {
+                                START => "Start Mission".to_owned(),
+                                ACCEPT => "Ready".to_owned(),
+                                CHOOSE_MAP => "Change Map".to_owned(),
+                                BACK => "Leave Room".to_owned(),
+                                _ => localized_label(state, spec.csf_key, spec.csf_key),
+                            }
+                        } else {
+                            view.dialog.button_label(button.id).map_or_else(
+                                || localized_label(state, spec.csf_key, spec.csf_key),
+                                str::to_owned,
+                            )
+                        },
                         button_text_rect(button.rect, pressed, scale),
                         super::text::button_label_color_for_disabled(!view.enabled(button.id)),
                         ShellAlign::H_CENTER | ShellAlign::V_CENTER,

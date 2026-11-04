@@ -54,6 +54,10 @@ impl Default for SkirmishStatics {
 }
 
 impl SkirmishStatics {
+    pub(crate) fn set_heading(&mut self, heading: &str, now: Instant) {
+        self.dialog.set_heading(heading, now);
+    }
+
     /// A new `0x102` instance: hidden, no text (the status line's template
     /// text is `GUI:Blank`).
     pub(crate) fn reset(&mut self) {

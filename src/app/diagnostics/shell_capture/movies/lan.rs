@@ -216,6 +216,9 @@ pub enum LanTarget {
     /// BD given Cooperative host options and the host's C0: the campaign's
     /// description and stage countries.
     CoopGuest,
+    /// The independent VERA Cooperative lobby with a controlled second room
+    /// participant, rendered through the production LAN setup view.
+    VeraCoopHost,
     /// The Cooperative match won (its AI Houses flagged to die, a
     /// controlled outcome): `+0xA0` advanced the record and BC6 opened.
     CoopResult,
@@ -267,6 +270,7 @@ pub(crate) const LAN_CHECKPOINTS: &[(&str, LanTarget)] = &[
     ("lan-0xbc-coop-join", LanTarget::CoopJoin),
     ("lan-coop-host-loading-first", LanTarget::CoopHostGo),
     ("lan-0xbd-coop-campaign", LanTarget::CoopGuest),
+    ("lan-vera-coop-room", LanTarget::VeraCoopHost),
     ("lan-0xbc6-coop-result", LanTarget::CoopResult),
     ("lan-coop-next-loading", LanTarget::CoopNext),
     ("lan-coop-defeat-retry", LanTarget::CoopRetry),
@@ -1817,6 +1821,70 @@ impl LanCapture {
                         self.offline_selection = Some(offline_selection(state));
                         setup_button(state, crate::ui::multiplayer_setup::CHOOSE_MAP)?;
                         self.phase = LanPhase::Chooser;
+                    }
+                    LanTarget::VeraCoopHost if !self.cooperative_committed => {
+                        self.offline_selection = Some(offline_selection(state));
+                        let file = commit_vera_cooperative_fixture_map(state)?;
+                        ensure!(
+                            self.offline_selection == Some(offline_selection(state)),
+                            "LAN capture changed the offline Skirmish selection"
+                        );
+                        self.cooperative_committed = true;
+                        self.event(
+                            frame,
+                            &format!(
+                                "VERA Cooperative selected through production map owner: {file}"
+                            ),
+                        );
+                        self.phase = LanPhase::Host;
+                    }
+                    LanTarget::VeraCoopHost => {
+                        setup::service_event(
+                            state,
+                            NetworkSetupEvent::ParticipantJoined(self.human(false)?),
+                        )?;
+                        setup::service_event(
+                            state,
+                            NetworkSetupEvent::MapStatus {
+                                index: 1,
+                                status: 1,
+                            },
+                        )?;
+                        let view = setup::view(state).context("VERA Cooperative BC")?;
+                        ensure!(
+                            view.vera_cooperative,
+                            "capture selected the stock Cooperative mode"
+                        );
+                        ensure!(
+                            state
+                                .match_state
+                                .session
+                                .network_setup()
+                                .is_some_and(|launch| {
+                                    launch.humans.len() == 2
+                                        && launch.mode.class
+                                            == crate::skirmish_modes::MpModeClass::VeraCooperative
+                                        && launch.selected_map_file.is_some()
+                                        && launch
+                                            .humans
+                                            .iter()
+                                            .any(|human| human.role.native_value() == -2)
+                                        && launch
+                                            .humans
+                                            .iter()
+                                            .any(|human| human.role.native_value() == 0)
+                                }),
+                            "capture room lacks the VERA mode, selected map, or expected roles"
+                        );
+                        ensure!(
+                            view.selected_map_index.is_some() && !view.map_label.is_empty(),
+                            "VERA Cooperative setup view has no selected map"
+                        );
+                        self.event(
+                            frame,
+                            "VERA Cooperative host and fixture guest room settled",
+                        );
+                        self.settle(state);
                     }
                     LanTarget::CoopHost => self.settle(state),
                     LanTarget::ChooseMap | LanTarget::ChooseMapCancel => {
@@ -4505,6 +4573,76 @@ fn cooperative_mode(state: &AppState) -> Result<&crate::skirmish_modes::Skirmish
         .iter()
         .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Cooperative)
         .context("retail Cooperative mode")
+}
+
+/// Choose the host fixture's already-catalogued map and route it through the
+/// production Use Map owner. This target captures the resulting room, so it
+/// does not need an additional chooser-row click.
+fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
+    let mode_id = state
+        .frontend
+        .skirmish_modes
+        .iter()
+        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
+        .context("VERA Cooperative mode is not registered")?
+        .id;
+    let mode = crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
+        .context("VERA Cooperative mode")?;
+    let current_file = state
+        .match_state
+        .session
+        .network_setup()
+        .and_then(|launch| launch.selected_map_file.as_deref());
+    let map_index = current_file
+        .and_then(|file| {
+            state
+                .frontend
+                .scenario_catalog
+                .records()
+                .iter()
+                .position(|record| record.file_name.eq_ignore_ascii_case(file))
+        })
+        .filter(|&index| {
+            state
+                .frontend
+                .scenario_catalog
+                .records()
+                .get(index)
+                .is_some_and(|record| {
+                    crate::map::skirmish_scenarios::is_valid_map(record, mode, false)
+                })
+        })
+        .or_else(|| {
+            state
+                .frontend
+                .scenario_catalog
+                .records()
+                .iter()
+                .position(|record| {
+                    crate::map::skirmish_scenarios::is_valid_map(record, mode, false)
+                })
+        })
+        .context("VERA Cooperative has no catalogued local map")?;
+    let file = state
+        .frontend
+        .scenario_catalog
+        .records()
+        .get(map_index)
+        .context("selected VERA Cooperative record")?
+        .file_name
+        .clone();
+    crate::app::shell_network_setup::commit_map_selection(state, mode_id, map_index, None)?;
+    let launch = state
+        .match_state
+        .session
+        .network_setup()
+        .context("VERA Cooperative setup")?;
+    ensure!(
+        launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative
+            && launch.selected_map_file.as_deref() == Some(file.as_str()),
+        "production map owner did not commit the VERA Cooperative map"
+    );
+    Ok(file)
 }
 
 /// Click Cooperative in the open chooser's game types; `+0x4C` lists the

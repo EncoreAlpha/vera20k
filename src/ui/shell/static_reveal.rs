@@ -449,6 +449,10 @@ impl Default for DialogStatics {
 }
 
 impl DialogStatics {
+    pub(crate) fn set_heading(&mut self, heading: &str, now: Instant) {
+        self.heading.set_text(heading, now);
+    }
+
     /// The SHOW completion with the heading the dialog holds.
     pub(crate) fn show(&mut self, heading: &str, now: Instant) {
         self.heading.set_text(heading, now);

@@ -989,7 +989,11 @@ pub(crate) fn show_statics(state: &mut AppState) {
     let Some(view) = view(state) else {
         return;
     };
-    let heading = App::csf_label(state, view.page().title_key, view.page().title_key);
+    let heading = if view.vera_cooperative {
+        "Cooperative Lobby".to_owned()
+    } else {
+        App::csf_label(state, view.page().title_key, view.page().title_key)
+    };
     if let Some(ui) = state.frontend.multiplayer_setup.as_mut() {
         ui.statics
             .show(&heading, &view.mode_label, &view.map_label, Instant::now());

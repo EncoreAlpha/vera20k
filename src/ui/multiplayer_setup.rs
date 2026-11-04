@@ -456,6 +456,8 @@ pub(crate) struct SetupView {
     pub(crate) no_preview: bool,
     pub(crate) preview_hidden: bool,
     pub(crate) cooperative: bool,
+    /// VERA's map-authored campaign mode, separate from retail Cooperative.
+    pub(crate) vera_cooperative: bool,
     pub(crate) cooperative_description: Option<String>,
 }
 impl SetupView {
@@ -1018,7 +1020,7 @@ impl MultiplayerSetupLayout {
             .chain(
                 CHECKBOXES
                     .into_iter()
-                    .filter(|_| self.game_options.is_none()),
+                    .filter(|_| self.game_options.is_none() && !view.vera_cooperative),
             )
             .chain([CHAT, CHAT_LOG])
             .chain(
@@ -1250,6 +1252,7 @@ mod tests {
             no_preview: false,
             preview_hidden: false,
             cooperative: false,
+            vera_cooperative: false,
             cooperative_description: None,
         };
         let center = |rect: RectPx| (rect.x + rect.w / 2, rect.y + rect.h / 2);

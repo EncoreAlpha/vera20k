@@ -592,6 +592,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 },
                 visible: visible
                     && !bare
+                    && (!mode.class.is_vera_cooperative() || column == SetupColumn::Team)
                     && (column == SetupColumn::Country || !observer)
                     && !(column == SetupColumn::Team
                         && clan_room
@@ -630,21 +631,21 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             value: skirmish_shell::game_speed_visual_position(options.game_speed),
             range: bounds.range(SkirmishTrackbarId::GameSpeed0x529),
             enabled: host,
-            visible: true,
+            visible: !mode.class.is_vera_cooperative(),
         },
         SetupTrackbar {
             id: CREDITS,
             value: options.starting_credits,
             range: bounds.range(SkirmishTrackbarId::Credits0x511),
             enabled: host,
-            visible: true,
+            visible: !mode.class.is_vera_cooperative(),
         },
         SetupTrackbar {
             id: UNITS,
             value: options.unit_count,
             range: bounds.range(SkirmishTrackbarId::UnitCount0x50c),
             enabled: host,
-            visible: true,
+            visible: !mode.class.is_vera_cooperative(),
         },
         SetupTrackbar {
             id: DIFFICULTY,
@@ -721,6 +722,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         no_preview: protocol.wol_no_preview().0,
         preview_hidden: protocol.wol_no_preview().1,
         cooperative,
+        vera_cooperative: mode.class.is_vera_cooperative(),
         cooperative_description: coop.as_ref().and_then(|coop| coop.description).map(
             |(campaign, stage)| {
                 label(
