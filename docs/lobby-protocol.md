@@ -54,7 +54,10 @@ every reader for 10 seconds.
 within a session and retries are idempotent. Responses and
 `GET /v1/events?after=<cursor>` return `{events:[{sequence,kind,payload}],cursor}`.
 Sequences increase within a session. An event appears once logically even when
-responses are repeated. `GET /v1/channels?kind=0|41` returns `{kind,channels}`.
+responses are repeated. `GET /v1/channels?kind=0|41` returns `{kind,channels}`. The
+`kind=41` list leaves out game rooms whose host's `User-Agent` named another version than
+the caller's, since those could never start together (two sessions that do not both name a
+version see each other's rooms).
 Clients poll at most once per second. Responses contain at most 256 events and
 256 KiB of UTF-8 JSON.
 `GET /v1/events/stream?after=<cursor>` with a WebSocket upgrade and the bearer (protocol 4
@@ -88,7 +91,11 @@ Channel: `{id,kind,max_users,users,tournament,flags,game_flags,ping,name,ex_info
 from the creator: 256 when a game has a password, which clients show as a lock and
 ask for before joining, otherwise 0. `max_users` (1–30) from `create` and the host's
 `advertise` is the room's join limit, never below its current members; a join past
-it fails with `room_full`. A host `kick` with `keep_out:true` keeps that player out of
+it fails with `room_full`. Games from 0.2.6 advertise the most people their room
+takes, players and spectators: the host's Max players, and with spectators off no
+more than its seats. Their host gives a newcomer a free seat, then the last AI's
+seat, then a spectator's place, and their lobby lists each room as `users` over
+`max_users`. A host `kick` with `keep_out:true` keeps that player out of
 the room for five minutes, by account and by name without case: their `join` fails
 with 403 `room_kept_out`, which clients show with the join ban's text while staying in the lobby. The other fields are presentation metadata, not authority. `name` identifies a channel uniquely for compatibility with the
 existing shell. Member: `{player_id,name,flags,squad,clan_name,clan_tag}`. Flags bit 0
@@ -114,7 +121,7 @@ Commands and their payloads:
 | `map_status` | `{status,revision,version,rules_digest,map_digest,effective_map_digest,staging_digest}` |
 | `advertise` | `{channel:<Channel>}` |
 | `start` | `{users:[name],revision,version,rules_digest,effective_map_digest,staging_digest}` |
-| `finish` | `{match_id,back_to_room?}` |
+| `finish` | `{match_id,back_to_room?,network_quality?}` |
 | `relay_ready` | `{match_id}` |
 | `latency_ready` | `{match_id,pings:[{source_index,round_trip_ms}]}` |
 | `renew_relay` | `{match_id}` |
@@ -391,6 +398,21 @@ intervals count from the later of the player's last request and the lobby's firs
 request after 90 seconds in which it neither served a request nor ran its
 once-a-minute alarm, or its latest 429 `busy` refusal.
 
+A game whose online match reached play adds `network_quality` to that match's
+`finish`: its own record of how the match ran, which it also logs as
+`Network quality:`. It is
+`{played_seconds,catch_up:{episodes,seconds,max_backlog_frames,skipped_draws},`
+`network:{gaps,repair_pulls,command_round_trip_ms,max_jitter_reserve_ms,underruns},`
+`performance:{tick_ms_p50,tick_ms_p99,fps_p50,fps_p5,unfocused_seconds},`
+`pacing:{slowdowns,slowed_by,slowed_seconds},outcome:{desync_frame,reconnects}}`.
+Times are seconds, or milliseconds where the name says so; `command_round_trip_ms`
+is `{mean,max,samples}` or null, `tick_ms_p50`, `tick_ms_p99`, `fps_p50`, `fps_p5` and
+`desync_frame` may be null, and `slowed_by` lists the House each relay slowdown named.
+A start cancelled before play and a match an external launcher formed send none. The
+service may keep reports for its operator without the player's name or address; one it
+cannot read is dropped and the match still finishes. A service that refuses the field
+gets the same finish again without it.
+
 `POST /v1/translate` accepts exactly `{text,target}` from a v4 bearer and returns
 `{text}`: `text` translated into `target`, a language tag such as `en` or `zh-Hans`.
 `text` is non-blank and at most 2048 UTF-8 bytes, the chat limit. Clients translate
@@ -439,6 +461,15 @@ A session whose version is older than `version` in
 since a match starts only between equal versions (`ready`, `start`). It arrives
 as a notice does: at once in the public channel or a game room that has not started,
 otherwise on the next public-channel join.
+A session that still joins a game room from another version, through a buddy's game or
+its name, makes every member hear a `chat` line from the notice sender naming both
+versions.
+
+Each `join` of the public channel gives the joining session one `chat` line from the
+notice sender after its `joined`. The line says how many players are online: in the
+public channel, in game rooms, playing, for sessions that play Quick Match searching on
+their version, and elsewhere. It also counts the game rooms the list leaves out for another
+version and, when the list holds none for the session, says how to start a game.
 
 ## Quick Match
 
@@ -462,6 +493,18 @@ a fresh random u32 seed and each player's COU and COL as sent. Pairing is first 
 served between two players whose `User-Agent` names the same version (two unknown versions
 may pair); the earlier waiter hosts. Leaving `Lob_40_0` (leave, logout, expiry or another
 join) leaves the queue.
+A request that puts a player in the queue without pairing them makes them first in line for
+their version. They then get private `Info <text>` lines after `Working`, which the game
+prints as they come. These say:
+- that the match starts when another player presses Quick Match;
+- how many others wait on another version;
+- how many public-channel players heard of the search;
+- that their game sent the side and colour last picked for a multiplayer game.
+
+Those players are the public channel's sessions that play Quick Match on the same version.
+Each gets a `chat` line from the notice sender, `<name> is looking for a Quick Match. Press
+Quick Match to play them.`, at most once every 5 minutes from each network.
+
 The host's game then leaves and `create`s the two-player game `<host>'s_game` with
 `tournament:1` and the `ex_info` of a Create; the guest's stays in `Lob_40_0`, lists `kind=41`
 up to 30 times, 100 ms apart, for that name (without case) and joins it, which leaves
