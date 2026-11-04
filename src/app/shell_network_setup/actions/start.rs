@@ -411,6 +411,57 @@ fn mode_start(
         .network_setup()
         .expect("validated setup")
         .clone();
+    if mode.class.is_vera_cooperative() {
+        let Some(file) = launch.selected_map_file.as_deref() else {
+            message(state, "VERA Coop requires a selected map.", &[]);
+            return Ok(false);
+        };
+        let map_ini = (|| -> anyhow::Result<crate::rules::ini_parser::IniFile> {
+            let root = &state
+                .platform
+                .game_config
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
+                .paths
+                .ra2_dir;
+            let assets = state
+                .process_assets
+                .manager()
+                .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
+            Ok(crate::map::source::load_network_map_ini(root, file, assets)?.ini)
+        })();
+        let valid = match map_ini {
+            Ok(ini) => match vera_cooperative_role_config(&ini) {
+                Ok(()) => {
+                    message(
+                        state,
+                        "VERA Coop role settings are valid, but cooperative campaign launch is not implemented yet.",
+                        &[],
+                    );
+                    false
+                }
+                Err(error) => {
+                    log::warn!("VERA Coop map role configuration is invalid: {error}");
+                    message(
+                        state,
+                        "VERA Coop requires Basic Player entries that name distinct Houses in the selected map.",
+                        &[],
+                    );
+                    false
+                }
+            },
+            Err(error) => {
+                log::warn!("VERA Coop could not read map role configuration: {error:#}");
+                message(
+                    state,
+                    "VERA Coop could not read role data from the selected map.",
+                    &[],
+                );
+                false
+            }
+        };
+        return Ok(valid);
+    }
     let roles: Vec<_> = launch
         .humans
         .iter()
@@ -445,9 +496,42 @@ fn mode_start(
     Ok(true)
 }
 
+fn vera_cooperative_role_config(ini: &crate::rules::ini_parser::IniFile) -> Result<(), String> {
+    let basic = crate::map::basic::parse_basic_section(ini);
+    if basic
+        .campaign_players
+        .players
+        .iter()
+        .all(|player| player.owner.is_none())
+    {
+        return Err("map has no Basic Player roles".to_owned());
+    }
+    let roster = crate::map::houses::parse_house_roster(ini, &[], None);
+    basic
+        .campaign_players
+        .validate_against_roster(&roster)
+        .map_err(|error| format!("invalid Basic Player roles: {error:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vera_coop_start_requires_distinct_configured_map_houses() {
+        let valid = crate::rules::ini_parser::IniFile::from_str(
+            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
+        );
+        assert!(vera_cooperative_role_config(&valid).is_ok());
+
+        let missing = crate::rules::ini_parser::IniFile::from_str(
+            "[Basic]\nPlayer1=Missing\n[Houses]\n0=Alpha\n",
+        );
+        assert!(vera_cooperative_role_config(&missing).is_err());
+
+        let empty = crate::rules::ini_parser::IniFile::from_str("[Houses]\n0=Alpha\n");
+        assert!(vera_cooperative_role_config(&empty).is_err());
+    }
 
     fn fixture() -> SkirmishLaunchSession {
         let profile = crate::test_fixture::json("tools/map_observation.command-bar.example.json");

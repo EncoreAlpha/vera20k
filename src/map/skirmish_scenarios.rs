@@ -252,6 +252,9 @@ pub fn is_valid_map(
 }
 
 pub fn record_matches_mode(record: &SkirmishScenarioRecord, mode: &SkirmishGameMode) -> bool {
+    if mode.class.is_vera_cooperative() {
+        return record.kind == SkirmishScenarioKind::ConcreteMap;
+    }
     match record.kind {
         SkirmishScenarioKind::RandomMapSentinel => mode.random_maps_allowed,
         SkirmishScenarioKind::ConcreteMap if record.game_modes.is_empty() => {
@@ -401,6 +404,20 @@ mod tests {
         let records = vec![record(0, "Empty", "")];
         assert_eq!(filter_records_for_mode(&records, &mode(1), false), vec![0]);
         assert!(filter_records_for_mode(&records, &mode(9), false).is_empty());
+    }
+
+    #[test]
+    fn vera_coop_lists_concrete_maps_and_excludes_random_maps() {
+        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        let vera = modes
+            .iter()
+            .find(|mode| mode.class.is_vera_cooperative())
+            .expect("VERA Coop mode");
+        let records = vec![
+            record(0, "Tagged for another mode", "cooperative"),
+            SkirmishScenarioRecord::random_map_sentinel(1, "Random Map", 4),
+        ];
+        assert_eq!(filter_records_for_mode(&records, vera, false), vec![0]);
     }
 
     #[test]

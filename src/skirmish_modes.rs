@@ -18,6 +18,8 @@ pub enum MpModeClass {
     Unholy,
     FreeForAll,
     Cooperative,
+    /// VERA's independent, map-authored cooperative campaign mode.
+    VeraCooperative,
 }
 
 impl MpModeClass {
@@ -36,6 +38,10 @@ impl MpModeClass {
     /// keep the base `0x005D6360` (false).
     pub const fn lists_in_skirmish(self) -> bool {
         matches!(self, Self::Battle | Self::FreeForAll)
+    }
+
+    pub const fn is_vera_cooperative(self) -> bool {
+        matches!(self, Self::VeraCooperative)
     }
 
     /// Vtable `+0x4` and `+0x8`, which the sidebar Diplomacy button asks
@@ -96,7 +102,7 @@ impl MpModeClass {
         roles: &[i32],
     ) -> Result<ModeStartEffect, Option<&'static str>> {
         match self {
-            Self::Battle | Self::ManBattle => Ok(ModeStartEffect::None),
+            Self::Battle | Self::ManBattle | Self::VeraCooperative => Ok(ModeStartEffect::None),
             Self::Unholy => {
                 if bases {
                     Ok(ModeStartEffect::None)
@@ -283,7 +289,7 @@ pub fn skirmish_modes_from_selected_ini(
     roster_ini: &IniFile,
     source: &str,
 ) -> Result<Vec<SkirmishGameMode>, SkirmishModeLoadError> {
-    let modes = parse_mpmodes_ini_with_overrides(roster_ini, |name| {
+    let mut modes = parse_mpmodes_ini_with_overrides(roster_ini, |name| {
         let Some((data, override_source)) = assets.get_with_source(name) else {
             log::warn!(
                 "Skirmish MPMode override {name} is missing; using native constructor defaults"
@@ -311,6 +317,7 @@ pub fn skirmish_modes_from_selected_ini(
             archive: source.to_owned(),
         })
     } else {
+        insert_vera_cooperative_mode(&mut modes);
         Ok(modes)
     }
 }
@@ -320,7 +327,7 @@ pub fn stock_skirmish_modes() -> Vec<SkirmishGameMode> {
     let roster = IniFile::from_str(crate::test_fixture::text(
         "tests/fixtures/ini/mpmodesmd_stock_contract.ini",
     ));
-    parse_mpmodes_ini_with_overrides(&roster, |name| {
+    let mut modes = parse_mpmodes_ini_with_overrides(&roster, |name| {
         let settings = match name.to_ascii_lowercase().as_str() {
             "mpteammd.ini" => "AlliesAllowed=yes\nMustAlly=yes\n",
             "mpfreeforallmd.ini" => "AlliesAllowed=no\nWonlineClanTournamentAllowed=no\n",
@@ -330,7 +337,32 @@ pub fn stock_skirmish_modes() -> Vec<SkirmishGameMode> {
         Some(IniFile::from_str(&format!(
             "[MultiplayerDialogSettings]\n{settings}"
         )))
-    })
+    });
+    insert_vera_cooperative_mode(&mut modes);
+    modes
+}
+
+const VERA_COOP_MODE_ID: i32 = 0x7FFF_0000;
+
+fn insert_vera_cooperative_mode(modes: &mut Vec<SkirmishGameMode>) {
+    let mut id = VERA_COOP_MODE_ID;
+    while mode_by_id(modes, id).is_some() {
+        id -= 1;
+    }
+    modes.push(SkirmishGameMode {
+        class: MpModeClass::VeraCooperative,
+        id,
+        ui_name_key: "VERA Coop".to_owned(),
+        tooltip_key: "VERA Coop".to_owned(),
+        override_file: String::new(),
+        map_filter: "standard".to_owned(),
+        random_maps_allowed: false,
+        allies_allowed: true,
+        must_ally: false,
+        wonline_tournament_allowed: false,
+        wonline_clan_tournament_allowed: false,
+    });
+    modes.sort_by_key(|mode| mode.id);
 }
 
 pub fn mode_by_id(modes: &[SkirmishGameMode], id: i32) -> Option<&SkirmishGameMode> {
@@ -358,6 +390,10 @@ mod tests {
         assert_eq!(
             MpModeClass::Cooperative.validate_setup_start(true, &[0, 0]),
             Ok(ModeStartEffect::CooperativePartners)
+        );
+        assert_eq!(
+            MpModeClass::VeraCooperative.validate_setup_start(true, &[0, 0]),
+            Ok(ModeStartEffect::None)
         );
         assert_eq!(
             MpModeClass::Siege.validate_setup_start(true, &[1, 2]),
@@ -411,6 +447,25 @@ mod tests {
         assert!(team.must_ally);
         assert!(!team.random_maps_allowed);
         assert_eq!(team.map_filter, "teamgame");
+    }
+
+    #[test]
+    fn stock_mode_list_exposes_vera_coop_without_replacing_original_cooperative() {
+        let modes = stock_skirmish_modes();
+        let vera = modes
+            .iter()
+            .find(|mode| mode.class == MpModeClass::VeraCooperative)
+            .expect("independent VERA Coop row");
+        assert_eq!(vera.ui_name_key, "VERA Coop");
+        assert_eq!(vera.map_filter, "standard");
+        assert!(!vera.random_maps_allowed);
+
+        let original = modes
+            .iter()
+            .find(|mode| mode.class == MpModeClass::Cooperative)
+            .expect("retail Cooperative row");
+        assert_eq!(original.ui_name_key, "GUI:Cooperative");
+        assert_eq!(original.id, 3);
     }
 
     #[test]

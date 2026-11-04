@@ -268,7 +268,11 @@ pub fn parse_house_roster(
         let side = fields.read_name("Side", 0x80).map(str::to_string);
         let player_control = fields.read_bool_value("PlayerControl");
         let campaign_player_controls = std::array::from_fn(|index| {
-            fields.read_bool_value(&format!("Player{}Control", index + 1))
+            if index == 0 && !fields.is_present("Player1Control") {
+                fields.read_bool_value("PlayerControl")
+            } else {
+                fields.read_bool_value(&format!("Player{}Control", index + 1))
+            }
         });
         let iq = fields.read_int("IQ", 0);
         let ui_name = fields.read_name("UIName", 0x20).map(str::to_string);
@@ -445,6 +449,21 @@ mod tests {
                 "{a} {b}"
             );
         }
+    }
+
+    #[test]
+    fn campaign_player_one_control_falls_back_only_when_player1_control_is_missing() {
+        let fallback = IniFile::from_str(
+            "[Houses]\n0=Alpha\n1=Beta\n[Alpha]\nPlayerControl=yes\n[Beta]\nPlayerControl=yes\nPlayer1Control=no\n",
+        );
+        let roster = parse_house_roster(&fallback, &[], None);
+        assert_eq!(roster.houses[0].campaign_player_controls[0], Some(true));
+        assert_eq!(roster.houses[1].campaign_player_controls[0], Some(false));
+
+        let disabled =
+            IniFile::from_str("[Houses]\n0=Alpha\n[Alpha]\nPlayerControl=yes\nPlayer1Control=no\n");
+        let roster = parse_house_roster(&disabled, &[], None);
+        assert_eq!(roster.houses[0].campaign_player_controls[0], Some(false));
     }
 
     #[test]
