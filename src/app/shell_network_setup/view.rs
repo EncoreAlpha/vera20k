@@ -53,35 +53,51 @@ fn team_value(team: LaunchTeam) -> i32 {
     }
 }
 
-fn vera_coop_role_choices(state: &AppState, row: u8) -> (i32, Vec<SetupChoice>) {
-    let launch = state
+fn vera_coop_role_metadata(
+    ini: &crate::rules::ini_parser::IniFile,
+    rules: Option<&crate::rules::ruleset::RuleSet>,
+) -> super::VeraCoopMapDetails {
+    let basic = crate::map::basic::parse_basic_section(ini);
+    let schemes = rules.map_or(&[][..], |rules| rules.color_schemes.as_slice());
+    let roster = crate::map::houses::parse_house_roster(ini, schemes, rules);
+    if basic
+        .campaign_players
+        .validate_against_roster(&roster)
+        .is_err()
+    {
+        return super::VeraCoopMapDetails::default();
+    }
+    let owners = basic.campaign_players.players.map(|player| player.owner);
+    let colors = std::array::from_fn(|i| {
+        let house = roster
+            .houses
+            .iter()
+            .find(|house| Some(house.name.as_str()) == owners[i].as_deref())?;
+        let scheme = schemes.get(usize::from(house.color.0))?;
+        Some(crate::rules::color_scheme::hsv_to_rgb(scheme.hsv))
+    });
+    super::VeraCoopMapDetails {
+        owners,
+        colors,
+        briefing: None,
+    }
+}
+
+fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
+    let Some(file) = state
         .match_state
         .session
         .network_setup()
-        .expect("setup view owns launch");
-    let Some(file) = launch.selected_map_file.as_deref() else {
-        return (
-            -2,
-            vec![SetupChoice {
-                value: -2,
-                text: label(state, "GUI:Random"),
-                swatch: None,
-            }],
-        );
+        .and_then(|launch| launch.selected_map_file.as_deref())
+    else {
+        return super::VeraCoopMapDetails::default();
     };
     let (Some(config), Some(assets), Some(protocol)) = (
         state.platform.game_config.as_ref(),
         state.process_assets.manager(),
         state.frontend.network_setup_protocol.as_ref(),
     ) else {
-        return (
-            -2,
-            vec![SetupChoice {
-                value: -2,
-                text: label(state, "GUI:Random"),
-                swatch: None,
-            }],
-        );
+        return super::VeraCoopMapDetails::default();
     };
     let root = config.paths.ra2_dir.clone();
     let digest = state
@@ -98,27 +114,55 @@ fn vera_coop_role_choices(state: &AppState, row: u8) -> (i32, Vec<SetupChoice>) 
             *cached_root == root && *cached_file == key_file && *cached_digest == digest
         })
         .map(|(_, _, _, owners)| owners.clone());
-    let owners = cached.unwrap_or_else(|| {
-        let owners = crate::map::source::load_network_map_ini(&root, file, assets)
+    cached.unwrap_or_else(|| {
+        let details = crate::map::source::load_network_map_ini(&root, file, assets)
             .ok()
             .and_then(|loaded| {
-                let basic = crate::map::basic::parse_basic_section(&loaded.ini);
-                let roster = crate::map::houses::parse_house_roster(&loaded.ini, &[], None);
-                basic
-                    .campaign_players
-                    .validate_against_roster(&roster)
+                let mut details = vera_coop_role_metadata(&loaded.ini, state.rules());
+                // The campaign's Brief= is a movie; mission text lives in
+                // MISSIONMD.INI under the scenario filename (restate reader).
+                let briefing = crate::rules::retail_sources::select_ini(assets, "MISSIONMD.INI")
                     .ok()
-                    .map(|()| basic.campaign_players.players.map(|player| player.owner))
+                    .and_then(|mission| {
+                        let section = mission.ini.section(file)?;
+                        if !section.is_present("Briefing") {
+                            return None;
+                        }
+                        let key = crate::rules::campaign_loading::restate_briefing_key(
+                            &mission.ini,
+                            file,
+                        );
+                        state
+                            .process_assets
+                            .csf
+                            .as_ref()?
+                            .get(&key)
+                            .map(str::to_owned)
+                    });
+                details.briefing = briefing;
+                Some(details)
             })
             .unwrap_or_default();
         protocol.vera_coop_role_cache.replace(Some((
             root.clone(),
             key_file,
             digest,
-            owners.clone(),
+            details.clone(),
         )));
-        owners
-    });
+        details
+    })
+}
+
+fn vera_coop_role_choices(
+    state: &AppState,
+    row: u8,
+    details: &super::VeraCoopMapDetails,
+) -> (i32, Vec<SetupChoice>) {
+    let launch = state
+        .match_state
+        .session
+        .network_setup()
+        .expect("setup view owns launch");
     let assigned = launch
         .humans
         .iter()
@@ -135,7 +179,7 @@ fn vera_coop_role_choices(state: &AppState, row: u8) -> (i32, Vec<SetupChoice>) 
         text: label(state, "GUI:Random"),
         swatch: None,
     }];
-    for (index, owner) in owners.iter().enumerate() {
+    for (index, owner) in details.owners.iter().enumerate() {
         let Some(owner) = owner.as_deref() else {
             continue;
         };
@@ -171,6 +215,10 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let launch = session.network_setup()?;
     let protocol = state.frontend.network_setup_protocol.as_ref()?;
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
+    let vera_details = mode
+        .class
+        .is_vera_cooperative()
+        .then(|| vera_coop_map_details(state));
     let host = session.host();
     let host_name = protocol.wol_host.as_deref();
     let local = launch.humans.get(launch.local_player_index)?;
@@ -560,7 +608,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             })
             .collect::<Vec<_>>();
         let (team, teams) = if mode.class.is_vera_cooperative() {
-            vera_coop_role_choices(state, row)
+            vera_coop_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
         } else {
             (
                 team,
@@ -614,6 +662,11 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             };
             row_icons[visible_row] = Some(SetupRowIcon {
                 country: flag,
+                vera_house_color: human.and_then(|(_, human)| {
+                    let role = usize::try_from(human.role.native_value()).ok()?;
+                    vera_details.as_ref()?.colors.get(role).copied().flatten()
+                }),
+                vera_player: human.is_some_and(|(_, human)| !human.is_observer()),
                 // 0x5EA3E0: wolhost.pcx on the human row named [0xA8D610];
                 // a WOL guest learns it from the user list, otherwise the
                 // host is row 0.
@@ -634,7 +687,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             value: skirmish_shell::game_speed_visual_position(options.game_speed),
             range: bounds.range(SkirmishTrackbarId::GameSpeed0x529),
             enabled: host,
-            visible: !mode.class.is_vera_cooperative(),
+            visible: true,
         },
         SetupTrackbar {
             id: CREDITS,
@@ -652,10 +705,18 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         },
         SetupTrackbar {
             id: DIFFICULTY,
-            value: coop.as_ref().map_or(0, |coop| coop.difficulty),
+            value: coop.as_ref().map_or_else(
+                || {
+                    state
+                        .frontend
+                        .multiplayer_shell_runtime
+                        .cooperative_difficulty()
+                },
+                |coop| coop.difficulty,
+            ),
             range: TrackbarRange::new(0, 2, 1),
             enabled: host,
-            visible: cooperative,
+            visible: cooperative || mode.class.is_vera_cooperative(),
         },
     ];
     // 7A0E50 from 5EA3E0: rows without a node show no ping image.
@@ -726,17 +787,47 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         preview_hidden: protocol.wol_no_preview().1,
         cooperative,
         vera_cooperative: mode.class.is_vera_cooperative(),
-        cooperative_description: coop.as_ref().and_then(|coop| coop.description).map(
-            |(campaign, stage)| {
-                label(
-                    state,
-                    &format!("NAME:COOPDESC{}{}", campaign + 1, stage + 1),
-                )
-            },
-        ),
+        cooperative_description: if mode.class.is_vera_cooperative() {
+            Some(
+                vera_details
+                    .and_then(|details| details.briefing)
+                    .unwrap_or_else(|| "Mission briefing unavailable".to_owned()),
+            )
+        } else {
+            coop.as_ref()
+                .and_then(|coop| coop.description)
+                .map(|(campaign, stage)| {
+                    label(
+                        state,
+                        &format!("NAME:COOPDESC{}{}", campaign + 1, stage + 1),
+                    )
+                })
+        },
     })
 }
 
 fn profile_is_wol(state: &AppState) -> bool {
     state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Wol
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
+
+    #[test]
+    fn vera_coop_role_colors_follow_each_authored_house() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[Colors]\nRed=0,255,255\nBlue=170,255,255\n[Countries]\n0=Americans\n[Americans]\nColor=Blue\n",
+        )).unwrap();
+        let ini = IniFile::from_str(
+            "[Basic]\nPlayer=First\nPlayer2=Second\n[Houses]\n0=First\n1=Second\n[First]\nCountry=Americans\nColor=Red\n[Second]\nCountry=Americans\n",
+        );
+        let details = vera_coop_role_metadata(&ini, Some(&rules));
+        assert_eq!(details.owners[0].as_deref(), Some("First"));
+        assert_eq!(details.owners[1].as_deref(), Some("Second"));
+        assert_eq!(details.colors[0], Some([255, 0, 0]));
+        assert_eq!(details.colors[1], Some([0, 0, 255]));
+        assert_eq!(details.colors[2], None);
+    }
 }

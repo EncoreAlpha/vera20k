@@ -346,6 +346,20 @@ pub(crate) fn render_multiplayer_setup(
             let Some(icon) = icon else {
                 continue;
             };
+            if view.vera_cooperative && icon.vera_player {
+                let rect = layout.flags[row];
+                let rgb = icon.vera_house_color.map_or([0.12, 0.12, 0.12], |color| {
+                    color.map(|value| f32::from(value) / 255.0)
+                });
+                push_solid_rect(&mut controls, atlas, rect, rgb, SHELL_CONTROL_DEPTH);
+                push_rect_outline(
+                    &mut controls,
+                    atlas,
+                    rect,
+                    [0.5, 0.5, 0.5],
+                    SHELL_CONTROL_DEPTH - 0.00002,
+                );
+            }
             if !view.vera_cooperative
                 && let Some(flag) = icon
                     .country
@@ -395,11 +409,11 @@ pub(crate) fn render_multiplayer_setup(
                 SHELL_CONTROL_TEXT_DEPTH,
             );
         }
-        for bar in view
-            .trackbars
-            .iter()
-            .filter(|bar| bar.visible && !OPTION_TRACKBARS.contains(&bar.id))
-        {
+        for bar in view.trackbars.iter().filter(|bar| {
+            bar.visible
+                && (!OPTION_TRACKBARS.contains(&bar.id)
+                    || (view.vera_cooperative && bar.id == SPEED))
+        }) {
             push_trackbar(
                 &mut controls,
                 &mut texts,
@@ -419,16 +433,30 @@ pub(crate) fn render_multiplayer_setup(
                 SHELL_CONTROL_TEXT_DEPTH,
             ));
         }
-        if view.cooperative {
+        if view.cooperative || view.vera_cooperative {
             for (key, x) in [("TXT_Easy", 170), ("TXT_Normal", 295), ("TXT_Hard", 430)] {
                 texts.push(text(
                     &localized_label(state, key, key),
-                    scale.scale_rect(RectPx::new(x, 190, 75, 20)),
+                    scale.scale_rect(RectPx::new(
+                        x,
+                        if view.vera_cooperative { 267 } else { 190 },
+                        75,
+                        20,
+                    )),
                     ShellAlign::H_CENTER,
                     SHELL_LABEL_TEXT_RGB,
                     SHELL_CONTROL_TEXT_DEPTH,
                 ));
             }
+        }
+        if view.vera_cooperative {
+            texts.push(text(
+                &localized_label(state, "GUI:GameSpeed", "Game Speed"),
+                scale.scale_rect(RectPx::new(180, 337, 110, 21)),
+                ShellAlign::V_CENTER,
+                SHELL_LABEL_TEXT_RGB,
+                SHELL_CONTROL_TEXT_DEPTH,
+            ));
         }
         push_new_edit(
             &mut controls,
@@ -493,6 +521,18 @@ pub(crate) fn render_multiplayer_setup(
             ));
         }
         if !sliding {
+            if view.vera_cooperative
+                && view.selected_map_index.is_some()
+                && state.frontend.skirmish_preview_texture.is_none()
+            {
+                texts.push(text(
+                    &localized_label(state, "TXT_NAT_NO_PREVIEW", "Preview unavailable"),
+                    layout.map_preview,
+                    ShellAlign::H_CENTER | ShellAlign::V_CENTER,
+                    SHELL_LABEL_TEXT_RGB,
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
+            }
             if let Some(preview) = state
                 .frontend
                 .skirmish_preview_texture

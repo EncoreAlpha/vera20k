@@ -4579,6 +4579,28 @@ fn cooperative_mode(state: &AppState) -> Result<&crate::skirmish_modes::Skirmish
 /// production Use Map owner. This target captures the resulting room, so it
 /// does not need an additional chooser-row click.
 fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
+    // Presentation-only fixture: expose the unmodified first Allied campaign
+    // map in the temporary capture catalog. Two seats allow the existing host
+    // and guest fixture to be displayed; this does not make the map playable.
+    let file = "ALL01UMD.MAP";
+    let assets = state.process_assets.manager().context("capture assets")?;
+    let root = &state
+        .platform
+        .game_config
+        .as_ref()
+        .context("capture config")?
+        .paths
+        .ra2_dir;
+    let loaded = crate::map::source::load_network_map_ini(root, file, assets)?;
+    let mut record = crate::map::skirmish_scenarios::SkirmishScenarioRecord::concrete_from_ini(
+        state.frontend.scenario_catalog.records().len(),
+        crate::map::skirmish_scenarios::SkirmishScenarioSource::Synthetic,
+        file,
+        &loaded.ini,
+    );
+    record.display_name = crate::app::App::csf_label(state, "Name:ALL01md", "Allied Mission 1");
+    record.player_capacity = 2;
+    state.frontend.scenario_catalog.records_mut().push(record);
     let mode_id = state
         .frontend
         .skirmish_modes
@@ -4588,20 +4610,12 @@ fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
         .id;
     let mode = crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
         .context("VERA Cooperative mode")?;
-    let current_file = state
-        .match_state
-        .session
-        .network_setup()
-        .and_then(|launch| launch.selected_map_file.as_deref());
-    let map_index = current_file
-        .and_then(|file| {
-            state
-                .frontend
-                .scenario_catalog
-                .records()
-                .iter()
-                .position(|record| record.file_name.eq_ignore_ascii_case(file))
-        })
+    let map_index = state
+        .frontend
+        .scenario_catalog
+        .records()
+        .iter()
+        .position(|record| record.file_name.eq_ignore_ascii_case(file))
         .filter(|&index| {
             state
                 .frontend

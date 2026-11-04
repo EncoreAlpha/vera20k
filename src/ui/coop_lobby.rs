@@ -3,7 +3,9 @@
 //! The original page owns the chrome anchors. Only the player columns are
 //! rearranged: a map role already determines its House and country.
 
-use crate::ui::multiplayer_setup::{GAME_OPTIONS, MultiplayerSetupLayout, SetupDialog};
+use crate::ui::multiplayer_setup::{
+    DIFFICULTY, GAME_OPTIONS, MultiplayerSetupLayout, SPEED, SetupDialog,
+};
 use crate::ui::shell::geom::RectPx;
 
 pub(crate) fn apply(
@@ -37,7 +39,7 @@ pub(crate) fn apply(
     layout.emote = native.emote;
     layout.acceptance = native.acceptance;
     layout.ping_icons = native.ping_icons;
-    layout.cooperative_description = native.cooperative_description;
+    layout.cooperative_description = scale.scale_rect(RectPx::new(60, 145, 540, 120));
     layout
         .page
         .buttons
@@ -51,12 +53,21 @@ pub(crate) fn apply(
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
     layout.labels = vec![
         ("GUI:Players", rect(74, 11, 180, 17)),
+        ("GUI:Color", rect(258, 11, 40, 17)),
         ("GUI:Team", rect(300, 11, 240, 17)),
     ];
     for (row, columns) in layout.combos.iter_mut().enumerate() {
         let y = 36 + row as i32 * 26;
         columns[0] = rect(74, y, 180, 23);
         columns[4] = rect(300, y, 240, 23);
+        layout.flags[row] = rect(268, y + 3, 18, 17);
+    }
+    for (id, bounds) in &mut layout.trackbars {
+        if *id == DIFFICULTY {
+            *bounds = rect(180, 290, 266, 22);
+        } else if *id == SPEED {
+            *bounds = rect(300, 337, 129, 21);
+        }
     }
     let bottom = 36 + row_count.min(layout.combos.len()) as i32 * 26;
     layout.roster_navigation = [rect(74, bottom, 94, 18), rect(446, bottom, 94, 18)];
@@ -97,6 +108,11 @@ mod tests {
                 assert_eq!(coop.page.button_rect(id), native.page.button_rect(id));
             }
             assert!(coop.combos[0][0].x + coop.combos[0][0].w < coop.combos[0][4].x);
+            let difficulty = coop.control_rect(DIFFICULTY).unwrap();
+            let speed = coop.control_rect(SPEED).unwrap();
+            assert!(coop.cooperative_description.y + coop.cooperative_description.h < difficulty.y);
+            assert!(difficulty.y + difficulty.h < speed.y);
+            assert!(speed.y + speed.h < coop.chat_log.y);
         }
     }
 }

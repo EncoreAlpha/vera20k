@@ -128,11 +128,18 @@ pub(crate) enum OnlineStartPhase {
     Submitted,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct VeraCoopMapDetails {
+    pub owners: [Option<String>; 4],
+    pub colors: [Option<[u8; 3]>; 4],
+    pub briefing: Option<String>,
+}
+
 pub(crate) struct NetworkSetupProtocol {
     /// Parsed map-authored Player1..Player4 labels, keyed by local map identity.
     /// The lobby view is rebuilt every frame, so it must not reload a map there.
     pub(super) vera_coop_role_cache:
-        std::cell::RefCell<Option<(std::path::PathBuf, String, String, [Option<String>; 4])>>,
+        std::cell::RefCell<Option<(std::path::PathBuf, String, String, VeraCoopMapDetails)>>,
     locked: bool,
     /// WOL Quick Match (`[0xA8B244]` 1): the game channel's nodes and start
     /// run without C2/C9 (`0x007A6208..0x007A6229`, `0x0078A36C..0x0078A386`)

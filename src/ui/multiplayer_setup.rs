@@ -420,6 +420,8 @@ impl SetupTrackbar {
 #[derive(Debug, Clone)]
 pub(crate) struct SetupRowIcon {
     pub(crate) country: Option<String>,
+    pub(crate) vera_house_color: Option<[u8; 3]>,
+    pub(crate) vera_player: bool,
     pub(crate) host: bool,
     pub(crate) accepted: bool,
 }
@@ -1004,7 +1006,11 @@ impl MultiplayerSetupLayout {
                 .chain([GAME_OPTIONS_OK])
                 .find(hit);
         }
-        let in_room = |id: &u16| self.game_options.is_none() || !OPTION_TRACKBARS.contains(id);
+        let in_room = |id: &u16| {
+            self.game_options.is_none()
+                || !OPTION_TRACKBARS.contains(id)
+                || (view.vera_cooperative && *id == SPEED)
+        };
         let paged = view.row_count > view.dialog.rows_per_page();
         view.combos
             .iter()
@@ -1273,6 +1279,25 @@ mod tests {
         view.map_offer_open = false;
         let (x, y) = center(popup_layout.checkboxes[0]);
         assert_ne!(popup_layout.control_at(&view, x, y), Some(CHECKBOXES[0]));
+        // Coop moves its speed control out of the ordinary options popup.
+        view.vera_cooperative = true;
+        view.trackbars = [SPEED, DIFFICULTY]
+            .into_iter()
+            .map(|id| SetupTrackbar {
+                id,
+                value: 0,
+                range: TrackbarRange::new(0, 2, 1),
+                enabled: true,
+                visible: true,
+            })
+            .collect();
+        let mut coop = MultiplayerSetupLayout::new(view.dialog, 800, 600, true);
+        crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600);
+        for id in [SPEED, DIFFICULTY] {
+            let (x, y) = center(coop.control_rect(id).unwrap());
+            assert_eq!(coop.control_at(&view, x, y), Some(id));
+        }
+        view.vera_cooperative = false;
         view.dialog = dialog(true, SetupFlavor::Wol, false);
         let native = MultiplayerSetupLayout::new(view.dialog, 800, 600, false);
         assert!(native.game_options.is_none());
