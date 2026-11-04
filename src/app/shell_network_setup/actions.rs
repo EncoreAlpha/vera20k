@@ -287,6 +287,50 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
         if super::dialog(state).wol() {
             queue(state, NetworkSetupRequest::Advertise);
         }
+    } else if column == SetupColumn::Team
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+    {
+        let launch = state.match_state.session.network_setup().unwrap();
+        let index = launch
+            .humans
+            .iter()
+            .position(|human| human.raw_slot_index == Some(row as u8))
+            .ok_or_else(|| anyhow::anyhow!("role row has no player"))?;
+        let local_index = launch.local_player_index;
+        anyhow::ensure!(
+            state.match_state.session.host() || index == local_index,
+            "guests may only assign their own role"
+        );
+        let role = crate::skirmish_launch::LaunchHumanRole::from_native(value);
+        state
+            .match_state
+            .session
+            .set_network_vera_coop_role(index, role)?;
+        if state.match_state.session.host() {
+            host_option_edited(state)?;
+            queue(state, NetworkSetupRequest::PublishOptions);
+        } else {
+            let human = state
+                .match_state
+                .session
+                .network_setup()
+                .unwrap()
+                .local_player();
+            queue(
+                state,
+                NetworkSetupRequest::PlayerChoices {
+                    row: row as u8,
+                    slot: human.slot.clone(),
+                    observer: false,
+                    role: Some(role),
+                },
+            );
+            return Ok(());
+        }
     } else {
         let mut slot = state
             .match_state
@@ -351,6 +395,7 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
                     row: row as u8,
                     slot,
                     observer,
+                    role: None,
                 },
             );
             return Ok(());
@@ -550,6 +595,13 @@ pub(crate) fn commit_map_selection(
         .session
         .network_setup()
         .is_none_or(|launch| launch.mode.id != mode_id);
+    let role_assignments_reset = mode_changed
+        || state
+            .match_state
+            .session
+            .network_setup()
+            .and_then(|launch| launch.selected_map_file.as_deref())
+            .is_none_or(|current| !current.eq_ignore_ascii_case(&file));
     let changed = state
         .match_state
         .session
@@ -581,6 +633,21 @@ pub(crate) fn commit_map_selection(
         file.clone(),
         map.player_capacity,
     )?;
+    if role_assignments_reset && mode.class.is_vera_cooperative() {
+        let count = state
+            .match_state
+            .session
+            .network_setup()
+            .expect("selected setup")
+            .humans
+            .len();
+        for index in 0..count {
+            state.match_state.session.set_network_vera_coop_role(
+                index,
+                crate::skirmish_launch::LaunchHumanRole::Player { group: -2 },
+            )?;
+        }
+    }
     state
         .match_state
         .session
@@ -604,9 +671,9 @@ pub(crate) fn commit_map_selection(
         protocol.invalidate_received_preview(map_changed);
     }
     if super::dialog(state).wol() {
-        // C2 ChooseMap 0x790F68: acceptance clears only for a new
-        // filename or title; the advertisement always follows (78F000).
-        if changed {
+        // VERA's role map changed with a mode change even if the same file
+        // and title remain selected; stale acceptance cannot approve that roster.
+        if changed || role_assignments_reset {
             super::wol::clear_guest_acceptance(state)?;
         }
         queue(state, NetworkSetupRequest::Advertise);

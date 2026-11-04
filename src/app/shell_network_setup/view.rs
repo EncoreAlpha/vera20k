@@ -53,6 +53,105 @@ fn team_value(team: LaunchTeam) -> i32 {
     }
 }
 
+fn vera_coop_role_choices(state: &AppState, row: u8) -> (i32, Vec<SetupChoice>) {
+    let launch = state
+        .match_state
+        .session
+        .network_setup()
+        .expect("setup view owns launch");
+    let Some(file) = launch.selected_map_file.as_deref() else {
+        return (
+            -2,
+            vec![SetupChoice {
+                value: -2,
+                text: label(state, "GUI:Random"),
+                swatch: None,
+            }],
+        );
+    };
+    let (Some(config), Some(assets), Some(protocol)) = (
+        state.platform.game_config.as_ref(),
+        state.process_assets.manager(),
+        state.frontend.network_setup_protocol.as_ref(),
+    ) else {
+        return (
+            -2,
+            vec![SetupChoice {
+                value: -2,
+                text: label(state, "GUI:Random"),
+                swatch: None,
+            }],
+        );
+    };
+    let root = config.paths.ra2_dir.clone();
+    let digest = state
+        .match_state
+        .session
+        .network_map_metadata()
+        .map_or_else(String::new, |metadata| metadata.source_sha256.clone());
+    let key_file = file.to_ascii_lowercase();
+    let cached = protocol
+        .vera_coop_role_cache
+        .borrow()
+        .as_ref()
+        .filter(|(cached_root, cached_file, cached_digest, _)| {
+            *cached_root == root && *cached_file == key_file && *cached_digest == digest
+        })
+        .map(|(_, _, _, owners)| owners.clone());
+    let owners = cached.unwrap_or_else(|| {
+        let owners = crate::map::source::load_network_map_ini(&root, file, assets)
+            .ok()
+            .and_then(|loaded| {
+                let basic = crate::map::basic::parse_basic_section(&loaded.ini);
+                let roster = crate::map::houses::parse_house_roster(&loaded.ini, &[], None);
+                basic
+                    .campaign_players
+                    .validate_against_roster(&roster)
+                    .ok()
+                    .map(|()| basic.campaign_players.players.map(|player| player.owner))
+            })
+            .unwrap_or_default();
+        protocol.vera_coop_role_cache.replace(Some((
+            root.clone(),
+            key_file,
+            digest,
+            owners.clone(),
+        )));
+        owners
+    });
+    let assigned = launch
+        .humans
+        .iter()
+        .filter(|human| human.raw_slot_index.is_some() && human.raw_slot_index != Some(row))
+        .map(|human| human.role.native_value())
+        .collect::<Vec<_>>();
+    let current = launch
+        .humans
+        .iter()
+        .find(|human| human.raw_slot_index == Some(row))
+        .map_or(-2, |human| human.role.native_value());
+    let mut choices = vec![SetupChoice {
+        value: -2,
+        text: label(state, "GUI:Random"),
+        swatch: None,
+    }];
+    for (index, owner) in owners.iter().enumerate() {
+        let Some(owner) = owner.as_deref() else {
+            continue;
+        };
+        let value = index as i32;
+        if assigned.contains(&value) && current != value {
+            continue;
+        }
+        choices.push(SetupChoice {
+            value,
+            text: format!("Player {} — {owner}", index + 1),
+            swatch: None,
+        });
+    }
+    (current, choices)
+}
+
 /// Whether the local player could press Accept (`SetupView::accept_enabled`).
 pub(super) fn accept_enabled(state: &AppState) -> bool {
     let session = &state.match_state.session;
@@ -457,10 +556,17 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 choice
             })
             .collect::<Vec<_>>();
-        let teams = skirmish_shell::team_choices(mode.must_ally)
-            .into_iter()
-            .map(|item| choice(state, item))
-            .collect::<Vec<_>>();
+        let (team, teams) = if mode.class.is_vera_cooperative() {
+            vera_coop_role_choices(state, row)
+        } else {
+            (
+                team,
+                skirmish_shell::team_choices(mode.must_ally)
+                    .into_iter()
+                    .map(|item| choice(state, item))
+                    .collect::<Vec<_>>(),
+            )
+        };
         for (column, value, choices) in [
             (SetupColumn::Country, country, countries),
             (SetupColumn::Color, color, colors),
@@ -478,12 +584,18 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             combos.push(SetupCombo {
                 id: column.control(visible_row),
                 row,
-                enabled: (editable || switching && column == SetupColumn::Country)
-                    && (column != SetupColumn::Team || mode.allies_allowed),
+                enabled: if column == SetupColumn::Team && mode.class.is_vera_cooperative() {
+                    !observer && (host || is_local && (!accepted || !dialog.modern))
+                } else {
+                    (editable || switching && column == SetupColumn::Country)
+                        && (column != SetupColumn::Team || mode.allies_allowed)
+                },
                 visible: visible
                     && !bare
                     && (column == SetupColumn::Country || !observer)
-                    && !(column == SetupColumn::Team && clan_room),
+                    && !(column == SetupColumn::Team
+                        && clan_room
+                        && !mode.class.is_vera_cooperative()),
                 selected,
                 choices,
             });

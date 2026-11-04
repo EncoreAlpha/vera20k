@@ -2114,11 +2114,25 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                     crate::skirmish_launch::LaunchStartPosition::Position(u8::try_from(values[2])?)
                 };
                 choices.team = crate::skirmish_launch::LaunchTeam::from_shell_value(values[3]);
+                let role = (values.len() >= 5 && launch.mode.class.is_vera_cooperative())
+                    .then(|| crate::skirmish_launch::LaunchHumanRole::from_native(values[4]));
+                if let Some(role) = role {
+                    state
+                        .match_state
+                        .session
+                        .validate_network_vera_coop_role(source, role)?;
+                }
                 let change = state.match_state.session.accept_lan_peer_choices(
                     source,
                     choices,
                     values[0] == -3,
                 )?;
+                if let Some(role) = role {
+                    state
+                        .match_state
+                        .session
+                        .set_network_vera_coop_role(source, role)?;
+                }
                 // A VERA room's guest who starts or stops watching changes
                 // rows: the roster, then the options, as WOL's R arm.
                 let mut deferred = Vec::new();
@@ -3972,7 +3986,12 @@ fn setup_request(
             super::shell_network_setup::lock_lan_departure(state);
             return Ok(true);
         }
-        NetworkSetupRequest::PlayerChoices { slot, observer, .. } => {
+        NetworkSetupRequest::PlayerChoices {
+            slot,
+            observer,
+            role,
+            ..
+        } => {
             let country = if *observer {
                 -3
             } else if slot.country_random {
@@ -3995,9 +4014,12 @@ fn setup_request(
                 crate::skirmish_launch::LaunchTeam::None => -2,
                 crate::skirmish_launch::LaunchTeam::Team(team) => i32::from(team),
             };
+            let role_suffix = role
+                .map(|role| format!(",{}", role.native_value()))
+                .unwrap_or_default();
             let message = LanMessage::player_choices(
                 &local_name(state),
-                format!("R{country},{color},{start},{team}").as_bytes(),
+                format!("R{country},{color},{start},{team}{role_suffix}").as_bytes(),
             )?
             .with_session_proof(
                 &state

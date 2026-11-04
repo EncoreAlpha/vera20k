@@ -874,7 +874,12 @@ impl MatchSession {
     ) -> anyhow::Result<PeerChoicesChange> {
         anyhow::ensure!(self.host, "only the host checks LAN peer choices");
         let several = self.network_several_observers();
-        let launch = self.editable_network_setup()?;
+        let launch = match self.network.as_ref().map(|network| &network.phase) {
+            Some(
+                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
+            ) => launch,
+            _ => anyhow::bail!("network setup is not editable"),
+        };
         anyhow::ensure!(
             index != launch.local_player_index,
             "the host's own row is not a peer's"
@@ -1746,6 +1751,52 @@ impl MatchSession {
             .ok_or_else(|| anyhow::anyhow!("unknown participant"))?
             .role = role;
         launch.rebuild_house_roster();
+        Ok(())
+    }
+
+    /// The map-authored Player1..Player4 assignment owned by VERA Coop setup.
+    /// Random is -2; native team selectors (+0x63/+0x67) remain independent.
+    pub(crate) fn set_network_vera_coop_role(
+        &mut self,
+        index: usize,
+        role: crate::skirmish_launch::LaunchHumanRole,
+    ) -> anyhow::Result<()> {
+        self.validate_network_vera_coop_role(index, role)?;
+        self.accept_network_human_role(index, role)
+    }
+
+    pub(crate) fn validate_network_vera_coop_role(
+        &self,
+        index: usize,
+        role: crate::skirmish_launch::LaunchHumanRole,
+    ) -> anyhow::Result<()> {
+        let launch = match self.network.as_ref().map(|network| &network.phase) {
+            Some(
+                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
+            ) => launch,
+            _ => anyhow::bail!("network setup is not editable"),
+        };
+        anyhow::ensure!(
+            launch.mode.class.is_vera_cooperative(),
+            "not a VERA Coop setup"
+        );
+        anyhow::ensure!(index < launch.humans.len(), "unknown participant");
+        let value = role.native_value();
+        anyhow::ensure!(
+            value == -2 || (0..4).contains(&value),
+            "invalid VERA Coop Player role"
+        );
+        anyhow::ensure!(
+            launch
+                .humans
+                .iter()
+                .enumerate()
+                .all(|(other, human)| other == index
+                    || human.raw_slot_index.is_none()
+                    || human.role.native_value() != value
+                    || value == -2),
+            "VERA Coop Player role is already assigned"
+        );
         Ok(())
     }
 
@@ -4554,6 +4605,45 @@ mod tests {
             session
                 .accept_network_human_role(0, LaunchHumanRole::Player { group: -1 })
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn vera_coop_role_owner_allows_random_but_rejects_duplicate_map_roles() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let mut session = MatchSession::default();
+        session.enter_network(super::NetworkReturnContext::LanLobby);
+        let mut setup = network_fixture();
+        setup.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        session
+            .accept_network_setup(setup, true, Some(7), false)
+            .unwrap();
+
+        session
+            .set_network_vera_coop_role(0, LaunchHumanRole::Player { group: 1 })
+            .unwrap();
+        assert!(
+            session
+                .set_network_vera_coop_role(1, LaunchHumanRole::Player { group: 1 })
+                .is_err()
+        );
+        session
+            .set_network_vera_coop_role(0, LaunchHumanRole::Player { group: -2 })
+            .unwrap();
+        session
+            .set_network_vera_coop_role(1, LaunchHumanRole::Player { group: -2 })
+            .unwrap();
+        assert_eq!(
+            session.network_setup().unwrap().humans[0]
+                .role
+                .native_value(),
+            -2
+        );
+        assert_eq!(
+            session.network_setup().unwrap().humans[1]
+                .role
+                .native_value(),
+            -2
         );
     }
 

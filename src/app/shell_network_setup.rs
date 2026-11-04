@@ -5,8 +5,8 @@
 //! `wol`; every shared helper branches on GameMode like the native ones.
 
 mod actions;
-pub(crate) mod bans;
 pub(crate) mod agreement;
+pub(crate) mod bans;
 mod cooperative;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,
@@ -78,6 +78,7 @@ pub(crate) enum NetworkSetupRequest {
         row: u8,
         slot: crate::skirmish_launch::SkirmishLocalSlot,
         observer: bool,
+        role: Option<crate::skirmish_launch::LaunchHumanRole>,
     },
     Ready(bool),
     RequestAcceptance,
@@ -128,6 +129,10 @@ pub(crate) enum OnlineStartPhase {
 }
 
 pub(crate) struct NetworkSetupProtocol {
+    /// Parsed map-authored Player1..Player4 labels, keyed by local map identity.
+    /// The lobby view is rebuilt every frame, so it must not reload a map there.
+    pub(super) vera_coop_role_cache:
+        std::cell::RefCell<Option<(std::path::PathBuf, String, String, [Option<String>; 4])>>,
     locked: bool,
     /// WOL Quick Match (`[0xA8B244]` 1): the game channel's nodes and start
     /// run without C2/C9 (`0x007A6208..0x007A6229`, `0x0078A36C..0x0078A386`)
@@ -345,6 +350,7 @@ impl NetworkSetupProtocol {
         // runs without C2.
         let wol_host = dialog.wol() && host && !quick_match;
         Self {
+            vera_coop_role_cache: std::cell::RefCell::new(None),
             locked: false,
             quick_match,
             external: false,

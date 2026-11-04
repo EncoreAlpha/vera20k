@@ -277,6 +277,7 @@ pub(crate) enum WolServiceEvent {
         from: String,
         slot: crate::skirmish_launch::SkirmishLocalSlot,
         observer: bool,
+        role: Option<crate::skirmish_launch::LaunchHumanRole>,
     },
     /// The public game-options sink `+0x58` (`0x007A7EA0`): a user's
     /// `A<n>` readiness.

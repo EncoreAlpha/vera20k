@@ -30,6 +30,7 @@ pub(crate) enum NetworkSetupEvent {
         index: usize,
         choices: SkirmishLocalSlot,
         observer: bool,
+        role: Option<crate::skirmish_launch::LaunchHumanRole>,
     },
     PlayerReady {
         index: usize,
@@ -309,7 +310,14 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             index,
             mut choices,
             observer,
+            role,
         } => {
+            if let Some(role) = role {
+                state
+                    .match_state
+                    .session
+                    .validate_network_vera_coop_role(index, role)?;
+            }
             super::bans::admit_slot(state, &mut choices);
             // Cooperative's mode +0x1C (0x5C17B0) admits its campaign's
             // countries; the other modes' (0x5D67A0) admit any.
@@ -327,6 +335,25 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 observer,
                 countries.as_deref(),
             )?;
+            let role_changed = role.is_some();
+            if let Some(role) = role {
+                let launch = state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .expect("setup remains admitted");
+                anyhow::ensure!(
+                    launch.mode.class.is_vera_cooperative(),
+                    "role update outside VERA Coop"
+                );
+                state
+                    .match_state
+                    .session
+                    .set_network_vera_coop_role(index, role)?;
+            }
+            if role_changed && dialog.wol() {
+                super::wol::clear_guest_acceptance(state)?;
+            }
             // 0x5EC9F0's advertisement 0x78F000, 0x77DB90's slot names,
             // then 0x5E32D0's options and the repaint 0x783C80.
             let protocol = state
@@ -340,7 +367,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                     NetworkSetupRequest::PublishRoster,
                 ]);
             }
-            if change.options {
+            if change.options || role_changed {
                 protocol.requests.push(NetworkSetupRequest::PublishOptions);
             }
             state.platform.window.request_redraw();

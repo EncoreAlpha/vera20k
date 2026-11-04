@@ -1705,6 +1705,7 @@ fn request_setup(
             row,
             slot,
             observer,
+            role,
         } => {
             let mut human = state
                 .match_state
@@ -1726,7 +1727,7 @@ fn request_setup(
             let expected_random = serde_json::to_value(human)?;
             let request_id = service.command_with_id(
                 "choices",
-                json!({"row":row,"slot":slot,"observer":observer}),
+                json!({"row":row,"slot":slot,"observer":observer,"role":role}),
             );
             // A Quick Match host drops `R` (`0x007A8260`), so no options
             // answer it.
@@ -2486,6 +2487,8 @@ fn apply_event(
                 from: String,
                 slot: crate::skirmish_launch::SkirmishLocalSlot,
                 observer: bool,
+                #[serde(default)]
+                role: Option<crate::skirmish_launch::LaunchHumanRole>,
             }
             let p: Payload = decode(payload)?;
             service_event(
@@ -2494,6 +2497,7 @@ fn apply_event(
                     from: p.from,
                     slot: p.slot,
                     observer: p.observer,
+                    role: p.role,
                 },
             );
         }

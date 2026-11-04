@@ -5484,6 +5484,7 @@ impl WolCapture {
                     from: SERVICE_GUEST.into(),
                     slot,
                     observer,
+                    role: None,
                 },
             );
             setup_requests(state)

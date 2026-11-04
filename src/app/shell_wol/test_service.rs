@@ -240,6 +240,7 @@ fn guest_joins(state: &mut AppState, accept: bool) {
             from: GUEST.into(),
             slot,
             observer: false,
+            role: None,
         },
     );
     guest_map_status(state);

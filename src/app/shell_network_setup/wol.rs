@@ -155,6 +155,12 @@ pub(crate) fn send_first_choices(state: &mut AppState) {
             row,
             slot,
             observer,
+            role: state
+                .match_state
+                .session
+                .network_setup()
+                .filter(|launch| launch.mode.class.is_vera_cooperative() && !observer)
+                .map(|launch| launch.local_player().role),
         },
     );
 }
@@ -261,6 +267,7 @@ pub(crate) fn player_choices(
     name: &str,
     choices: crate::skirmish_launch::SkirmishLocalSlot,
     observer: bool,
+    role: Option<crate::skirmish_launch::LaunchHumanRole>,
 ) -> anyhow::Result<()> {
     if crate::app::shell_wol::in_match(state)
         || start_pending(state)
@@ -278,6 +285,7 @@ pub(crate) fn player_choices(
             index,
             choices,
             observer,
+            role,
         },
     )
 }

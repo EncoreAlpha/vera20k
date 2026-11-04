@@ -95,6 +95,11 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
                 .options
                 .room_options(),
         ),
+        vera_coop_roles: session
+            .network_setup()
+            .filter(|launch| launch.mode.class.is_vera_cooperative())
+            .map(|launch| launch.humans.iter().map(|human| human.role).collect())
+            .unwrap_or_default(),
     })?;
     let admitted = queue_payload(
         state,
@@ -130,6 +135,10 @@ struct ExtendedOptions {
     /// VERA's room options, which the native options text has no field for.
     #[serde(default)]
     room: Option<crate::skirmish_launch::RoomOptions>,
+    /// VERA Coop's map role assignments; the retail options string has no
+    /// field for this project-specific state.
+    #[serde(default)]
+    vera_coop_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
 }
 
 /// Host-authored admission projection for native Type3 assembly, derived from
@@ -163,6 +172,7 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.effective_digest,
         options.selected_map_file,
         options.room,
+        options.vera_coop_roles,
     )
 }
 
@@ -234,6 +244,7 @@ fn receive_options_text(
     effective_digest: String,
     selected_map_file: String,
     room: Option<crate::skirmish_launch::RoomOptions>,
+    vera_coop_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
 ) -> Result<()> {
     ensure!(
         source_sha256.is_empty() || crate::map::source::valid_source_sha256(&source_sha256),
@@ -244,6 +255,9 @@ fn receive_options_text(
         &state.frontend.skirmish_modes,
         text,
     )?;
+    if options.launch.mode.class.is_vera_cooperative() {
+        apply_vera_coop_roles(&mut options.launch, &vera_coop_roles)?;
+    }
     crate::map::source::validate_network_map_name(&selected_map_file)?;
     // VERA keeps the host's logical UTF-8 identity independently of the
     // bounded native text projection and the local SHA-named cache path.
@@ -266,6 +280,35 @@ fn receive_options_text(
         .match_presentation
         .in_game_options
         .game_speed = current_speed as u32;
+    Ok(())
+}
+
+fn apply_vera_coop_roles(
+    launch: &mut crate::skirmish_launch::SkirmishLaunchSession,
+    roles: &[crate::skirmish_launch::LaunchHumanRole],
+) -> Result<()> {
+    ensure!(
+        launch.mode.class.is_vera_cooperative() && roles.len() == launch.humans.len(),
+        "LAN VERA Coop options lack the role roster"
+    );
+    let mut claimed = [false; 4];
+    for (human, role) in launch.humans.iter_mut().zip(roles.iter().copied()) {
+        let value = role.native_value();
+        if human.is_observer() {
+            ensure!(value == -1, "LAN VERA Coop observer has a player role");
+            human.role = role;
+            continue;
+        }
+        ensure!(
+            value == -2 || (0..4).contains(&value),
+            "invalid LAN VERA Coop role"
+        );
+        if human.raw_slot_index.is_some() && value >= 0 {
+            ensure!(!claimed[value as usize], "duplicate LAN VERA Coop role");
+            claimed[value as usize] = true;
+        }
+        human.role = role;
+    }
     Ok(())
 }
 
@@ -447,6 +490,7 @@ pub(super) fn receive_extended(
                 options.effective_digest,
                 options.selected_map_file,
                 options.room,
+                options.vera_coop_roles,
             )?;
             super::maps::received_options(state, scope, options.random_map)
         }
@@ -995,6 +1039,81 @@ mod tests {
             Some(29)
         );
         assert_eq!(guest.network_setup_capacity(), Some(30));
+    }
+
+    #[test]
+    fn vera_coop_role_roster_round_trips_in_extended_host_options() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let mut host = fixture(true);
+        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        let mode = modes
+            .iter()
+            .find(|mode| mode.class.is_vera_cooperative())
+            .unwrap();
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode = SkirmishLaunchMode::from_game_mode(mode);
+        for human in &mut launch.humans {
+            human.role = LaunchHumanRole::Player { group: -2 };
+        }
+        launch.humans[1].set_observer(true);
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        host.set_network_vera_coop_role(0, LaunchHumanRole::Player { group: 0 })
+            .unwrap();
+        let roles = host
+            .network_setup()
+            .unwrap()
+            .humans
+            .iter()
+            .map(|human| human.role)
+            .collect();
+        let projected = projected_options(&host, 3, 0).unwrap();
+        let snapshot = ExtendedOptions {
+            text: projected.encode(),
+            selected_map_file: "test.map".into(),
+            agreement: crate::app::shell_network_setup::agreement::MultiplayerAgreement {
+                version: "test".into(),
+                rules_digest: "test".into(),
+            },
+            source_sha256: String::new(),
+            effective_digest: String::new(),
+            random_map: None,
+            admissions: Vec::new(),
+            room: None,
+            vera_coop_roles: roles,
+        };
+        let snapshot: ExtendedOptions =
+            serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let mut guest = fixture(false);
+        let (mut received, _, _) = parse_options(&guest, &modes, &snapshot.text).unwrap();
+        let teams = received
+            .launch
+            .humans
+            .iter()
+            .map(|human| human.slot.team)
+            .collect::<Vec<_>>();
+        apply_vera_coop_roles(&mut received.launch, &snapshot.vera_coop_roles).unwrap();
+        guest
+            .accept_network_host_setup(
+                received.launch,
+                received.vacancies,
+                received.map_metadata.player_capacity,
+                None,
+                false,
+            )
+            .unwrap();
+        let guest = guest.network_setup().unwrap();
+        assert_eq!(guest.humans[0].role.native_value(), 0);
+        assert!(guest.humans[1].is_observer());
+        assert_eq!(guest.humans[1].role.native_value(), -1);
+        assert_eq!(
+            guest
+                .humans
+                .iter()
+                .map(|human| human.slot.team)
+                .collect::<Vec<_>>(),
+            teams
+        );
     }
 
     #[test]

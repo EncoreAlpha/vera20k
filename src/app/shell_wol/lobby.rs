@@ -3063,6 +3063,7 @@ pub(super) fn service_event(state: &mut AppState, event: WolServiceEvent) {
             from,
             slot,
             observer,
+            role,
         } => {
             // 0x7A82F8..0x7A833C: only from a user of this channel.
             let member = lobby_mut(state)
@@ -3072,7 +3073,7 @@ pub(super) fn service_event(state: &mut AppState, event: WolServiceEvent) {
                 .any(|member| member.name.eq_ignore_ascii_case(&from));
             if member
                 && in_setup_channel(state)
-                && let Err(error) = setup::player_choices(state, &from, slot, observer)
+                && let Err(error) = setup::player_choices(state, &from, slot, observer, role)
             {
                 log::warn!("WOL choices from {from}: {error:#}");
             }

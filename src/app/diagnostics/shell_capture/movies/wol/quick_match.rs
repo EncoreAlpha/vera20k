@@ -532,6 +532,7 @@ impl WolCapture {
                 from: PEER.into(),
                 slot: options.launch.humans[1].slot.clone(),
                 observer: false,
+                role: None,
             },
         );
         service_event(
