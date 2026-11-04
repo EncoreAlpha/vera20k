@@ -7,21 +7,22 @@
 //! VERA's page lays its controls out on the main page's bands and rows.
 
 use super::{
-    ACCESSIBILITY_LABEL, CHECK_FOR_UPDATES_HELP, CHECK_FOR_UPDATES_LABEL,
-    CUSTOM_END_GAME_BANNER_HELP, CUSTOM_END_GAME_BANNER_LABEL, CUSTOM_END_GAME_MOVIE_HELP,
-    CUSTOM_END_GAME_MOVIE_LABEL, CUSTOM_END_GAME_SCORE_HELP, CUSTOM_END_GAME_SCORE_LABEL,
-    DEVELOPER_OPTIONS_LABEL, DISPLAY_AUTO_LABEL, DISPLAY_HELP, DISPLAY_LABEL, DisplayChoice,
-    DisplayTarget, FPS_COUNTER_HELP, FPS_COUNTER_LABEL, FULL_SCREEN_HELP, FULL_SCREEN_LABEL,
-    HAS_CHECK_FOR_UPDATES, HEALTH_BARS_HELP, HEALTH_BARS_LABEL, HOUSE_COLOR_STRENGTH_HELP,
-    HOUSE_COLOR_STRENGTH_LABEL, HealthBarMode, LOCK_CURSOR_HELP, LOCK_CURSOR_LABEL, LauncherButton,
-    LauncherCheckboxId, LauncherComboId, LauncherCue, LauncherOptionsEvent, LauncherParentResult,
-    LauncherTrackbarId, MOUSE_WHEEL_ZOOM_HELP, MOUSE_WHEEL_ZOOM_LABEL, ORIGINAL_SHAPE_HELP,
-    ORIGINAL_SHAPE_LABEL, OptionsDialogState, OptionsPage, PhysicalControlFrame,
-    RENDER_INTERPOLATION_HELP, RENDER_INTERPOLATION_LABEL, RIGHT_CLICK_ORDERS_HELP,
-    RIGHT_CLICK_ORDERS_LABEL, SHIFT_QUEUE_HELP, SHIFT_QUEUE_LABEL, SIDEBAR_HELP, SIDEBAR_LABEL,
-    SKIP_STARTUP_LOGO_HELP, SKIP_STARTUP_LOGO_LABEL, SidebarSize, VERA_ICON_HELP, VERA_ICON_LABEL,
-    VERA_OPTIONS_HELP, VERA_OPTIONS_LABEL, WOL_TEST_SERVICE_HELP, WOL_TEST_SERVICE_LABEL,
-    YR_ORIGINAL_STYLE_HELP, YR_ORIGINAL_STYLE_LABEL, ZOOM_HELP, ZOOM_LABEL, Zoom,
+    ACCESSIBILITY_LABEL, CHECK_FOR_UPDATES_HELP, CHECK_FOR_UPDATES_LABEL, COOP_EXPANSION_HELP,
+    COOP_EXPANSION_LABEL, CUSTOM_END_GAME_BANNER_HELP, CUSTOM_END_GAME_BANNER_LABEL,
+    CUSTOM_END_GAME_MOVIE_HELP, CUSTOM_END_GAME_MOVIE_LABEL, CUSTOM_END_GAME_SCORE_HELP,
+    CUSTOM_END_GAME_SCORE_LABEL, DEVELOPER_OPTIONS_LABEL, DISPLAY_AUTO_LABEL, DISPLAY_HELP,
+    DISPLAY_LABEL, DisplayChoice, DisplayTarget, FPS_COUNTER_HELP, FPS_COUNTER_LABEL,
+    FULL_SCREEN_HELP, FULL_SCREEN_LABEL, HAS_CHECK_FOR_UPDATES, HEALTH_BARS_HELP,
+    HEALTH_BARS_LABEL, HOUSE_COLOR_STRENGTH_HELP, HOUSE_COLOR_STRENGTH_LABEL, HealthBarMode,
+    LOCK_CURSOR_HELP, LOCK_CURSOR_LABEL, LauncherButton, LauncherCheckboxId, LauncherComboId,
+    LauncherCue, LauncherOptionsEvent, LauncherParentResult, LauncherTrackbarId,
+    MOUSE_WHEEL_ZOOM_HELP, MOUSE_WHEEL_ZOOM_LABEL, ORIGINAL_SHAPE_HELP, ORIGINAL_SHAPE_LABEL,
+    OptionsDialogState, OptionsPage, PhysicalControlFrame, RENDER_INTERPOLATION_HELP,
+    RENDER_INTERPOLATION_LABEL, RIGHT_CLICK_ORDERS_HELP, RIGHT_CLICK_ORDERS_LABEL,
+    SHIFT_QUEUE_HELP, SHIFT_QUEUE_LABEL, SIDEBAR_HELP, SIDEBAR_LABEL, SKIP_STARTUP_LOGO_HELP,
+    SKIP_STARTUP_LOGO_LABEL, SidebarSize, VERA_ICON_HELP, VERA_ICON_LABEL, VERA_OPTIONS_HELP,
+    VERA_OPTIONS_LABEL, WOL_TEST_SERVICE_HELP, WOL_TEST_SERVICE_LABEL, YR_ORIGINAL_STYLE_HELP,
+    YR_ORIGINAL_STYLE_LABEL, ZOOM_HELP, ZOOM_LABEL, Zoom,
 };
 use crate::ui::shell::descriptor::DialogId;
 use crate::ui::shell::geom::{RectPx, ShellScale, center_offset, child_window, dlu_rect};
@@ -279,6 +280,7 @@ impl LauncherOptionsLayout {
                     (LauncherCheckboxId::LockCursor, dlu(93, 158, 130, 10)),
                     (LauncherCheckboxId::RightClickOrders, dlu(238, 113, 130, 10)),
                     (LauncherCheckboxId::VeraIcon, dlu(238, 128, 130, 10)),
+                    (LauncherCheckboxId::CoopExpansion, dlu(238, 187, 130, 10)),
                     // Developer Options, in the main page's UI Options band.
                     // This band carries five rows where the others carry
                     // three, so it uses a 13 DLU pitch instead of 15:
@@ -510,6 +512,7 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => &self.labels.tooltips,
             LauncherCheckboxId::TargetLines => &self.labels.target_lines,
             LauncherCheckboxId::ShowHidden => &self.labels.show_hidden,
+            LauncherCheckboxId::CoopExpansion => COOP_EXPANSION_LABEL,
             LauncherCheckboxId::FullScreen => FULL_SCREEN_LABEL,
             LauncherCheckboxId::OriginalShape => ORIGINAL_SHAPE_LABEL,
             LauncherCheckboxId::YrOriginalStyle => YR_ORIGINAL_STYLE_LABEL,
@@ -568,6 +571,7 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => self.values.tooltips,
             LauncherCheckboxId::TargetLines => self.values.target_lines,
             LauncherCheckboxId::ShowHidden => self.values.show_hidden,
+            LauncherCheckboxId::CoopExpansion => self.values.coop_expansion,
             LauncherCheckboxId::FullScreen => self.values.full_screen,
             LauncherCheckboxId::OriginalShape => self.values.original_shape,
             LauncherCheckboxId::YrOriginalStyle => self.values.yr_original_style,
@@ -780,6 +784,7 @@ impl OptionsDialogState {
                     LauncherStatusHelp::Csf("STT:MainOptCBoxTargetLines")
                 }
                 LauncherCheckboxId::ShowHidden => LauncherStatusHelp::Csf("STT:MainOptCBoxHidden"),
+                LauncherCheckboxId::CoopExpansion => LauncherStatusHelp::Text(COOP_EXPANSION_HELP),
                 LauncherCheckboxId::FullScreen => LauncherStatusHelp::Text(FULL_SCREEN_HELP),
                 LauncherCheckboxId::OriginalShape => LauncherStatusHelp::Text(ORIGINAL_SHAPE_HELP),
                 LauncherCheckboxId::YrOriginalStyle => {
@@ -1180,7 +1185,7 @@ mod tests {
             .chain(&layout.checkboxes)
             .map(|(id, _)| *id)
             .collect();
-        assert_eq!(all.len(), 17);
+        assert_eq!(all.len(), 18);
         for id in &all {
             assert_eq!(all.iter().filter(|other| *other == id).count(), 1, "{id:?}");
         }
@@ -1222,6 +1227,7 @@ mod tests {
             (LockCursor, ui, developer),
             (RightClickOrders, ui, developer),
             (VeraIcon, ui, developer),
+            (CoopExpansion, developer, accessibility),
             (FpsCounter, developer, accessibility),
             (SkipStartupLogo, developer, accessibility),
             (CustomEndGameBanner, developer, accessibility),

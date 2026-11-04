@@ -208,8 +208,8 @@ pub enum ChooseMapContext {
 impl ChooseMapContext {
     /// `FillModeList` (`0x005D6130`), with its room tests at
     /// `0x005D6203..0x005D6237`.
-    fn permits(self, mode: &SkirmishGameMode) -> bool {
-        match self {
+    fn permits(self, mode: &SkirmishGameMode, vera_cooperative_enabled: bool) -> bool {
+        let context_allows = match self {
             Self::Skirmish => mode.class.lists_in_skirmish(),
             Self::Network {
                 observer,
@@ -220,7 +220,8 @@ impl ChooseMapContext {
                     && (mode.wonline_tournament_allowed || !tournament_room)
                     && (mode.wonline_clan_tournament_allowed || !clan_room)
             }
-        }
+        };
+        context_allows && (!mode.class.is_vera_cooperative() || vera_cooperative_enabled)
     }
 
     /// `IsValidMap`'s room test (`0x005D6409`): a tournament or clan room
@@ -253,6 +254,29 @@ impl ChooseMapModalState {
         records: &[SkirmishScenarioRecord],
         layout: &ChooseMapModalLayout,
     ) -> Self {
+        Self::open_with_vera_cooperative(
+            context,
+            current_mode_id,
+            current_record_index,
+            modes,
+            records,
+            layout,
+            false,
+        )
+    }
+
+    /// Opens the chooser with the user preference controlling whether VERA's
+    /// independent cooperative mode is offered as a selectable row. The mode
+    /// remains in `modes` so a guest can resolve the host's selected id.
+    pub fn open_with_vera_cooperative(
+        context: ChooseMapContext,
+        current_mode_id: i32,
+        current_record_index: Option<usize>,
+        modes: &[SkirmishGameMode],
+        records: &[SkirmishScenarioRecord],
+        layout: &ChooseMapModalLayout,
+        vera_cooperative_enabled: bool,
+    ) -> Self {
         let selected_mode_id = mode_by_id(modes, current_mode_id)
             .or_else(|| modes.first())
             .map(|mode| mode.id)
@@ -264,7 +288,7 @@ impl ChooseMapModalState {
             },
             mode_rows: modes
                 .iter()
-                .filter(|mode| context.permits(mode))
+                .filter(|mode| context.permits(mode, vera_cooperative_enabled))
                 .map(|mode| mode.id)
                 .collect(),
             selected_mode_id,
@@ -821,6 +845,56 @@ impl ChooseMapModalState {
 mod tests {
     use super::*;
     use crate::skirmish_modes::stock_skirmish_modes;
+
+    #[test]
+    fn vera_cooperative_row_is_opt_in_without_removing_registry_mode() {
+        let modes = stock_skirmish_modes();
+        let vera = modes
+            .iter()
+            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
+            .expect("VeraCooperative remains registered for network mode ids");
+        let vera_id = vera.id;
+        let layout = compute_choose_map_modal_layout(800, 600);
+        let context = crate::ui::skirmish_shell::ChooseMapContext::Network {
+            observer: false,
+            tournament_room: false,
+            clan_room: false,
+        };
+        let disabled = ChooseMapModalState::open(context, 1, None, &modes, &[], &layout);
+        assert!(!disabled.mode_rows().contains(&vera_id));
+
+        let skirmish = ChooseMapModalState::open_with_vera_cooperative(
+            crate::ui::skirmish_shell::ChooseMapContext::Skirmish,
+            1,
+            None,
+            &modes,
+            &[],
+            &layout,
+            true,
+        );
+        assert!(!skirmish.mode_rows().contains(&vera_id));
+
+        let enabled = ChooseMapModalState::open_with_vera_cooperative(
+            context,
+            1,
+            None,
+            &modes,
+            &[],
+            &layout,
+            true,
+        );
+        assert!(enabled.mode_rows().contains(&vera_id));
+        let original_coop_id = modes
+            .iter()
+            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Cooperative)
+            .expect("retail Cooperative remains registered")
+            .id;
+        assert!(enabled.mode_rows().contains(&original_coop_id));
+        assert_eq!(
+            crate::skirmish_modes::mode_by_id(&modes, vera_id),
+            Some(vera)
+        );
+    }
     use crate::ui::skirmish_shell::compute_choose_map_modal_layout;
     use std::time::Duration;
 

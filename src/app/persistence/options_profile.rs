@@ -129,6 +129,9 @@ pub(crate) struct RetailOptionsProfile {
     /// 2's. Only those surfaces read it; see
     /// [`LauncherCheckboxId::YrOriginalStyle`](crate::ui::main_menu_dialogs::options::LauncherCheckboxId::YrOriginalStyle).
     pub(crate) yr_original_style: bool,
+    /// `[VERA] CoopExpansion=`: include VERA's cooperative mode alongside
+    /// the original cooperative mode in the launcher. Off by default.
+    pub(crate) coop_expansion: bool,
     /// `[VERA] SkipStartupLogo=`: start without the logo movie `Init_Game`
     /// plays before its splash. Off by default, so new profiles play it like
     /// gamemd; the splash and the first-run intro play either way.
@@ -302,6 +305,7 @@ impl Default for RetailOptionsProfile {
             original_shape: false,
             sidebar: crate::ui::main_menu_dialogs::options::SidebarSize::Normal,
             yr_original_style: false,
+            coop_expansion: false,
             skip_startup_logo: false,
             render_interpolation: false,
             mouse_wheel_zoom: false,
@@ -340,7 +344,7 @@ pub(crate) struct FormattedProfileSections {
     pub(crate) audio: [(&'static str, String); 7],
     pub(crate) network: [(&'static str, String); 4],
     /// VERA's own section, written after the native ones.
-    pub(crate) vera: [(&'static str, String); 27],
+    pub(crate) vera: [(&'static str, String); 28],
 }
 
 impl RetailOptionsLoad {
@@ -539,6 +543,7 @@ impl RetailOptionsProfile {
                 vera.read_int("Sidebar", self.sidebar.ini_value()),
             );
             self.yr_original_style = vera.read_bool("YROriginalStyle", self.yr_original_style);
+            self.coop_expansion = vera.read_bool("CoopExpansion", self.coop_expansion);
             self.skip_startup_logo = vera.read_bool("SkipStartupLogo", self.skip_startup_logo);
             self.render_interpolation =
                 vera.read_bool("RenderInterpolation", self.render_interpolation);
@@ -680,6 +685,10 @@ impl RetailOptionsProfile {
                 (
                     "YROriginalStyle",
                     format_bool(self.yr_original_style).to_string(),
+                ),
+                (
+                    "CoopExpansion",
+                    format_bool(self.coop_expansion).to_string(),
                 ),
                 (
                     "SkipStartupLogo",
@@ -1523,13 +1532,14 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
 
         let load = load_snapshot(
             &RetailStartupOptions::default(),
-            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\nSoloSkirmish=yes\n",
+            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nCoopExpansion=yes\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\nSoloSkirmish=yes\n",
         );
         assert!(load.retained_profile.full_screen);
         // The first release saved the whole factor.
         assert_eq!(load.retained_profile.zoom, Zoom::Percent(200));
         assert!(load.retained_profile.original_shape);
         assert_eq!(load.retained_profile.sidebar, SidebarSize::Large);
+        assert!(load.retained_profile.coop_expansion);
         assert!(!load.retained_profile.yr_original_style);
         assert!(!load.retained_profile.skip_startup_logo);
         assert!(load.retained_profile.shift_queue);
@@ -1539,6 +1549,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         // A value this build doesn't know reads as Auto.
         let unknown = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nZoom=9\n");
         assert_eq!(unknown.retained_profile.zoom, Zoom::Auto);
+        assert!(!unknown.retained_profile.coop_expansion);
 
         let profile = RetailOptionsProfile {
             full_screen: true,
@@ -1546,6 +1557,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
             original_shape: true,
             sidebar: SidebarSize::ExtraLarge,
             yr_original_style: true,
+            coop_expansion: true,
             skip_startup_logo: true,
             shift_queue: true,
             shift_queue_count: 7,
@@ -1558,7 +1570,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
                 .unwrap();
         assert!(
             output.contains(
-                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nSkipStartupLogo=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
+                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nCoopExpansion=yes\r\nSkipStartupLogo=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
             ),
             "{output}"
         );
@@ -1567,6 +1579,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         assert_eq!(reread.retained_profile.zoom, Zoom::Percent(150));
         assert!(reread.retained_profile.original_shape);
         assert_eq!(reread.retained_profile.sidebar, SidebarSize::ExtraLarge);
+        assert!(reread.retained_profile.coop_expansion);
         assert!(reread.retained_profile.yr_original_style);
         assert!(reread.retained_profile.skip_startup_logo);
         assert!(reread.retained_profile.shift_queue);

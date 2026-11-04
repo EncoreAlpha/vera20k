@@ -34,6 +34,7 @@ pub(crate) fn launcher_values_from_profile(
         full_screen: false,
         original_shape: profile.original_shape,
         yr_original_style: profile.yr_original_style,
+        coop_expansion: profile.coop_expansion,
         render_interpolation: profile.render_interpolation,
         mouse_wheel_zoom: profile.mouse_wheel_zoom,
         right_click_orders: profile.right_click_orders,
@@ -103,6 +104,7 @@ pub(crate) trait LauncherPreviewOperations: AudioVolumeOperations {
     fn set_full_screen(&mut self, full_screen: bool);
     fn store_original_shape(&mut self, original_shape: bool);
     fn store_yr_original_style(&mut self, yr_original_style: bool);
+    fn store_coop_expansion(&mut self, enabled: bool);
     fn store_render_interpolation(&mut self, enabled: bool);
     fn store_mouse_wheel_zoom(&mut self, enabled: bool);
     fn store_right_click_orders(&mut self, enabled: bool);
@@ -144,6 +146,9 @@ pub(crate) fn dispatch_launcher_preview_event(
         }
         LauncherOptionsEvent::YrOriginalStyleChanged(yr_original_style) => {
             operations.store_yr_original_style(yr_original_style)
+        }
+        LauncherOptionsEvent::CoopExpansionChanged(enabled) => {
+            operations.store_coop_expansion(enabled);
         }
         LauncherOptionsEvent::RenderInterpolationChanged(enabled) => {
             operations.store_render_interpolation(enabled);
@@ -375,6 +380,7 @@ mod tests {
             unit_action_lines: false,
             show_hidden: true,
             yr_original_style: true,
+            coop_expansion: true,
             skip_startup_logo: true,
             render_interpolation: false,
             mouse_wheel_zoom: true,
@@ -386,6 +392,7 @@ mod tests {
         assert!(!booleans.target_lines);
         assert!(booleans.show_hidden);
         assert!(booleans.yr_original_style);
+        assert!(booleans.coop_expansion);
         assert!(booleans.skip_startup_logo);
         assert!(!booleans.render_interpolation);
         assert!(booleans.mouse_wheel_zoom);

@@ -83,6 +83,11 @@ impl crate::app::persistence::options::launcher::LauncherPreviewOperations for A
         self.persistence.options_profile.yr_original_style = yr_original_style;
         let _ = App::ensure_skirmish_shell_chrome(self);
     }
+    fn store_coop_expansion(&mut self, enabled: bool) {
+        // Launcher mode projection reads the retained profile; Options' accept
+        // persists the choice through the normal profile transaction.
+        self.persistence.options_profile.coop_expansion = enabled;
+    }
     fn store_skip_startup_logo(&mut self, skip: bool) {
         // Read once at the next launch; Options' accept writes it out.
         self.persistence.options_profile.skip_startup_logo = skip;

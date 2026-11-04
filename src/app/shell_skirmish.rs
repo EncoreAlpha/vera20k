@@ -402,9 +402,13 @@ impl App {
             Self::reload_skirmish_catalog(state, current_record_index)
         };
         let layout = Self::skirmish_choose_map_layout(state);
-        state.frontend.skirmish_shell_state.choose_map_modal =
-            Some(crate::ui::skirmish_shell::ChooseMapModalState::open(
-                if state.frontend.shell_route.network_setup() {
+        let network_setup = state.frontend.shell_route.network_setup();
+        let vera_cooperative_enabled = network_setup
+            && state.persistence.options_profile.coop_expansion
+            && state.match_state.session.host();
+        state.frontend.skirmish_shell_state.choose_map_modal = Some(
+            crate::ui::skirmish_shell::ChooseMapModalState::open_with_vera_cooperative(
+                if network_setup {
                     {
                         let room = state.match_state.session.network_room();
                         crate::ui::skirmish_shell::ChooseMapContext::Network {
@@ -425,7 +429,9 @@ impl App {
                 &state.frontend.skirmish_modes,
                 state.frontend.scenario_catalog.records(),
                 &layout,
-            ));
+                vera_cooperative_enabled,
+            ),
+        );
         // VERA: online rooms list the online map library under its own row.
         if crate::app::map_library::listed_in_choose_map(state) {
             let favorites = state.frontend.map_library.favorites().clone();

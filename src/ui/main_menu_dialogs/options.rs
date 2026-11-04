@@ -101,8 +101,7 @@ pub(crate) const CUSTOM_END_GAME_SCORE_LABEL: &str = "Custom End Game Score";
 pub(crate) const CUSTOM_END_GAME_SCORE_HELP: &str = "Use the same country picture as the score screen's background and its music as the score theme. Untick to keep the standard score screen.";
 pub(crate) const CUSTOM_END_GAME_MOVIE_LABEL: &str = "Custom End Game Movie";
 pub(crate) const CUSTOM_END_GAME_MOVIE_HELP: &str = "Let a beaten computer commander's losing clip finish before the victory or defeat picture and the score screen. Skirmish only. Untick to show them at once, which cuts the clip.";
-pub(crate) const SHIFT_QUEUE_HELP: &str =
-    "Unit cameos: Shift-click queues several, Ctrl-click builds endlessly, Alt-click builds next, Shift-right-click cancels all.";
+pub(crate) const SHIFT_QUEUE_HELP: &str = "Unit cameos: Shift-click queues several, Ctrl-click builds endlessly, Alt-click builds next, Shift-right-click cancels all.";
 pub(crate) const DISPLAY_LABEL: &str = "Display";
 pub(crate) const DISPLAY_HELP: &str = "Which screen the game opens on. Auto follows the system.";
 /// VERA's health-strip list on its own page. The retail string table has
@@ -121,6 +120,9 @@ pub(crate) const DISPLAY_AUTO_LABEL: &str = "Auto";
 pub(crate) const VERA_OPTIONS_LABEL: &str = "Vera Options";
 pub(crate) const VERA_OPTIONS_HELP: &str =
     "Settings VERA20K adds: full screen, sidebar size, smooth motion and more.";
+pub(crate) const COOP_EXPANSION_LABEL: &str = "Coop Expansion";
+pub(crate) const COOP_EXPANSION_HELP: &str =
+    "Show the experimental VERA Coop mode alongside the original Cooperative mode.";
 /// VERA's page's Check for Updates: the desktop updater (`app::updater`)
 /// checks once the page has slid out. The browser build has no updater.
 pub(crate) const HAS_CHECK_FOR_UPDATES: bool =
@@ -552,6 +554,7 @@ pub(crate) enum LauncherCheckboxId {
     Tooltips,
     TargetLines,
     ShowHidden,
+    CoopExpansion,
     /// VERA's own box: the window fills the screen. It changes the window at
     /// once instead of waiting for the parent's accept.
     FullScreen,
@@ -641,6 +644,7 @@ pub(crate) enum LauncherOptionsEvent {
     HealthBarModeSelected(HealthBarMode),
     /// The Display list's pick, applied to the window at once.
     DisplaySelected(DisplayTarget),
+    CoopExpansionChanged(bool),
     FullScreenChanged(bool),
     OriginalShapeChanged(bool),
     YrOriginalStyleChanged(bool),
@@ -692,6 +696,7 @@ pub(crate) struct LauncherOptionsValues {
     pub(crate) tooltips: bool,
     pub(crate) target_lines: bool,
     pub(crate) show_hidden: bool,
+    pub(crate) coop_expansion: bool,
     /// The window's state when the page opened, then each toggle.
     pub(crate) full_screen: bool,
     pub(crate) original_shape: bool,
@@ -737,6 +742,7 @@ impl Default for LauncherOptionsValues {
             tooltips: true,
             target_lines: true,
             show_hidden: false,
+            coop_expansion: false,
             full_screen: false,
             original_shape: false,
             yr_original_style: false,
@@ -1108,6 +1114,7 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => &mut self.values.tooltips,
             LauncherCheckboxId::TargetLines => &mut self.values.target_lines,
             LauncherCheckboxId::ShowHidden => &mut self.values.show_hidden,
+            LauncherCheckboxId::CoopExpansion => &mut self.values.coop_expansion,
             LauncherCheckboxId::FullScreen => &mut self.values.full_screen,
             LauncherCheckboxId::OriginalShape => &mut self.values.original_shape,
             LauncherCheckboxId::YrOriginalStyle => &mut self.values.yr_original_style,
@@ -1129,6 +1136,9 @@ impl OptionsDialogState {
         self.pending_events
             .push(LauncherOptionsEvent::Cue(LauncherCue::Checkbox));
         match id {
+            LauncherCheckboxId::CoopExpansion => self
+                .pending_events
+                .push(LauncherOptionsEvent::CoopExpansionChanged(checked)),
             LauncherCheckboxId::FullScreen => self
                 .pending_events
                 .push(LauncherOptionsEvent::FullScreenChanged(checked)),
@@ -1536,6 +1546,21 @@ mod tests {
         state.checkbox_mouse_down(LauncherCheckboxId::Tooltips, frame(80, 5, 220, 20));
         assert!(!state.values.tooltips);
         assert!(state.drain_output().events.is_empty());
+    }
+
+    #[test]
+    fn coop_expansion_checkbox_emits_the_selected_value() {
+        let mut state = state(true);
+        assert!(!state.values.coop_expansion);
+        state.checkbox_mouse_down(LauncherCheckboxId::CoopExpansion, frame(5, 5, 220, 20));
+        assert!(state.values.coop_expansion);
+        assert_eq!(
+            state.drain_output().events,
+            [
+                LauncherOptionsEvent::Cue(LauncherCue::Checkbox),
+                LauncherOptionsEvent::CoopExpansionChanged(true),
+            ]
+        );
     }
 
     #[test]
