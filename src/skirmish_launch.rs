@@ -584,6 +584,69 @@ pub enum LaunchHumanRole {
     Player { group: i32 },
 }
 
+/// Frozen VERA Coop mapping from a synchronized lobby participant seat and
+/// role to the map-authored primary House. Generated from the agreed start
+/// seed and selected map, then carried unchanged into simulation bootstrap.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VeraCoopHouseAssignment {
+    pub participant_name: String,
+    pub raw_slot_index: u8,
+    pub player_index: u8,
+    pub owner_name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VeraCoopHouseAssignments {
+    pub participants: Vec<VeraCoopHouseAssignment>,
+}
+
+impl VeraCoopHouseAssignments {
+    pub fn validate_for_launch(&self, launch: &SkirmishLaunchSession) -> Result<(), String> {
+        let players = launch
+            .humans
+            .iter()
+            .filter(|human| !human.is_observer())
+            .collect::<Vec<_>>();
+        if players.len() != self.participants.len() {
+            return Err("VERA Coop frozen assignment count differs from participants".to_owned());
+        }
+        let mut rows = [false; NETWORK_PLAYER_SLOT_COUNT];
+        let mut roles = [false; 4];
+        let mut owners = Vec::new();
+        for assignment in &self.participants {
+            let row_index = usize::from(assignment.raw_slot_index);
+            if row_index >= rows.len() || rows[row_index] {
+                return Err(
+                    "VERA Coop frozen assignment has an invalid or duplicate row".to_owned(),
+                );
+            }
+            rows[row_index] = true;
+            let player = players
+                .iter()
+                .find(|human| human.raw_slot_index == Some(assignment.raw_slot_index))
+                .filter(|human| human.name == assignment.participant_name)
+                .ok_or_else(|| "VERA Coop frozen assignment participant changed".to_owned())?;
+            let role = player.role.native_value();
+            if role != -2 && role != i32::from(assignment.player_index) {
+                return Err("VERA Coop frozen assignment role changed".to_owned());
+            }
+            let role_index = usize::from(assignment.player_index);
+            if role_index >= roles.len() || roles[role_index] {
+                return Err("VERA Coop frozen assignment has duplicate player roles".to_owned());
+            }
+            roles[role_index] = true;
+            if owners
+                .iter()
+                .any(|owner: &String| owner == &assignment.owner_name)
+            {
+                return Err("VERA Coop frozen assignment has duplicate Houses".to_owned());
+            }
+            owners.push(assignment.owner_name.clone());
+        }
+        Ok(())
+    }
+}
+
 impl Default for LaunchHumanRole {
     fn default() -> Self {
         Self::Player { group: 0 }

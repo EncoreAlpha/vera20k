@@ -168,6 +168,29 @@ impl FreshScenarioLoadContextDescriptor {
         };
         let mut launch = MatchLaunchDescriptor::from_resolved(session.clone())
             .map_err(|err| anyhow::anyhow!("fresh stock-offline launch is unresolved: {err}"))?;
+        if let LoadingStartup::Network(prepared) = startup {
+            match (
+                session.mode.class.is_vera_cooperative(),
+                prepared.vera_coop_houses(),
+            ) {
+                (true, Some(frozen)) => {
+                    let recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
+                        &map.ini, &session, match_seed,
+                    )?;
+                    anyhow::ensure!(
+                        &recomputed == frozen,
+                        "VERA Coop map, participant roles, or shared seed changed after start freeze"
+                    );
+                }
+                (true, None) => {
+                    anyhow::bail!("frozen VERA Coop startup has no House assignments")
+                }
+                (false, Some(_)) => {
+                    anyhow::bail!("non-Coop network startup carries VERA Coop assignments")
+                }
+                (false, None) => {}
+            }
+        }
         if let LoadingStartup::Network(prepared) = startup
             && prepared.wol_start().quick_coop
         {
@@ -183,6 +206,11 @@ impl FreshScenarioLoadContextDescriptor {
             || selected_map_trimmed.eq_ignore_ascii_case("auto")
         {
             anyhow::bail!("stock offline launch has no exact selected map record");
+        }
+        if session.mode.class.is_vera_cooperative() {
+            anyhow::bail!(
+                "VERA Coop roles are frozen and verified, but authored-map House initialization is not admitted yet"
+            );
         }
         // Validate the complete stock callback row before the accepted staging
         // token can move. Numeric mode IDs alone are not sufficient authority.

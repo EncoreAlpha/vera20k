@@ -2656,6 +2656,14 @@ impl MatchSession {
         &mut self,
         agreed_seed: u32,
     ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
+        self.freeze_network_start_with_vera_coop(agreed_seed, None)
+    }
+
+    pub(crate) fn freeze_network_start_with_vera_coop(
+        &mut self,
+        agreed_seed: u32,
+        vera_coop_houses: Option<crate::skirmish_launch::VeraCoopHouseAssignments>,
+    ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
         let network = self
             .network
             .as_mut()
@@ -2667,6 +2675,19 @@ impl MatchSession {
             network.proposed_seed.is_none_or(|seed| seed == agreed_seed),
             "accepted host seed differs from admitted setup seed"
         );
+        match (
+            launch.mode.class.is_vera_cooperative(),
+            vera_coop_houses.as_ref(),
+        ) {
+            (true, Some(assignments)) => assignments
+                .validate_for_launch(launch)
+                .map_err(anyhow::Error::msg)?,
+            (true, None) => anyhow::bail!("VERA Coop start has no frozen House assignments"),
+            (false, Some(_)) => {
+                anyhow::bail!("non-Coop network start carries VERA Coop assignments")
+            }
+            (false, None) => {}
+        }
         network.proposed_seed = Some(agreed_seed);
         admit_network_start_roster(launch)?;
         let max_ahead_frames = network
@@ -2677,20 +2698,24 @@ impl MatchSession {
         else {
             unreachable!()
         };
+        let mut prepared = crate::app::match_bootstrap::PreparedNetworkStartup::new(
+            launch,
+            agreed_seed,
+            network.return_context.session_mode(),
+            self.host,
+            max_ahead_frames,
+            std::mem::take(&mut network.wol_start),
+        );
+        if let Some(assignments) = vera_coop_houses {
+            prepared = prepared.with_vera_coop_houses(assignments);
+        }
         let startup = Arc::new(
-            crate::app::match_bootstrap::PreparedNetworkStartup::new(
-                launch,
-                agreed_seed,
-                network.return_context.session_mode(),
-                self.host,
-                max_ahead_frames,
-                std::mem::take(&mut network.wol_start),
-            )
-            .with_local_map_source(
-                network.local_map_source.clone(),
-                network.local_map_effective_digest.clone(),
-            )
-            .with_random_map_preview(network.local_random_map_preview.clone()),
+            prepared
+                .with_local_map_source(
+                    network.local_map_source.clone(),
+                    network.local_map_effective_digest.clone(),
+                )
+                .with_random_map_preview(network.local_random_map_preview.clone()),
         );
         network.phase = NetworkPhase::Frozen {
             connected: (0..startup.launch_session().humans.len()).collect(),
@@ -3816,6 +3841,78 @@ mod tests {
             assert_eq!(session.shell_mode(), Some(SessionMode::Campaign));
             assert!(session.network_return_context().is_none());
         }
+    }
+
+    #[test]
+    fn vera_coop_freeze_carries_only_assignments_matching_the_synced_launch() {
+        use super::NetworkReturnContext;
+        use crate::skirmish_launch::{
+            LaunchHumanRole, VeraCoopHouseAssignment, VeraCoopHouseAssignments,
+        };
+        let mut launch = network_fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
+        launch.humans[1].role = LaunchHumanRole::Player { group: 1 };
+        let assignments = VeraCoopHouseAssignments {
+            participants: launch
+                .humans
+                .iter()
+                .map(|human| VeraCoopHouseAssignment {
+                    participant_name: human.name.clone(),
+                    raw_slot_index: human.raw_slot_index.unwrap(),
+                    player_index: human.role.native_value() as u8,
+                    owner_name: if human.role.native_value() == 0 {
+                        "Alpha".into()
+                    } else {
+                        "Beta".into()
+                    },
+                })
+                .collect(),
+        };
+        let mut session = MatchSession::default();
+        session.enter_network(NetworkReturnContext::LanLobby);
+        session
+            .accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        session.set_network_player_ready(0, true).unwrap();
+        session.set_network_map_status(0, 2).unwrap();
+        session.set_network_start_seed(0x1234_abcd).unwrap();
+        session.prepare_network_timing(2, || 0).unwrap();
+
+        assert!(session.freeze_network_start(0x1234_abcd).is_err());
+        assert!(
+            session.network_setup().is_some(),
+            "failed freeze leaves setup editable"
+        );
+        let startup = session
+            .freeze_network_start_with_vera_coop(0x1234_abcd, Some(assignments.clone()))
+            .unwrap();
+        let crate::app::match_bootstrap::LoadingStartup::Network(prepared) = &startup else {
+            panic!("network startup");
+        };
+        assert_eq!(prepared.vera_coop_houses(), Some(&assignments));
+
+        let mut mismatched = assignments;
+        mismatched.participants[0].player_index = 3;
+        let mut retry = MatchSession::default();
+        retry.enter_network(NetworkReturnContext::LanLobby);
+        let mut retry_launch = network_fixture();
+        retry_launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        retry_launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
+        retry_launch.humans[1].role = LaunchHumanRole::Player { group: 1 };
+        retry
+            .accept_network_setup(retry_launch, true, Some(7), false)
+            .unwrap();
+        retry.set_network_player_ready(0, true).unwrap();
+        retry.set_network_map_status(0, 2).unwrap();
+        retry.set_network_start_seed(0x1234_abcd).unwrap();
+        retry.prepare_network_timing(2, || 0).unwrap();
+        assert!(
+            retry
+                .freeze_network_start_with_vera_coop(0x1234_abcd, Some(mismatched))
+                .is_err()
+        );
+        assert!(retry.network_setup().is_some());
     }
 
     #[test]

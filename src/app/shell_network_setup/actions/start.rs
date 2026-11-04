@@ -442,7 +442,7 @@ fn mode_start(
                 Ok(assignments) => {
                     log::info!(
                         "VERA Coop role roster resolves to {} player Houses",
-                        assignments.iter().flatten().count()
+                        assignments.participants.len()
                     );
                     message(
                         state,
@@ -514,88 +514,9 @@ fn resolve_vera_cooperative_houses(
     ini: &crate::rules::ini_parser::IniFile,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     seed: u32,
-) -> Result<Vec<Option<String>>, String> {
-    let basic = crate::map::basic::parse_basic_section(ini);
-    let roster = crate::map::houses::parse_house_roster(ini, &[], None);
-    basic
-        .campaign_players
-        .validate_against_roster(&roster)
-        .map_err(|error| format!("invalid Basic Player roles: {error:?}"))
-        .and_then(|()| {
-            let owners = basic
-                .campaign_players
-                .players
-                .each_ref()
-                .map(|player| player.owner.clone());
-            let mut claimed = [false; 4];
-            let mut result = vec![None; launch.humans.len()];
-            let mut random_humans = Vec::new();
-            let mut occupied_rows = [false; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT];
-            for (human_index, human) in launch.humans.iter().enumerate() {
-                let role = human.role.native_value();
-                if human.is_observer() {
-                    if role != -1 {
-                        return Err(format!("observer {} has a player role", human.name));
-                    }
-                    continue;
-                }
-                let row = human
-                    .raw_slot_index
-                    .filter(|row| usize::from(*row) < occupied_rows.len())
-                    .ok_or_else(|| format!("participant {} has no stable lobby row", human.name))?;
-                if occupied_rows[usize::from(row)] {
-                    return Err(format!("duplicate lobby row {row}"));
-                }
-                occupied_rows[usize::from(row)] = true;
-                if role == -2 {
-                    random_humans.push(human_index);
-                    continue;
-                }
-                let index = usize::try_from(role)
-                    .ok()
-                    .filter(|index| *index < owners.len())
-                    .ok_or_else(|| format!("invalid player role {role} for {}", human.name))?;
-                let owner = owners[index]
-                    .as_ref()
-                    .ok_or_else(|| format!("map has no Basic Player{} House", index + 1))?;
-                if claimed[index] {
-                    return Err(format!("duplicate Basic Player{} assignment", index + 1));
-                }
-                claimed[index] = true;
-                result[human_index] = Some(owner.clone());
-            }
-
-            let mut available = owners
-                .iter()
-                .enumerate()
-                .filter_map(|(index, owner)| (!claimed[index] && owner.is_some()).then_some(index))
-                .collect::<Vec<_>>();
-            if result.iter().flatten().count() + random_humans.len()
-                > owners.iter().flatten().count()
-            {
-                return Err("more playing humans than configured Basic Player Houses".to_owned());
-            }
-            // `humans` is local-first in a network visit. Host-authored row
-            // indices are synchronized seats, so use them for shared ordering.
-            random_humans.sort_by_key(|index| {
-                launch.humans[*index]
-                    .raw_slot_index
-                    .expect("validated participant lobby row")
-            });
-            let mut random = if seed == 0 { 0x9E37_79B9 } else { seed };
-            // Stable xorshift32 and Fisher-Yates: all peers use the same
-            // accepted host seed and the same Player1..Player4 ordering.
-            for index in (1..available.len()).rev() {
-                random ^= random << 13;
-                random ^= random >> 17;
-                random ^= random << 5;
-                available.swap(index, random as usize % (index + 1));
-            }
-            for (human_index, player_index) in random_humans.into_iter().zip(available) {
-                result[human_index] = owners[player_index].clone();
-            }
-            Ok(result)
-        })
+) -> Result<crate::skirmish_launch::VeraCoopHouseAssignments, String> {
+    crate::app::match_bootstrap::resolve_vera_cooperative_houses(ini, launch, seed)
+        .map_err(|error| format!("{error:#}"))
 }
 
 #[cfg(test)]
@@ -610,12 +531,26 @@ mod tests {
         let mut launch = fixture();
         assert_eq!(
             resolve_vera_cooperative_houses(&valid, &launch, 7).unwrap(),
-            vec![Some("Alpha".to_owned())]
+            crate::skirmish_launch::VeraCoopHouseAssignments {
+                participants: vec![crate::skirmish_launch::VeraCoopHouseAssignment {
+                    participant_name: launch.humans[0].name.clone(),
+                    raw_slot_index: 0,
+                    player_index: 0,
+                    owner_name: "Alpha".to_owned(),
+                }]
+            }
         );
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
         assert_eq!(
             resolve_vera_cooperative_houses(&valid, &launch, 7).unwrap(),
-            vec![Some("Beta".to_owned())]
+            crate::skirmish_launch::VeraCoopHouseAssignments {
+                participants: vec![crate::skirmish_launch::VeraCoopHouseAssignment {
+                    participant_name: launch.humans[0].name.clone(),
+                    raw_slot_index: 0,
+                    player_index: 1,
+                    owner_name: "Beta".to_owned(),
+                }]
+            }
         );
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 0 };
 
@@ -638,23 +573,27 @@ mod tests {
         let first = resolve_vera_cooperative_houses(&two_players, &launch, 123).unwrap();
         let second = resolve_vera_cooperative_houses(&two_players, &launch, 123).unwrap();
         assert_eq!(first, second);
-        assert_ne!(first[0], first[1], "random roles must not share a House");
-        let by_name = |launch: &SkirmishLaunchSession, assignments: &[Option<String>]| {
-            launch
-                .humans
+        assert_ne!(
+            first.participants[0].owner_name, first.participants[1].owner_name,
+            "random roles must not share a House"
+        );
+        let by_name = |assignments: &crate::skirmish_launch::VeraCoopHouseAssignments| {
+            assignments
+                .participants
                 .iter()
-                .zip(assignments)
-                .map(|(human, owner)| (human.name.clone(), owner.clone()))
+                .map(|assignment| {
+                    (
+                        assignment.participant_name.clone(),
+                        assignment.owner_name.clone(),
+                    )
+                })
                 .collect::<std::collections::BTreeMap<_, _>>()
         };
-        let expected = by_name(&launch, &first);
+        let expected = by_name(&first);
         let mut reordered = launch.clone();
         reordered.humans.reverse();
         assert_eq!(
-            by_name(
-                &reordered,
-                &resolve_vera_cooperative_houses(&two_players, &reordered, 123).unwrap()
-            ),
+            by_name(&resolve_vera_cooperative_houses(&two_players, &reordered, 123).unwrap()),
             expected
         );
         let mut too_many = launch.clone();

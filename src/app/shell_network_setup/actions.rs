@@ -515,7 +515,58 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
         (false, false) => crate::app::lan_service::admitted_host_name(state)
             .map(|host| crate::app::shell_lan::LanRematch::Guest { host }),
     };
-    match state.match_state.session.freeze_network_start(agreed_seed) {
+    let vera_coop_houses =
+        (|| -> anyhow::Result<Option<crate::skirmish_launch::VeraCoopHouseAssignments>> {
+            let launch = state
+                .match_state
+                .session
+                .network_setup()
+                .ok_or_else(|| anyhow::anyhow!("no network setup at start commit"))?;
+            if !launch.mode.class.is_vera_cooperative() {
+                return Ok(None);
+            }
+            let file = launch
+                .selected_map_file
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no selected map"))?;
+            let root = &state
+                .platform
+                .game_config
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
+                .paths
+                .ra2_dir;
+            let assets = state
+                .process_assets
+                .manager()
+                .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
+            let map = crate::map::source::load_network_map_ini(root, file, assets)?;
+            let assignments = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
+                &map.ini,
+                launch,
+                agreed_seed,
+            )?;
+            Ok(Some(assignments))
+        })();
+    let vera_coop_houses = match vera_coop_houses {
+        Ok(assignments) => assignments,
+        Err(error) => {
+            log::error!("Cannot verify VERA Coop Houses at accepted start: {error:#}");
+            if external {
+                App::fail_external_launch(state, &format!("VERA Coop start: {error:#}"));
+            } else if quick_match {
+                crate::app::shell_wol::start_aborted(state);
+            } else {
+                super::commit_back(state);
+            }
+            return;
+        }
+    };
+    match state
+        .match_state
+        .session
+        .freeze_network_start_with_vera_coop(agreed_seed, vera_coop_houses)
+    {
         Ok(startup) => {
             if state.match_state.session_mode()
                 == crate::app::match_runtime::session::SessionMode::Wol

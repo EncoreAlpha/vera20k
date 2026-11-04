@@ -101,6 +101,9 @@ pub struct PreparedNetworkStartup {
     /// A co-op continuation's carry-over record (`0x004C6210` after
     /// Start_Scenario); a first start restores none.
     carry_over: Option<CampaignCarryOver>,
+    /// Independently resolved on every peer from the admitted map, roles and
+    /// shared start seed; consumed by the VERA Coop House bootstrap owner.
+    vera_coop_houses: Option<crate::skirmish_launch::VeraCoopHouseAssignments>,
 }
 
 impl PreparedNetworkStartup {
@@ -130,7 +133,16 @@ impl PreparedNetworkStartup {
             native_id_prefix,
             wol_start,
             carry_over: None,
+            vera_coop_houses: None,
         }
+    }
+
+    pub(crate) fn with_vera_coop_houses(
+        mut self,
+        assignments: crate::skirmish_launch::VeraCoopHouseAssignments,
+    ) -> Self {
+        self.vera_coop_houses = Some(assignments);
+        self
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {
@@ -181,12 +193,130 @@ impl PreparedNetworkStartup {
     pub fn launch_session(&self) -> &SkirmishLaunchSession {
         &self.launch
     }
+
+    pub(crate) fn vera_coop_houses(
+        &self,
+    ) -> Option<&crate::skirmish_launch::VeraCoopHouseAssignments> {
+        self.vera_coop_houses.as_ref()
+    }
     pub(crate) fn mode(&self) -> crate::app::match_runtime::session::SessionMode {
         self.mode
     }
     pub(crate) fn host(&self) -> bool {
         self.host
     }
+}
+
+/// Resolve the synchronized lobby roles against the selected map's authored
+/// Basic Player roster. Random roles consume the remaining configured Houses
+/// in a seed-stable order shared by every participant.
+pub(crate) fn resolve_vera_cooperative_houses(
+    ini: &crate::rules::ini_parser::IniFile,
+    launch: &SkirmishLaunchSession,
+    seed: u32,
+) -> anyhow::Result<crate::skirmish_launch::VeraCoopHouseAssignments> {
+    let basic = crate::map::basic::parse_basic_section(ini);
+    let roster = crate::map::houses::parse_house_roster(ini, &[], None);
+    basic
+        .campaign_players
+        .validate_against_roster(&roster)
+        .map_err(|error| anyhow::anyhow!("invalid Basic Player Houses: {error:?}"))?;
+    let owners = basic
+        .campaign_players
+        .players
+        .each_ref()
+        .map(|player| player.owner.clone());
+    let mut claimed = [false; 4];
+    let mut player_indices = vec![None; launch.humans.len()];
+    let mut random_humans = Vec::new();
+    let mut occupied_rows = [false; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT];
+    for (human_index, human) in launch.humans.iter().enumerate() {
+        let role = human.role.native_value();
+        if human.is_observer() {
+            anyhow::ensure!(role == -1, "observer {} has a player role", human.name);
+            continue;
+        }
+        let row = human
+            .raw_slot_index
+            .filter(|row| usize::from(*row) < occupied_rows.len())
+            .ok_or_else(|| anyhow::anyhow!("participant {} has no stable lobby row", human.name))?;
+        anyhow::ensure!(
+            !occupied_rows[usize::from(row)],
+            "duplicate lobby row {row}"
+        );
+        occupied_rows[usize::from(row)] = true;
+        if role == -2 {
+            random_humans.push(human_index);
+            continue;
+        }
+        let index = usize::try_from(role)
+            .ok()
+            .filter(|index| *index < owners.len())
+            .ok_or_else(|| anyhow::anyhow!("invalid player role {role} for {}", human.name))?;
+        anyhow::ensure!(
+            owners[index].is_some(),
+            "map has no Basic Player{} House",
+            index + 1
+        );
+        anyhow::ensure!(
+            !claimed[index],
+            "duplicate Basic Player{} assignment",
+            index + 1
+        );
+        claimed[index] = true;
+        player_indices[human_index] = Some(index);
+    }
+    let mut available = owners
+        .iter()
+        .enumerate()
+        .filter_map(|(index, owner)| (!claimed[index] && owner.is_some()).then_some(index))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        player_indices.iter().flatten().count() + random_humans.len()
+            <= owners.iter().flatten().count(),
+        "more playing humans than configured Basic Player Houses"
+    );
+    // `humans` is local-first in a network visit. Host-authored row indices
+    // are synchronized seats, so use them for shared random assignment order.
+    random_humans.sort_by_key(|index| {
+        launch.humans[*index]
+            .raw_slot_index
+            .expect("validated participant lobby row")
+    });
+    let mut random = if seed == 0 { 0x9E37_79B9 } else { seed };
+    for index in (1..available.len()).rev() {
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        available.swap(index, random as usize % (index + 1));
+    }
+    for (human_index, player_index) in random_humans.into_iter().zip(available) {
+        player_indices[human_index] = Some(player_index);
+    }
+    let mut participants = Vec::new();
+    for (human_index, player_index) in player_indices.into_iter().enumerate() {
+        let Some(player_index) = player_index else {
+            continue;
+        };
+        let human = &launch.humans[human_index];
+        participants.push(crate::skirmish_launch::VeraCoopHouseAssignment {
+            participant_name: human.name.clone(),
+            raw_slot_index: human
+                .raw_slot_index
+                .expect("validated participant lobby row"),
+            player_index: player_index as u8,
+            owner_name: owners[player_index]
+                .as_ref()
+                .expect("assigned map player has a House")
+                .clone(),
+        });
+    }
+    participants.sort_by_key(|assignment| assignment.raw_slot_index);
+    let assignments = crate::skirmish_launch::VeraCoopHouseAssignments { participants };
+    assignments
+        .validate_for_launch(launch)
+        .map_err(anyhow::Error::msg)?;
+    Ok(assignments)
 }
 
 /// Explicit campaign settings, from a client or the process speed-control flag.
