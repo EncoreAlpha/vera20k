@@ -40,6 +40,7 @@ pub(crate) fn layout(state: &AppState) -> MultiplayerSetupLayout {
     {
         crate::ui::coop_lobby::apply(
             &mut layout,
+            dialog,
             usize::from(state.match_state.session.network_player_row_limit()),
             w as i32,
             h as i32,
