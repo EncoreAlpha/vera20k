@@ -7,6 +7,59 @@
 use crate::rules::ini_parser::IniFile;
 use crate::util::native_x87::NativeF64Bits;
 
+/// One configured campaign participant's primary House.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CampaignPlayer {
+    /// Exact House name supplied by `[Basic] PlayerN=`.
+    pub owner: Option<String>,
+}
+
+/// The four primary House bindings authored by `[Basic] Player1` through
+/// `Player4`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CampaignPlayers {
+    pub players: [CampaignPlayer; 4],
+}
+
+/// Invalid campaign player-to-House bindings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CampaignPlayersValidationError {
+    /// Two player roles name the same roster House.
+    DuplicateOwner { first: usize, duplicate: usize },
+    /// A configured player names no House in `[Houses]`.
+    UnknownOwner { player: usize, owner: String },
+}
+
+impl CampaignPlayers {
+    /// Check that each configured role resolves to one distinct active House.
+    /// Player slots are one-based in the returned diagnostics.
+    pub fn validate_against_roster(
+        &self,
+        roster: &crate::map::houses::HouseRoster,
+    ) -> Result<(), CampaignPlayersValidationError> {
+        let mut owners: Vec<(&str, usize)> = Vec::new();
+        for (index, player) in self.players.iter().enumerate() {
+            let Some(owner) = player.owner.as_deref() else {
+                continue;
+            };
+            if !roster.houses.iter().any(|house| house.name == owner) {
+                return Err(CampaignPlayersValidationError::UnknownOwner {
+                    player: index + 1,
+                    owner: owner.to_owned(),
+                });
+            }
+            if let Some((_, first)) = owners.iter().find(|(seen, _)| *seen == owner) {
+                return Err(CampaignPlayersValidationError::DuplicateOwner {
+                    first: *first,
+                    duplicate: index + 1,
+                });
+            }
+            owners.push((owner, index + 1));
+        }
+        Ok(())
+    }
+}
+
 /// Owner of the active `SpecialFlags::DestroyableBridges` bit during load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeDestroyabilityMode {
@@ -19,6 +72,10 @@ pub enum BridgeDestroyabilityMode {
 /// Parsed metadata from a map's `[Basic]` section.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BasicSection {
+    /// Cooperative-campaign House bindings. Player1 falls back to the legacy
+    /// `Player=` value when `Player1=` has no non-empty name.
+    #[serde(default)]
+    pub campaign_players: CampaignPlayers,
     /// Human-facing map/scenario name when present.
     pub name: Option<String>,
     /// Author text when present.
@@ -196,6 +253,7 @@ pub fn parse_basic_section(ini: &IniFile) -> BasicSection {
     };
 
     BasicSection {
+        campaign_players: parse_campaign_players(section),
         // The scenario list's ReadString 0x40 (`0x00699858`).
         name: section.read_name("Name", 0x40).map(str::to_string),
         // No gamemd reader; VERA's scenario menu shows it.
@@ -268,6 +326,87 @@ pub fn parse_basic_section(ini: &IniFile) -> BasicSection {
         pre_map_select: section
             .is_present("PreMapSelect")
             .then(|| section.read_string("PreMapSelect", "", 128)),
+    }
+}
+
+fn parse_campaign_players(section: &crate::rules::ini_parser::IniSection) -> CampaignPlayers {
+    let legacy_player = section.read_name("Player", 0x14).map(str::to_owned);
+    let mut players: [CampaignPlayer; 4] = std::array::from_fn(|_| CampaignPlayer::default());
+    for (index, player) in players.iter_mut().enumerate() {
+        let owner_key = format!("Player{}", index + 1);
+        let owner = section
+            .read_name(&owner_key, 0x14)
+            .map(str::to_owned)
+            .or_else(|| (index == 0).then(|| legacy_player.clone()).flatten());
+        player.owner = owner;
+    }
+    CampaignPlayers { players }
+}
+
+#[cfg(test)]
+mod campaign_players_tests {
+    use super::*;
+
+    #[test]
+    fn campaign_player_bindings_read_roles_and_legacy_player_fallback() {
+        let parsed = parse_basic_section(&IniFile::from_str(
+            "[Basic]\nPlayer=Legacy\nPlayer1=\nPlayer2=Partner\nPlayer4=Fourth\n",
+        ));
+        assert_eq!(
+            parsed.campaign_players.players[0].owner.as_deref(),
+            Some("Legacy")
+        );
+        assert_eq!(
+            parsed.campaign_players.players[1].owner.as_deref(),
+            Some("Partner")
+        );
+        assert_eq!(parsed.campaign_players.players[2].owner, None);
+
+        let explicit = parse_basic_section(&IniFile::from_str(
+            "[Basic]\nPlayer=Legacy\nPlayer1=Primary\nPlayer4=Fourth\n",
+        ));
+        assert_eq!(
+            explicit.campaign_players.players[0].owner.as_deref(),
+            Some("Primary")
+        );
+        assert_eq!(
+            explicit.campaign_players.players[3].owner.as_deref(),
+            Some("Fourth")
+        );
+    }
+
+    #[test]
+    fn campaign_player_bindings_require_unique_roster_owners() {
+        let roster_ini = IniFile::from_str("[Houses]\n0=Alpha\n1=Beta\n[Alpha]\n[Beta]\n");
+        let roster = crate::map::houses::parse_house_roster(&roster_ini, &[], None);
+        let distinct =
+            parse_basic_section(&IniFile::from_str("[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n"));
+        assert!(
+            distinct
+                .campaign_players
+                .validate_against_roster(&roster)
+                .is_ok()
+        );
+
+        let parsed = parse_basic_section(&IniFile::from_str(
+            "[Basic]\nPlayer1=Alpha\nPlayer2=Alpha\n",
+        ));
+        assert_eq!(
+            parsed.campaign_players.validate_against_roster(&roster),
+            Err(CampaignPlayersValidationError::DuplicateOwner {
+                first: 1,
+                duplicate: 2,
+            })
+        );
+
+        let unknown = parse_basic_section(&IniFile::from_str("[Basic]\nPlayer1=Missing\n"));
+        assert_eq!(
+            unknown.campaign_players.validate_against_roster(&roster),
+            Err(CampaignPlayersValidationError::UnknownOwner {
+                player: 1,
+                owner: "Missing".to_owned(),
+            })
+        );
     }
 }
 

@@ -57,6 +57,10 @@ pub struct HouseDefinition {
     pub side: Option<String>,
     /// Optional player-control hint from `PlayerControl=`.
     pub player_control: Option<bool>,
+    /// Optional per-role cooperative control marks from this House section's
+    /// `PlayerNControl=` keys, in Player1..Player4 order.
+    #[serde(default)]
+    pub campaign_player_controls: [Option<bool>; 4],
     /// Scenario-authored `IQ=` read into HouseClass CurrentIQ (ReadInt over 0).
     pub iq: i32,
     /// `UIName=`, the CSF key Read_Scenario_INI reads into +0x16009
@@ -263,6 +267,9 @@ pub fn parse_house_roster(
         // it cannot resolve.
         let side = fields.read_name("Side", 0x80).map(str::to_string);
         let player_control = fields.read_bool_value("PlayerControl");
+        let campaign_player_controls = std::array::from_fn(|index| {
+            fields.read_bool_value(&format!("Player{}Control", index + 1))
+        });
         let iq = fields.read_int("IQ", 0);
         let ui_name = fields.read_name("UIName", 0x20).map(str::to_string);
         let base_plan = parse_scenario_base_plan(section, rules);
@@ -273,6 +280,7 @@ pub fn parse_house_roster(
             country,
             side,
             player_control,
+            campaign_player_controls,
             iq,
             ui_name,
             allies: 0,
@@ -397,11 +405,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_standard_houses() {
+    fn test_parse_standard_houses_and_campaign_player_controls() {
         let ini: IniFile = IniFile::from_str(
             "[Houses]\n0=Americans\n1=Russians\n\
              [Americans]\nColor=DarkBlue\nSide=Allies\nCountry=America\nPlayerControl=yes\n\
-             [Russians]\nColor=DarkRed\nSide=Soviet\nCountry=Russia\nAllies=Confederation,YuriCountry\n",
+             Player1Control=no\n\
+             [Russians]\nColor=DarkRed\nSide=Soviet\nCountry=Russia\n\
+             Player2Control=yes\nPlayer3Control=yes\nPlayer4Control=no\n\
+             Allies=Confederation,YuriCountry\n",
         );
         let roster = parse_house_roster(&ini, &test_schemes(), None);
         let map = roster.color_map();
@@ -412,6 +423,15 @@ mod tests {
         assert_eq!(roster.houses[0].side.as_deref(), Some("Allies"));
         assert_eq!(roster.houses[0].country.as_deref(), Some("America"));
         assert_eq!(roster.houses[0].player_control, Some(true));
+        assert_eq!(
+            roster.houses[0].campaign_player_controls,
+            [Some(false), None, None, None]
+        );
+        assert_eq!(
+            roster.houses[1].campaign_player_controls,
+            [None, Some(true), Some(true), Some(false)],
+            "one additional House may be marked for multiple player roles"
+        );
         assert_eq!(roster.houses[0].iq, 0);
         assert_eq!(roster.houses[1].allies, 1 << 31);
         let alliances = roster.alliance_map();
