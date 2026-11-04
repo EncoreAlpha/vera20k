@@ -290,7 +290,10 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         let observer = human.is_some_and(|(_, human)| human.is_observer())
             || vacancy == Some(NetworkVacancy::OpenObserver);
         let visible =
-            several || usize::from(row) < visible_limit || observer_row == Some(usize::from(row));
+            (several || usize::from(row) < visible_limit || observer_row == Some(usize::from(row)))
+                && !(mode.class.is_vera_cooperative()
+                    && observer_row == Some(usize::from(row))
+                    && human.is_none());
         // A VERA room's Open, Add slot and Waiting rows show only their
         // Player combo.
         let adding = Some(row) == add_slot;

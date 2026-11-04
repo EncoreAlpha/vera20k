@@ -297,6 +297,25 @@ pub(crate) fn render_multiplayer_setup(
             let Some(rect) = layout.control_rect(combo.id) else {
                 continue;
             };
+            if view.vera_cooperative {
+                // Coop uses wider cells than the stock combo sprites support.
+                // Give every player and role a consistent visible field even
+                // when the original fixed-width face sprite is unavailable.
+                push_solid_rect(
+                    &mut controls,
+                    atlas,
+                    rect,
+                    [0.055, 0.025, 0.025],
+                    SHELL_CONTROL_DEPTH + 0.00002,
+                );
+                push_rect_outline(
+                    &mut controls,
+                    atlas,
+                    rect,
+                    [0.49, 0.38, 0.28],
+                    SHELL_CONTROL_DEPTH - 0.00002,
+                );
+            }
             let selected = combo.selected.and_then(|index| combo.choices.get(index));
             paint_control(
                 &mut controls,
