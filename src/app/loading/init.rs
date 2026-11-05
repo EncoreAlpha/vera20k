@@ -2819,6 +2819,52 @@ fn load_map_first_step(
                     Some(startup),
                 )
             }
+            FreshScenarioParts::VeraCooperative {
+                physical_source,
+                signed_new_ini_format: admitted_format,
+                startup,
+            } => {
+                anyhow::ensure!(
+                    physical_source == map_source,
+                    "VERA Coop source changed during load"
+                );
+                anyhow::ensure!(
+                    admitted_format == signed_new_ini_format,
+                    "VERA Coop NewINIFormat changed during load"
+                );
+                anyhow::ensure!(
+                    startup.launch_session().mode.class.is_vera_cooperative(),
+                    "VERA Coop receipt no longer names the VERA Coop mode"
+                );
+                let selected_map = startup
+                    .launch_session()
+                    .selected_map_file
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
+                let config = startup
+                    .vera_coop_map_config()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no frozen map config"))?;
+                let (_, source_sha256) = map_source
+                    .physical_identity()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+                let effective_ini =
+                    config.apply_to_map(selected_map, source_sha256, &map_data.ini)?;
+                let recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
+                    &effective_ini,
+                    startup.launch_session(),
+                    startup.seed.value,
+                )?;
+                anyhow::ensure!(
+                    startup.vera_coop_houses() == Some(&recomputed),
+                    "VERA Coop effective map config, House assignments, or seed changed after freeze"
+                );
+                // All map consumers, including Basic and House readers, now
+                // see exactly the typed overlay admitted from the host.
+                MapFile::from_ini(effective_ini)?;
+                anyhow::bail!(
+                    "VERA Coop authored map and frozen House assignments are admitted, but shared House command authority is not available"
+                );
+            }
         };
     validate_fresh_transport_before_effects(
         materialization,

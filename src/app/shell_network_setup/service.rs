@@ -18,6 +18,7 @@ pub(crate) struct HostOptions {
     pub(crate) observer_row: Option<u8>,
     pub(crate) cooperative_difficulty: i32,
     pub(crate) seed: Option<u32>,
+    pub(crate) vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
 }
 
 pub(crate) enum NetworkSetupEvent {
@@ -440,6 +441,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             observer_row,
             cooperative_difficulty,
             seed,
+            vera_coop_map_config,
         }) => {
             // 0x5E3E73..0x5E3E90: a WOL parse drops every option text while
             // the game runs ([0xB77DC1]) or a StartGame is pending ([0xB77E28]).
@@ -466,6 +468,36 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
                 .clone();
+            validate_host_coop_map_config(
+                dialog.wol(),
+                launch.mode.class.is_vera_cooperative(),
+                launch.selected_map_file.as_deref(),
+                &map_metadata.source_sha256,
+                vera_coop_map_config.as_ref(),
+            )?;
+            if let Some(config) = vera_coop_map_config.as_ref()
+                && let Some(file) = launch.selected_map_file.as_deref()
+                && let (Some(game_config), Some(assets)) = (
+                    state.platform.game_config.as_ref(),
+                    state.process_assets.manager(),
+                )
+                && let Ok(map) = crate::map::source::load_network_map_ini(
+                    &game_config.paths.ra2_dir,
+                    file,
+                    assets,
+                )
+                && map
+                    .source
+                    .physical_identity()
+                    .is_some_and(|(_, digest)| digest == config.source_sha256)
+            {
+                // A locally available map validates the full typed overlay
+                // before it enters Session. Missing maps are checked after
+                // the existing verified transfer path and again at Start.
+                config.apply_to_map(file, &config.source_sha256, &map.ini)?;
+            }
+            let coop_config_changed = state.match_state.session.network_vera_coop_map_config()
+                != vera_coop_map_config.as_ref();
             // 0x5E5411..0x5E541D: the current mode's +24 on every parse.
             if super::cooperative::current(state) {
                 state
@@ -539,6 +571,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 local_map.as_deref(),
                 map_changed,
             )?;
+            state
+                .match_state
+                .session
+                .accept_network_vera_coop_map_config(vera_coop_map_config)?;
             // 0x5E542B..0x5E5466: a changed mode's +9C/+20, then +7C.
             if mode_changed {
                 super::cooperative::mode_entered(state)?;
@@ -589,6 +625,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // general-options flags. Map verification/K is already complete;
             // metadata or mode changes must also retire local acceptance.
             let material = map_changed
+                || coop_config_changed
                 || settings_materially_changed(
                     &before,
                     state
@@ -953,6 +990,60 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
     }
     state.platform.window.request_redraw();
     Ok(())
+}
+
+fn validate_host_coop_map_config(
+    wol: bool,
+    vera_cooperative: bool,
+    map_file: Option<&str>,
+    source_sha256: &str,
+    config: Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+) -> anyhow::Result<()> {
+    match (vera_cooperative, config) {
+        (true, Some(config)) => {
+            anyhow::ensure!(
+                !wol,
+                "WOL VERA Coop does not synchronize supplemental map config"
+            );
+            let file = map_file
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop host options have no selected map"))?;
+            config.validate_binding(file, source_sha256)?;
+        }
+        (true, None) if wol => {}
+        (true, None) => anyhow::bail!("VERA Coop host options omit the map config"),
+        (false, Some(_)) => anyhow::bail!("non-Coop host options carry VERA Coop map config"),
+        (false, None) => {}
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_host_coop_map_config;
+
+    #[test]
+    fn wol_coop_host_setup_keeps_legacy_missing_config_behavior() {
+        let map_file = "test.map";
+        let source = "a".repeat(64);
+        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            map_file.to_owned(),
+            source.clone(),
+            crate::map::coop_config::VeraCoopMapConfig::default(),
+        )
+        .unwrap();
+
+        assert!(validate_host_coop_map_config(true, true, Some(map_file), &source, None).is_ok());
+        assert!(
+            validate_host_coop_map_config(true, true, Some(map_file), &source, Some(&config))
+                .is_err()
+        );
+        assert!(validate_host_coop_map_config(false, true, Some(map_file), &source, None).is_err());
+        assert!(
+            validate_host_coop_map_config(false, true, Some(map_file), &source, Some(&config))
+                .is_ok()
+        );
+        assert!(validate_host_coop_map_config(false, false, Some(map_file), &source, None).is_ok());
+    }
 }
 
 /// Verify through the existing map owner before the transport queues Type13.

@@ -416,7 +416,29 @@ fn mode_start(
             message(state, "VERA Coop requires a selected map.", &[]);
             return Ok(false);
         };
-        let map_ini = (|| -> anyhow::Result<crate::rules::ini_parser::IniFile> {
+        if state.match_state.session_mode() != crate::app::match_runtime::session::SessionMode::Lan
+        {
+            message(
+                state,
+                "VERA Coop map configuration sync is currently LAN-only.",
+                &[],
+            );
+            return Ok(false);
+        }
+        let Some(config) = state
+            .match_state
+            .session
+            .network_vera_coop_map_config()
+            .cloned()
+        else {
+            message(
+                state,
+                "VERA Coop host options omit the selected map configuration.",
+                &[],
+            );
+            return Ok(false);
+        };
+        let map = (|| -> anyhow::Result<crate::map::source::LoadedMapIni> {
             let root = &state
                 .platform
                 .game_config
@@ -428,16 +450,27 @@ fn mode_start(
                 .process_assets
                 .manager()
                 .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
-            Ok(crate::map::source::load_network_map_ini(root, file, assets)?.ini)
+            crate::map::source::load_network_map_ini(root, file, assets)
         })();
-        let valid = match map_ini {
-            Ok(ini) => match state
+        let valid = match map {
+            Ok(map) => match state
                 .match_state
                 .session
                 .network_start_seed()
                 .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no accepted shared seed"))
                 .and_then(|seed| {
-                    resolve_vera_cooperative_houses(&ini, &launch, seed).map_err(anyhow::Error::msg)
+                    let (_, source_sha256) = map
+                        .source
+                        .physical_identity()
+                        .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+                    crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                        &map.ini,
+                        file,
+                        source_sha256,
+                        &config,
+                        &launch,
+                        seed,
+                    )
                 }) {
                 Ok(assignments) => {
                     log::info!(
@@ -602,6 +635,55 @@ mod tests {
         third.raw_slot_index = Some(2);
         too_many.humans.push(third);
         assert!(resolve_vera_cooperative_houses(&two_players, &too_many, 123).is_err());
+    }
+
+    #[test]
+    fn vera_coop_sidecar_changes_the_resolved_house_and_is_bound_to_map_bytes() {
+        let map = crate::rules::ini_parser::IniFile::from_str(
+            "[Basic]\nPlayer1=Alpha\n[Houses]\n0=Alpha\n1=Beta\n[Alpha]\n[Beta]\n",
+        );
+        let supplemental = crate::rules::ini_parser::IniFile::from_str(
+            "[Basic]\nPlayer1=Beta\n[Alpha]\nPlayer1Control=yes\n",
+        );
+        let config =
+            crate::map::coop_config::VeraCoopMapConfig::from_ini(&map, &supplemental).unwrap();
+        let snapshot = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            "test.map".into(),
+            "a".repeat(64),
+            config,
+        )
+        .unwrap();
+        let launch = fixture();
+        let native =
+            crate::app::match_bootstrap::resolve_vera_cooperative_houses(&map, &launch, 7).unwrap();
+        let configured = crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+            &map,
+            "test.map",
+            &"a".repeat(64),
+            &snapshot,
+            &launch,
+            7,
+        )
+        .unwrap();
+        assert_eq!(native.participants[0].owner_name, "Alpha");
+        assert_eq!(configured.participants[0].owner_name, "Beta");
+        assert!(
+            snapshot
+                .validate_binding("other.map", &"a".repeat(64))
+                .is_err()
+        );
+        assert!(
+            snapshot
+                .validate_binding("test.map", &"b".repeat(64))
+                .is_err()
+        );
+        let mut tampered = snapshot;
+        tampered.config_sha256 = "0".repeat(64);
+        assert!(
+            tampered
+                .validate_binding("test.map", &"a".repeat(64))
+                .is_err()
+        );
     }
 
     fn fixture() -> SkirmishLaunchSession {

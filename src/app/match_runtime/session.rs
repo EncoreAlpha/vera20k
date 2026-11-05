@@ -313,6 +313,8 @@ struct NetworkSession {
     /// The IPv4 LAN adaptation uses the actual global-envelope source endpoint.
     endpoints: std::collections::BTreeMap<String, std::net::SocketAddrV4>,
     map_metadata: Option<NetworkMapMetadata>,
+    /// Host-authoritative external VERA Coop map settings for this selection.
+    vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
     /// Verified local content for the current advertised map. The lobby keeps
     /// the host's filename; only the frozen local load consumes this source.
     local_map_source: Option<crate::map::source::LoadedMapSource>,
@@ -542,6 +544,7 @@ impl MatchSession {
             loading_requests: Vec::new(),
             endpoints: Default::default(),
             map_metadata: None,
+            vera_coop_map_config: None,
             local_map_source: None,
             local_map_effective_digest: None,
             local_random_map_preview: None,
@@ -1468,6 +1471,46 @@ impl MatchSession {
         self.network.as_ref()?.map_metadata.as_ref()
     }
 
+    pub(crate) fn network_vera_coop_map_config(
+        &self,
+    ) -> Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig> {
+        self.network.as_ref()?.vera_coop_map_config.as_ref()
+    }
+
+    pub(crate) fn accept_network_vera_coop_map_config(
+        &mut self,
+        config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    ) -> anyhow::Result<()> {
+        let Some(NetworkSession {
+            phase: NetworkPhase::Setup { launch, .. },
+            map_metadata,
+            vera_coop_map_config,
+            return_context,
+            ..
+        }) = self.network.as_mut()
+        else {
+            anyhow::bail!("network setup is not editable");
+        };
+        match (launch.mode.class.is_vera_cooperative(), config.as_ref()) {
+            (true, Some(config)) => {
+                let map_file = launch
+                    .selected_map_file
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop setup has no selected map"))?;
+                let metadata = map_metadata
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop setup has no map identity"))?;
+                config.validate_binding(map_file, &metadata.source_sha256)?;
+            }
+            (true, None) if *return_context == NetworkReturnContext::Wol => {}
+            (true, None) => anyhow::bail!("VERA Coop host options omit the map config"),
+            (false, Some(_)) => anyhow::bail!("non-Coop setup carries VERA Coop map settings"),
+            (false, None) => {}
+        }
+        *vera_coop_map_config = config;
+        Ok(())
+    }
+
     ///5E4F49 mapsame flag, independent of general option/readiness changes.
     /// Call before host setup admission, avoiding a second filename cache.
     pub(crate) fn network_map_requires_verification(
@@ -2314,6 +2357,9 @@ impl MatchSession {
         }
         launch.rebuild_house_roster();
         candidate.keep_spectator_row()?;
+        if let Some(network) = candidate.network.as_mut() {
+            network.vera_coop_map_config = None;
+        }
         *self = candidate;
         Ok(removed)
     }
@@ -2739,18 +2785,34 @@ impl MatchSession {
             network.proposed_seed.is_none_or(|seed| seed == agreed_seed),
             "accepted host seed differs from admitted setup seed"
         );
+        let vera_coop_map_config = network.vera_coop_map_config.clone();
         match (
             launch.mode.class.is_vera_cooperative(),
             vera_coop_houses.as_ref(),
+            vera_coop_map_config.as_ref(),
         ) {
-            (true, Some(assignments)) => assignments
-                .validate_for_launch(launch)
-                .map_err(anyhow::Error::msg)?,
-            (true, None) => anyhow::bail!("VERA Coop start has no frozen House assignments"),
-            (false, Some(_)) => {
+            (true, Some(assignments), Some(config)) => {
+                assignments
+                    .validate_for_launch(launch)
+                    .map_err(anyhow::Error::msg)?;
+                let map_file = launch
+                    .selected_map_file
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no selected map"))?;
+                let metadata = network
+                    .map_metadata
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no map metadata"))?;
+                config.validate_binding(map_file, &metadata.source_sha256)?;
+            }
+            (true, _, _) => anyhow::bail!("VERA Coop start has no frozen map config/assignments"),
+            (false, Some(_), _) => {
                 anyhow::bail!("non-Coop network start carries VERA Coop assignments")
             }
-            (false, None) => {}
+            (false, None, Some(_)) => {
+                anyhow::bail!("non-Coop network start carries VERA Coop map settings")
+            }
+            (false, None, None) => {}
         }
         network.proposed_seed = Some(agreed_seed);
         admit_network_start_roster(launch)?;
@@ -2772,6 +2834,9 @@ impl MatchSession {
         );
         if let Some(assignments) = vera_coop_houses {
             prepared = prepared.with_vera_coop_houses(assignments);
+        }
+        if let Some(config) = vera_coop_map_config {
+            prepared = prepared.with_vera_coop_map_config(config);
         }
         let startup = Arc::new(
             prepared
@@ -3972,6 +4037,31 @@ mod tests {
         session
             .accept_network_setup(launch, true, Some(7), false)
             .unwrap();
+        let map_file = session
+            .network_setup()
+            .unwrap()
+            .selected_map_file
+            .clone()
+            .unwrap();
+        let source_sha256 = "a".repeat(64);
+        session.network.as_mut().unwrap().map_metadata = Some(super::NetworkMapMetadata {
+            display_name: map_file.clone(),
+            player_capacity: 8,
+            official: false,
+            byte_length: 100,
+            digest: String::new(),
+            source_sha256: source_sha256.clone(),
+            effective_digest: "b".repeat(64),
+        });
+        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            map_file,
+            source_sha256,
+            crate::map::coop_config::VeraCoopMapConfig::default(),
+        )
+        .unwrap();
+        session
+            .accept_network_vera_coop_map_config(Some(config.clone()))
+            .unwrap();
         session.set_network_player_ready(0, true).unwrap();
         session.set_network_map_status(0, 2).unwrap();
         session.set_network_start_seed(0x1234_abcd).unwrap();
@@ -4001,6 +4091,31 @@ mod tests {
         retry
             .accept_network_setup(retry_launch, true, Some(7), false)
             .unwrap();
+        let map_file = retry
+            .network_setup()
+            .unwrap()
+            .selected_map_file
+            .clone()
+            .unwrap();
+        let source_sha256 = "a".repeat(64);
+        retry.network.as_mut().unwrap().map_metadata = Some(super::NetworkMapMetadata {
+            display_name: map_file.clone(),
+            player_capacity: 8,
+            official: false,
+            byte_length: 100,
+            digest: String::new(),
+            source_sha256: source_sha256.clone(),
+            effective_digest: "b".repeat(64),
+        });
+        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            map_file,
+            source_sha256,
+            crate::map::coop_config::VeraCoopMapConfig::default(),
+        )
+        .unwrap();
+        retry
+            .accept_network_vera_coop_map_config(Some(config))
+            .unwrap();
         retry.set_network_player_ready(0, true).unwrap();
         retry.set_network_map_status(0, 2).unwrap();
         retry.set_network_start_seed(0x1234_abcd).unwrap();
@@ -4011,6 +4126,27 @@ mod tests {
                 .is_err()
         );
         assert!(retry.network_setup().is_some());
+    }
+
+    #[test]
+    fn wol_vera_coop_keeps_lobby_without_config_while_lan_requires_it() {
+        use super::NetworkReturnContext;
+
+        let mut launch = network_fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+
+        let mut wol = MatchSession::default();
+        wol.enter_network(NetworkReturnContext::Wol);
+        wol.accept_network_setup(launch.clone(), true, None, false)
+            .unwrap();
+        wol.accept_network_vera_coop_map_config(None).unwrap();
+        assert!(wol.network_setup().is_some());
+
+        let mut lan = MatchSession::default();
+        lan.enter_network(NetworkReturnContext::LanLobby);
+        lan.accept_network_setup(launch, true, None, false).unwrap();
+        assert!(lan.accept_network_vera_coop_map_config(None).is_err());
+        assert!(lan.network_setup().is_some());
     }
 
     #[test]

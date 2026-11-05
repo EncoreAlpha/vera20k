@@ -541,11 +541,24 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                 .manager()
                 .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
             let map = crate::map::source::load_network_map_ini(root, file, assets)?;
-            let assignments = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
-                &map.ini,
-                launch,
-                agreed_seed,
-            )?;
+            let config = state
+                .match_state
+                .session
+                .network_vera_coop_map_config()
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no accepted map config"))?;
+            let (_, source_sha256) = map
+                .source
+                .physical_identity()
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+            let assignments =
+                crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                    &map.ini,
+                    file,
+                    source_sha256,
+                    config,
+                    launch,
+                    agreed_seed,
+                )?;
             Ok(Some(assignments))
         })();
     let vera_coop_houses = match vera_coop_houses {
@@ -641,6 +654,22 @@ pub(crate) fn commit_map_selection(
         .ok_or_else(|| anyhow::anyhow!("unknown chosen map"))?;
     let file = map.file_name.clone();
     let metadata = super::local_map_metadata(state, &file)?;
+    let vera_coop_map_config = if mode.class.is_vera_cooperative() {
+        match state.match_state.session_mode() {
+            crate::app::match_runtime::session::SessionMode::Lan => {
+                Some(super::resolve_host_vera_coop_map_config(state, &file)?)
+            }
+            // WOL retains its existing lobby and map selection behavior. Its
+            // options transport has no supplemental-config field.
+            crate::app::match_runtime::session::SessionMode::Wol => None,
+            _ => anyhow::bail!("VERA Coop map selection requires a network session"),
+        }
+    } else {
+        None
+    };
+    if let Some(config) = vera_coop_map_config.as_ref() {
+        config.validate_binding(&file, &metadata.source_sha256)?;
+    }
     let mode_changed = state
         .match_state
         .session
@@ -664,6 +693,8 @@ pub(crate) fn commit_map_selection(
             .session
             .network_map_metadata()
             .is_none_or(|current| current.display_name != metadata.display_name);
+    let coop_config_changed =
+        state.match_state.session.network_vera_coop_map_config() != vera_coop_map_config.as_ref();
     // Use Map can reselect an already-uploaded source. Ask the same map
     // identity owner as received HostSetup before replacing its selection;
     // unchanged physical/effective bytes retain their image and marker bounds.
@@ -679,6 +710,9 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .network_map_requires_verification(&selected, &metadata)?;
+    let vera_coop_lan_material_changed = mode.class.is_vera_cooperative()
+        && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
+        && (changed || map_changed || coop_config_changed);
     let removed = state.match_state.session.select_network_map(
         selected.mode,
         file.clone(),
@@ -703,6 +737,17 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .accept_network_map_metadata(metadata, None, true)?;
+    state
+        .match_state
+        .session
+        .accept_network_vera_coop_map_config(vera_coop_map_config)?;
+    if vera_coop_lan_material_changed {
+        if map_changed {
+            state.match_state.session.invalidate_network_agreement()?;
+        } else {
+            state.match_state.session.clear_guest_readiness()?;
+        }
+    }
     for human in removed {
         queue(
             state,
@@ -720,6 +765,9 @@ pub(crate) fn commit_map_selection(
     state.frontend.skirmish_preview_texture = None;
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.invalidate_received_preview(map_changed);
+        if vera_coop_lan_material_changed {
+            protocol.start_requested = false;
+        }
     }
     if super::dialog(state).wol() {
         // VERA's role map changed with a mode change even if the same file

@@ -792,6 +792,7 @@ impl LanCapture {
                 },
                 cooperative_difficulty: 0,
                 seed: Some(self.seed()?),
+                vera_coop_map_config: None,
             }),
         )?;
         self.assert_guest_order(state, true)

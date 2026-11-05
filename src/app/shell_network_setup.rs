@@ -7,6 +7,8 @@
 mod actions;
 pub(crate) mod agreement;
 pub(crate) mod bans;
+mod coop_map;
+pub(crate) use coop_map::resolve_host_vera_coop_map_config;
 mod cooperative;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,

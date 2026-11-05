@@ -104,6 +104,73 @@ pub struct PreparedNetworkStartup {
     /// Independently resolved on every peer from the admitted map, roles and
     /// shared start seed; consumed by the VERA Coop House bootstrap owner.
     vera_coop_houses: Option<crate::skirmish_launch::VeraCoopHouseAssignments>,
+    /// The exact host-authoritative coop overlay used to resolve those Houses.
+    vera_coop_map_config: Option<NetworkVeraCoopMapConfig>,
+}
+
+/// Typed sidecar plus the physical map identity it was admitted against.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NetworkVeraCoopMapConfig {
+    pub map_file: String,
+    pub source_sha256: String,
+    pub config_sha256: String,
+    pub config: crate::map::coop_config::VeraCoopMapConfig,
+}
+
+impl NetworkVeraCoopMapConfig {
+    pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;
+
+    pub(crate) fn new(
+        map_file: String,
+        source_sha256: String,
+        config: crate::map::coop_config::VeraCoopMapConfig,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            crate::map::source::valid_source_sha256(&source_sha256),
+            "VERA Coop config has no valid map byte identity"
+        );
+        let config_bytes = serde_json::to_vec(&config)?;
+        anyhow::ensure!(
+            config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES,
+            "VERA Coop config exceeds the network size limit"
+        );
+        let config_sha256 = crate::util::sha256::sha256_hex(&config_bytes);
+        Ok(Self {
+            map_file,
+            source_sha256,
+            config_sha256,
+            config,
+        })
+    }
+
+    pub(crate) fn validate_binding(
+        &self,
+        map_file: &str,
+        source_sha256: &str,
+    ) -> anyhow::Result<()> {
+        let config_bytes = serde_json::to_vec(&self.config)?;
+        anyhow::ensure!(
+            self.map_file.eq_ignore_ascii_case(map_file)
+                && self.source_sha256 == source_sha256
+                && crate::map::source::valid_source_sha256(&self.source_sha256)
+                && crate::map::source::valid_source_sha256(&self.config_sha256)
+                && config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES
+                && self.config_sha256 == crate::util::sha256::sha256_hex(&config_bytes),
+            "VERA Coop config does not match the selected map identity"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn apply_to_map(
+        &self,
+        map_file: &str,
+        source_sha256: &str,
+        map_ini: &crate::rules::ini_parser::IniFile,
+    ) -> anyhow::Result<crate::rules::ini_parser::IniFile> {
+        self.validate_binding(map_file, source_sha256)?;
+        self.config.apply_to_map(map_ini)
+    }
 }
 
 impl PreparedNetworkStartup {
@@ -134,6 +201,7 @@ impl PreparedNetworkStartup {
             wol_start,
             carry_over: None,
             vera_coop_houses: None,
+            vera_coop_map_config: None,
         }
     }
 
@@ -143,6 +211,15 @@ impl PreparedNetworkStartup {
     ) -> Self {
         self.vera_coop_houses = Some(assignments);
         self
+    }
+
+    pub(crate) fn with_vera_coop_map_config(mut self, config: NetworkVeraCoopMapConfig) -> Self {
+        self.vera_coop_map_config = Some(config);
+        self
+    }
+
+    pub(crate) fn vera_coop_map_config(&self) -> Option<&NetworkVeraCoopMapConfig> {
+        self.vera_coop_map_config.as_ref()
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {
@@ -317,6 +394,18 @@ pub(crate) fn resolve_vera_cooperative_houses(
         .validate_for_launch(launch)
         .map_err(anyhow::Error::msg)?;
     Ok(assignments)
+}
+
+pub(crate) fn resolve_vera_cooperative_houses_with_config(
+    ini: &crate::rules::ini_parser::IniFile,
+    map_file: &str,
+    source_sha256: &str,
+    config: &NetworkVeraCoopMapConfig,
+    launch: &SkirmishLaunchSession,
+    seed: u32,
+) -> anyhow::Result<crate::skirmish_launch::VeraCoopHouseAssignments> {
+    let effective = config.apply_to_map(map_file, source_sha256, ini)?;
+    resolve_vera_cooperative_houses(&effective, launch, seed)
 }
 
 /// Explicit campaign settings, from a client or the process speed-control flag.

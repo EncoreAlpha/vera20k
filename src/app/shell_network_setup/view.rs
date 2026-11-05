@@ -83,6 +83,22 @@ fn vera_coop_role_metadata(
     }
 }
 
+fn vera_coop_role_metadata_with_config(
+    ini: &crate::rules::ini_parser::IniFile,
+    rules: Option<&crate::rules::ruleset::RuleSet>,
+    file: &str,
+    source_sha256: &str,
+    config: Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+) -> Option<super::VeraCoopMapDetails> {
+    match config {
+        Some(config) => {
+            let effective = config.apply_to_map(file, source_sha256, ini).ok()?;
+            Some(vera_coop_role_metadata(&effective, rules))
+        }
+        None => Some(vera_coop_role_metadata(ini, rules)),
+    }
+}
+
 fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
     let Some(file) = state
         .match_state
@@ -100,11 +116,17 @@ fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
         return super::VeraCoopMapDetails::default();
     };
     let root = config.paths.ra2_dir.clone();
-    let digest = state
+    let source_digest = state
         .match_state
         .session
         .network_map_metadata()
         .map_or_else(String::new, |metadata| metadata.source_sha256.clone());
+    let coop_config = state.match_state.session.network_vera_coop_map_config();
+    let digest = format!(
+        "{}:{}",
+        source_digest,
+        coop_config.map_or("", |config| config.config_sha256.as_str())
+    );
     let key_file = file.to_ascii_lowercase();
     let cached = protocol
         .vera_coop_role_cache
@@ -118,7 +140,17 @@ fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
         let details = crate::map::source::load_network_map_ini(&root, file, assets)
             .ok()
             .and_then(|loaded| {
-                let mut details = vera_coop_role_metadata(&loaded.ini, state.rules());
+                let actual_digest = loaded
+                    .source
+                    .physical_identity()
+                    .map_or("", |(_, digest)| digest);
+                let mut details = vera_coop_role_metadata_with_config(
+                    &loaded.ini,
+                    state.rules(),
+                    file,
+                    actual_digest,
+                    coop_config,
+                )?;
                 // The campaign's Brief= is a movie; mission text lives in
                 // MISSIONMD.INI under the scenario filename (restate reader).
                 let briefing = crate::rules::retail_sources::select_ini(assets, "MISSIONMD.INI")
@@ -829,5 +861,37 @@ mod tests {
         assert_eq!(details.colors[0], Some([255, 0, 0]));
         assert_eq!(details.colors[1], Some([0, 0, 255]));
         assert_eq!(details.colors[2], None);
+    }
+
+    #[test]
+    fn vera_coop_lobby_uses_accepted_map_config_and_rejects_wrong_map() {
+        let ini = IniFile::from_str(
+            "[Basic]\nPlayer1=Alpha\n[Houses]\n0=Alpha\n1=Beta\n[Alpha]\n[Beta]\n",
+        );
+        let config = crate::map::coop_config::VeraCoopMapConfig::from_bytes(
+            &ini,
+            b"[Basic]\nPlayer1=Beta\n",
+        )
+        .unwrap();
+        let digest = crate::util::sha256::sha256_hex(b"map bytes");
+        let accepted = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            "mission.map".to_owned(),
+            digest.clone(),
+            config,
+        )
+        .unwrap();
+        let details = vera_coop_role_metadata_with_config(
+            &ini,
+            None,
+            "mission.map",
+            &digest,
+            Some(&accepted),
+        )
+        .unwrap();
+        assert_eq!(details.owners[0].as_deref(), Some("Beta"));
+        assert!(
+            vera_coop_role_metadata_with_config(&ini, None, "other.map", &digest, Some(&accepted),)
+                .is_none()
+        );
     }
 }

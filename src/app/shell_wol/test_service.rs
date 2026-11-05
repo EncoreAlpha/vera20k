@@ -349,6 +349,7 @@ fn host_options(
             observer_row: None,
             cooperative_difficulty: 0,
             seed: Some(HOST_SEED),
+            vera_coop_map_config: None,
         }),
     )
 }

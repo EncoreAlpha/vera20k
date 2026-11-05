@@ -1276,6 +1276,155 @@ fn load_descriptor_source_family_format_matrix() {
 }
 
 #[test]
+fn vera_coop_fresh_admission_rejects_generated_sources_before_house_resolution() {
+    let mut launch = test_launch_session(LaunchCountry::America);
+    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    launch.selected_map_file = Some("mp01t4.map".to_owned());
+    let startup = crate::app::match_bootstrap::PreparedNetworkStartup::new(
+        launch,
+        73,
+        crate::app::match_runtime::session::SessionMode::Lan,
+        true,
+        2,
+        crate::app::match_runtime::session::WolStartTerms::default(),
+    );
+    let request = LoadingRequest::network(LoadingStartup::Network(std::sync::Arc::new(startup)));
+    let source = crate::map::source::LoadedMapSource::Generated {
+        seed_name: "mp01t4.map".to_owned(),
+        seed_source: None,
+    };
+    let initial = crate::app::loading::init::MapLoadInitial::from_test_map_source(
+        prefix_test_map(&[(0, 20, 24)]),
+        source,
+    );
+
+    let error = match request.prepare_initial(initial) {
+        Err(error) => error,
+        Ok(_) => panic!("VERA Coop fresh admission must reject generated sources"),
+    };
+    assert!(error.to_string().contains("authored physical map source"));
+}
+
+#[test]
+fn vera_coop_authored_admission_requires_frozen_house_assignments() {
+    let mut launch = test_launch_session(LaunchCountry::America);
+    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    let startup = crate::app::match_bootstrap::PreparedNetworkStartup::new(
+        launch,
+        73,
+        crate::app::match_runtime::session::SessionMode::Lan,
+        true,
+        2,
+        crate::app::match_runtime::session::WolStartTerms::default(),
+    );
+    let request = LoadingRequest::network(LoadingStartup::Network(std::sync::Arc::new(startup)));
+    let source = crate::map::source::LoadedMapSource::Loose {
+        cache_lease: Default::default(),
+        path: std::path::PathBuf::from("mp01t4.map"),
+        payload_len: 17,
+        source_sha256: crate::util::sha256::sha256_hex(b"synthetic map fixture"),
+    };
+    let initial = crate::app::loading::init::MapLoadInitial::from_test_map_source(
+        prefix_test_map(&[(0, 20, 24)]),
+        source,
+    );
+
+    let error = match request.prepare_initial(initial) {
+        Err(error) => error,
+        Ok(_) => panic!("VERA Coop authored admission needs frozen House assignments"),
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("frozen VERA Coop startup has no House assignments")
+    );
+}
+
+#[test]
+fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() {
+    use crate::app::loading::fresh_scenario::FreshScenarioFamily;
+    use crate::skirmish_launch::{LaunchHumanRole, VeraCoopHouseAssignments};
+
+    let mut launch = test_launch_session(LaunchCountry::America);
+    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    launch.selected_map_file = Some("flat.map".to_owned());
+    launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
+    let mut map_text = include_str!("../../../../tests/maps/flat.map").to_owned();
+    let basic_end = map_text.find("[Basic]").expect("Basic section") + "[Basic]".len();
+    map_text.insert_str(basic_end, "\nPlayer1=Alpha");
+    map_text.push_str(
+        "\n[Houses]\n0=Alpha\n1=Beta\n[Alpha]\nCountry=Americans\n[Beta]\nCountry=Yuri\n",
+    );
+    let map = crate::map::map_file::MapFile::from_bytes(map_text.as_bytes())
+        .expect("authored map fixture parses");
+
+    let source = crate::map::source::LoadedMapSource::Loose {
+        cache_lease: Default::default(),
+        path: std::path::PathBuf::from("flat.map"),
+        payload_len: map_text.len(),
+        source_sha256: crate::util::sha256::sha256_hex(map_text.as_bytes()),
+    };
+    let (_, source_sha256) = source.physical_identity().unwrap();
+    let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        "flat.map".into(),
+        source_sha256.to_owned(),
+        crate::map::coop_config::VeraCoopMapConfig::from_bytes(&map.ini, b"[Basic]\nPlayer1=Beta")
+            .unwrap(),
+    )
+    .unwrap();
+    let assignments = crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+        &map.ini,
+        "flat.map",
+        source_sha256,
+        &config,
+        &launch,
+        73,
+    )
+    .expect("frozen participant maps to the supplemental primary House");
+    assert_eq!(assignments.participants[0].owner_name, "Beta");
+
+    let startup = crate::app::match_bootstrap::PreparedNetworkStartup::new(
+        launch,
+        73,
+        crate::app::match_runtime::session::SessionMode::Lan,
+        true,
+        2,
+        crate::app::match_runtime::session::WolStartTerms::default(),
+    )
+    .with_vera_coop_houses(VeraCoopHouseAssignments {
+        participants: assignments.participants.clone(),
+    })
+    .with_vera_coop_map_config(config.clone());
+    let startup = LoadingStartup::Network(std::sync::Arc::new(startup));
+    let initial =
+        crate::app::loading::init::MapLoadInitial::from_test_map_source(map, source.clone());
+    let prepared = LoadingRequest::network(startup.clone())
+        .prepare_initial(initial)
+        .expect("VERA Coop admitted authored network source and frozen mapping");
+
+    assert_eq!(
+        prepared.context.family(),
+        FreshScenarioFamily::VeraCooperative
+    );
+    prepared
+        .context
+        .validate_terminal_transfer(
+            prepared.request.startup(),
+            &source,
+            prepared.context.signed_new_ini_format(),
+        )
+        .expect("terminal transfer retains the frozen network startup");
+    assert_eq!(
+        prepared.request.startup().session_mode(),
+        crate::app::match_runtime::session::SessionMode::Lan
+    );
+    let LoadingStartup::Network(frozen) = prepared.request.startup() else {
+        panic!("network startup remains frozen through LoadingRequest");
+    };
+    assert_eq!(frozen.vera_coop_map_config(), Some(&config));
+}
+
+#[test]
 fn accepted_and_resolved_legacy_share_one_stock_cursor_shape() {
     use crate::app::loading::fresh_scenario::{FreshScenarioFamily, FreshStartupProvenance};
 

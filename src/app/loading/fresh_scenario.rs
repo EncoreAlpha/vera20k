@@ -35,6 +35,7 @@ impl FreshMapMaterialization {
 pub(crate) enum FreshScenarioFamily {
     StockOffline,
     Campaign,
+    VeraCooperative,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +59,9 @@ enum FreshScenarioPrefixReceipt {
     },
     Campaign {
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
+    },
+    VeraCooperative {
+        startup: std::sync::Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     },
 }
 
@@ -93,6 +97,11 @@ pub(crate) enum FreshScenarioParts {
         physical_source: LoadedMapSource,
         signed_new_ini_format: i32,
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
+    },
+    VeraCooperative {
+        physical_source: LoadedMapSource,
+        signed_new_ini_format: i32,
+        startup: std::sync::Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     },
 }
 
@@ -142,6 +151,64 @@ impl FreshScenarioLoadContextDescriptor {
                 },
             });
         }
+        if let LoadingStartup::Network(prepared) = startup
+            && prepared.launch_session().mode.class.is_vera_cooperative()
+        {
+            let launch = prepared.launch_session();
+            let selected_map = launch
+                .selected_map_file
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
+            anyhow::ensure!(
+                !selected_map.trim().is_empty()
+                    && selected_map.trim() == selected_map
+                    && !crate::map::rmg::is_seed_selection(selected_map),
+                "VERA Coop requires an exact authored map selection"
+            );
+            anyhow::ensure!(
+                matches!(
+                    physical_source,
+                    LoadedMapSource::Loose { .. } | LoadedMapSource::Mix { .. }
+                ),
+                "VERA Coop requires an authored physical map source"
+            );
+            anyhow::ensure!(
+                accepted_rmg_start_staging.is_none(),
+                "random-map staging cannot enter a VERA Coop authored-map load"
+            );
+            let frozen = prepared.vera_coop_houses().ok_or_else(|| {
+                anyhow::anyhow!("frozen VERA Coop startup has no House assignments")
+            })?;
+            let config = prepared
+                .vera_coop_map_config()
+                .ok_or_else(|| anyhow::anyhow!("frozen VERA Coop startup has no map config"))?;
+            let (_, source_sha256) = physical_source
+                .physical_identity()
+                .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+            let recomputed =
+                crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                    &map.ini,
+                    selected_map,
+                    source_sha256,
+                    config,
+                    launch,
+                    prepared.seed.value,
+                )?;
+            anyhow::ensure!(
+                &recomputed == frozen,
+                "VERA Coop map, participant roles, or shared seed changed after start freeze"
+            );
+            return Ok(Self {
+                physical_source: physical_source.clone(),
+                materialization: FreshMapMaterialization::Authored,
+                signed_new_ini_format: map.basic.new_ini_format.unwrap_or(0),
+                startup_provenance: FreshStartupProvenance::NetworkAccepted,
+                match_seed: prepared.seed.value,
+                prefix: FreshScenarioPrefixReceipt::VeraCooperative {
+                    startup: std::sync::Arc::clone(prepared),
+                },
+            });
+        }
         let (session, match_seed, startup_provenance) = match startup {
             LoadingStartup::Accepted(prepared) => (
                 prepared.session.launch_session().clone(),
@@ -174,9 +241,25 @@ impl FreshScenarioLoadContextDescriptor {
                 prepared.vera_coop_houses(),
             ) {
                 (true, Some(frozen)) => {
-                    let recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
-                        &map.ini, &session, match_seed,
-                    )?;
+                    let selected_map = session
+                        .selected_map_file
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
+                    let config = prepared.vera_coop_map_config().ok_or_else(|| {
+                        anyhow::anyhow!("frozen VERA Coop startup has no map config")
+                    })?;
+                    let (_, source_sha256) = physical_source
+                        .physical_identity()
+                        .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+                    let recomputed =
+                        crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                            &map.ini,
+                            selected_map,
+                            source_sha256,
+                            config,
+                            &session,
+                            match_seed,
+                        )?;
                     anyhow::ensure!(
                         &recomputed == frozen,
                         "VERA Coop map, participant roles, or shared seed changed after start freeze"
@@ -319,6 +402,9 @@ impl FreshScenarioLoadContextDescriptor {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline { .. } => FreshScenarioFamily::StockOffline,
             FreshScenarioPrefixReceipt::Campaign { .. } => FreshScenarioFamily::Campaign,
+            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
+                FreshScenarioFamily::VeraCooperative
+            }
         }
     }
 
@@ -327,6 +413,9 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioPrefixReceipt::StockOffline { launch, .. } => launch,
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer launch descriptor")
+            }
+            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
+                panic!("VERA Coop authored campaign has no stock-offline launch descriptor")
             }
         }
     }
@@ -338,6 +427,9 @@ impl FreshScenarioLoadContextDescriptor {
             } => scenario_prefix.projection(),
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer start projection")
+            }
+            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
+                panic!("VERA Coop authored campaign has no stock-offline start projection")
             }
         }
     }
@@ -371,6 +463,15 @@ impl FreshScenarioLoadContextDescriptor {
                 return Ok(());
             }
             anyhow::bail!("campaign receipt cannot enter a multiplayer load");
+        }
+        if let FreshScenarioPrefixReceipt::VeraCooperative { startup: admitted } = &self.prefix {
+            if let LoadingStartup::Network(startup) = startup {
+                if startup.as_ref() != admitted.as_ref() {
+                    anyhow::bail!("VERA Coop network startup changed before terminal transfer");
+                }
+                return Ok(());
+            }
+            anyhow::bail!("VERA Coop receipt cannot enter a non-network load");
         }
         let (provenance, seed, session) = match startup {
             LoadingStartup::Accepted(prepared) => (
@@ -433,6 +534,13 @@ impl FreshScenarioLoadContextDescriptor {
                 signed_new_ini_format: self.signed_new_ini_format,
                 startup,
             },
+            FreshScenarioPrefixReceipt::VeraCooperative { startup } => {
+                FreshScenarioParts::VeraCooperative {
+                    physical_source: self.physical_source,
+                    signed_new_ini_format: self.signed_new_ini_format,
+                    startup,
+                }
+            }
         }
     }
 
@@ -442,6 +550,9 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioParts::StockOffline(parts) => *parts,
             FreshScenarioParts::Campaign { .. } => {
                 panic!("campaign is not a stock-offline fixture")
+            }
+            FreshScenarioParts::VeraCooperative { .. } => {
+                panic!("VERA Coop authored campaign is not a stock-offline fixture")
             }
         }
     }

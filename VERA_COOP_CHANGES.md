@@ -1,10 +1,10 @@
 # VERA 合作战役开发记录
 
-这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。独立开发版本号：`0.1.10-dev`。
+这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。独立开发版本号：`0.1.11-dev`。
 
 ## 长期路线图（目标，尚未实现）
 
-首个可完整游玩的合作战役版本，目标覆盖以下内容；这份路线图不表示这些工作正在进行或已经完成。当前 `0.1.10-dev` 仍不能开始合作战役。外部合作配置只完成底层白名单解析与验证，尚未接入房间同步或开局，不能供游戏实际使用；WOL 角色同步也尚未实测。
+首个可完整游玩的合作战役版本，目标覆盖以下内容；这份路线图不表示这些工作正在进行或已经完成。当前 `0.1.11-dev` 仍不能开始合作战役。外部合作配置草稿已加入读取路径，但尚无双端 LAN 实测，WOL 也没有外部配置同步。
 
 - 支持 1–4 名玩家，角色为 `Player1` 至 `Player4`；`Player1` 未配置时回退到旧式 `Player`。每个角色有一个主所属 House，并可通过 `PlayerNControl` 控制额外 House；`Player1Control` 缺省时回退到 `PlayerControl`。额外 House 可由多个角色共享，地图原有同盟关系和战役视野规则继续适用。
 - 大厅允许玩家自选角色、房主调整所有角色，支持 Random 和唯一角色分配；角色分配及相关配置须在联机各端同步并校验。
@@ -12,6 +12,28 @@
 - 提供单人战役式的个人主所属方计分，并要求全体玩家确认后再进入下一关。
 - 支持玩家断线后由 AI 接管、玩家重连、包含完整合作状态的同步存档与读档后重新选择角色，以及合作暂停。
 - 支持为原版地图提供外部合作配置覆盖；覆盖内容仅限合作专用键，不得改写原版地图配置的其他行为。
+
+## `0.1.11-dev`
+
+- 增加外部合作配置草稿及地图/配置身份校验：loose 地图从地图旁读取；MIX 地图从游戏目录或 `settings_dir/Maps` 查找；两处都找到配置时拒绝加载。文件上限为 4 KiB，只允许 `[Basic]` 的 `Player1` 至 `Player4` 和地图 `[Houses]` 已列出的 House 段中的 `PlayerControl`、`Player1Control` 至 `Player4Control`。
+- 地图或合作配置发生变化后，LAN VERA Coop 房主保持自动准备，其他玩家需重新准备。
+- LAN 已完成底层配置处理、定向及单端大厅画面；尚无双端实测，合作任务仍不能开局。WOL 暂无外部配置同步。
+
+### 外部合作配置操作
+
+配置文件名是在完整地图文件名后追加 `.coop.ini`，例如 `ALL01UMD.MAP.coop.ini`。loose 地图的配置文件放在地图文件旁。MIX 地图的配置文件放在游戏目录或 `settings_dir/Maps`；如果两处同时存在同名配置，加载会被拒绝。文件不得超过 4 KiB。
+
+文件只可包含 `[Basic]` 中的 `Player1` 至 `Player4`，以及地图 `[Houses]` 已列出的 House 名称对应段中的 `PlayerControl`、`Player1Control` 至 `Player4Control`。例如：
+
+```ini
+[Basic]
+Player1=Americans
+Player2=Alliance
+[Neutral]
+Player1Control=yes
+```
+
+示例中的 `Americans`、`Alliance` 和 `Neutral` 只有在地图 `[Houses]` 中列出时才适用。`Player1Control` 显式值优先于 `PlayerControl`；若 `[Basic]` 中的 `Player1` 显式为空，则回退到地图原有的 `Player` 值。
 
 ## `0.1.10-dev`
 
