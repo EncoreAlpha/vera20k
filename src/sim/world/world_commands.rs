@@ -883,6 +883,14 @@ impl Simulation {
     /// its own network source for the House it shares (VERA shared
     /// control), otherwise the House's index.
     pub(crate) fn command_sender(&self, command_owner: InternedId) -> Option<i8> {
+        if self.session.has_network_house_grants() {
+            let source = self.session.local_shared_house_source()?;
+            let house = self.houses.index_of(command_owner)?;
+            return self
+                .session
+                .network_source_controls_house(source, house)
+                .then_some(source);
+        }
         if let Some(source) = self.session.local_shared_house_source()
             && self.session.current_house() == Some(command_owner)
         {
@@ -2911,6 +2919,35 @@ impl Simulation {
         true
     }
 
+    /// Local input counterpart to the synchronized TechnoClass::Select gate.
+    /// `Command::Select` is process-local presentation state: the app's input
+    /// ledger applies that gate before emitting the ordered snapshot, so Coop
+    /// participants may select an additional granted House even when it is not
+    /// `current_house`. The snapshot itself stays native and un-gated.
+    /// Discovery remains the native first gate; local grants replace only the
+    /// current-house human check for input selection.
+    pub fn techno_select_admits_for_local_input(&self, stable_id: u64) -> bool {
+        self.substrate
+            .entities
+            .get(stable_id)
+            .is_some_and(|entity| {
+                entity.discovery.discovered_by_current_house()
+                    || self.house_is_locally_controlled_player(entity.owner())
+            })
+    }
+
+    /// Local selection ledger counterpart to Unselect_All's human-player
+    /// classification. Consumed only by app input reduction.
+    pub fn local_input_select_unselects_all(&self, first: u64, new: u64) -> bool {
+        let locally_controlled = |id: u64| {
+            self.substrate
+                .entities
+                .get(id)
+                .is_some_and(|entity| self.house_is_locally_controlled_player(entity.owner()))
+        };
+        locally_controlled(first) != locally_controlled(new) || !locally_controlled(first)
+    }
+
     /// Object5F6C30 (+138), with Foot4DFA50's +6AD guard for mobile objects.
     /// Its disguise arm (+C8 with a NULL +D0(1)) is
     /// [`crate::sim::game_entity::GameEntity::disguise_hides_house_from`]; it
@@ -3166,7 +3203,20 @@ impl Simulation {
             return false;
         }
         let foreign = |id: u64| {
-            self.substrate.entities.get(id).is_some() && !self.entity_owned_by_id(command_owner, id)
+            let Some(actor) = self.substrate.entities.get(id) else {
+                return false;
+            };
+            if self.session.has_network_house_grants() {
+                let (Some(source), Some(index)) = (
+                    self.executing_record_sender,
+                    self.houses.index_of(actor.owner()),
+                ) else {
+                    return true;
+                };
+                !self.session.network_source_controls_house(source, index)
+            } else {
+                !self.entity_owned_by_id(command_owner, id)
+            }
         };
         match cmd {
             Command::Stop { entity_id }
@@ -3642,6 +3692,89 @@ mod tests {
         // reads that byte, so the fixture must model a revealed object.
         entity.lifecycle.set_in_limbo_for_test(false);
         sim.substrate.entities.insert(entity);
+    }
+
+    #[test]
+    fn vera_coop_unit_command_gate_uses_authenticated_source_grants() {
+        use crate::sim::house_state::HouseState;
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut sim = Simulation::new();
+        let alpha = sim.interner.intern("Alpha");
+        let beta = sim.interner.intern("Beta");
+        let neutral = sim.interner.intern("Neutral");
+        for (owner, side) in [(alpha, 0), (beta, 1), (neutral, 2)] {
+            sim.houses
+                .register(HouseState::new(owner, side, None, true, 0, 10));
+        }
+        sim.session.set_game_mode(ScenarioGameMode::Lan);
+        sim.session
+            .install_network_house_grants(vec![0, 1], vec![vec![0, 2], vec![1, 2]], Some(0));
+        let mut insert_unit = |id, owner| {
+            let type_id = sim.interner.intern("TEST");
+            let mut entity = GameEntity::new_at_frame_zero_for_test(
+                id,
+                2,
+                3,
+                0,
+                0,
+                owner,
+                Health::new(100),
+                type_id,
+                EntityCategory::Unit,
+                0,
+                5,
+                true,
+            );
+            entity.lifecycle.set_in_limbo_for_test(false);
+            sim.substrate.entities.insert(entity);
+        };
+        insert_unit(10, neutral);
+        insert_unit(11, beta);
+
+        sim.executing_record_sender = Some(0);
+        assert!(!sim.network_command_actor_foreign("Alpha", &Command::Stop { entity_id: 10 }));
+        assert!(sim.network_command_actor_foreign("Alpha", &Command::Stop { entity_id: 11 }));
+        sim.executing_record_sender = Some(1);
+        assert!(!sim.network_command_actor_foreign("Beta", &Command::Stop { entity_id: 10 }));
+        assert!(!sim.network_command_actor_foreign("Beta", &Command::Stop { entity_id: 11 }));
+        sim.executing_record_sender = None;
+        assert!(sim.network_command_actor_foreign("Alpha", &Command::Stop { entity_id: 10 }));
+
+        // Exercise the actual local encoder, native sender byte, queue decoder
+        // and due-command gate for an additional House actor.
+        let record = sim
+            .encode_stop_record(neutral, 10)
+            .expect("authorized local House encodes with its own sender");
+        assert_eq!(record.house_id(), 0);
+        assert!(sim.encode_stop_record(beta, 11).is_none());
+        sim.session.install_network_timing(10);
+        sim.session
+            .install_network_command_timing(0, std::num::NonZeroU8::new(1).unwrap(), [0, 1]);
+        assert!(sim.admit_native_command_record(record));
+        let applied = std::cell::RefCell::new(Vec::new());
+        let observe = |_: &Simulation, record: &CommandRecord, accepted| {
+            applied
+                .borrow_mut()
+                .push((record.opcode(), record.house_id(), accepted));
+        };
+        sim.advance_master_frame(
+            &[],
+            RuleSet::empty_for_test(),
+            None,
+            33,
+            crate::sim::world::TickLane::Ordinary,
+            false,
+            FrameEffects::default().with_command_applied(&observe),
+        )
+        .unwrap();
+        assert!(
+            applied
+                .borrow()
+                .contains(&(crate::sim::command::IDLE_OPCODE, 0, true)),
+            "executed native records: {:?}",
+            *applied.borrow()
+        );
     }
 
     #[test]

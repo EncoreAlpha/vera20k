@@ -116,9 +116,7 @@ pub(crate) fn destroy_connection(
     error: ConnectionError,
     live: Option<&mut crate::net::live_commands::LiveCommandSession>,
 ) -> Option<ConnectionDestroyed> {
-    let owner = sim
-        .interner()
-        .get(&session.network_source_owner(source_index)?)?;
+    let owner = participant_sim_owner(session, sim, source_index)?;
     if !sim
         .houses()
         .get(&owner)
@@ -207,6 +205,24 @@ pub(crate) fn destroy_connection(
         key: error.csf_key(),
         player: shared_house_player_name(session, source_index),
     })
+}
+
+/// Resolve the House that owns this synchronized participant. VERA Coop's
+/// lobby participant name is not the map-authored House name, so use the
+/// already authenticated sender mapping installed with its frozen role grants.
+/// Other network modes keep their existing participant-name lookup.
+fn participant_sim_owner(
+    session: &MatchSession,
+    sim: &Simulation,
+    source_index: usize,
+) -> Option<crate::sim::intern::InternedId> {
+    if sim.session().has_network_house_grants() {
+        let sender = session.network_source_sender(source_index)?;
+        let house_index = sim.session().network_source_house(sender)?;
+        return sim.houses().order().get(house_index).copied();
+    }
+    sim.interner()
+        .get(&session.network_source_owner(source_index)?)
 }
 
 /// ProcessGlobalPackets48D81A identifies a type10 Departure by the active
@@ -698,6 +714,14 @@ pub(crate) fn participant_name(session: &MatchSession, source_index: usize) -> S
 /// index. VERA shared control: while players share Houses, each sends as its
 /// own source instead.
 pub(crate) fn source_house(session: &MatchSession, sim: &Simulation, source: usize) -> Option<i32> {
+    if sim.session().has_network_house_grants() {
+        let sender = session.network_source_sender(source)?;
+        // Network packets, timing rows and peer tables retain the unique
+        // authenticated source byte. ScenarioSession separately resolves that
+        // byte to the map-authored primary House for simulation ownership.
+        sim.session().network_source_house(sender)?;
+        return Some(i32::from(sender));
+    }
     let owner = sim.interner().get(&session.network_source_owner(source)?)?;
     let index = sim.houses().index_of(owner)?;
     if !sim.session().shares_houses() {
@@ -709,6 +733,11 @@ pub(crate) fn source_house(session: &MatchSession, sim: &Simulation, source: usi
 
 /// The participant whose network "house" id is `house`.
 pub(crate) fn house_source(session: &MatchSession, sim: &Simulation, house: i32) -> Option<usize> {
+    if sim.session().has_network_house_grants() {
+        let sender = i8::try_from(house).ok()?;
+        sim.session().network_source_house(sender)?;
+        return session.network_sender_source(sender);
+    }
     if !sim.session().shares_houses() {
         let owner = sim.houses().order().get(usize::try_from(house).ok()?)?;
         return session

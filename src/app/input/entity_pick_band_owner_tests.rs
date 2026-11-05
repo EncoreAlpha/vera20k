@@ -113,9 +113,9 @@ fn band(source: impl PickSource, sim: &Simulation, local_owner: Option<&str>) ->
 #[test]
 fn campaign_band_box_admits_a_player_controlled_house_like_the_players_own() {
     let (sim, houses) = world(true, false);
-    assert!(sim.house_is_human_player(houses.local));
-    assert!(sim.house_is_human_player(houses.player_controlled));
-    assert!(!sim.house_is_human_player(houses.computer));
+    assert!(sim.house_is_locally_controlled_player(houses.local));
+    assert!(sim.house_is_locally_controlled_player(houses.player_controlled));
+    assert!(!sim.house_is_locally_controlled_player(houses.computer));
 
     let snapshot = band(&sim, &sim, Some("Russians"));
     assert!(snapshot.clear);
@@ -131,7 +131,7 @@ fn multiplayer_band_box_keeps_to_the_saved_current_house() {
     // Nonzero game mode: `0x50B6F0` compares the House with `A83D4C` alone,
     // so another human's House is refused even with PlayerControl set.
     let (sim, houses) = world(false, true);
-    assert!(!sim.house_is_human_player(houses.player_controlled));
+    assert!(!sim.house_is_locally_controlled_player(houses.player_controlled));
 
     let snapshot = band(&sim, &sim, Some("Russians"));
     assert_eq!(snapshot.select, vec![2]);

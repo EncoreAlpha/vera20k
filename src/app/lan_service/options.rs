@@ -64,6 +64,37 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
     } else {
         None
     };
+    let vera_coop_campaign = if let Some(config) = vera_coop_map_config.as_ref() {
+        let file = session
+            .network_setup()
+            .and_then(|launch| launch.selected_map_file.as_deref())
+            .ok_or_else(|| anyhow!("VERA Coop has no selected map"))?;
+        let (directory, sha256) =
+            match crate::app::shell_network_setup::vera_coop_host_campaign_identity(
+                state,
+                file,
+                &config.source_sha256,
+            ) {
+                Ok(identity) => identity,
+                Err(error) => return Err(error),
+            };
+        if config.campaign_directory.as_deref() != Some(directory.as_str())
+            || config.campaign_sha256.as_deref() != Some(sha256.as_str())
+        {
+            anyhow::bail!("host VERA Coop campaign changed after map selection");
+        }
+        ensure!(
+            config.source_sha256
+                == session
+                    .network_map_metadata()
+                    .ok_or_else(|| anyhow!("VERA Coop map metadata missing"))?
+                    .source_sha256,
+            "VERA Coop config is not bound to the selected map"
+        );
+        Some(VeraCoopCampaignIdentity { directory, sha256 })
+    } else {
+        None
+    };
     let service = state.match_state.lan_service.as_ref().expect("LAN visit");
     let admissions = session
         .network_setup()
@@ -113,7 +144,7 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
             .filter(|launch| launch.mode.class.is_vera_cooperative())
             .map(|launch| launch.humans.iter().map(|human| human.role).collect())
             .unwrap_or_default(),
-        vera_coop_map_config,
+        vera_coop_campaign,
     })?;
     let admitted = queue_payload(
         state,
@@ -153,9 +184,17 @@ struct ExtendedOptions {
     /// field for this project-specific state.
     #[serde(default)]
     vera_coop_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
-    /// Bounded typed host sidecar. Missing is rejected for VERA Coop.
+    /// Host's full campaign identity; campaign contents and projected config
+    /// remain local to each peer.
     #[serde(default)]
-    vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    vera_coop_campaign: Option<VeraCoopCampaignIdentity>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VeraCoopCampaignIdentity {
+    directory: String,
+    sha256: String,
 }
 
 /// Host-authored admission projection for native Type3 assembly, derived from
@@ -190,7 +229,7 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.selected_map_file,
         options.room,
         options.vera_coop_roles,
-        options.vera_coop_map_config,
+        options.vera_coop_campaign,
     )
 }
 
@@ -263,7 +302,7 @@ fn receive_options_text(
     selected_map_file: String,
     room: Option<crate::skirmish_launch::RoomOptions>,
     vera_coop_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
-    vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    vera_coop_campaign: Option<VeraCoopCampaignIdentity>,
 ) -> Result<()> {
     ensure!(
         source_sha256.is_empty() || crate::map::source::valid_source_sha256(&source_sha256),
@@ -274,46 +313,44 @@ fn receive_options_text(
         &state.frontend.skirmish_modes,
         text,
     )?;
-    validate_vera_coop_map_config(
+    validate_vera_coop_campaign(
         &options.launch,
         &selected_map_file,
         &source_sha256,
-        vera_coop_map_config.as_ref(),
+        vera_coop_campaign.as_ref(),
     )?;
     if options.launch.mode.class.is_vera_cooperative() {
         apply_vera_coop_roles(&mut options.launch, &vera_coop_roles)?;
-        let _config = vera_coop_map_config
-            .as_ref()
-            .ok_or_else(|| anyhow!("LAN VERA Coop options omit the map config"))?;
     }
     crate::map::source::validate_network_map_name(&selected_map_file)?;
     // VERA keeps the host's logical UTF-8 identity independently of the
     // bounded native text projection and the local SHA-named cache path.
-    options.launch.selected_map_file = Some(selected_map_file);
+    options.launch.selected_map_file = Some(selected_map_file.clone());
     options.map_metadata.source_sha256 = source_sha256.clone();
     options.map_metadata.effective_digest = effective_digest;
     if let Some(room) = room {
         options.launch.options.set_room_options(room);
     }
-    if let Some(config) = vera_coop_map_config.as_ref()
-        && let Some(file) = options.launch.selected_map_file.as_deref()
-    {
-        // If the local source is already present, validate the overlay now;
-        // missing maps are validated after the existing transfer admission.
-        if let (Some(game), Some(assets)) = (
-            state.platform.game_config.as_ref(),
-            state.process_assets.manager(),
-        ) && let Ok(map) =
-            crate::map::source::load_network_map_ini(&game.paths.ra2_dir, file, assets)
-            && map
-                .source
-                .physical_identity()
-                .is_some_and(|(_, digest)| digest == config.source_sha256)
-        {
-            config.apply_to_map(file, &source_sha256, &map.ini)?;
+    let local_coop_config = if options.launch.mode.class.is_vera_cooperative() {
+        let resolved = vera_coop_campaign.as_ref().and_then(|identity| {
+            let (config, digest) =
+                crate::app::shell_network_setup::resolve_local_vera_coop_campaign_config(
+                    state,
+                    &selected_map_file,
+                    &identity.directory,
+                    &source_sha256,
+                )
+                .ok()?;
+            campaign_identity_matches(identity, &config, &digest).then_some(config)
+        });
+        if resolved.is_none() && !state.match_state.session.host() {
+            report_coop_campaign_unavailable(state);
         }
-    }
-    options.vera_coop_map_config = vera_coop_map_config;
+        resolved
+    } else {
+        None
+    };
+    options.vera_coop_map_config = local_coop_config;
     crate::app::shell_network_setup::service_event(state, NetworkSetupEvent::HostSetup(options))?;
     state
         .match_state
@@ -330,22 +367,115 @@ fn receive_options_text(
     Ok(())
 }
 
-fn validate_vera_coop_map_config(
+fn validate_vera_coop_campaign(
     launch: &SkirmishLaunchSession,
     map_file: &str,
     source_sha256: &str,
-    config: Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    campaign: Option<&VeraCoopCampaignIdentity>,
 ) -> Result<()> {
     if launch.mode.class.is_vera_cooperative() {
-        config
-            .ok_or_else(|| anyhow!("LAN VERA Coop options omit the map config"))?
-            .validate_binding(map_file, source_sha256)?;
+        crate::map::source::validate_network_map_name(map_file)?;
+        ensure!(
+            source_sha256.is_empty() || crate::map::source::valid_source_sha256(source_sha256),
+            "invalid VERA Coop map identity"
+        );
+        if let Some(campaign) = campaign {
+            ensure!(
+                !campaign.directory.is_empty()
+                    && std::path::Path::new(&campaign.directory)
+                        .components()
+                        .count()
+                        == 1
+                    && crate::map::source::valid_source_sha256(&campaign.sha256),
+                "invalid VERA Coop campaign identity"
+            );
+        }
     } else {
         ensure!(
-            config.is_none(),
-            "LAN non-Coop options carry VERA Coop map config"
+            campaign.is_none(),
+            "LAN non-Coop options carry VERA Coop campaign identity"
         );
     }
+    Ok(())
+}
+
+fn campaign_identity_matches(
+    advertised: &VeraCoopCampaignIdentity,
+    local: &crate::app::match_bootstrap::NetworkVeraCoopMapConfig,
+    local_sha256: &str,
+) -> bool {
+    advertised.sha256 == local_sha256
+        && local.campaign_directory.as_deref() == Some(advertised.directory.as_str())
+        && local.campaign_sha256.as_deref() == Some(advertised.sha256.as_str())
+}
+
+pub(super) fn report_coop_campaign_unavailable(state: &mut AppState) {
+    let text = "VERA Coop requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+    crate::app::shell_lan::append_chat(
+        state,
+        crate::ui::lan_shell::LanChatLine {
+            text: text.encode_utf16().collect(),
+            color: u32::MAX,
+        },
+    );
+}
+
+/// Re-read local files at each prepare/start boundary. A valid snapshot at
+/// options receipt is insufficient if campaign or map files changed later.
+pub(super) fn validate_current_coop_campaign(state: &AppState) -> Result<()> {
+    let session = &state.match_state.session;
+    let launch = session
+        .network_setup()
+        .ok_or_else(|| anyhow!("LAN setup is missing"))?;
+    if !launch.mode.class.is_vera_cooperative() {
+        return Ok(());
+    }
+    let file = launch
+        .selected_map_file
+        .as_deref()
+        .ok_or_else(|| anyhow!("VERA Coop has no selected map"))?;
+    let metadata = session
+        .network_map_metadata()
+        .ok_or_else(|| anyhow!("VERA Coop map identity is missing"))?;
+    let accepted = session
+        .network_vera_coop_map_config()
+        .ok_or_else(|| anyhow!("local VERA Coop campaign is not verified"))?;
+    accepted.validate_binding(file, &metadata.source_sha256)?;
+    let (directory, expected_sha256) = if session.host() {
+        crate::app::shell_network_setup::vera_coop_host_campaign_identity(
+            state,
+            file,
+            &metadata.source_sha256,
+        )?
+    } else {
+        let service = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .ok_or_else(|| anyhow!("LAN service is missing"))?;
+        let received = service
+            .received_options
+            .as_ref()
+            .filter(|received| service.setup_scope() == Some(received.scope))
+            .ok_or_else(|| anyhow!("host campaign identity is missing"))?;
+        let identity = received
+            .options
+            .vera_coop_campaign
+            .as_ref()
+            .ok_or_else(|| anyhow!("host did not provide a campaign identity"))?;
+        (identity.directory.clone(), identity.sha256.clone())
+    };
+    let (local, local_sha256) =
+        crate::app::shell_network_setup::resolve_local_vera_coop_campaign_config(
+            state,
+            file,
+            &directory,
+            &metadata.source_sha256,
+        )?;
+    ensure!(
+        local_sha256 == expected_sha256 && local == *accepted,
+        "local VERA Coop campaign or map changed after options admission"
+    );
     Ok(())
 }
 
@@ -363,11 +493,11 @@ fn prevalidate_received_options(
         "invalid map source identity"
     );
     let (mut parsed, _, _) = parse_options(session, modes, &options.text)?;
-    validate_vera_coop_map_config(
+    validate_vera_coop_campaign(
         &parsed.launch,
         &options.selected_map_file,
         &options.source_sha256,
-        options.vera_coop_map_config.as_ref(),
+        options.vera_coop_campaign.as_ref(),
     )?;
     if parsed.launch.mode.class.is_vera_cooperative() {
         apply_vera_coop_roles(&mut parsed.launch, &options.vera_coop_roles)?;
@@ -514,27 +644,6 @@ pub(super) fn receive_extended(
                 &state.frontend.skirmish_modes,
                 &options,
             )?;
-            if let Some(config) = options.vera_coop_map_config.as_ref()
-                && let (Some(game_config), Some(assets)) = (
-                    state.platform.game_config.as_ref(),
-                    state.process_assets.manager(),
-                )
-                && let Ok(map) = crate::map::source::load_network_map_ini(
-                    &game_config.paths.ra2_dir,
-                    &options.selected_map_file,
-                    assets,
-                )
-                && map
-                    .source
-                    .physical_identity()
-                    .is_some_and(|(_, digest)| digest == options.source_sha256)
-            {
-                config.apply_to_map(
-                    &options.selected_map_file,
-                    &options.source_sha256,
-                    &map.ini,
-                )?;
-            }
             {
                 let service = state.match_state.lan_service.as_mut().expect("visit");
                 service.setup_scope = Some(scope);
@@ -616,7 +725,7 @@ pub(super) fn receive_extended(
                 options.selected_map_file,
                 options.room,
                 options.vera_coop_roles,
-                options.vera_coop_map_config,
+                options.vera_coop_campaign,
             )?;
             super::maps::received_options(state, scope, options.random_map)
         }
@@ -1208,7 +1317,7 @@ mod tests {
             admissions: Vec::new(),
             room: None,
             vera_coop_roles: roles,
-            vera_coop_map_config: None,
+            vera_coop_campaign: None,
         };
         let snapshot: ExtendedOptions =
             serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
@@ -1580,36 +1689,68 @@ mod tests {
     }
 
     #[test]
-    fn lan_coop_snapshot_requires_bound_config_while_ordinary_modes_keep_none() {
+    fn lan_coop_snapshot_carries_only_campaign_identity_while_other_modes_keep_none() {
         let mut launch = fixture(true).network_setup().unwrap().clone();
         launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
         launch.selected_map_file = Some("test.map".into());
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let identity = VeraCoopCampaignIdentity {
+            directory: "campaign-a".into(),
+            sha256: "a".repeat(64),
+        };
+        let local_config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
             "test.map".into(),
             "a".repeat(64),
             crate::map::coop_config::VeraCoopMapConfig::default(),
         )
+        .unwrap()
+        .with_campaign_identity(identity.directory.clone(), identity.sha256.clone())
         .unwrap();
+        assert!(campaign_identity_matches(
+            &identity,
+            &local_config,
+            &identity.sha256
+        ));
+        let mut stale_identity = identity.clone();
+        stale_identity.sha256 = "b".repeat(64);
+        assert!(!campaign_identity_matches(
+            &identity,
+            &local_config,
+            &stale_identity.sha256
+        ));
+        let changed_full_campaign = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            "test.map".into(),
+            "a".repeat(64),
+            crate::map::coop_config::VeraCoopMapConfig::default(),
+        )
+        .unwrap()
+        .with_campaign_identity("campaign-a".into(), "b".repeat(64))
+        .unwrap();
+        assert_ne!(
+            local_config, changed_full_campaign,
+            "full campaign changes must invalidate Coop readiness even if the current overlay is equal"
+        );
         assert!(
-            validate_vera_coop_map_config(&launch, "test.map", &"a".repeat(64), Some(&config),)
+            validate_vera_coop_campaign(&launch, "test.map", &"a".repeat(64), Some(&identity),)
                 .is_ok()
         );
-        assert!(validate_vera_coop_map_config(&launch, "test.map", &"a".repeat(64), None).is_err());
+        // Missing local identity keeps the guest in the room; readiness later
+        // fails closed after trying to resolve the host's campaign.
+        assert!(validate_vera_coop_campaign(&launch, "test.map", &"a".repeat(64), None).is_ok());
         assert!(
-            validate_vera_coop_map_config(&launch, "other.map", &"a".repeat(64), Some(&config))
+            validate_vera_coop_campaign(&launch, "../other.map", &"a".repeat(64), Some(&identity))
                 .is_err()
         );
-        let mut tampered = config.clone();
-        tampered.config_sha256 = "0".repeat(64);
+        let mut tampered = identity.clone();
+        tampered.sha256 = "bad".into();
         assert!(
-            validate_vera_coop_map_config(&launch, "test.map", &"a".repeat(64), Some(&tampered))
+            validate_vera_coop_campaign(&launch, "test.map", &"a".repeat(64), Some(&tampered))
                 .is_err()
         );
 
         launch.mode.class = crate::skirmish_modes::MpModeClass::Battle;
-        assert!(validate_vera_coop_map_config(&launch, "test.map", &"a".repeat(64), None).is_ok());
+        assert!(validate_vera_coop_campaign(&launch, "test.map", &"a".repeat(64), None).is_ok());
         assert!(
-            validate_vera_coop_map_config(&launch, "test.map", &"a".repeat(64), Some(&config))
+            validate_vera_coop_campaign(&launch, "test.map", &"a".repeat(64), Some(&identity))
                 .is_err()
         );
 
@@ -1626,20 +1767,22 @@ mod tests {
             admissions: Vec::new(),
             room: None,
             vera_coop_roles: Vec::new(),
-            vera_coop_map_config: Some(config),
+            vera_coop_campaign: Some(identity),
         })
         .unwrap();
+        assert!(payload.get("vera_coop_campaign").is_some());
+        assert!(payload.get("vera_coop_map_config").is_none());
         let mut old_host = payload;
         old_host
             .as_object_mut()
             .unwrap()
-            .remove("vera_coop_map_config");
+            .remove("vera_coop_campaign");
         let old_snapshot: ExtendedOptions = serde_json::from_value(old_host).unwrap();
-        assert!(old_snapshot.vera_coop_map_config.is_none());
+        assert!(old_snapshot.vera_coop_campaign.is_none());
     }
 
     #[test]
-    fn received_coop_config_prevalidation_leaves_admitted_session_unchanged() {
+    fn received_coop_identity_prevalidation_leaves_admitted_session_unchanged() {
         use crate::skirmish_launch::LaunchHumanRole;
 
         let modes = crate::skirmish_modes::stock_skirmish_modes();
@@ -1659,12 +1802,10 @@ mod tests {
             .unwrap();
         let text = projected_options(&host, 2, 0).unwrap().encode();
         let source_sha256 = "a".repeat(64);
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
-            "test.map".into(),
-            source_sha256.clone(),
-            crate::map::coop_config::VeraCoopMapConfig::default(),
-        )
-        .unwrap();
+        let identity = VeraCoopCampaignIdentity {
+            directory: "campaign-a".into(),
+            sha256: "c".repeat(64),
+        };
         let snapshot = ExtendedOptions {
             text,
             selected_map_file: "test.map".into(),
@@ -1684,7 +1825,7 @@ mod tests {
                 .iter()
                 .map(|human| human.role)
                 .collect(),
-            vera_coop_map_config: Some(config.clone()),
+            vera_coop_campaign: Some(identity.clone()),
         };
 
         let guest = fixture(false);
@@ -1692,19 +1833,15 @@ mod tests {
         assert!(prevalidate_received_options(&guest, &modes, &snapshot).is_ok());
 
         let mut missing = snapshot.clone();
-        missing.vera_coop_map_config = None;
-        assert!(prevalidate_received_options(&guest, &modes, &missing).is_err());
+        missing.vera_coop_campaign = None;
+        assert!(prevalidate_received_options(&guest, &modes, &missing).is_ok());
         assert_eq!(
             guest, before,
             "missing config cannot alter accepted session state"
         );
 
         let mut tampered = snapshot;
-        tampered
-            .vera_coop_map_config
-            .as_mut()
-            .unwrap()
-            .config_sha256 = "0".repeat(64);
+        tampered.vera_coop_campaign.as_mut().unwrap().sha256 = "invalid".into();
         assert!(prevalidate_received_options(&guest, &modes, &tampered).is_err());
         assert_eq!(
             guest, before,

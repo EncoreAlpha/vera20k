@@ -275,7 +275,7 @@ pub(crate) fn attack_action(
     let Some(kind) = sim.interner().object_type(actor.type_ref(), rules) else {
         return action;
     };
-    let human = sim.house_is_human_player(actor.owner());
+    let human = sim.house_is_locally_controlled_player(actor.owner());
     let armed = crate::sim::combat::combat_weapon::is_armed(
         actor,
         kind,
@@ -485,7 +485,7 @@ pub(crate) fn attack_action(
         if action == AttackAction::None
             && matches!(target, TargetKind::Cell(..))
             && kind.has_rally_line()
-            && sim.house_is_human_player(actor.owner())
+            && sim.house_is_locally_controlled_player(actor.owner())
         {
             // Cell44774B..447768; existing factory destination owner commits it.
             action = AttackAction::Rally;
@@ -520,7 +520,7 @@ pub(super) fn base_action(
     let Some(kind) = sim.interner().object_type(actor.type_ref(), rules) else {
         return AttackAction::None;
     };
-    let human = sim.house_is_human_player(actor.owner());
+    let human = sim.house_is_locally_controlled_player(actor.owner());
     let armed = crate::sim::combat::combat_weapon::is_armed(
         actor,
         kind,
@@ -567,7 +567,7 @@ pub(super) fn base_action(
             _ => AttackAction::None,
         }
     } else if admitted
-        && (sim.techno_player_controllable(actor_id, rules)
+        && (sim.locally_controllable_techno(actor_id, rules)
             || resolved_unit_in_range(
                 sim,
                 actor_id,
@@ -1607,7 +1607,7 @@ pub(super) fn object_key_action(
     if actor.berserk.is_active() || actor.is_warped_out() {
         return None;
     }
-    let human = sim.house_is_human_player(actor.owner());
+    let human = sim.house_is_locally_controlled_player(actor.owner());
     let alt = matches!(
         modifier,
         OrderModifier::ForceMove | OrderModifier::GuardArea
@@ -1620,7 +1620,7 @@ pub(super) fn object_key_action(
     {
         Some(ObjectKeyAction::GuardArea)
     } else {
-        (alt && human && sim.techno_player_controllable(actor_id, rules))
+        (alt && human && sim.locally_controllable_techno(actor_id, rules))
             .then_some(ObjectKeyAction::Move)
     }?;
     Some(
@@ -1676,8 +1676,8 @@ pub(super) fn guard_area_admitted(
         return false;
     };
     if actor.berserk.is_active()
-        || !sim.house_is_human_player(actor.owner())
-        || !sim.techno_player_controllable(actor_id, rules)
+        || !sim.house_is_locally_controlled_player(actor.owner())
+        || !sim.locally_controllable_techno(actor_id, rules)
     {
         return false;
     }
@@ -2443,7 +2443,7 @@ pub(crate) fn try_queue_context_order(
                 }
                 consumed = true;
                 // Foot4D7716 asks vt+A0 before publishing the Capture event.
-                if sim.techno_player_controllable(id, &resources.rules) {
+                if sim.locally_controllable_techno(id, &resources.rules) {
                     queued.push(CommandEnvelope::new(
                         owner_id,
                         execute_tick,
@@ -3744,7 +3744,7 @@ pub(super) fn entry_action(
     if moves
         && sim.entities().get(actor_id).is_some_and(|actor| {
             actor.category() == EntityCategory::Infantry
-                && sim.house_is_human_player(actor.owner())
+                && sim.house_is_locally_controlled_player(actor.owner())
                 && actor.infantry_deploy_doing()
                 && sim
                     .interner()
@@ -3836,7 +3836,7 @@ fn entry_orders(
             crate::sim::world::EntryClickAction::Grind => crate::sim::mission::MissionType::Eaten,
             crate::sim::world::EntryClickAction::NoEnter => return false,
         };
-        if sim.techno_player_controllable(id, rules) {
+        if sim.locally_controllable_techno(id, rules) {
             orders.push(Command::MegaMission {
                 entity_id: id,
                 mission,
@@ -3907,7 +3907,7 @@ fn engineer_capture_orders(
         use crate::sim::world::EngineerBuildingAction;
         consumed = true;
         // Foot4D7716 calls Infantry+A0/Techno700C40 before enqueue.
-        if sim.techno_player_controllable(id, rules) {
+        if sim.locally_controllable_techno(id, rules) {
             match action {
                 EngineerBuildingAction::Capture
                 | EngineerBuildingAction::Damage
@@ -4054,7 +4054,7 @@ pub(super) fn infantry_attack_action(
     // Infantry51F160..51F179: the Attack left is NoMove over an Immune=
     // type. A player's Crazy Ivan has returned at his bomb arm
     // (51EB24..51EB7E) before it.
-    if !(object.ivan && sim.house_is_human_player(actor.owner()))
+    if !(object.ivan && sim.house_is_locally_controlled_player(actor.owner()))
         && target_is_immune(sim, rules, &TargetKind::Entity(target_id))
     {
         return Some(InfantryAttackAction::NoMove);
@@ -4089,7 +4089,7 @@ pub(super) fn infantry_c4_action(
     let target = sim.entities().get(hover.stable_id)?;
     if actor.category() != EntityCategory::Infantry
         || target.category() != EntityCategory::Structure
-        || !sim.house_is_human_player(actor.owner())
+        || !sim.house_is_locally_controlled_player(actor.owner())
         || !sim.interner().object_type(actor.type_ref(), rules)?.c4
     {
         return None;
@@ -4148,7 +4148,7 @@ fn infiltrator_capture_orders(
         }
         consumed = true;
         // Foot4D7716 calls Infantry+A0/Techno700C40 before enqueue.
-        if sim.techno_player_controllable(id, rules) {
+        if sim.locally_controllable_techno(id, rules) {
             orders.push(Command::CaptureBuilding {
                 engineer_id: id,
                 target_building_id: hover.stable_id,
@@ -4652,8 +4652,8 @@ fn building_moves_over_object(
         && sim
             .entities()
             .get(id)
-            .is_some_and(|building| sim.house_is_human_player(building.owner()))
-        && sim.techno_player_controllable(id, rules)
+            .is_some_and(|building| sim.house_is_locally_controlled_player(building.owner()))
+        && sim.locally_controllable_techno(id, rules)
 }
 
 /// The left release over an object for a selection of buildings only: the
@@ -8301,7 +8301,7 @@ mod tests {
                 sim.mapgen_rng().logical_state(),
             );
             assert_eq!(
-                sim.techno_player_controllable(engineer, &rules),
+                sim.locally_controllable_techno(engineer, &rules),
                 row["native"]["output"]["returned_al"] == 1,
                 "{name}"
             );

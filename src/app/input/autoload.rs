@@ -261,7 +261,7 @@ fn collect_facts(
         let pos = object_center_xy(entity);
         // ClickedAction's Enter arm (0x004D76C6) requires vt+A0. A loaded
         // carrier also keeps its transport role for this AutoLoad plan.
-        if sim.techno_player_controllable(id, rules)
+        if sim.locally_controllable_techno(id, rules)
             && entity
                 .passenger_role
                 .cargo()

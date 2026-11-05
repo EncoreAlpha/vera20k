@@ -14,8 +14,9 @@
 //!   `movement::infantry_action`; this fear receiver requests actions without
 //!   advancing or copying that clock.
 //! - The second fidget's one-in-three `VoiceComment=` draws on Main, not the
-//!   Scenario stream: its gate is local-player-only and therefore
-//!   client-dependent ([`crate::sim::world::Simulation::infantry_idle_comment`]).
+//!   Scenario stream. In ordinary modes its native gate is local-player-only;
+//!   VERA Coop consumes the draw from shared House grants on every peer and
+//!   keeps sound output local (`infantry_idle_comment`).
 //! - The idle NULL-source Scatter (`51D0D0`, from the panic and roll-8 arms)
 //!   drops the owner's bridge-state answer: none of the three native callers
 //!   reads the idle result, and a Guard/AreaGuard/Hunt civilian's first Walk
@@ -659,7 +660,15 @@ impl crate::sim::world::Simulation {
         let Some(actor) = self.substrate.entities.get(id) else {
             return;
         };
-        if actor.selection.is_selected() || !self.house_is_human_player(actor.owner()) {
+        let coop_shared =
+            self.session.has_network_house_grants() && self.session.game_mode().is_network();
+        if coop_shared {
+            // Coop bootstrap marks the union of primary and extra grants as
+            // House+1EC on every peer; Houses outside that union remain AI.
+            if !self.owner_is_human(actor.owner()) {
+                return;
+            }
+        } else if actor.selection.is_selected() || !self.house_is_human_player(actor.owner()) {
             return;
         }
         let Some(comment) = self
@@ -668,7 +677,10 @@ impl crate::sim::world::Simulation {
         else {
             return;
         };
-        if self.main_rng.next_range_i32_inclusive(0, 2) != 0 {
+        let should_play_locally =
+            !actor.selection.is_selected() && self.house_is_human_player(actor.owner());
+        let voice_roll = self.main_rng.next_range_i32_inclusive(0, 2);
+        if voice_roll != 0 || (coop_shared && !should_play_locally) {
             return;
         }
         let event = crate::sim::world::SimSoundEvent::voc_at_location(
@@ -1428,6 +1440,126 @@ mod tests {
         let (before, after, comments) = run("Russians", 0);
         assert_eq!(after, before.state(), "no Main draw");
         assert!(comments.is_empty());
+    }
+
+    /// VERA Coop consumes VoiceComment draws for every granted human House on
+    /// every peer. Current-house ownership and selection independently gate
+    /// local playback; an ungranted AI House consumes no draw.
+    #[test]
+    fn coop_idle_voice_comment_keeps_main_rng_aligned_for_remote_granted_house() {
+        use crate::rules::sound_ini::SoundRegistry;
+        use crate::sim::rng::SimRng;
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut rules = rules_for("");
+        let sounds = SoundRegistry::from_ini(&IniFile::from_str("[SoundList]\n0=Hi\n1=Bye\n"));
+        rules
+            .bind_type_sound_references(&IniFile::from_str("[E1]\nVoiceComment=Hi,Bye\n"), &sounds);
+        let main_seed = (0..64)
+            .find(|&seed| {
+                let mut rng = SimRng::new(seed);
+                rng.next_range_i32_inclusive(0, 2) == 0
+            })
+            .unwrap();
+        let run = |local: &str, owner: &str, selected: bool| {
+            let mut sim = crate::sim::arena_fixture::rival_arena(&rules, 31);
+            sim.session.set_game_mode(ScenarioGameMode::Lan);
+            let yuri_id = sim.interner.intern("Yuri");
+            sim.houses
+                .register(crate::sim::house_state::HouseState::new(
+                    yuri_id, 0, None, false, 0, 10,
+                ));
+            let order = sim.houses.order().to_vec();
+            let primary_id = sim.interner.get("Americans").unwrap();
+            let remote_id = sim.interner.get("Russians").unwrap();
+            let primary = order.iter().position(|&id| id == primary_id).unwrap();
+            let remote = order.iter().position(|&id| id == remote_id).unwrap();
+            for (index, &house) in order.iter().enumerate() {
+                sim.houses
+                    .get_mut(&house)
+                    .unwrap()
+                    .assign_network_human(index == primary || index == remote);
+            }
+            let mut shared_grants = vec![remote as u8, primary as u8];
+            shared_grants.sort_unstable();
+            sim.session.install_network_house_grants_for_test(
+                vec![primary as u8, remote as u8],
+                vec![vec![primary as u8], shared_grants],
+                Some(if local == "Americans" { 0 } else { 1 }),
+            );
+            assert!(sim.session.network_house_grants_valid(order.len()));
+            let local_house = sim.interner.intern(local);
+            sim.session.set_current_house_for_test(Some(local_house));
+            let man = sim.spawn_object("E1", owner, 10, 10, 0, &rules).unwrap();
+            sim.substrate
+                .entities
+                .get_mut(man)
+                .unwrap()
+                .selection
+                .set_selected_for_test(selected);
+            sim.main_rng = SimRng::new(main_seed).into();
+            let initial = sim.main_rng.state();
+            sim.sound_events.clear_for_test();
+            sim.infantry_idle_comment(man, &rules, Default::default());
+            let comments: Vec<_> = sim
+                .sound_events
+                .iter()
+                .filter_map(|event| match event {
+                    crate::sim::world::SimSoundEvent::VocAt { sound_id, .. } => {
+                        Some(sound_id.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let state = sim.main_rng.state();
+            let next = sim.main_rng.next_u32();
+            (initial, state, next, sim.state_hash(), comments)
+        };
+        let local_unselected = run("Americans", "Americans", false);
+        let local_selected = run("Americans", "Americans", true);
+        let remote_unselected = run("Russians", "Americans", false);
+        let ai_unselected = run("Americans", "Yuri", false);
+        let mut expected = SimRng::new(main_seed);
+        expected.next_range_i32_inclusive(0, 2);
+        assert_eq!(
+            local_unselected.1,
+            expected.state(),
+            "one shared Main draw is consumed"
+        );
+        assert_eq!(
+            local_selected.1, local_unselected.1,
+            "selection does not gate the draw"
+        );
+        assert_eq!(
+            remote_unselected.1, local_unselected.1,
+            "current House does not gate the draw"
+        );
+        assert_eq!(local_selected.2, local_unselected.2);
+        assert_eq!(
+            remote_unselected.2, local_unselected.2,
+            "the next Main draw remains aligned"
+        );
+        assert_eq!(
+            local_unselected.3, local_selected.3,
+            "voice output does not alter shared simulation state"
+        );
+        assert_eq!(local_unselected.3, remote_unselected.3);
+        assert_eq!(local_unselected.4, ["Hi"]);
+        assert!(
+            local_selected.4.is_empty(),
+            "a selected local unit is silent"
+        );
+        assert!(
+            remote_unselected.4.is_empty(),
+            "remote House voice stays local to its owner"
+        );
+        assert_eq!(
+            ai_unselected.0, ai_unselected.1,
+            "an ungranted AI House takes no draw"
+        );
+        let mut ai_expected = SimRng::new(main_seed);
+        assert_eq!(ai_unselected.2, ai_expected.next_u32());
+        assert!(ai_unselected.4.is_empty());
     }
 
     /// Full original51CDB0 + actual75AB30 + original51D6F0 on the physical

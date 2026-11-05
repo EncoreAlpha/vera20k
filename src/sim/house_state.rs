@@ -1074,6 +1074,11 @@ impl HouseState {
         self.player_control = controlled;
     }
 
+    /// Install synchronized human identity for a VERA Coop role grant.
+    pub(crate) fn assign_network_human(&mut self, human: bool) {
+        self.is_human = human;
+    }
+
     /// `68AD0C/68AD18`: the campaign's selected House becomes human
     /// (`+0x1EC`) and player-controlled (`+0x1ED`).
     pub(crate) fn make_campaign_player(&mut self) {

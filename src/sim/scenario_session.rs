@@ -802,6 +802,10 @@ pub struct ScenarioSession {
     /// sender is then its House index, as in gamemd. Launch installs it once.
     #[serde(default)]
     shared_house_sources: Vec<u8>,
+    /// VERA Coop only: each synchronized sender's primary House followed by
+    /// the additional Houses its campaign role may command.
+    #[serde(default)]
+    network_house_grants: Vec<Vec<u8>>,
     /// This process's own sender while players share Houses; `None`
     /// otherwise, when its sender is its current House's index. Local
     /// identity, like `current_house`.
@@ -1328,6 +1332,73 @@ impl ScenarioSession {
         self.local_shared_house_source = local_source;
     }
 
+    pub(crate) fn install_network_house_grants(
+        &mut self,
+        source_houses: Vec<u8>,
+        grants: Vec<Vec<u8>>,
+        local_source: Option<i8>,
+    ) {
+        debug_assert_eq!(source_houses.len(), grants.len());
+        self.shared_house_sources = source_houses;
+        self.network_house_grants = grants;
+        self.local_shared_house_source = local_source;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install_network_house_grants_for_test(
+        &mut self,
+        source_houses: Vec<u8>,
+        grants: Vec<Vec<u8>>,
+        local_source: Option<i8>,
+    ) {
+        self.install_network_house_grants(source_houses, grants, local_source);
+    }
+
+    /// Whether this Scenario carries the VERA Coop source-to-House authority
+    /// table. The table is installed only by the Coop authored bootstrap.
+    pub fn has_network_house_grants(&self) -> bool {
+        !self.network_house_grants.is_empty()
+    }
+
+    pub(crate) fn network_house_grants_valid(&self, house_count: usize) -> bool {
+        if self.network_house_grants.is_empty() {
+            return true;
+        }
+        self.shared_house_sources.len() == self.network_house_grants.len()
+            && self
+                .shared_house_sources
+                .iter()
+                .zip(&self.network_house_grants)
+                .all(|(&primary, grants)| {
+                    usize::from(primary) < house_count
+                        && grants.windows(2).all(|pair| pair[0] < pair[1])
+                        && grants.iter().all(|&house| usize::from(house) < house_count)
+                        && (grants.is_empty() || grants.contains(&primary))
+                })
+            && self.local_shared_house_source.is_none_or(|source| {
+                usize::try_from(source)
+                    .ok()
+                    .and_then(|source| self.network_house_grants.get(source))
+                    .is_some_and(|grants| !grants.is_empty())
+            })
+    }
+
+    /// Whether an authenticated synchronized sender may issue orders to a
+    /// House index under the VERA Coop authored campaign configuration.
+    pub fn network_source_controls_house(&self, source: i8, house: usize) -> bool {
+        let (Ok(source), Ok(house)) = (usize::try_from(source), u8::try_from(house)) else {
+            return false;
+        };
+        self.network_house_grants
+            .get(source)
+            .is_some_and(|grants| grants.contains(&house))
+    }
+
+    pub(crate) fn local_source_controls_house(&self, house: usize) -> bool {
+        self.local_shared_house_source
+            .is_some_and(|source| self.network_source_controls_house(source, house))
+    }
+
     /// VERA shared control: whether any players share a House, so that
     /// senders differ from House indices.
     pub fn shares_houses(&self) -> bool {
@@ -1339,6 +1410,14 @@ impl ScenarioSession {
     /// unless players share Houses.
     pub fn network_source_house(&self, source: i8) -> Option<usize> {
         let source = usize::try_from(source).ok()?;
+        if !self.network_house_grants.is_empty()
+            && self
+                .network_house_grants
+                .get(source)
+                .is_none_or(Vec::is_empty)
+        {
+            return None;
+        }
         if self.shared_house_sources.is_empty() {
             return Some(source);
         }
@@ -1720,6 +1799,11 @@ impl ScenarioSession {
             b"network-command-timing-v1".hash(hasher);
             timing.hash(hasher);
         }
+        if !s.network_house_grants.is_empty() {
+            b"vera-coop-house-grants-v1".hash(hasher);
+            s.shared_house_sources.hash(hasher);
+            s.network_house_grants.hash(hasher);
+        }
         s.start_header.hash(hasher);
         // observer_houses, like current_house, selects process-local presentation
         // and accepted outcome, and skips the observer's terminal score draw
@@ -1966,6 +2050,7 @@ impl ScenarioSession {
             network_max_ahead_frames: None,
             network_command_timing: None,
             shared_house_sources: Vec::new(),
+            network_house_grants: Vec::new(),
             local_shared_house_source: None,
             start_header: crate::map::preview::ScenarioStartHeader::default(),
             campaign: None,

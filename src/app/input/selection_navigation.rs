@@ -135,7 +135,7 @@ fn navigation_owner_controlled(
     owner: crate::sim::intern::InternedId,
 ) -> bool {
     if sim.session().game_mode_nonzero() {
-        sim.house_is_human_player(owner)
+        sim.house_is_locally_controlled_player(owner)
     } else {
         sim.houses()
             .get(&owner)

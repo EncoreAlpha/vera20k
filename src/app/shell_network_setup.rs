@@ -8,7 +8,12 @@ mod actions;
 pub(crate) mod agreement;
 pub(crate) mod bans;
 mod coop_map;
-pub(crate) use coop_map::resolve_host_vera_coop_map_config;
+pub(crate) use coop_map::{
+    host_campaign_identity as vera_coop_host_campaign_identity,
+    refresh_campaign_entry_records as refresh_vera_coop_campaign_entries,
+    resolve_host_vera_coop_map_config,
+    resolve_local_campaign_config as resolve_local_vera_coop_campaign_config,
+};
 mod cooperative;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,
@@ -18,7 +23,8 @@ mod service;
 pub(crate) use service::{
     HostOptions, NetworkSetupEvent, accept_network_map_source, accept_network_random_map_preview,
     fail_go_handoff, invalidate_network_agreement, poll, prepare_lan_guest_handoff,
-    refuse_local_acceptance, service_event, set_network_map_progress,
+    refuse_local_acceptance, report_local_map_unavailable, service_event, set_network_map_progress,
+    withdraw_local_acceptance,
 };
 pub(crate) mod view;
 mod wol;

@@ -137,7 +137,12 @@ impl Simulation {
         if entity.category() == EntityCategory::Structure {
             return self.building_cell_move_action(viewer, id, cell, query, rules, registry);
         }
-        if !self.house_is_human_player(entity.owner()) {
+        // What_Action is asked by this process's cursor and click producers;
+        // VERA Coop grants extra Houses to that local input owner even though
+        // they are not the shared current House (`0x0050B6F0`). The command
+        // carries the chosen destination and its receiver revalidates the
+        // synchronized sender grant before changing shared state.
+        if !self.house_is_locally_controlled_player(entity.owner()) {
             return Ok(MoveAction::None);
         }
         let object = self
@@ -156,7 +161,7 @@ impl Simulation {
             Some(terrain),
             Some(&cells),
         );
-        let controllable = self.techno_player_controllable(id, rules);
+        let controllable = self.locally_controllable_techno(id, rules);
         let mut action = if entity.berserk.is_active()
             || entity.is_warped_out()
             || entity.is_warping_in()

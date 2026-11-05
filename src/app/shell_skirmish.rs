@@ -429,6 +429,27 @@ impl App {
         } else {
             Self::reload_skirmish_catalog(state, current_record_index)
         };
+        #[cfg(not(feature = "verax"))]
+        let current_record_index = current_record_index;
+        let vera_coop_mode =
+            crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, selected_mode_id)
+                .is_some_and(|mode| mode.class.is_vera_cooperative());
+        let current_record_index = if vera_coop_mode {
+            crate::app::shell_network_setup::refresh_vera_coop_campaign_entries(state);
+            state
+                .frontend
+                .scenario_catalog
+                .records()
+                .iter()
+                .position(|record| {
+                    matches!(
+                        &record.source,
+                        crate::map::skirmish_scenarios::SkirmishScenarioSource::VeraCoopCampaign(_)
+                    )
+                })
+        } else {
+            current_record_index
+        };
         let layout = Self::skirmish_choose_map_layout(state);
         let network_setup = state.frontend.shell_route.network_setup();
         let vera_cooperative_enabled = network_setup
@@ -1518,8 +1539,8 @@ impl App {
         // which holds the mouse; freeing it lets the dialog's hit test run
         // again.
         let shell = &state.frontend.skirmish_shell_state;
-        let held = shell.trackbar_hold.is_some()
-            || crate::ui::skirmish_shell::opponent_scroll_held(shell);
+        let held =
+            shell.trackbar_hold.is_some() || crate::ui::skirmish_shell::opponent_scroll_held(shell);
         crate::ui::skirmish_shell::handle_option_mouse_up(&mut state.frontend.skirmish_shell_state);
         Self::drain_skirmish_shell_ui_sounds(state);
         if held {

@@ -108,7 +108,8 @@ pub struct PreparedNetworkStartup {
     vera_coop_map_config: Option<NetworkVeraCoopMapConfig>,
 }
 
-/// Typed sidecar plus the physical map identity it was admitted against.
+/// Typed local campaign projection plus the physical map identity it was
+/// admitted against. LAN publishes only the campaign directory and digest.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NetworkVeraCoopMapConfig {
@@ -116,6 +117,12 @@ pub(crate) struct NetworkVeraCoopMapConfig {
     pub source_sha256: String,
     pub config_sha256: String,
     pub config: crate::map::coop_config::VeraCoopMapConfig,
+    /// Local full-campaign identity used to detect changes after admission.
+    /// LAN sends only this identity, never this typed config or campaign data.
+    #[serde(default)]
+    pub campaign_directory: Option<String>,
+    #[serde(default)]
+    pub campaign_sha256: Option<String>,
 }
 
 impl NetworkVeraCoopMapConfig {
@@ -141,7 +148,28 @@ impl NetworkVeraCoopMapConfig {
             source_sha256,
             config_sha256,
             config,
+            campaign_directory: None,
+            campaign_sha256: None,
         })
+    }
+
+    pub(crate) fn with_campaign_identity(
+        mut self,
+        directory: String,
+        sha256: String,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            std::path::Path::new(&directory).components().count() == 1
+                && std::path::Path::new(&directory)
+                    .components()
+                    .next()
+                    .is_some_and(|part| matches!(part, std::path::Component::Normal(_)))
+                && crate::map::source::valid_source_sha256(&sha256),
+            "invalid VERA Coop campaign identity"
+        );
+        self.campaign_directory = Some(directory);
+        self.campaign_sha256 = Some(sha256);
+        Ok(self)
     }
 
     pub(crate) fn validate_binding(

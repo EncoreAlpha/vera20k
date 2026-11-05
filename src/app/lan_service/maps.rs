@@ -7,10 +7,10 @@
 //! Source decoding, generated W staging and cache installation have one shared
 //! owner with WOL in shell_network_setup::maps and map::source.
 
+use crate::util::time::{Duration, Instant};
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use crate::util::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, ensure};
 
@@ -914,6 +914,22 @@ pub(super) fn received_options(
             .ok_or_else(|| anyhow!("no LAN service"))?
             .maps,
     );
+    if state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+    {
+        maps.cancel();
+        state
+            .match_state
+            .lan_service
+            .as_mut()
+            .expect("retained LAN service")
+            .maps = maps;
+        setup::set_network_map_progress(state, None);
+        return Ok(());
+    }
     let result = maps.selected(state, scope, generated);
     if result.is_err() {
         maps.fail(state);
@@ -935,6 +951,25 @@ pub(super) fn poll(state: &mut AppState) {
         .as_ref()
         .is_some_and(|service| service.preadmitted)
     {
+        return;
+    }
+    if state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+    {
+        let active = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .is_some_and(|service| service.maps.active());
+        if active {
+            if let Some(service) = state.match_state.lan_service.as_mut() {
+                service.maps.cancel();
+            }
+            setup::set_network_map_progress(state, None);
+        }
         return;
     }
     let scope = state
@@ -985,6 +1020,16 @@ pub(super) fn poll(state: &mut AppState) {
 }
 
 pub(super) fn receive(state: &mut AppState, source: SocketAddrV4, bytes: &[u8]) -> Result<()> {
+    if state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+    {
+        // A stale or unsolicited transfer from a previous options revision
+        // must never be installed into a Coop LAN room.
+        return Ok(());
+    }
     let packet = Packet::decode(bytes)?;
     let scope = state
         .match_state
@@ -1018,6 +1063,16 @@ pub(super) fn setup_request(
     state: &mut AppState,
     request: &NetworkSetupRequest,
 ) -> Result<Option<bool>> {
+    let coop_lan = state.match_state.session_mode()
+        == crate::app::match_runtime::session::SessionMode::Lan
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+    if coop_lan && is_asset_request(request) {
+        return Ok(Some(true));
+    }
     match request {
         NetworkSetupRequest::RequestPreview
         | NetworkSetupRequest::RequestRandomMapImage
@@ -1048,6 +1103,18 @@ pub(super) fn setup_request(
     }
 }
 
+fn is_asset_request(request: &NetworkSetupRequest) -> bool {
+    matches!(
+        request,
+        NetworkSetupRequest::RequestPreview
+            | NetworkSetupRequest::RequestRandomMapImage
+            | NetworkSetupRequest::OfferPreview
+            | NetworkSetupRequest::SendPreviewFile
+            | NetworkSetupRequest::AcknowledgePreview
+            | NetworkSetupRequest::RequestPreviewFile
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1055,6 +1122,21 @@ mod tests {
     use crate::net::reliable::{Delivery, LanConnectionConfig, LanConnections, RetryTiming};
     use crate::net::udp::{LanUdpTransport, UdpBindConfig};
     use std::net::Ipv4Addr;
+
+    #[test]
+    fn coop_lan_asset_requests_are_identifiable_for_consumption_without_sending() {
+        for request in [
+            NetworkSetupRequest::RequestPreview,
+            NetworkSetupRequest::RequestRandomMapImage,
+            NetworkSetupRequest::OfferPreview,
+            NetworkSetupRequest::SendPreviewFile,
+            NetworkSetupRequest::AcknowledgePreview,
+            NetworkSetupRequest::RequestPreviewFile,
+        ] {
+            assert!(is_asset_request(&request));
+        }
+        assert!(!is_asset_request(&NetworkSetupRequest::Ready(true)));
+    }
 
     fn key(resource: TransferResource, bytes: &[u8]) -> Key {
         let mut identity = crate::util::sha256::Sha256::new();

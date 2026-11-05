@@ -17,6 +17,9 @@ pub struct VeraCoopMapConfig {
     basic_players: [Option<String>; 4],
     #[serde(default)]
     houses: BTreeMap<String, VeraCoopHouseConfig>,
+    /// Campaign INIs replace map-authored cooperative assignments entirely.
+    #[serde(default)]
+    replace_map_values: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -114,6 +117,26 @@ impl VeraCoopMapConfig {
         }
 
         let mut projected = map_ini.clone();
+        if self.replace_map_values {
+            let mut removals = vec![
+                ("Basic".to_owned(), "Player".to_owned()),
+                ("Basic".to_owned(), "Player1".to_owned()),
+                ("Basic".to_owned(), "Player2".to_owned()),
+                ("Basic".to_owned(), "Player3".to_owned()),
+                ("Basic".to_owned(), "Player4".to_owned()),
+            ];
+            for house in &listed {
+                removals.push((house.clone(), "PlayerControl".to_owned()));
+                for index in 1..=4 {
+                    removals.push((house.clone(), format!("Player{index}Control")));
+                }
+            }
+            projected.remove_source_values(
+                removals
+                    .iter()
+                    .map(|(section, key)| (section.as_str(), key.as_str())),
+            );
+        }
         projected.merge_source_values(
             values
                 .iter()
@@ -121,6 +144,12 @@ impl VeraCoopMapConfig {
             true,
         );
         Ok(projected)
+    }
+
+    /// Mark this normalized value as the authoritative campaign scenario
+    /// config, clearing all cooperative fields authored in the map first.
+    pub fn replace_map_cooperative_values(&mut self) {
+        self.replace_map_values = true;
     }
 }
 

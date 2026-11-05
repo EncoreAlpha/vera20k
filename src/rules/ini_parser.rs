@@ -280,12 +280,12 @@ impl IniSection {
         self.physical_entries().map(|(key, _)| key)
     }
 
-    pub(crate) fn physical_keys_including_explicit_empty(&self) -> impl Iterator<Item = &str> {
+    pub fn physical_keys_including_explicit_empty(&self) -> impl Iterator<Item = &str> {
         self.physical_keys()
             .chain(self.explicit_empty_values.iter().map(String::as_str))
     }
 
-    pub(crate) fn has_explicit_empty_value(&self, key: &str) -> bool {
+    pub fn has_explicit_empty_value(&self, key: &str) -> bool {
         self.explicit_empty_values.iter().any(|empty| empty == key)
     }
 
@@ -447,7 +447,7 @@ impl IniFile {
     /// parser as [`Self::from_bytes`], while retaining which accepted keys
     /// had an explicit empty value. Empty values remain absent to normal INI
     /// readers; the overlay owner may use the marker to clear a prior value.
-    pub(crate) fn from_bytes_preserving_empty_values(data: &[u8]) -> Result<Self, RulesError> {
+    pub fn from_bytes_preserving_empty_values(data: &[u8]) -> Result<Self, RulesError> {
         Self::from_bytes_with_empty_values(data, true)
     }
 
@@ -630,6 +630,21 @@ impl IniFile {
             .collect()
     }
 
+    /// Whether the physical INI contains a repeated section name.
+    pub fn has_duplicate_sections(&self) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        self.sections
+            .iter()
+            .any(|section| !seen.insert(section.name.as_str()))
+    }
+
+    /// Whether any physical section repeats a key.
+    pub fn has_duplicate_keys(&self) -> bool {
+        self.sections
+            .iter()
+            .any(|section| !section.duplicate_entries.is_empty())
+    }
+
     /// Physical section bodies in source order, including repeated names.
     /// Callers that validate an untrusted patch must inspect every body rather
     /// than only the native lookup winner returned by [`Self::section`].
@@ -804,6 +819,34 @@ impl IniFile {
                 }
             }
         }
+    }
+
+    /// Remove exact source keys from every matching section occurrence before
+    /// composing a validated replacement view. Rebuild the fresh lookup index
+    /// because its slots refer to the physical key order.
+    pub(crate) fn remove_source_values<'a>(
+        &mut self,
+        values: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) {
+        let values: Vec<_> = values.into_iter().collect();
+        for section in &mut self.sections {
+            for (section_name, key) in &values {
+                if section.name == *section_name {
+                    section.entries.remove(*key);
+                    section.key_order.retain(|stored| stored.as_str() != *key);
+                    section.projected_values.remove(*key);
+                    section
+                        .explicit_empty_values
+                        .retain(|stored| stored.as_str() != *key);
+                    section
+                        .duplicate_entries
+                        .retain(|(_, stored, _)| stored.as_str() != *key);
+                    section.fresh_index = None;
+                }
+            }
+        }
+        self.fresh_section_index = None;
+        self.discard_entryless_sections(false);
     }
 
     /// Build the typed-reader compatibility view for one ordered rules pass.

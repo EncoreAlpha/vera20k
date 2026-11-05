@@ -324,7 +324,16 @@ impl LanService {
 
     /// Physical source, effective map and generated preview/staging are one
     /// admission through the retained transfer owner, for this exact options.
-    fn setup_maps_verified(&self) -> bool {
+    fn setup_maps_verified(&self, session: &super::match_runtime::session::MatchSession) -> bool {
+        if session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+        {
+            // Coop LAN never starts a transfer. The session's typed config is
+            // created only from the host's campaign identity and this peer's
+            // locally verified campaign/map files.
+            return session.network_vera_coop_map_config().is_some();
+        }
         // A direct spawn's map is the launcher's file beside spawn.ini; the
         // selected-mode agreement still compares the rules digest at GO.
         self.setup_scope
@@ -2168,13 +2177,23 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
             let proof = message
                 .session_proof()?
                 .ok_or_else(|| anyhow::anyhow!("GO reply has no LAN scope"))?;
+            let campaign_ok = !state
+                .match_state
+                .session
+                .network_setup()
+                .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                || options::validate_current_coop_campaign(state).is_ok();
+            if !campaign_ok {
+                options::report_coop_campaign_unavailable(state);
+                return Ok(());
+            }
             if !state
                 .match_state
                 .lan_service
                 .as_ref()
                 .is_some_and(|service| {
                     service.validate_peer_agreement(&proof)
-                        && service.setup_maps_verified()
+                        && service.setup_maps_verified(&state.match_state.session)
                         && service.setup_roster_complete(&state.match_state.session)
                 })
             {
@@ -2219,13 +2238,23 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                 let proof = message
                     .session_proof()?
                     .ok_or_else(|| anyhow::anyhow!("GO has no LAN scope"))?;
+                let campaign_ok = !state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                    || options::validate_current_coop_campaign(state).is_ok();
+                if !campaign_ok {
+                    options::report_coop_campaign_unavailable(state);
+                    return Ok(());
+                }
                 if !state
                     .match_state
                     .lan_service
                     .as_ref()
                     .is_some_and(|service| {
                         service.validate_peer_agreement(&proof)
-                            && service.setup_maps_verified()
+                            && service.setup_maps_verified(&state.match_state.session)
                             && service.setup_roster_complete(&state.match_state.session)
                     })
                 {
@@ -3900,8 +3929,49 @@ fn setup_request(
     now: u32,
 ) -> anyhow::Result<bool> {
     use super::shell_network_setup::NetworkSetupRequest;
+    let coop_lan = state.match_state.session_mode() == SessionMode::Lan
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+    if coop_lan && matches!(request, NetworkSetupRequest::MapStatus(2)) {
+        // There is no LAN map-transfer fallback for VERA Coop.
+        return Ok(true);
+    }
     if let Some(admitted) = maps::setup_request(state, request)? {
         return Ok(admitted);
+    }
+    let validate_campaign = coop_lan
+        && matches!(
+            request,
+            NetworkSetupRequest::Ready(true)
+                | NetworkSetupRequest::MapStatus(1)
+                | NetworkSetupRequest::Go { .. }
+                | NetworkSetupRequest::PrepareMapForHandoff { .. }
+        );
+    if validate_campaign && let Err(error) = options::validate_current_coop_campaign(state) {
+        log::warn!("VERA Coop local campaign validation failed: {error:#}");
+        options::report_coop_campaign_unavailable(state);
+        match request {
+            NetworkSetupRequest::Ready(true) => {
+                super::shell_network_setup::withdraw_local_acceptance(state)?;
+                return Ok(true);
+            }
+            NetworkSetupRequest::MapStatus(1) => {
+                super::shell_network_setup::report_local_map_unavailable(state)?;
+                return Ok(true);
+            }
+            NetworkSetupRequest::Go { .. } => {
+                super::shell_network_setup::fail_go_handoff(state);
+                return Ok(true);
+            }
+            NetworkSetupRequest::PrepareMapForHandoff { .. } => {
+                super::shell_network_setup::fail_go_handoff(state);
+                return Ok(true);
+            }
+            _ => {}
+        }
     }
     let message = match request {
         NetworkSetupRequest::Kick { name, keep_out } => {
@@ -3933,7 +4003,7 @@ fn setup_request(
                 .as_ref()
                 .is_some_and(|service| {
                     service.setup_agreement.is_some()
-                        && service.setup_maps_verified()
+                        && service.setup_maps_verified(&state.match_state.session)
                         && service.setup_roster_complete(&state.match_state.session)
                         && service.can_queue_go(recipients)
                 })
@@ -4101,7 +4171,7 @@ fn setup_request(
                 .lan_service
                 .as_ref()
                 .is_some_and(|service| {
-                    service.setup_maps_verified()
+                    service.setup_maps_verified(&state.match_state.session)
                         && service.setup_roster_complete(&state.match_state.session)
                         && service.can_queue_go(1)
                 })
@@ -4151,7 +4221,7 @@ fn setup_request(
             .as_ref()
             .is_none_or(|service| {
                 service.setup_agreement.is_none()
-                    || !service.setup_maps_verified()
+                    || !service.setup_maps_verified(&state.match_state.session)
                     || !service.setup_roster_complete(&state.match_state.session)
             })
     {
@@ -4872,12 +4942,14 @@ mod tests {
         let guest_session = session(false, host_address);
         let ordinary = service();
         assert!(!ordinary.setup_roster_complete(&host_session));
-        assert!(!ordinary.setup_maps_verified());
+        assert!(!ordinary.setup_maps_verified(&host_session));
         host.adopt_direct_admission(&host_admission);
         guest.adopt_direct_admission(&guest_admission);
         assert!(host.setup_roster_complete(&host_session));
         assert!(guest.setup_roster_complete(&guest_session));
-        assert!(host.setup_maps_verified() && guest.setup_maps_verified());
+        assert!(
+            host.setup_maps_verified(&host_session) && guest.setup_maps_verified(&guest_session)
+        );
         assert_eq!(guest.admitted_host, Some(("Host".to_owned(), host_address)));
         assert!(!host.direct_peers_heard(), "GO waits for every guest");
 
@@ -4906,6 +4978,54 @@ mod tests {
         assert!(guest.validate_scope(&go) && guest.peer_admission_matches(host_address, &go));
         let reply = guest.control_proof().unwrap();
         assert!(host.validate_scope(&reply) && host.peer_admission_matches(guest_address, &reply));
+    }
+
+    #[test]
+    fn coop_lan_readiness_uses_local_campaign_config_without_transfer_state() {
+        let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1301);
+        let service = service();
+        let mut host_session = session(true, endpoint);
+        let mut launch = host_session.network_setup().unwrap().clone();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        host_session
+            .select_network_map(launch.mode, "VeraCoop/Campaign/01.map".into(), 8)
+            .unwrap();
+        host_session
+            .accept_network_map_metadata(
+                crate::app::match_runtime::session::NetworkMapMetadata {
+                    display_name: "campaign entry".into(),
+                    player_capacity: 4,
+                    official: false,
+                    byte_length: 1,
+                    digest: "metadata".into(),
+                    source_sha256: "a".repeat(64),
+                    effective_digest: "b".repeat(64),
+                },
+                None,
+                true,
+            )
+            .unwrap();
+        assert!(!service.setup_maps_verified(&host_session));
+        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            "VeraCoop/Campaign/01.map".into(),
+            "a".repeat(64),
+            crate::map::coop_config::VeraCoopMapConfig::default(),
+        )
+        .unwrap()
+        .with_campaign_identity("Campaign".into(), "c".repeat(64))
+        .unwrap();
+        host_session
+            .accept_network_vera_coop_map_config(Some(config))
+            .unwrap();
+        assert!(service.setup_maps_verified(&host_session));
+        let mut guest = session(false, endpoint);
+        let mut guest_launch = guest.network_setup().unwrap().clone();
+        guest_launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        guest_launch.selected_map_file = Some("VeraCoop/Campaign/01.map".into());
+        guest
+            .accept_network_setup(guest_launch, false, None, false)
+            .unwrap();
+        assert!(!service.setup_maps_verified(&guest));
     }
 
     #[test]

@@ -2790,6 +2790,7 @@ fn load_map_first_step(
         signed_new_ini_format,
     )?;
     let full_init_entry_mode = startup.session_mode();
+    let mut vera_coop_startup = None;
     let (materialization, match_seed, match_launch_descriptor, scenario_prefix_plan, campaign) =
         match fresh_scenario_context.into_parts() {
             FreshScenarioParts::StockOffline(parts) => {
@@ -2860,10 +2861,15 @@ fn load_map_first_step(
                 );
                 // All map consumers, including Basic and House readers, now
                 // see exactly the typed overlay admitted from the host.
-                MapFile::from_ini(effective_ini)?;
-                anyhow::bail!(
-                    "VERA Coop authored map and frozen House assignments are admitted, but shared House command authority is not available"
-                );
+                map_data = MapFile::from_ini(effective_ini)?;
+                vera_coop_startup = Some(std::sync::Arc::clone(&startup));
+                (
+                    FreshMapMaterialization::Authored,
+                    startup.seed.value,
+                    None,
+                    None,
+                    None,
+                )
             }
         };
     validate_fresh_transport_before_effects(
@@ -3425,6 +3431,7 @@ fn load_map_first_step(
                                                 theater_ext,
                                                 &map_data.header.theater,
                                             );
+                                            let coop_map_ini = map_data.ini.clone();
                                             let output = crate::sim::runtime::finalize_and_populate_staged_authored_scenario(
                 &mut staged_simulation,
                 &mut map_data,
@@ -3445,6 +3452,19 @@ fn load_map_first_step(
                 |sim, ruleset| {
                     if let Some(launch) = match_launch_descriptor.as_ref() {
                         initialize_skirmish_launch_houses(sim, &house_roster, ruleset, launch);
+                    } else if let Some(startup) = vera_coop_startup.as_ref() {
+                        let assignments = startup
+                            .vera_coop_houses()
+                            .expect("admitted VERA Coop startup assignments");
+                        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+                            sim,
+                            &house_roster,
+                            ruleset,
+                            &coop_map_ini,
+                            startup.launch_session(),
+                            assignments,
+                        )
+                        .expect("validated VERA Coop House command grants");
                     }
                 },
             )?;

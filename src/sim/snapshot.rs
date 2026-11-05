@@ -1526,10 +1526,7 @@ fn restore_object_references(
         }
 
         for (field, system_id) in [
-            (
-                "fire_particle_system",
-                entity.fire_particle_system.system(),
-            ),
+            ("fire_particle_system", entity.fire_particle_system.system()),
             (
                 "spark_particle_system",
                 entity.spark_particle_system.system(),
@@ -1830,6 +1827,14 @@ impl Simulation {
         {
             return Err(SnapshotRestoreError::InvalidMultiplayerSession {
                 reason: "network timing is absent",
+            });
+        }
+        if !self
+            .session
+            .network_house_grants_valid(self.houses.order().len())
+        {
+            return Err(SnapshotRestoreError::InvalidMultiplayerSession {
+                reason: "VERA Coop House grants do not match the House roster",
             });
         }
         let scenario_names_admitted = self

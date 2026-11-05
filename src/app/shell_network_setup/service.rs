@@ -424,6 +424,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .session
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?;
+            anyhow::ensure!(
+                status != 2 || dialog.wol() || !launch.mode.class.is_vera_cooperative(),
+                "VERA Coop LAN does not transfer maps"
+            );
             let status = if index == launch.local_player_index {
                 1
             } else {
@@ -493,6 +497,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
                 .clone();
             validate_host_coop_map_config(
+                dialog.host,
                 dialog.wol(),
                 launch.mode.class.is_vera_cooperative(),
                 launch.selected_map_file.as_deref(),
@@ -515,9 +520,9 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                     .physical_identity()
                     .is_some_and(|(_, digest)| digest == config.source_sha256)
             {
-                // A locally available map validates the full typed overlay
-                // before it enters Session. Missing maps are checked after
-                // the existing verified transfer path and again at Start.
+                // The peer's local map validates its locally derived campaign
+                // projection before it enters Session. Coop LAN never transfers
+                // a missing or mismatched map/config.
                 config.apply_to_map(file, &config.source_sha256, &map.ini)?;
             }
             let coop_config_changed = state.match_state.session.network_vera_coop_map_config()
@@ -573,7 +578,14 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                         || !(upper.contains(".MPR") && upper.contains(".YRM")))
             });
             let local_map = local_map.map(|(name, _)| name);
-            let map_admission = if map_changed {
+            let vera_cooperative = launch.mode.class.is_vera_cooperative();
+            let coop_lan_without_local_config = launch.mode.class.is_vera_cooperative()
+                && !dialog.wol()
+                && !dialog.host
+                && vera_coop_map_config.is_none();
+            let map_admission = if coop_lan_without_local_config {
+                Some(crate::app::match_runtime::session::NetworkMapAdmission::Unavailable)
+            } else if map_changed {
                 let file = launch
                     .selected_map_file
                     .as_deref()
@@ -622,7 +634,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 protocol.awaiting_preview_file = false;
                 protocol.local_map_verified = local_map.is_some();
                 protocol.local_map_loose = local_map_loose;
-                if local_map.is_none() && !dialog.host && !dialog.wol() {
+                if local_map.is_none() && !dialog.host && !dialog.wol() && !vera_cooperative {
                     protocol.requests.push(NetworkSetupRequest::RequestPreview);
                 }
             }
@@ -830,6 +842,15 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             preview_acknowledged(state, index)?;
         }
         NetworkSetupEvent::PreviewOffered => {
+            if state
+                .match_state
+                .session
+                .network_setup()
+                .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                && !dialog.wol()
+            {
+                return Ok(());
+            }
             // The receive loop answers 0x19 only on BD (0x005E0133), whether
             // or not this guest asked; 0x005E7920 acks, then receives.
             // A receive in progress blocks native's loop; a second offer is
@@ -1017,6 +1038,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
 }
 
 fn validate_host_coop_map_config(
+    host: bool,
     wol: bool,
     vera_cooperative: bool,
     map_file: Option<&str>,
@@ -1033,7 +1055,7 @@ fn validate_host_coop_map_config(
                 .ok_or_else(|| anyhow::anyhow!("VERA Coop host options have no selected map"))?;
             config.validate_binding(file, source_sha256)?;
         }
-        (true, None) if wol => {}
+        (true, None) if wol || !host => {}
         (true, None) => anyhow::bail!("VERA Coop host options omit the map config"),
         (false, Some(_)) => anyhow::bail!("non-Coop host options carry VERA Coop map config"),
         (false, None) => {}
@@ -1043,7 +1065,9 @@ fn validate_host_coop_map_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{mode_allows_automatic_accept, validate_host_coop_map_config};
+    use super::{
+        mode_allows_automatic_accept, validate_host_coop_map_config, without_coop_lan_transfer,
+    };
 
     #[test]
     fn modern_auto_accept_is_disabled_only_for_vera_coop() {
@@ -1055,7 +1079,21 @@ mod tests {
     }
 
     #[test]
-    fn wol_coop_host_setup_keeps_legacy_missing_config_behavior() {
+    fn vera_coop_lan_never_admits_missing_custom_maps_for_transfer() {
+        use crate::app::match_runtime::session::NetworkMapAdmission::{
+            NeedsTransfer, Present, Unavailable,
+        };
+
+        assert_eq!(without_coop_lan_transfer(NeedsTransfer, true), Unavailable);
+        assert_eq!(without_coop_lan_transfer(Present, true), Present);
+        assert_eq!(
+            without_coop_lan_transfer(NeedsTransfer, false),
+            NeedsTransfer
+        );
+    }
+
+    #[test]
+    fn wol_coop_keeps_legacy_behavior_and_lan_guest_can_lack_local_config() {
         let map_file = "test.map";
         let source = "a".repeat(64);
         let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
@@ -1065,17 +1103,39 @@ mod tests {
         )
         .unwrap();
 
-        assert!(validate_host_coop_map_config(true, true, Some(map_file), &source, None).is_ok());
         assert!(
-            validate_host_coop_map_config(true, true, Some(map_file), &source, Some(&config))
+            validate_host_coop_map_config(true, true, true, Some(map_file), &source, None).is_ok()
+        );
+        assert!(
+            validate_host_coop_map_config(true, true, true, Some(map_file), &source, Some(&config))
                 .is_err()
         );
-        assert!(validate_host_coop_map_config(false, true, Some(map_file), &source, None).is_err());
         assert!(
-            validate_host_coop_map_config(false, true, Some(map_file), &source, Some(&config))
+            validate_host_coop_map_config(false, true, true, Some(map_file), &source, None).is_ok()
+        );
+        assert!(
+            validate_host_coop_map_config(
+                false,
+                true,
+                true,
+                Some(map_file),
+                &source,
+                Some(&config)
+            )
+            .is_err()
+        );
+        assert!(
+            validate_host_coop_map_config(false, false, true, Some(map_file), &source, None)
                 .is_ok()
         );
-        assert!(validate_host_coop_map_config(false, false, Some(map_file), &source, None).is_ok());
+        assert!(
+            validate_host_coop_map_config(true, false, true, Some(map_file), &source, None)
+                .is_err()
+        );
+        assert!(
+            validate_host_coop_map_config(false, false, false, Some(map_file), &source, None)
+                .is_ok()
+        );
     }
 }
 
@@ -1525,6 +1585,14 @@ fn apply_local_map_admission(
     state: &mut AppState,
     admission: crate::app::match_runtime::session::NetworkMapAdmission,
 ) -> anyhow::Result<()> {
+    let coop_lan = state.match_state.session_mode()
+        == crate::app::match_runtime::session::SessionMode::Lan
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+    let admission = without_coop_lan_transfer(admission, coop_lan);
     let status = admission.status();
     let index = state
         .match_state
@@ -1565,7 +1633,30 @@ fn apply_local_map_admission(
             },
         );
     }
+    if coop_lan && status == 0 {
+        let text = "VERA Coop requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+        crate::app::shell_lan::append_chat(
+            state,
+            LanChatLine {
+                text: text.encode_utf16().collect(),
+                color: u32::MAX,
+            },
+        );
+    }
     Ok(())
+}
+
+fn without_coop_lan_transfer(
+    admission: crate::app::match_runtime::session::NetworkMapAdmission,
+    coop_lan: bool,
+) -> crate::app::match_runtime::session::NetworkMapAdmission {
+    if coop_lan
+        && admission == crate::app::match_runtime::session::NetworkMapAdmission::NeedsTransfer
+    {
+        crate::app::match_runtime::session::NetworkMapAdmission::Unavailable
+    } else {
+        admission
+    }
 }
 
 /// Verified map prefetch uses the editable lobby's existing progress owner
@@ -1803,6 +1894,40 @@ pub(crate) fn refuse_local_acceptance(state: &mut AppState) -> anyhow::Result<()
         .set_network_player_ready(index, false)?;
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.accept_eligible = false;
+    }
+    state.platform.window.request_redraw();
+    Ok(())
+}
+
+/// Withdraw readiness and notify the LAN host after a Coop campaign changes
+/// between admission and the next preparation/start boundary.
+pub(crate) fn withdraw_local_acceptance(state: &mut AppState) -> anyhow::Result<()> {
+    let index = state
+        .match_state
+        .session
+        .network_setup()
+        .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
+        .local_player_index;
+    let was_ready = state.match_state.session.network_player_ready(index);
+    refuse_local_acceptance(state)?;
+    if was_ready && let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.requests.push(NetworkSetupRequest::Ready(false));
+    }
+    Ok(())
+}
+
+/// Tell the host that the local Coop campaign/map is no longer available.
+pub(crate) fn report_local_map_unavailable(state: &mut AppState) -> anyhow::Result<()> {
+    let index = state
+        .match_state
+        .session
+        .network_setup()
+        .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
+        .local_player_index;
+    state.match_state.session.set_network_map_status(index, 0)?;
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.accept_eligible = false;
+        protocol.requests.push(NetworkSetupRequest::MapStatus(0));
     }
     state.platform.window.request_redraw();
     Ok(())

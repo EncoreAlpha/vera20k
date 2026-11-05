@@ -811,7 +811,7 @@ pub(super) fn capability_cursor_for_hover(
     // Infantry51E462's disarm prefix precedes self post-processing too.
     if let Some(actor) = best_id.and_then(|id| sim.entities().get(id))
         && actor.category() == EntityCategory::Infantry
-        && sim.house_is_human_player(actor.owner())
+        && sim.house_is_locally_controlled_player(actor.owner())
         && rules
             .and_then(|rules| sim.interner().object_type(actor.type_ref(), rules))
             .is_some_and(|object| object.engineer)
@@ -3764,8 +3764,8 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
         let enemy_ivan = spawn("IVAN", "Soviets", 20);
         let far_tank = spawn("HTNK", "Soviets", 22);
 
-        assert!(sim.techno_player_controllable(ivan, &rules));
-        assert!(sim.techno_player_controllable(engineer, &rules));
+        assert!(sim.locally_controllable_techno(ivan, &rules));
+        assert!(sim.locally_controllable_techno(engineer, &rules));
 
         use HoverTargetKind::{EnemyUnit, FriendlyUnit};
         assert_eq!(

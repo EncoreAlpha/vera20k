@@ -98,7 +98,7 @@ impl PickSource for &crate::sim::world::Simulation {
         )
     }
     fn owner_is_human_player(&self, owner: InternedId) -> Option<bool> {
-        Some(self.house_is_human_player(owner))
+        Some(self.house_is_locally_controlled_player(owner))
     }
 }
 impl PickWorld for &crate::sim::world::Simulation {
@@ -142,7 +142,7 @@ impl PickSource for PresentedWorld<'_> {
         })
     }
     fn owner_is_human_player(&self, owner: InternedId) -> Option<bool> {
-        Some(self.sim.house_is_human_player(owner))
+        Some(self.sim.house_is_locally_controlled_player(owner))
     }
 }
 impl PickWorld for PresentedWorld<'_> {
@@ -1195,7 +1195,7 @@ pub(crate) fn is_local_player_selectable_object(
         && entity.category() != EntityCategory::Structure
         && entity.discovery.discovered_by_current_house()
         && type_is_selectable(sim.interner().resolve(entity.type_ref()), rules)
-        && sim.house_is_human_player(entity.owner())
+        && sim.house_is_locally_controlled_player(entity.owner())
 }
 
 /// Does a building's footprint cover this cell? The native lookup asks the cell

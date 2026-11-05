@@ -180,6 +180,107 @@ fn query(mouse_over: bool, shift: bool) -> CellActionQuery {
     CellActionQuery { mouse_over, shift }
 }
 
+#[test]
+fn vera_coop_local_extra_house_click_encodes_and_executes_move() {
+    use crate::sim::scenario_session::ScenarioGameMode;
+
+    let (mut sim, rules, actor) = Simulation::walk_cell_input_test_scene(false);
+    let local = sim.interner.get("Local").unwrap();
+    let extra = sim.interner.intern("Extra");
+    sim.houses
+        .register(crate::sim::house_state::HouseState::new(
+            extra, 1, None, true, 0, 10,
+        ));
+    sim.entities_mut_for_test()
+        .get_mut(actor)
+        .unwrap()
+        .set_owner_for_test(extra);
+    sim.session.set_game_mode(ScenarioGameMode::Lan);
+    sim.session.install_network_house_grants_for_test(
+        vec![0, 1],
+        vec![vec![0, 2], vec![1]],
+        Some(0),
+    );
+    assert_eq!(sim.session.current_house(), Some(local));
+    assert!(!sim.house_is_human_player(extra));
+    assert!(sim.house_is_locally_controlled_player(extra));
+
+    let enemy = sim.interner.get("Enemy").unwrap();
+    let enemy_actor = sim
+        .entities()
+        .iter_sorted()
+        .find_map(|(id, actor)| (actor.owner() == enemy).then_some(id))
+        .unwrap();
+    assert_eq!(
+        sim.cell_click_destination(local, enemy_actor, (11, 10), false, &rules, None)
+            .unwrap(),
+        None,
+        "an enemy House remains unavailable to local input"
+    );
+    let unclaimed = sim.interner.intern("Unclaimed");
+    sim.houses
+        .register(crate::sim::house_state::HouseState::new(
+            unclaimed, 2, None, true, 0, 10,
+        ));
+    let unclaimed_actor = enemy_actor;
+    sim.entities_mut_for_test()
+        .get_mut(unclaimed_actor)
+        .unwrap()
+        .set_owner_for_test(unclaimed);
+    assert_eq!(
+        sim.cell_click_destination(local, unclaimed_actor, (11, 10), false, &rules, None)
+            .unwrap(),
+        None,
+        "a House outside the local grant remains unavailable"
+    );
+    sim.entities_mut_for_test()
+        .get_mut(unclaimed_actor)
+        .unwrap()
+        .set_owner_for_test(enemy);
+
+    let goal = sim
+        .cell_click_destination(local, actor, (6, 5), false, &rules, None)
+        .unwrap()
+        .expect("local click resolves a walk destination");
+    let command = crate::sim::command::Command::Move {
+        entity_id: actor,
+        target_rx: goal.0,
+        target_ry: goal.1,
+    };
+    let record = sim
+        .encode_megamission_record(extra, &command)
+        .expect("authorized extra House command encodes");
+    assert_eq!(
+        record.house_id(),
+        0,
+        "record names the local network source"
+    );
+    sim.session.install_network_timing(10);
+    sim.session
+        .install_network_command_timing(10, std::num::NonZeroU8::new(1).unwrap(), [0, 1]);
+    assert!(sim.admit_native_command_record(record));
+    let result = sim
+        .advance_master_frame(
+            &[],
+            &rules,
+            None,
+            33,
+            crate::sim::world::TickLane::Ordinary,
+            false,
+            crate::sim::world::FrameEffects::default(),
+        )
+        .unwrap();
+    assert_eq!(result.tick.executed_commands, 1);
+    assert!(
+        sim.entities()
+            .get(actor)
+            .unwrap()
+            .navigation
+            .nav_com()
+            .is_some()
+    );
+}
+
 /// The cursor update asks What_Action with its mouse-over argument
 /// (`0x0069300B`), which answers Move before Can_Enter_Cell
 /// (`0x00700B51..0x00700B57`); the click asks it, so a retail Grizzly's

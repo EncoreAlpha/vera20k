@@ -3186,6 +3186,118 @@ pub fn initialize_map_roster_houses(
     }
 }
 
+/// Build authored VERA Coop Houses and install the frozen role-to-House
+/// command grants before map objects are read. Each participant's Basic
+/// Player House is always theirs; PlayerXControl adds Houses, and those may
+/// be shared by several participants. This project-specific path consumes
+/// the existing campaign House parser and the sender identity retained by
+/// ScenarioSession; it does not change ordinary LAN or stock Cooperative.
+pub fn initialize_vera_cooperative_houses(
+    sim: &mut Simulation,
+    house_roster: &HouseRoster,
+    rules: &RuleSet,
+    map_ini: &crate::rules::ini_parser::IniFile,
+    launch: &crate::skirmish_launch::SkirmishLaunchSession,
+    assignments: &crate::skirmish_launch::VeraCoopHouseAssignments,
+) -> anyhow::Result<()> {
+    assignments
+        .validate_for_launch(launch)
+        .map_err(anyhow::Error::msg)?;
+    initialize_map_roster_houses(sim, house_roster, rules, Some(map_ini));
+
+    let basic = crate::map::basic::parse_basic_section(map_ini);
+    let slots = normalized_launch_slots(launch);
+    let mut source_by_human = vec![None; launch.humans.len()];
+    for slot in &slots {
+        for controller in &slot.controllers {
+            source_by_human[controller.human_index] = Some(controller.source);
+        }
+    }
+    let mut source_houses = vec![0u8; launch.humans.len()];
+    let mut grants = vec![Vec::<u8>::new(); launch.humans.len()];
+    let mut local_source = None;
+    for assignment in &assignments.participants {
+        let human_index = launch
+            .humans
+            .iter()
+            .position(|human| {
+                human.raw_slot_index == Some(assignment.raw_slot_index)
+                    && human.name == assignment.participant_name
+            })
+            .ok_or_else(|| anyhow::anyhow!("VERA Coop participant disappeared"))?;
+        let source = source_by_human[human_index]
+            .ok_or_else(|| anyhow::anyhow!("VERA Coop participant has no command source"))?;
+        let source_index = usize::try_from(source)
+            .map_err(|_| anyhow::anyhow!("negative VERA Coop command source"))?;
+        anyhow::ensure!(
+            source_index < source_houses.len(),
+            "VERA Coop command source is outside the frozen participant roster"
+        );
+        let primary_name = basic.campaign_players.players[usize::from(assignment.player_index)]
+            .owner
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("VERA Coop role has no Basic Player House"))?;
+        anyhow::ensure!(
+            primary_name.eq_ignore_ascii_case(&assignment.owner_name),
+            "VERA Coop frozen primary House differs from the effective Basic Player roster"
+        );
+        let primary = sim
+            .houses
+            .order()
+            .iter()
+            .position(|owner| {
+                sim.interner
+                    .resolve(*owner)
+                    .eq_ignore_ascii_case(primary_name)
+            })
+            .ok_or_else(|| anyhow::anyhow!("VERA Coop primary House is absent"))?;
+        let primary = u8::try_from(primary)
+            .map_err(|_| anyhow::anyhow!("VERA Coop House index exceeds command format"))?;
+        source_houses[source_index] = primary;
+        grants[source_index].push(primary);
+        for (house_index, house) in house_roster.houses.iter().enumerate() {
+            if house.campaign_player_controls[usize::from(assignment.player_index)] == Some(true) {
+                grants[source_index].push(u8::try_from(house_index).map_err(|_| {
+                    anyhow::anyhow!("VERA Coop House index exceeds command format")
+                })?);
+            }
+        }
+        grants[source_index].sort_unstable();
+        grants[source_index].dedup();
+        if human_index == launch.local_player_index {
+            local_source = Some(source);
+        }
+    }
+
+    // Human identity is shared and deterministic: any House granted to at
+    // least one role is not driven by the House AI. Local input selection is
+    // separately derived from the persisted grant row.
+    let house_order = sim.houses.order().to_vec();
+    for (house_index, owner) in house_order.into_iter().enumerate() {
+        let house = sim.houses.get_mut(&owner).expect("registered roster House");
+        let controlled = u8::try_from(house_index)
+            .ok()
+            .is_some_and(|house_index| grants.iter().any(|row| row.contains(&house_index)));
+        house.assign_network_human(controlled);
+    }
+    let local_house = local_source
+        .and_then(|source| usize::try_from(source).ok())
+        .and_then(|source| source_houses.get(source))
+        .and_then(|index| sim.houses.order().get(usize::from(*index)))
+        .copied();
+    sim.session.install_current_house(local_house);
+    if let Some(owner) = local_house
+        && let Some(country) = sim.houses.get(&owner).and_then(|house| house.country())
+    {
+        let country = sim.interner.resolve(country);
+        sim.session
+            .install_scenario_side(rules.country_side_index_raw(country).unwrap_or(0));
+    }
+    sim.session
+        .install_network_house_grants(source_houses, grants, local_source);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5750,7 +5862,12 @@ mod tests {
     #[test]
     fn scenario_prefix_all_stock_mode_families_gather_twice() {
         let map = prefix_map_with_starts(&[]);
-        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        // VERA adds one non-stock Coop mode beside retail's nine; this sweep is
+        // about the stock roster's prefix families, so keep it out.
+        let modes: Vec<_> = crate::skirmish_modes::stock_skirmish_modes()
+            .into_iter()
+            .filter(|mode| !mode.class.is_vera_cooperative())
+            .collect();
         assert_eq!(modes.len(), 9);
         for mode in modes {
             let mut session = one_player_battle_launch("stock-mode.mmx").session().clone();

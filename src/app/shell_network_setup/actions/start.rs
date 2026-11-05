@@ -473,16 +473,15 @@ fn mode_start(
                     )
                 }) {
                 Ok(assignments) => {
+                    // The map, role and House configuration is valid, so the
+                    // start proceeds to GO. The accepted start freezes these
+                    // assignments and the loader installs the shared House
+                    // command grants from the same effective map.
                     log::info!(
                         "VERA Coop role roster resolves to {} player Houses",
                         assignments.participants.len()
                     );
-                    message(
-                        state,
-                        "VERA Coop role settings are valid, but cooperative campaign launch is not implemented yet.",
-                        &[],
-                    );
-                    false
+                    true
                 }
                 Err(error) => {
                     log::warn!("VERA Coop map role configuration is invalid: {error}");
@@ -684,6 +683,120 @@ mod tests {
                 .validate_binding("test.map", &"a".repeat(64))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn vera_coop_bootstrap_installs_deterministic_shared_house_command_grants() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let authored = crate::rules::ini_parser::IniFile::from_str(
+            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n2=Neutral\n[Alpha]\n[Beta]\n[Neutral]\n",
+        );
+        let external = crate::rules::ini_parser::IniFile::from_str(
+            "[Neutral]\nPlayerControl=yes\nPlayer2Control=yes\n",
+        );
+        let config =
+            crate::map::coop_config::VeraCoopMapConfig::from_ini(&authored, &external).unwrap();
+        let effective = config.apply_to_map(&authored).unwrap();
+        let roster = crate::map::houses::parse_house_roster(&effective, &[], None);
+
+        let mut launch = fixture();
+        launch.humans[0].raw_slot_index = Some(0);
+        let mut guest = launch.humans[0].clone();
+        guest.name = "Guest".into();
+        guest.raw_slot_index = Some(1);
+        guest.role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
+        guest.slot.color_index = 1;
+        launch.humans.push(guest);
+        let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+            participants: vec![
+                crate::skirmish_launch::VeraCoopHouseAssignment {
+                    participant_name: launch.humans[0].name.clone(),
+                    raw_slot_index: 0,
+                    player_index: 0,
+                    owner_name: "Alpha".into(),
+                },
+                crate::skirmish_launch::VeraCoopHouseAssignment {
+                    participant_name: "Guest".into(),
+                    raw_slot_index: 1,
+                    player_index: 1,
+                    owner_name: "Beta".into(),
+                },
+            ],
+        };
+        let mut sim = crate::sim::world::Simulation::new();
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Lan);
+        sim.session_mut_for_test().install_network_timing(5);
+        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+            &mut sim,
+            &roster,
+            &crate::rules::ruleset::RuleSet::empty_for_test(),
+            &effective,
+            &launch,
+            &assignments,
+        )
+        .unwrap();
+
+        let alpha = sim.interner().get("Alpha").unwrap();
+        let beta = sim.interner().get("Beta").unwrap();
+        let neutral = sim.interner().get("Neutral").unwrap();
+        let alpha_index = sim.houses().index_of(alpha).unwrap();
+        let beta_index = sim.houses().index_of(beta).unwrap();
+        let neutral_index = sim.houses().index_of(neutral).unwrap();
+        assert_eq!(sim.session().current_house(), Some(alpha));
+        assert!(sim.house_is_locally_controlled_player(alpha));
+        assert!(!sim.house_is_locally_controlled_player(beta));
+        assert!(sim.house_is_locally_controlled_player(neutral));
+        assert!(!sim.house_is_human_player(neutral));
+        assert!(sim.houses()[&neutral].is_human());
+        assert!(sim.session().network_source_controls_house(0, alpha_index));
+        assert!(!sim.session().network_source_controls_house(0, beta_index));
+        assert!(
+            sim.session()
+                .network_source_controls_house(0, neutral_index)
+        );
+        assert!(!sim.session().network_source_controls_house(1, alpha_index));
+        assert!(sim.session().network_source_controls_house(1, beta_index));
+        assert!(
+            sim.session()
+                .network_source_controls_house(1, neutral_index)
+        );
+
+        let bytes = crate::sim::snapshot::GameSnapshot::save(&sim, 0, 0, "coop", 0);
+        let mut restored = crate::sim::snapshot::GameSnapshot::load(&bytes)
+            .unwrap()
+            .sim;
+        restored.restore_after_snapshot_load().unwrap();
+        assert!(
+            restored
+                .session()
+                .network_source_controls_house(0, neutral_index)
+        );
+        assert!(
+            !restored
+                .session()
+                .network_source_controls_house(0, beta_index)
+        );
+
+        let mut guest_launch = launch.clone();
+        guest_launch.local_player_index = 1;
+        let mut guest_sim = crate::sim::world::Simulation::new();
+        guest_sim
+            .session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Lan);
+        guest_sim.session_mut_for_test().install_network_timing(5);
+        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+            &mut guest_sim,
+            &roster,
+            &crate::rules::ruleset::RuleSet::empty_for_test(),
+            &effective,
+            &guest_launch,
+            &assignments,
+        )
+        .unwrap();
+        assert_eq!(guest_sim.session().current_house(), Some(beta));
+        assert_eq!(sim.state_hash(), guest_sim.state_hash());
     }
 
     fn fixture() -> SkirmishLaunchSession {

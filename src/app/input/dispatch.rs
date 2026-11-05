@@ -2778,14 +2778,14 @@ fn resolve_selection_mutation(
                       follow_target: &mut Option<u64>| {
         if placement_armed
             || members.contains(&id)
-            || !sim.techno_select_admits(id)
+            || !local_input_techno_select_admits(sim, id)
             || !rules.is_some_and(|rules| sim.can_select_object(id, rules))
         {
             return false;
         }
         if ordered
             .front()
-            .is_some_and(|&first| sim.select_unselects_all(first, id))
+            .is_some_and(|&first| local_input_select_unselects_all(sim, first, id))
         {
             unselected_all = true;
             for removed in ordered.drain(..) {
@@ -2847,6 +2847,23 @@ fn resolve_selection_mutation(
     }
 }
 
+/// The input ledger is process-local; use this peer's frozen Coop grants for
+/// its extra Houses while preserving the discovery gate. Shared simulation
+/// selection continues to use `techno_select_admits`.
+fn local_input_techno_select_admits(sim: &crate::sim::world::Simulation, id: u64) -> bool {
+    sim.techno_select_admits_for_local_input(id)
+}
+
+/// Apply the local player's House grouping to the input selection ledger.
+/// Shared simulation consumers retain the ordinary native House predicate.
+fn local_input_select_unselects_all(
+    sim: &crate::sim::world::Simulation,
+    first: u64,
+    new: u64,
+) -> bool {
+    sim.local_input_select_unselects_all(first, new)
+}
+
 fn insert_selected_id(
     ordered: &mut VecDeque<u64>,
     id: u64,
@@ -2902,15 +2919,17 @@ mod item83_selection_order_tests {
         HELD_TYPE_SELECT_VOICE_POLICY, ORDINARY_SELECTION_ACTION_LINE_POLICY,
         ORDINARY_SELECTION_VOICE_POLICY, TYPE_SELECT_TAP_ACTION_LINE_POLICY,
         TYPE_SELECT_TAP_VOICE_POLICY, apply_selection_action_line_policy_at_frame,
-        insert_selected_id_by_role, selected_stable_ids_in_order, selection_membership_committed,
-        selection_voice_recipients,
+        insert_selected_id_by_role, resolve_selection_mutation, selected_stable_ids_in_order,
+        selection_membership_committed, selection_voice_recipients,
     };
+    use crate::app::input::entity_pick::SelectionMutation;
     use crate::app::presentation::target_lines::TargetLineState;
     use crate::audio::events::GameSoundEvent;
     use crate::map::entities::EntityCategory;
     use crate::rules::ini_parser::IniFile;
     use crate::rules::ruleset::RuleSet;
     use crate::sim::combat::Health;
+    use crate::sim::command::Command;
     use crate::sim::game_entity::GameEntity;
     use crate::sim::world::Simulation;
     use std::collections::VecDeque;
@@ -3272,13 +3291,57 @@ mod item83_selection_order_tests {
         (sim, rules)
     }
 
+    #[test]
+    fn vera_coop_local_selection_reaches_shared_house_stop_command() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let (mut sim, rules) = two_house_fixture(&[]);
+        let shared = sim.intern("Enemy");
+        sim.session_mut_for_test()
+            .set_game_mode(ScenarioGameMode::Lan);
+        sim.session_mut_for_test()
+            .install_network_house_grants_for_test(vec![0, 1], vec![vec![0, 1], vec![1]], Some(0));
+
+        let effects = resolve_selection_mutation(
+            &sim,
+            Some(&rules),
+            vec![42],
+            Some(42),
+            false,
+            false,
+            &SelectionMutation {
+                select: vec![50],
+                ..Default::default()
+            },
+        );
+        assert_eq!(effects.ordered, [42, 50]);
+        assert_eq!(effects.successful_adds, [50]);
+
+        assert!(sim.apply_command(
+            "Local",
+            &Command::Select {
+                entity_ids: effects.ordered,
+                additive: true,
+            },
+            Some(&rules),
+        ));
+        assert!(sim.entities().get(50).unwrap().selection.is_selected());
+
+        let stop = sim
+            .encode_stop_record(shared, 50)
+            .expect("selected shared House actor is authorized for local Stop");
+        assert_eq!(stop.house_id(), 0);
+    }
+
     /// Put each actor on the player's node at (5, 7) in turn: the player's
     /// by a planned move, another house's by a connect (`0x0063AD50`).
     fn plan_to_shared_node(sim: &mut Simulation, rules: &RuleSet, actors: &[u64]) {
         use crate::sim::command::Command;
         let local = sim.intern("Local");
         for &actor in actors {
-            let record = if sim.house_is_human_player(sim.entities().get(actor).unwrap().owner()) {
+            let record = if sim
+                .house_is_locally_controlled_player(sim.entities().get(actor).unwrap().owner())
+            {
                 sim.encode_planning_order_record(
                     local,
                     &Command::Move {
@@ -3668,7 +3731,7 @@ fn stop_qualifies(
     rules: &crate::rules::ruleset::RuleSet,
     id: u64,
 ) -> bool {
-    sim.techno_player_controllable(id, rules) || sim.techno_is_active(id, rules)
+    sim.locally_controllable_techno(id, rules) || sim.techno_is_active(id, rules)
 }
 
 /// The Stop walk, then its cue `PlayGlobal(Rules+720, 0x2000, 1.0)`
@@ -3997,7 +4060,7 @@ fn deploy_key_commands(
         .copied()
         .filter(|&id| {
             rules.is_none_or(|rules| {
-                (sim.techno_player_controllable(id, rules) || sim.techno_is_active(id, rules))
+                (sim.locally_controllable_techno(id, rules) || sim.techno_is_active(id, rules))
                     && sim.can_deploy_slash_unload(id, rules)
             }) && sim
                 .entities()
@@ -5268,7 +5331,7 @@ mod control_group_tests {
             group_entity(&mut sim, stable_id, owner);
         }
         assert!(
-            sim.house_is_human_player(human_only),
+            sim.house_is_locally_controlled_player(human_only),
             "the campaign IsHumanPlayer predicate admits this owner"
         );
         assert!(
