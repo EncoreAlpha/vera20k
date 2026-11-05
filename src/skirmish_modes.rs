@@ -77,12 +77,14 @@ impl MpModeClass {
     }
 
     /// Mode-specific cap used alongside the map's capacity by5EC3A0/5E9E70.
-    /// vtable+98:5C42C0 returns2; ordinary5C0F30 returns-1(no extra cap).
+    /// Original Cooperative's native vtable+98 (`5C42C0`) returns2; ordinary
+    /// `5C0F30` returns-1 (no extra cap). VERA Coop's four-seat cap is a
+    /// separate product rule, not native Cooperative behavior.
     pub const fn setup_player_limit(self) -> Option<usize> {
-        if matches!(self, Self::Cooperative) {
-            Some(2)
-        } else {
-            None
+        match self {
+            Self::Cooperative => Some(2),
+            Self::VeraCooperative => Some(4),
+            _ => None,
         }
     }
 

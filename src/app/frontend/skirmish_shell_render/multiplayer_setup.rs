@@ -602,7 +602,16 @@ pub(crate) fn render_multiplayer_setup(
                     false,
                     SHELL_CONTROL_DEPTH,
                 );
-                if let Some(spec) = view.page().button(button.id) {
+                let spec = view.page().button(button.id).or_else(|| {
+                    view.vera_cooperative
+                        .then(|| crate::ui::multiplayer_setup::SetupDialog {
+                            modern: false,
+                            ..view.dialog
+                        })?
+                        .page()
+                        .button(button.id)
+                });
+                if let Some(spec) = spec {
                     texts.push(shell_text::draw_in_rect_scaled(
                         font,
                         &if view.vera_cooperative {

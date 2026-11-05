@@ -3,9 +3,7 @@
 //! The original page owns the chrome anchors. Only the player columns are
 //! rearranged: a map role already determines its House and country.
 
-use crate::ui::multiplayer_setup::{
-    DIFFICULTY, GAME_OPTIONS, MultiplayerSetupLayout, SPEED, SetupDialog,
-};
+use crate::ui::multiplayer_setup::{DIFFICULTY, MultiplayerSetupLayout, SPEED, SetupDialog};
 use crate::ui::shell::geom::RectPx;
 
 pub(crate) fn apply(
@@ -40,15 +38,9 @@ pub(crate) fn apply(
     layout.acceptance = native.acceptance;
     layout.ping_icons = native.ping_icons;
     layout.cooperative_description = scale.scale_rect(RectPx::new(60, 145, 540, 120));
-    layout
-        .page
-        .buttons
-        .retain(|button| button.id != GAME_OPTIONS);
-    for button in &mut layout.page.buttons {
-        if let Some(rect) = native.page.button_rect(button.id) {
-            button.rect = rect;
-        }
-    }
+    // Modern guest rooms normally replace Accept with Game Options and rely
+    // on automatic acceptance. Coop uses the original manual-ready buttons.
+    layout.page.buttons.clone_from(&native.page.buttons);
 
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
     layout.labels = vec![
@@ -77,7 +69,7 @@ pub(crate) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::multiplayer_setup::{BACK, CHOOSE_MAP, START, SetupFlavor};
+    use crate::ui::multiplayer_setup::{ACCEPT, BACK, CHOOSE_MAP, START, SetupFlavor};
 
     #[test]
     fn coop_reuses_original_sidebar_anchors_at_multiple_sizes() {
@@ -113,6 +105,31 @@ mod tests {
             assert!(coop.cooperative_description.y + coop.cooperative_description.h < difficulty.y);
             assert!(difficulty.y + difficulty.h < speed.y);
             assert!(speed.y + speed.h < coop.chat_log.y);
+        }
+    }
+
+    #[test]
+    fn coop_guest_has_the_original_manual_ready_button() {
+        for flavor in [SetupFlavor::Lan, SetupFlavor::Wol] {
+            let dialog = SetupDialog {
+                host: false,
+                flavor,
+                modern: true,
+            };
+            let mut coop = MultiplayerSetupLayout::new(dialog, 800, 600, true);
+            let original = MultiplayerSetupLayout::new(
+                SetupDialog {
+                    modern: false,
+                    ..dialog
+                },
+                800,
+                600,
+                true,
+            );
+            apply(&mut coop, dialog, 2, 800, 600);
+            assert_eq!(coop.control_rect(ACCEPT), original.control_rect(ACCEPT));
+            assert!(coop.control_rect(ACCEPT).is_some());
+            assert_eq!(coop.control_rect(BACK), original.control_rect(BACK));
         }
     }
 }

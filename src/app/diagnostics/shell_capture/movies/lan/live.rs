@@ -56,6 +56,7 @@ const HOST_NAME: &str = "LiveHost";
 const GUEST_NAME: &str = "LiveGuest";
 const REQUIRED_FRAMES: u32 = 300;
 const SOLO_AI_INPUT_BOUND_FRAMES: u32 = 1;
+const VERA_COOP_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
 
 /// Diagnostic evidence only: a fixed local frame cannot prove that Stop has
 /// arrived from the relay. Retain the full Position after actual execution,
@@ -383,6 +384,10 @@ pub(super) struct LiveLanCapture {
     ai: Option<AiActivity>,
     failure: Option<failure::FailureCapture>,
     setup_crash: Option<setup_crash::SetupCrashCapture>,
+    coop_setup_initial: Option<Value>,
+    coop_setup_final: Option<Value>,
+    coop_setup_guest_accepted: bool,
+    coop_setup_started: Option<Instant>,
 }
 
 impl LiveLanCapture {
@@ -461,6 +466,10 @@ impl LiveLanCapture {
             stop_observation: StopObservation::default(),
             stopped: false,
             last_wait: None,
+            coop_setup_initial: None,
+            coop_setup_final: None,
+            coop_setup_guest_accepted: false,
+            coop_setup_started: None,
             guest_watched: false,
             sides: 0,
             cooperative: target.live_cooperative().then(|| {
@@ -525,6 +534,7 @@ impl LiveLanCapture {
                 | LanTarget::LiveCoopHost
                 | LanTarget::LiveCoopSavedHost
                 | LanTarget::LiveCoopFinalHost
+                | LanTarget::LiveVeraCoopHost
                 | LanTarget::BattleHost
         )
     }
@@ -777,6 +787,34 @@ impl LiveLanCapture {
         rendered: PresentedShell,
         frame: u32,
     ) -> Result<()> {
+        if matches!(
+            self.target,
+            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+        ) && matches!(
+            self.phase,
+            Phase::Discover | Phase::HostSetup | Phase::HostReady | Phase::GuestSetup
+        ) {
+            let started = *self.coop_setup_started.get_or_insert_with(Instant::now);
+            if started.elapsed() >= VERA_COOP_SETUP_WATCHDOG {
+                anyhow::bail!(
+                    "live VERA Coop setup watchdog expired after {}s: {}",
+                    VERA_COOP_SETUP_WATCHDOG.as_secs(),
+                    vera_coop_setup_watchdog_snapshot(self, state, rendered)
+                );
+            }
+        }
+        if matches!(
+            self.target,
+            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+        ) {
+            ensure!(
+                !matches!(
+                    state.frontend.screen,
+                    GameScreen::Loading | GameScreen::InGame
+                ),
+                "VERA Coop setup-only capture crossed GO"
+            );
+        }
         if let Some(latency) = self.latency.as_mut() {
             latency.observe_setup(state);
         }
@@ -899,7 +937,17 @@ impl LiveLanCapture {
                 // Hidden-window transcript captures suppress physical LAN.
                 // Live captures install the real owner before normal Network
                 // input opens the shell; it retains sockets through gameplay.
-                LanCapture::isolated_root(state)?;
+                let isolated_ra2 = LanCapture::isolated_root(state)?;
+                if matches!(
+                    self.target,
+                    LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+                ) {
+                    let isolated_settings = LanCapture::isolated_settings_root(state)?;
+                    ensure!(
+                        isolated_ra2 != isolated_settings,
+                        "VERA Coop setup capture needs separate isolated assets and settings roots"
+                    );
+                }
                 ensure!(
                     state.match_state.lan_service.is_none(),
                     "LAN transport was already installed"
@@ -983,6 +1031,11 @@ impl LiveLanCapture {
             }
             Phase::HostSetup => {
                 let selected = self.config.as_ref().and_then(|config| config.map.clone());
+                let mode_id = if self.target == LanTarget::LiveVeraCoopHost {
+                    Some(vera_cooperative_mode_id(state)?)
+                } else {
+                    None
+                };
                 let prepared = if let Some(mut run) = self.cooperative.take() {
                     let result = run.prepare_host(state, rendered, &mut self.route, frame);
                     self.cooperative = Some(run);
@@ -1001,7 +1054,7 @@ impl LiveLanCapture {
                         state,
                         selected.as_deref(),
                         self.expected_players,
-                        None,
+                        mode_id,
                         None,
                     )?;
                     true
@@ -1011,7 +1064,11 @@ impl LiveLanCapture {
                 if prepared {
                     self.event(
                         frame,
-                        "host selected the map and open human rows through normal setup",
+                        if self.target == LanTarget::LiveVeraCoopHost {
+                            "host selected the VERA Coop map through production setup owner"
+                        } else {
+                            "host selected the map and open human rows through normal setup"
+                        },
                     );
                     self.phase = Phase::HostReady;
                 }
@@ -1019,6 +1076,10 @@ impl LiveLanCapture {
             Phase::HostReady
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) =>
             {
+                if self.target == LanTarget::LiveVeraCoopHost {
+                    self.step_vera_coop_host_setup(state, frame)?;
+                    return Ok(());
+                }
                 let session = &state.match_state.session;
                 if let Some(launch) = session.network_setup()
                     && launch.humans.len() == 2
@@ -1043,6 +1104,10 @@ impl LiveLanCapture {
             Phase::GuestSetup
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, false) =>
             {
+                if self.target == LanTarget::LiveVeraCoopGuest {
+                    self.step_vera_coop_guest_setup(state, frame)?;
+                    return Ok(());
+                }
                 // The guest's game accepts the received options and map by
                 // itself, and again after each host change, so the run stays
                 // in editable setup until the host starts.
@@ -1175,6 +1240,122 @@ impl LiveLanCapture {
         setup::commit_map_selection(state, mode_id, map_index, None)?;
         self.select_country(state)?;
         self.open_human_rows(state, ai)
+    }
+
+    fn step_vera_coop_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+        let session = &state.match_state.session;
+        let launch = session.network_setup().context("VERA Coop host setup")?;
+        if launch.humans.len() < 2 {
+            return Ok(());
+        }
+        ensure!(
+            session.host()
+                && launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative,
+            "live Coop host lost its admitted mode"
+        );
+        let (host, guest) = coop_setup_rows(launch)?;
+        let host_ready = session.network_player_ready(host);
+        let guest_ready = session.network_player_ready(guest);
+        let host_map = session.network_map_status(host) == Some(1);
+        let guest_map = session.network_map_status(guest) == Some(1);
+
+        if self.coop_setup_initial.is_none() {
+            if !host_ready || !host_map {
+                return Ok(());
+            }
+            self.coop_setup_initial = Some(vera_coop_setup_snapshot(state)?);
+            self.event(
+                frame,
+                if guest_ready && guest_map {
+                    "host snapshot captured after guest Ready/map status had already arrived"
+                } else {
+                    "host map/config accepted; waiting for guest Ready and map status"
+                },
+            );
+            if !guest_ready || !guest_map {
+                return Ok(());
+            }
+        }
+        if !host_ready || !guest_ready || !host_map || !guest_map {
+            return Ok(());
+        }
+        let final_snapshot = vera_coop_setup_snapshot(state)?;
+        ensure_coop_setup_ready_transition(
+            self.coop_setup_initial
+                .as_ref()
+                .context("initial VERA Coop host snapshot")?,
+            &final_snapshot,
+            true,
+        )?;
+        self.coop_setup_final = Some(final_snapshot.clone());
+        self.route.push(json!({
+            "render_frame": frame,
+            "action": "guest Ready received by host over real LAN",
+            "state": final_snapshot,
+        }));
+        self.phase = Phase::Finished;
+        Ok(())
+    }
+
+    fn step_vera_coop_guest_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+        let session = &state.match_state.session;
+        let launch = session.network_setup().context("VERA Coop guest setup")?;
+        if launch.mode.class != crate::skirmish_modes::MpModeClass::VeraCooperative
+            || launch.selected_map_file.is_none()
+        {
+            return Ok(());
+        }
+        ensure!(!session.host(), "live Coop guest lost the admitted mode");
+        let (_, guest) = coop_setup_rows(launch)?;
+        if !self.coop_setup_guest_accepted {
+            if session.network_map_status(guest) != Some(1)
+                || !setup::view(state)
+                    .context("VERA Coop guest view")?
+                    .accept_enabled
+            {
+                return Ok(());
+            }
+            ensure!(
+                !session.network_player_ready(guest),
+                "guest was already Ready before the diagnostic Accept"
+            );
+            self.coop_setup_initial = Some(vera_coop_setup_snapshot(state)?);
+            setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
+            let accepted = state
+                .match_state
+                .session
+                .network_setup()
+                .context("accepted Coop guest setup")?;
+            let (_, guest) = coop_setup_rows(accepted)?;
+            ensure!(
+                state.match_state.session.network_player_ready(guest),
+                "production Accept did not set guest Ready"
+            );
+            self.coop_setup_guest_accepted = true;
+            self.event(
+                frame,
+                "guest accepted the host's VERA Coop map through production setup",
+            );
+            return Ok(());
+        }
+
+        let initial = self
+            .coop_setup_initial
+            .as_ref()
+            .context("initial VERA Coop guest snapshot")?;
+        if session.network_map_status(guest) != Some(1) || !session.network_player_ready(guest) {
+            return Ok(());
+        }
+        let final_snapshot = vera_coop_setup_snapshot(state)?;
+        ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
+        self.coop_setup_final = Some(final_snapshot.clone());
+        self.route.push(json!({
+            "render_frame": frame,
+            "action": "guest local Ready confirmed after real host options and map acceptance",
+            "state": final_snapshot,
+        }));
+        self.phase = Phase::Finished;
+        Ok(())
     }
 
     /// Open every free row to a human through the setup's Player combos,
@@ -1665,6 +1846,29 @@ impl LiveLanCapture {
         if let Some(crash) = &self.setup_crash {
             return crash.receipt();
         }
+        if matches!(
+            self.target,
+            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+        ) {
+            ensure!(
+                self.ready()
+                    && self.coop_setup_initial.is_some()
+                    && self.coop_setup_final.is_some(),
+                "live VERA Coop setup capture did not finish"
+            );
+            return Ok(json!({
+                    "target": format!("{:?}", self.target),
+                    "service_boundary": "two independent App processes over direct LAN UDP; production host options, guest receipt, map verification, and Ready transport",
+            "scope": "VERA Coop setup only: host options/config received over LAN, local map verification, roles and LAN-authoritative Ready/map status; stopped before GO",
+                    "observation": if self.host() { "host-authored setup and remote Ready" } else { "received host setup and local Ready" },
+            "ready_proof": if self.host() { "host snapshot observes both room rows after LAN updates" } else { "guest snapshot taken locally before Accept, then local Ready after Accept; remote host K/A1 is not mirrored on a guest" },
+                    "process_id": std::process::id(),
+                    "initial": self.coop_setup_initial,
+                    "after_guest_ready": self.coop_setup_final,
+                    "route": self.route,
+                    "started_game": false,
+                }));
+        }
         if let Some(run) = &self.cooperative {
             if let Some(online) = &self.rounds {
                 return Ok(json!({"target":format!("{:?}",self.target),
@@ -1815,6 +2019,240 @@ fn terminal_simulation_receipt(state: &AppState) -> Result<Value> {
         "hash":hash,"recorded_hashes":hashes,"score_finalized":true,
         "state_hash_owners":sim.state_hash_owners()}),
     )
+}
+
+fn vera_cooperative_mode_id(state: &AppState) -> Result<i32> {
+    state
+        .frontend
+        .skirmish_modes
+        .iter()
+        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
+        .map(|mode| mode.id)
+        .context("VERA Cooperative mode")
+}
+
+/// Error-only snapshot for the new VERA Coop setup targets. It reads current
+/// owners without sending requests, accepting the map, or writing a receipt.
+fn vera_coop_setup_watchdog_snapshot(
+    capture: &LiveLanCapture,
+    state: &AppState,
+    rendered: PresentedShell,
+) -> Value {
+    let session = &state.match_state.session;
+    let launch = session.network_setup();
+    let participants = launch.map(|launch| {
+        launch
+            .humans
+            .iter()
+            .enumerate()
+            .map(|(index, human)| {
+                json!({
+                    "name": human.name,
+                    "raw_row": human.raw_slot_index,
+                    "role": human.role.native_value(),
+                    "ready": session.network_player_ready(index),
+                    "map_status": session.network_map_status(index),
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    let metadata = session.network_map_metadata();
+    let config = session.network_vera_coop_map_config();
+    let source = session.network_local_map_source();
+    let protocol = state.frontend.network_setup_protocol.as_ref();
+    let setup_view = setup::view(state);
+    let lobby = state.frontend.lan.as_ref();
+
+    json!({
+        "target": format!("{:?}", capture.target),
+        "capture_phase": format!("{:?}", capture.phase),
+        "screen": format!("{:?}", state.frontend.screen),
+        "presented_shell": format!("{rendered:?}"),
+        "host": session.host(),
+        "network_setup_present": launch.is_some(),
+        "mode_id": launch.map(|launch| launch.mode.id),
+        "selected_map": launch.and_then(|launch| launch.selected_map_file.as_deref()),
+        "map_metadata": metadata.map(|metadata| json!({
+            "byte_length": metadata.byte_length,
+            "source_sha256": metadata.source_sha256,
+            "effective_digest": metadata.effective_digest,
+            "digest": metadata.digest,
+            "player_capacity": metadata.player_capacity,
+        })),
+        "local_map_source_identity": source.and_then(|source| source.physical_identity()),
+        "coop_config": config.map(|config| json!({
+            "map_file": config.map_file,
+            "source_sha256": config.source_sha256,
+            "config_sha256": config.config_sha256,
+        })),
+        "participants": participants,
+        "protocol_present": protocol.is_some(),
+        "pending_setup_requests": protocol.map(|protocol| protocol.diagnostic_pending_requests()),
+        "protocol_accept_eligible": protocol.map(|protocol| protocol.diagnostic_accept_eligible()),
+        "accept_enabled": setup_view.as_ref().map(|view| view.accept_enabled),
+        "start_requested": setup_view.as_ref().map(|view| view.start_requested),
+        "lan_lobby": lobby.map(|runtime| json!({
+            "pending_game": runtime.pending_game(),
+            "modal": runtime.modal,
+            "games": runtime.lobby.games.iter().map(|game| json!({
+                "name": game.name,
+                "open": game.open,
+            })).collect::<Vec<_>>(),
+        })),
+    })
+}
+
+fn coop_setup_rows(
+    launch: &crate::skirmish_launch::SkirmishLaunchSession,
+) -> Result<(usize, usize)> {
+    ensure!(
+        launch.humans.len() == 2
+            && launch
+                .humans
+                .iter()
+                .all(|human| human.raw_slot_index.is_some()),
+        "VERA Coop setup capture requires exactly two admitted human rows"
+    );
+    let host = launch
+        .humans
+        .iter()
+        .position(|human| human.name == HOST_NAME)
+        .context("admitted LAN host row")?;
+    let guest = launch
+        .humans
+        .iter()
+        .position(|human| human.name == GUEST_NAME)
+        .context("admitted LAN guest row")?;
+    ensure!(host != guest, "host and guest rows alias");
+    Ok((host, guest))
+}
+
+fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
+    let session = &state.match_state.session;
+    let launch = session
+        .network_setup()
+        .context("VERA Coop setup snapshot")?;
+    ensure!(
+        launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative,
+        "setup snapshot is not VERA Coop"
+    );
+    let file = launch
+        .selected_map_file
+        .as_deref()
+        .context("selected VERA Coop map")?;
+    let metadata = session
+        .network_map_metadata()
+        .context("accepted VERA Coop map metadata")?;
+    let source = session
+        .network_local_map_source()
+        .context("verified local VERA Coop map source")?;
+    let (byte_length, physical_sha256) = source
+        .physical_identity()
+        .context("physical VERA Coop map identity")?;
+    let effective_digest = session
+        .network_local_map_effective_digest()
+        .context("verified local VERA Coop effective digest")?;
+    let config = session
+        .network_vera_coop_map_config()
+        .context("accepted VERA Coop map config")?;
+    config.validate_binding(file, &metadata.source_sha256)?;
+    ensure!(
+        byte_length == usize::try_from(metadata.byte_length)?
+            && physical_sha256 == metadata.source_sha256
+            && effective_digest == metadata.effective_digest
+            && metadata.source_sha256 == config.source_sha256,
+        "local VERA Coop bytes or effective map differ from the accepted host identity"
+    );
+    let (host, guest) = coop_setup_rows(launch)?;
+    let participants = launch
+        .humans
+        .iter()
+        .enumerate()
+        .map(|(index, human)| {
+            json!({
+                "name": human.name,
+                "raw_row": human.raw_slot_index,
+                "role": human.role.native_value(),
+                "ready": session.network_player_ready(index),
+                "map_status": session.network_map_status(index),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "host": state.match_state.session.host(),
+        "mode_id": launch.mode.id,
+        "map_file": file,
+        "map_source_sha256": metadata.source_sha256,
+        "physical_source_sha256": physical_sha256,
+        "byte_length": byte_length,
+        "effective_digest": effective_digest,
+        "config": {
+            "map_file": config.map_file,
+            "source_sha256": config.source_sha256,
+            "config_sha256": config.config_sha256,
+        },
+        "host_row": host,
+        "guest_row": guest,
+        "participants": participants,
+    }))
+}
+
+fn ensure_coop_setup_ready_transition(
+    initial: &Value,
+    final_state: &Value,
+    host_observes_room: bool,
+) -> Result<()> {
+    for field in ["map_file", "map_source_sha256", "effective_digest"] {
+        ensure!(
+            initial[field] == final_state[field],
+            "VERA Coop map identity changed while accepting the guest: {field}"
+        );
+    }
+    ensure!(
+        initial["config"]["config_sha256"] == final_state["config"]["config_sha256"],
+        "VERA Coop config changed during the Ready transition"
+    );
+    let initial_host = coop_setup_participant(initial, HOST_NAME)?;
+    let initial_guest = coop_setup_participant(initial, GUEST_NAME)?;
+    let final_host = coop_setup_participant(final_state, HOST_NAME)?;
+    let final_guest = coop_setup_participant(final_state, GUEST_NAME)?;
+    if host_observes_room {
+        ensure!(
+            initial_host["ready"] == true
+                && initial_host["map_status"] == 1
+                && final_host["ready"] == true
+                && final_guest["ready"] == true
+                && final_host["map_status"] == 1
+                && final_guest["map_status"] == 1,
+            "host did not observe both real LAN participants Ready with accepted maps"
+        );
+    } else {
+        ensure!(
+            initial_guest["ready"] == false
+                && initial_guest["map_status"] == 1
+                && final_guest["ready"] == true
+                && final_guest["map_status"] == 1,
+            "guest local Ready/map-status did not transition across production Accept"
+        );
+    }
+    for name in [HOST_NAME, GUEST_NAME] {
+        let before = coop_setup_participant(initial, name)?;
+        let after = coop_setup_participant(final_state, name)?;
+        ensure!(
+            before["raw_row"] == after["raw_row"] && before["role"] == after["role"],
+            "VERA Coop participant role changed while accepting: {name}"
+        );
+    }
+    Ok(())
+}
+
+fn coop_setup_participant<'a>(snapshot: &'a Value, name: &str) -> Result<&'a Value> {
+    snapshot["participants"]
+        .as_array()
+        .context("VERA Coop participant snapshot")?
+        .iter()
+        .find(|row| row["name"] == name)
+        .with_context(|| format!("VERA Coop {name} participant"))
 }
 
 fn local_owner(state: &AppState) -> Result<String> {

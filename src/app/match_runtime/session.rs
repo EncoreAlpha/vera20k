@@ -3543,6 +3543,95 @@ mod tests {
     }
 
     #[test]
+    fn vera_coop_limits_map_seats_and_keeps_observers_separate() {
+        use super::NetworkVacancy;
+        use crate::skirmish_modes::MpModeClass;
+
+        let mut launch = network_fixture();
+        launch.local_player_index = 0;
+        launch.mode.class = MpModeClass::VeraCooperative;
+        let mode = launch.mode.clone();
+        assert_eq!(
+            super::row_capacity(SessionMode::Lan, NetworkRoom::default(), &mode, 8),
+            4,
+            "an eight-player map supplies four VERA Coop player seats"
+        );
+        assert_eq!(
+            super::row_capacity(SessionMode::Wol, NetworkRoom::default(), &mode, 8),
+            4,
+            "the same mode cap applies to WOL"
+        );
+        assert_eq!(
+            super::row_capacity(
+                SessionMode::Wol,
+                NetworkRoom {
+                    tournament: true,
+                    clan: false,
+                },
+                &mode,
+                8,
+            ),
+            2,
+            "WOL tournament's existing two-seat cap still applies"
+        );
+        let mut original_cooperative = mode.clone();
+        original_cooperative.class = MpModeClass::Cooperative;
+        assert_eq!(
+            super::row_capacity(
+                SessionMode::Lan,
+                NetworkRoom::default(),
+                &original_cooperative,
+                8,
+            ),
+            2
+        );
+        let mut battle = mode.clone();
+        battle.class = MpModeClass::Battle;
+        assert_eq!(
+            super::row_capacity(SessionMode::Lan, NetworkRoom::default(), &battle, 8),
+            8
+        );
+
+        let mut session = MatchSession::default();
+        session.enter_network(super::NetworkReturnContext::LanLobby);
+        session
+            .accept_network_setup(launch, true, Some(7), true)
+            .unwrap();
+        session
+            .select_network_map(mode, "EIGHT.YRM".into(), 8)
+            .unwrap();
+        assert_eq!(session.network_setup_capacity(), Some(4));
+        assert_eq!(session.network_player_row_limit(), 4);
+        session.set_network_spectators(true).unwrap();
+        assert_eq!(
+            session.network_vacancy(4),
+            Some(NetworkVacancy::OpenObserver)
+        );
+
+        let mut spectator = session.network_setup().unwrap().humans[1].clone();
+        spectator.name = "Spectator".into();
+        spectator.raw_slot_index = Some(4);
+        spectator.set_observer(true);
+        session.add_network_participant(spectator).unwrap();
+        assert!(session.network_setup().unwrap().humans[2].is_observer());
+        assert_eq!(session.network_player_row_limit(), 4);
+
+        let player = session.network_setup().unwrap().humans[1].clone();
+        for row in [2, 3] {
+            let mut player = player.clone();
+            player.name = format!("Player{row}");
+            player.raw_slot_index = Some(row);
+            session.add_network_participant(player).unwrap();
+        }
+        assert_eq!(session.network_player_row_limit(), 4);
+        assert_eq!(
+            session.network_join_row(false),
+            Some((5, true)),
+            "a fifth would-be player is admitted as a spectator, not a fifth player seat"
+        );
+    }
+
+    #[test]
     fn extended_player_admission_stops_at_capacity_and_shrink_closes_hidden_rows() {
         use super::{NetworkRowKind, NetworkVacancy};
         let mut launch = network_fixture();

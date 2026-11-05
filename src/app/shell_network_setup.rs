@@ -449,6 +449,19 @@ impl NetworkSetupProtocol {
         std::mem::take(&mut self.requests)
     }
 
+    /// Read-only diagnostic view of queued requests; unlike `take_service_requests`,
+    /// this does not drain the production service boundary.
+    pub(crate) fn diagnostic_pending_requests(&self) -> Vec<String> {
+        self.requests
+            .iter()
+            .map(|request| format!("{request:?}"))
+            .collect()
+    }
+
+    pub(crate) fn diagnostic_accept_eligible(&self) -> bool {
+        self.accept_eligible
+    }
+
     fn record_remote_user_left(&mut self, host: bool, operator: bool) {
         if host {
             self.requests.push(NetworkSetupRequest::PublishOptions);

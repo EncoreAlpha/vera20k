@@ -106,6 +106,12 @@ pub enum LanTarget {
     LiveCoopFinalHost,
     /// The final guest presses `0xBC7`'s Continue back to the shell.
     LiveCoopFinalGuest,
+    /// Real two-process VERA Coop setup: host publishes its map/config,
+    /// receives guest Ready and stops before GO.
+    LiveVeraCoopHost,
+    /// Real two-process VERA Coop setup: guest receives host options, verifies
+    /// the map/config, Accepts and stops before GO.
+    LiveVeraCoopGuest,
     BattleHost,
     BattleGuest,
     Lobby,
@@ -250,6 +256,8 @@ pub(crate) const LAN_CHECKPOINTS: &[(&str, LanTarget)] = &[
     ("lan-live-coop-guest", LanTarget::LiveCoopGuest),
     ("lan-live-coop-final-host", LanTarget::LiveCoopFinalHost),
     ("lan-live-coop-final-guest", LanTarget::LiveCoopFinalGuest),
+    ("lan-live-vera-coop-host", LanTarget::LiveVeraCoopHost),
+    ("lan-live-vera-coop-guest", LanTarget::LiveVeraCoopGuest),
     ("lan-battle-host", LanTarget::BattleHost),
     ("lan-battle-guest", LanTarget::BattleGuest),
     ("lan-0xbb-steady", LanTarget::Lobby),
@@ -389,6 +397,8 @@ impl LanTarget {
                 | Self::LiveCoopGuest
                 | Self::LiveCoopFinalHost
                 | Self::LiveCoopFinalGuest
+                | Self::LiveVeraCoopHost
+                | Self::LiveVeraCoopGuest
                 | Self::BattleHost
                 | Self::BattleGuest
         )

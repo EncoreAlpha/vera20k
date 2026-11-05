@@ -2032,11 +2032,22 @@ where
             ensure!(
                 matches!(
                     checkpoint,
-                    ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveHost)
+                    ShellCaptureCheckpoint::Lan(
+                        movies::LanTarget::LiveHost | movies::LanTarget::LiveVeraCoopHost
+                    )
                 ),
-                "--lan-map requires the normal full-round LAN host checkpoint"
+                "--lan-map requires a live LAN host checkpoint"
             );
             crate::map::source::validate_network_map_name(file)?;
+        }
+        if matches!(
+            checkpoint,
+            ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVeraCoopHost)
+        ) {
+            ensure!(
+                lan_map.is_some(),
+                "VERA Coop host capture requires --lan-map"
+            );
         }
         ensure!(
             lan_setup_crash.is_none()
@@ -3456,6 +3467,48 @@ mod tests {
         assert!(parse_launch_args(values.clone()).is_ok());
         values[1] = "lan-0xbb-steady".into();
         assert!(parse_launch_args(values).is_err());
+    }
+
+    #[test]
+    fn live_vera_coop_setup_requires_a_host_map_and_keeps_guest_map_host_authored() {
+        let output = new_output_path("live-vera-coop-setup-host");
+        let mut host = valid_args(&output);
+        host[1] = "lan-live-vera-coop-host".into();
+        host.extend(args(&[
+            "--lan-bind",
+            "127.0.0.1:31000",
+            "--lan-peer",
+            "127.0.0.1:31010",
+            "--lan-map",
+            "Lindrak.map",
+        ]));
+        let AppLaunchMode::ShellCapture(request) = parse_launch_args(host.clone()).unwrap() else {
+            panic!("capture");
+        };
+        let config = request.live_lan.unwrap();
+        assert_eq!(config.map.as_deref(), Some("Lindrak.map"));
+
+        let output = new_output_path("live-vera-coop-setup-guest");
+        let mut guest = valid_args(&output);
+        guest[1] = "lan-live-vera-coop-guest".into();
+        guest.extend(args(&[
+            "--lan-bind",
+            "127.0.0.1:31010",
+            "--lan-peer",
+            "127.0.0.1:31000",
+        ]));
+        assert!(parse_launch_args(guest).is_ok());
+
+        let output = new_output_path("live-vera-coop-setup-host-missing-map");
+        let mut host_without_map = valid_args(&output);
+        host_without_map[1] = "lan-live-vera-coop-host".into();
+        host_without_map.extend(args(&[
+            "--lan-bind",
+            "127.0.0.1:31000",
+            "--lan-peer",
+            "127.0.0.1:31010",
+        ]));
+        assert!(parse_launch_args(host_without_map).is_err());
     }
 
     #[test]

@@ -378,9 +378,10 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         // Player combo.
         let adding = Some(row) == add_slot;
         let bare = several && human.is_none() && ai.is_none();
-        // VERA's room accepts for its guest (`service::auto_accept`), so the
-        // guest's row stays open: the host's next options take it back.
-        let accepted = !dialog.modern && session.network_player_ready(launch.local_player_index);
+        // Modern rooms auto-accept their guest; VERA Coop instead uses the
+        // original manual acceptance and locks the guest's choices once ready.
+        let accepted = (!dialog.modern || mode.class.is_vera_cooperative())
+            && session.network_player_ready(launch.local_player_index);
         let editable = ((is_local && (host || !accepted)) || host && ai.is_some()) && !observer;
         // A VERA room's guest picks Observer in its Side list to watch while
         // a spectator row is open, and a side to play while a player row is.
@@ -668,7 +669,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 id: column.control(visible_row),
                 row,
                 enabled: if column == SetupColumn::Team && mode.class.is_vera_cooperative() {
-                    !observer && (host || is_local && (!accepted || !dialog.modern))
+                    !observer && (host || is_local && !accepted)
                 } else {
                     (editable || switching && column == SetupColumn::Country)
                         && (column != SetupColumn::Team || mode.allies_allowed)

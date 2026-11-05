@@ -1043,7 +1043,16 @@ fn validate_host_coop_map_config(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_host_coop_map_config;
+    use super::{mode_allows_automatic_accept, validate_host_coop_map_config};
+
+    #[test]
+    fn modern_auto_accept_is_disabled_only_for_vera_coop() {
+        use crate::skirmish_modes::MpModeClass::{Battle, Cooperative, VeraCooperative};
+
+        assert!(mode_allows_automatic_accept(Battle));
+        assert!(mode_allows_automatic_accept(Cooperative));
+        assert!(!mode_allows_automatic_accept(VeraCooperative));
+    }
 
     #[test]
     fn wol_coop_host_setup_keeps_legacy_missing_config_behavior() {
@@ -1744,16 +1753,21 @@ pub(crate) fn poll(state: &mut AppState) -> Option<Instant> {
     pings.into_iter().chain(go).chain(offer).chain(direct).min()
 }
 
-/// VERA's game room (`SetupDialog::modern`) presses Accept for a guest
-/// whenever the player could, so nobody readies up by hand: after joining,
-/// after every host change, and for the final settings Start publishes.
-/// Quick Match and external launches have no setup dialog.
+/// Modern rooms automatically accept eligible guests, except VERA Coop,
+/// whose guest readiness is a deliberate manual action. Quick Match and
+/// external launches have no setup dialog.
 fn auto_accept(state: &mut AppState) {
     let dialog = super::dialog(state);
+    let mode_class = state
+        .match_state
+        .session
+        .network_setup()
+        .map(|launch| launch.mode.class);
     if !dialog.modern
         || dialog.host
         || super::quick_match(state)
         || super::external(state)
+        || mode_class.is_some_and(|class| !mode_allows_automatic_accept(class))
         || state
             .frontend
             .network_setup_protocol
@@ -1767,6 +1781,10 @@ fn auto_accept(state: &mut AppState) {
         log::warn!("automatic Accept refused: {error:#}");
     }
     state.platform.window.request_redraw();
+}
+
+fn mode_allows_automatic_accept(class: crate::skirmish_modes::MpModeClass) -> bool {
+    !class.is_vera_cooperative()
 }
 
 /// The service could not take the local acceptance. It stays withdrawn
