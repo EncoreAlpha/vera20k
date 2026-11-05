@@ -1,8 +1,65 @@
 # VERA 合作战役开发记录
 
-这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.18-dev`。
+这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.19-dev`（已提交：双进程 LAN 基座与首帧）；上一版本 `0.1.18-dev`。
 
 ## 当前状态
+
+### `0.1.19-dev`（已提交）
+
+本版本开始补做 `0.1.18-dev` 留下的第一个缺口：真实双进程 LAN 开局实测。此前 `lan-live-vera-coop-host/guest` 诊断目标只跑到“双方 Ready”就结束，现在改为走生产路径：房主点击 Start，双方经过 GO 与装载进入任务帧循环，沿用既有 300 帧 Move/Stop 输入、逐帧校验和与共享 `state_hash` 采集；收据新增 VERA 专属证据（战役目录与摘要、角色名单、sender→House grant 矩阵、越权选择探针）。该目标已在本地双进程上跑通，证据与遗留见下。
+
+实测环境只在本地 scratch，不入库：游戏源用用户提供的一份完整 YR 安装（与 Steam 安装并列，作为隔离副本的资产来源），两个隔离进程各复制一份；测试图由用户提供的 `all01umd.map` 按字节修改而来，`[Basic]` 增加 `Player1=Americans House`、`Player2=Alliance House`，共享额外 House 用地图自带的 `French House`（该图 `[Houses]` 四个我方 House 互为 `Allies`）。两关测试战役的 campaign.ini 放在 `settings/Maps/VeraCoop/<战役>/`；第 2 关是第 1 关地图的字节拷贝（文件名改为 `stage02/all01umd.map`），只用于清单/下一关占位。
+
+实测暴露并已修（均未提交）的阻塞：
+
+- LAN 主机选项里的 VERA 角色数组按位置严格等长；客机先收到 options、后收到 roster 时整包被丢弃，房间停在 Ready 之前。现在 roster 滞后时先暂缓角色应用，roster 到达后重放已保存的 options；已加定向回归测试并通过。
+- 客机把预装的战役 Entry 当地图不可用（Choose Map 目录里没有它），map_status 恒为 0，永远不会 Ready。现在按本地 campaign.ini 与地图摘要校验后按 Present 准入，并把预装地图绑定为 GO 前本地文件探针与装载器使用的 transfer source。
+- 恢复上一次 VERA Coop 房间时提示 `network game mode has no eligible map`：campaign Entry 记录只在选择模式时才进入目录。现在建房间前先发现 campaign Entry。
+- 恢复 LAN 存档进入 VERA 模式时两个座位都继承 role 0，触发 `duplicate LAN VERA Coop role`。现在 VERA 房间的本地座位与加入座位默认 Random，角色只在大厅显式选择。
+- 装载画面组装对 VERA 装载调用了 stock-offline 访问器而 panic。现在装载前缀只对 stock-offline 提供 start 投影，VERA Coop 使用其冻结的 network launch 名单。
+- 装载器在 fresh prefix 选择处 panic（`campaign admission supplies its startup`）：`FreshScenarioPrefix` 只有 stock-offline 与 campaign 两族。新增 VERA Coop 前缀族：网络 Scenario、不启动 campaign startup、按 campaign 顺序构建 authored House roster；populate 回调只安装冻结的 sender→House 授权（`install_vera_cooperative_house_authority`），不再重复建 House。加定向回归测试：先建 roster 再装授权，得到与 wrapper 相同的 current House、grant 与 IsHuman 标记。
+- 测试地图的开场触发器会锁输入（trigger action 46/47）。诊断目标等地图自己解锁后再下发 Move，并记录被推迟的帧数。
+- 双进程收尾竞态：一端先完成时保持传输等另一端落定（最长 20 秒），避免“peer disappeared”。
+
+已验证（本地双进程，2026-11-05）：
+
+- 两端完整走完房间发现、加入、Ready/Start/GO、装载并进入任务；受开场锁影响，Move/Stop 在解锁后下发（native frame 811/831 下发，830/850 应用）。
+- 两端各写出 `capture.json`：300/300 帧校验和完全一致，20 个固定帧 `state_hash` 完全一致；两端都观察到 Move 改变 actor 格与稳定 Stop。
+- grant 矩阵两端一致：source0 → Alliance House + French House，source1 → Americans House + French House；各端 `current_house` 是自己的主 House；点击对方主 House 的对象时指针命中，但本地选择保持为空（两端 probe 均记录 `selection_empty`）。
+- 两端收据的地图/战役身份一致（含 `campaign_sha256`、`config_sha256`）；`cargo build --profile fast --bin vera20k` 通过。
+- 第 2 关改用第 1 关地图拷贝后重跑，300/300 帧校验和、20 个固定帧 `state_hash`、Move/Stop 与越权探针断言不变。
+- 定向 lib 测试通过：`app::shell_network_setup` 23、`app::lan_service::options` 13、`app::diagnostics::shell_capture` 88、`app::loading` 116（7 ignored）、`app::frontend::skirmish_session` 71、core `sim::scenario_bootstrap` 70。
+
+尚未验证/遗留：
+
+- 大厅角色仍取 Random 默认（本轮回放未显式选角色），House 分配由 mode+14 解析；显式选角色、以及“对方 House 的**命令**被拒”的运行时断言未做（命令拒绝仍由既有单元测试覆盖）。
+- 客机在 Accept 瞬间的本地大厅快照里 Host 行仍显示未 Ready（Host 端快照正确显示双方 Ready）；属本地行刷新时序，未阻塞开局，记为后续。
+- 任务内保存、结算、下一关推进不在本片范围。
+- 以上改动即 `0.1.19-dev` 增量提交的内容。
+
+#### 下一阶段计划（LAN 合作任务从开局到通关）
+
+阶段目标（DONE WHEN）：两名 LAN 玩家（结构按 4 人做）用已装好的外部合作战役，能完成“大厅开局 → 双方各自可操作 → 地图触发器判定团队胜负 → 双方看到同一份结算并确认 → 房主进入下一关（角色、资金保留）→ `EndOfGame` 回合作大厅”；失败可重试；全程不出现普通遭遇战计分板，也不需要重开房间。
+
+分片与 DONE 标准（每片一个 `0.1.x-dev` 增量提交）：
+
+1. **`0.1.19-dev` 双进程实测基座 + 首帧修复（双进程基座已完成）**：扩 `lan-live-vera-coop-*` 诊断目标到 Start/GO/跑帧，并准备 2 人测试战役；修实测暴露的呈现侧与共享判定问题。DONE：两端进入同一关、同帧校验和与固定帧 `state_hash` 一致、各自能选中/移动自己 House 的单位、对方 House 的点击被拒、无 panic。移动与点击已达成；“对方 House 的命令被拒”运行时断言待补。
+2. **`0.1.20-dev` 任务结束（团队胜负）**：把合作共享胜负从“模式类等于 Cooperative”泛化为模式能力；VERA Coop 抑制“主 House 全灭 = 任务失败”的自动结束，胜负只来自地图触发器与房主强制结束；结束路由复用 `CooperativeResult`。DONE：win 触发器两端口同时胜利；全灭主 House 后任务继续；lose 触发器两端失败；不出现 0x108。
+3. **`0.1.21-dev` 结算界面与确认**：复用 `CooperativeRound`（ready 槽位与行数已参数化）；每个玩家主 House 一行，房主自动准备、客人准备，全准备后房主 Continue；VERA Coop 不写 `coopsave.ini`。DONE：两端行与时间一致；只有房主 Continue 能开下一关；Quit 全员回合作大厅；单人掉线走现有机制。
+4. **`0.1.22-dev` 下一关与战役完成**：战役身份（目录 + 摘要）带入比赛期；任务结束时按当前 Entry 从外部 campaign.ini 解析 `NextScenario`（`SkipMapSelect=yes` 且全局变量 1 时取 `AltNextScenario`），各端本地重算并核对摘要后走与首关相同的冻结开始时序；角色保留，按角色继承资金（`CarryOverMoney`/`CarryOverCap`，扩展现有 `CampaignCarryOver`）；全局变量与战役计时器沿用现有继承；`EndOfGame=yes` 则全员确认后回大厅；失败由房主选择重试本关或回大厅。DONE：第 1 关胜利后再进第 2 关且角色/资金一致；EndOfGame 回大厅；失败重试同图；摘要不一致时两端拒绝继续并提示。
+5. **`0.1.23-dev` 边界规则**：任意玩家可暂停、只有暂停者或房主可恢复、二者都掉线自动恢复；房主强制结束回大厅；任务中离场（不接管 AI、不许中途加入、最后一人离开结束房间）；难度仅房主可改且全队统一；游戏速度房主可调。DONE：状态机定向测试 + 双进程各跑一遍暂停/恢复/离场。
+
+本阶段不做：WOL 开局与身份同步、任务内存档/读档、逐项触发器合作语义审查（只修双进程实测暴露的）、3–4 人真机验证（结构按 4 人）、原 Cooperative 与普通联机行为变更。
+
+先定的设计选择（建议，落地时按证据调整）：
+
+- 结算弹窗复用 BC6 对话框（`CoopScoreModel.rows` 已是变长列表），不新造 UI。
+- 下一关使用新的共享 seed（随回合选项下发），不复用首关 seed。
+- 资金继承按角色（含 AI 角色）记录，在现有 `CampaignCarryOver` 上扩展。
+- 每关胜利的持久进度写盘留到下一阶段；本阶段只做内存内的关卡推进。
+- 合作共享胜负与 House grant 保留在共享 sim；结果行与 `current_house` 相关呈现保持各端本地。
+
+验证方式：每片跑定向 `cargo_run` 测试（涉零售数值时带 `VERA20K_REQUIRE_RETAIL_INI=1`）；双进程基座与下一关加载各跑一遍真实 LAN；阶段末 `python -m tools.run_tests` 一次；抓图与日志只进验证记录，不入库。
 
 ### `0.1.18-dev`
 
@@ -10,7 +67,7 @@ VERA Coop 的 LAN 开局路径已接通。房主点击 Start 时，`mode_start` 
 
 验证结果：`sim::world::world_commands` 17 项、`sim::scenario_bootstrap` 70 项、`app::shell_network_setup` 22 项、`app::input::dispatch` 80 项、`app::loading::init` 39 项、`app::input::context_order` 150 项通过。新增 bootstrap 测试覆盖两名玩家加共享额外 House 的授权表、快照往返和房主/客机 `state_hash` 一致；同时修正两处 fork 回归：stock 模式前缀测试改为按 9 个 retail 模式过滤 VERA Coop 模式，`Command::Select` 快照恢复为不加本地输入门禁（门禁只由 app 输入账本执行）。
 
-尚未做真实双进程 LAN 开局实测，也未验证开局后首帧、触发器、结算与关卡推进，因此不代表合作战役可完整游玩。其他共享模拟和 presentation 路径里的 `current_house` 判断、其他单位命令 handler 和点击路径仍待处理。LAN 玩家仍须预装相同地图和 `campaign.ini`；LAN 只交换摘要，不传输地图或配置。
+尚未做真实双进程 LAN 开局实测，也未验证开局后首帧、触发器、结算与关卡推进，因此不代表合作战役可完整游玩。其他共享模拟和 presentation 路径里的 `current_house` 判断、其他单位命令 handler 和点击路径仍待处理。LAN 玩家仍须预装相同地图和 `campaign.ini`；LAN 只交换摘要，不传输地图或配置。（`0.1.19-dev` 的双进程实测确认：该版本的开局在装载器的 fresh prefix 选择处仍会 panic，实际不能进入任务；修复与实测记录见上一节。）
 
 ### `0.1.17-dev` 历史记录
 
@@ -30,7 +87,7 @@ VERA Coop 开局保护仍启用，合作任务尚不能开始（该版本的状�
 
 ## 长期路线图（目标，尚未实现）
 
-LAN 合作战役现在可以开始任务（`0.1.18-dev`）；WOL 开局、关卡推进、结算和任务内存档仍未实现。当前已接入战役 Entry 发现、地图清单、当前关配置校验和 LAN 任务启动。玩家须自行预先安装相同地图与战役配置；LAN 不自动传图或同步完整 campaign.ini，并已接入房间资源身份检查；WOL 的身份检查尚未实现。新模式与原 Cooperative 并存，并尽量复用现有战役、联网、保存和地图逻辑；原 Cooperative 及其他模式的既有联网机制不变。以下路线描述尚未完成的目标行为。
+LAN 合作战役的开局路径已接到 GO（`0.1.18-dev`），但真实双进程实测发现装载器仍不能进入任务（`0.1.19-dev` 修复中）；WOL 开局、关卡推进、结算和任务内存档仍未实现。当前已接入战役 Entry 发现、地图清单、当前关配置校验，以及到 GO 为止的 LAN 任务启动路径。玩家须自行预先安装相同地图与战役配置；LAN 不自动传图或同步完整 campaign.ini，并已接入房间资源身份检查；WOL 的身份检查尚未实现。新模式与原 Cooperative 并存，并尽量复用现有战役、联网、保存和地图逻辑；原 Cooperative 及其他模式的既有联网机制不变。以下路线描述尚未完成的目标行为。
 
 ### 战役文件与配置
 

@@ -420,6 +420,33 @@ impl FreshScenarioLoadContextDescriptor {
         }
     }
 
+    /// The launch session the loading composition paints (participant names,
+    /// colours, countries). Authored VERA Coop starts carry their frozen
+    /// network launch; campaign loads draw the campaign screen instead.
+    pub(crate) fn loading_prefix_launch_session(
+        &self,
+    ) -> Option<&crate::skirmish_launch::SkirmishLaunchSession> {
+        match &self.prefix {
+            FreshScenarioPrefixReceipt::StockOffline { launch, .. } => Some(launch.session()),
+            FreshScenarioPrefixReceipt::Campaign { .. } => None,
+            FreshScenarioPrefixReceipt::VeraCooperative { startup } => {
+                Some(startup.launch_session())
+            }
+        }
+    }
+
+    /// The stock-offline start projection, when this load has one. VERA Coop
+    /// authored campaigns place Houses through their own bootstrap, so they
+    /// paint no stock start markers.
+    pub(crate) fn loading_prefix_projection(&self) -> Option<&StockOfflinePrefixProjection> {
+        match &self.prefix {
+            FreshScenarioPrefixReceipt::StockOffline {
+                scenario_prefix, ..
+            } => Some(scenario_prefix.projection()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn stock_offline_projection(&self) -> &StockOfflinePrefixProjection {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline {

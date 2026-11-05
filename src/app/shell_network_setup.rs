@@ -721,6 +721,11 @@ impl App {
             host: true,
             ..dialog(state)
         };
+        // A restored VERA Coop mode's saved map is a campaign Entry that the
+        // startup catalog scan does not include. Discover those records first,
+        // or the restored setup reports "no eligible map" and no room opens.
+        // Discovery is inert without a VeraCoop settings folder.
+        refresh_vera_coop_campaign_entries(state);
         // VERA's compact online flow opens a mode that offers AI opponents.
         // Native diagnostic visits retain their saved mode selection.
         let prefer_computer_mode = dialog.wol()

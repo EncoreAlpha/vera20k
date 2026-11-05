@@ -261,6 +261,17 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 // 0x5E1945..0x5E1973: the mode's +1C/+28 country check.
                 super::cooperative::admit_join_country(state, &mut human.slot);
                 super::bans::admit_slot(state, &mut human.slot);
+                // A VERA Coop seat defaults to Random; the join packet's
+                // Player1 default is not a role choice.
+                if state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                    && !human.is_observer()
+                {
+                    human.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
+                }
             }
             state.match_state.session.add_network_participant(human)?;
             // Type3 admission5E0770 and accepted host type6 at5E1B32.
@@ -504,7 +515,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 &map_metadata.source_sha256,
                 vera_coop_map_config.as_ref(),
             )?;
-            if let Some(config) = vera_coop_map_config.as_ref()
+            let coop_local_map = if let Some(config) = vera_coop_map_config.as_ref()
                 && let Some(file) = launch.selected_map_file.as_deref()
                 && let (Some(game_config), Some(assets)) = (
                     state.platform.game_config.as_ref(),
@@ -524,7 +535,29 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 // projection before it enters Session. Coop LAN never transfers
                 // a missing or mismatched map/config.
                 config.apply_to_map(file, &config.source_sha256, &map.ini)?;
-            }
+                let loose = matches!(
+                    &map.source,
+                    crate::map::source::LoadedMapSource::Loose { .. }
+                );
+                // The campaign Entry is not a Choose Map row on a guest, so the
+                // catalog cannot supply this verified local source. The local
+                // bytes just matched the host-advertised campaign digest, which
+                // is the LAN admission proof for a preinstalled map.
+                let name = map
+                    .ini
+                    .section("Basic")
+                    .map(|section| section.read_string("Name", "", 0x20))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| map_metadata.display_name.clone());
+                Some((
+                    name,
+                    loose,
+                    map.source,
+                    map_metadata.effective_digest.clone(),
+                ))
+            } else {
+                None
+            };
             let coop_config_changed = state.match_state.session.network_vera_coop_map_config()
                 != vera_coop_map_config.as_ref();
             // 0x5E5411..0x5E541D: the current mode's +24 on every parse.
@@ -545,6 +578,8 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // independently of the later general-option acceptance flag.
             // A qualified local record supplies its title;
             // otherwise the accepted host metadata remains sufficient for BD.
+            // VERA Coop's preinstalled campaign Entry is not a guest catalog
+            // row, so a locally re-verified campaign map stands in for it.
             let local_map = if map_changed {
                 launch.selected_map_file.as_deref().and_then(|file| {
                     let config = state.platform.game_config.as_ref()?;
@@ -563,7 +598,12 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 })
             } else {
                 None
-            };
+            }
+            .or_else(|| {
+                coop_local_map
+                    .as_ref()
+                    .map(|(name, loose, _, _)| (name.clone(), *loose))
+            });
             // 0x005E7604..0x005E76E8: a WOL guest skips the loose-file test
             // only for an unofficial name holding both ".MPR" and ".YRM".
             let local_map_loose = local_map.as_ref().is_some_and(|(_, loose)| {
@@ -607,6 +647,15 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 local_map.as_deref(),
                 map_changed,
             )?;
+            // The preinstalled Coop campaign map is this guest's transfer
+            // source: LAN never sends the bytes, and the post-GO local-file
+            // probe plus the loader both read this retained source.
+            if let Some((_, _, source, effective)) = coop_local_map {
+                state
+                    .match_state
+                    .session
+                    .accept_verified_network_map_source(source, effective)?;
+            }
             state
                 .match_state
                 .session

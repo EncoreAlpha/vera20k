@@ -3123,42 +3123,79 @@ fn latency_waypoint(origin: (u16, u16), offset: (i32, i32)) -> Option<(u16, u16)
 pub(super) fn mobile_move_with_mouse(
     state: &mut AppState,
 ) -> Result<(u64, (u16, u16), (u16, u16))> {
+    let rules = state.rules().context("retail rules")?.clone();
     let sim = simulation(state)?;
     let owner = sim.session().current_house().context("local House")?;
-    let entity = sim
+    // Authored campaign maps preplace scripted (mission-only) objects and
+    // naval assets. Prefer ordinary infantry, which the tactical click can
+    // always select and which moves on land.
+    let mut actors: Vec<(u64, (u16, u16))> = sim
         .entities()
         .values_sorted()
         .filter(|entity| {
             entity.owner() == owner
                 && entity.is_alive()
                 && !entity.in_limbo()
+                && !entity.is_mission_only()
                 && entity.locomotor.is_some()
                 && matches!(
                     entity.category(),
                     crate::map::entities::EntityCategory::Unit
                         | crate::map::entities::EntityCategory::Infantry
                 )
+                && sim.can_select_object(entity.stable_id(), &rules)
         })
-        // Real computer opponents can kill a starting infantryman before the
-        // command observation ends. Prefer a durable local mobile object.
-        .max_by_key(|entity| (entity.health.current(), entity.stable_id()))
-        .context("local mobile object")?;
-    let id = entity.stable_id();
-    let from = (entity.position.rx(), entity.position.ry());
-    let to = [(18, 0), (-18, 0), (0, 18), (0, -18)]
-        .into_iter()
-        .find_map(|(dx, dy)| {
-            let desired = (
-                u16::try_from(i32::from(from.0) + dx).ok()?,
-                u16::try_from(i32::from(from.1) + dy).ok()?,
-            );
-            legal_move_cell(state, id, desired)
-                .ok()
-                .filter(|cell| *cell != from && clicks_own_cell(state, *cell))
+        .map(|entity| {
+            (
+                entity.stable_id(),
+                (entity.position.rx(), entity.position.ry()),
+            )
         })
-        .context("reachable tactical Move target")?;
-    ground_order_with_mouse(state, id, to)?;
-    Ok((id, from, to))
+        .collect();
+    let infantry = |id: u64| {
+        sim.entities().get(id).is_some_and(|entity| {
+            entity.category() == crate::map::entities::EntityCategory::Infantry
+        })
+    };
+    actors.sort_by_key(|(id, _)| (!infantry(*id), *id));
+    for (id, from) in actors {
+        let target = tactical_move_target(state, id, from);
+        let Some(to) = target else {
+            continue;
+        };
+        ground_order_with_mouse(state, id, to)?;
+        return Ok((id, from, to));
+    }
+    anyhow::bail!("no reachable tactical Move target for any local mobile object")
+}
+
+/// One legal, empty ground cell near `from` that the production click owner
+/// accepts for actor `id`.
+fn tactical_move_target(state: &mut AppState, id: u64, from: (u16, u16)) -> Option<(u16, u16)> {
+    let mut candidates = Vec::new();
+    for radius in [18, 12, 24, 8, 6, 32, 40] {
+        for (dx, dy) in [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ] {
+            candidates.push((dx * radius, dy * radius));
+        }
+    }
+    candidates.into_iter().find_map(|(dx, dy)| {
+        let desired = (
+            u16::try_from(i32::from(from.0) + dx).ok()?,
+            u16::try_from(i32::from(from.1) + dy).ok()?,
+        );
+        legal_move_cell(state, id, desired)
+            .ok()
+            .filter(|cell| *cell != from && clicks_own_cell(state, *cell))
+    })
 }
 
 /// A click on a cell's centre orders that cell only when no taller cell or
@@ -3583,15 +3620,69 @@ fn select_entity(state: &mut AppState, id: u64) -> Result<()> {
     }
     ensure!(
         projected_selection(state) == [id],
-        "tactical input did not retain object{id}: projected={:?}, pending={}, position={:?}",
+        "tactical input did not retain object{id}: projected={:?}, pending={}, position={:?}, gate={:?}",
         projected_selection(state),
         state.match_state.input.selection_order_pending,
         simulation(state)?
             .entities()
             .get(id)
-            .map(|entity| entity.position)
+            .map(|entity| entity.position),
+        simulation(state)?.entities().get(id).map(|entity| {
+            let sim = simulation(state).expect("simulation");
+            format!(
+                "type={} owner={} current={:?} admits={} selectable={} owner_name={:?} fog={}",
+                sim.interner().resolve(entity.type_ref()),
+                sim.interner().resolve(entity.owner()),
+                sim.session()
+                    .current_house()
+                    .map(|owner| sim.interner().resolve(owner)),
+                sim.techno_select_admits_for_local_input(id),
+                state
+                    .rules()
+                    .is_some_and(|rules| sim.can_select_object(id, rules)),
+                crate::app::input::commands::preferred_local_owner_name(state),
+                selection_fog_detail(state, id),
+            )
+        })
     );
     Ok(())
+}
+
+/// Local-view state around one entity for selection failures: the House whose
+/// fog the app picks through, and the clicked cell's visibility there.
+fn selection_fog_detail(state: &AppState, id: u64) -> String {
+    let Ok(sim) = simulation(state) else {
+        return "no simulation".to_string();
+    };
+    let Some(entity) = sim.entities().get(id) else {
+        return "no entity".to_string();
+    };
+    let (rx, ry) = (entity.position.rx(), entity.position.ry());
+    let player = crate::app::input::commands::preferred_local_owner_name(state)
+        .and_then(|name| sim.interner().get(&name));
+    let visibility = crate::app::presentation::instances::cell_visibility_for_local_owner(
+        player,
+        Some(sim.fog()),
+        rx,
+        ry,
+        false,
+        sim.resolved_terrain(),
+    );
+    format!(
+        "player={:?} cell=({rx},{ry}) visibility={visibility:?} fogged={:?} cursor=({},{}) camera=({},{}) zoom={} modal={:?} paused={} targeting={:?} locked={} menu={:?}",
+        player.map(|p| sim.interner().resolve(p)),
+        player.map(|p| sim.fog().is_object_fogged(p, id)),
+        state.match_state.input.cursor_x,
+        state.match_state.input.cursor_y,
+        state.match_state.input.camera_x,
+        state.match_state.input.camera_y,
+        state.match_state.input.zoom_level,
+        crate::app::input::precedence::modal_page(state),
+        state.match_state.paused(),
+        state.match_state.input.targeting_mode,
+        crate::app::input::campaign_input::is_locked(state),
+        state.match_state.match_presentation.in_game_menu,
+    )
 }
 
 pub(super) fn projected_selection(state: &AppState) -> Vec<u64> {
@@ -3699,6 +3790,21 @@ fn click_entity(state: &mut AppState, id: u64) -> Result<()> {
         dispatch::handle_mouse_input(state, MouseButton::Left, edge);
     }
     Ok(())
+}
+
+/// Diagnostic probe: point at `id`, left-click through the production pick and
+/// selection owners, and return what the pointer hit and what entered the
+/// local selection. The VERA Coop capture uses it to prove a peer-granted
+/// House's object cannot be selected locally.
+pub(super) fn selection_after_clicking(
+    state: &mut AppState,
+    id: u64,
+) -> Result<(Option<u64>, Vec<u64>)> {
+    let picked = point_at_entity(state, id)?;
+    for edge in [ElementState::Pressed, ElementState::Released] {
+        dispatch::handle_mouse_input(state, MouseButton::Left, edge);
+    }
+    Ok((picked, projected_selection(state)))
 }
 
 fn point_at_entity(state: &mut AppState, id: u64) -> Result<Option<u64>> {

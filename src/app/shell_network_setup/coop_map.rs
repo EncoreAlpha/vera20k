@@ -285,6 +285,10 @@ pub(crate) fn refresh_campaign_entry_records(state: &mut AppState) {
             .copied()
             == Some(1)
     });
+    log::debug!(
+        "VERA Coop campaign discovery: {} record(s)",
+        discovered.len()
+    );
     let mut records = state.frontend.scenario_catalog.records_mut();
     records.extend(discovered);
 }

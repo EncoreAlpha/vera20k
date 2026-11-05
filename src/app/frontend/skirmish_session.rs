@@ -504,6 +504,11 @@ impl MultiplayerShellRuntime {
         }
         let mut local = self.local_participant();
         local.set_observer(observe);
+        // A VERA Coop room starts every seat at Random: the Team column is the
+        // role chooser there, never a remembered team value.
+        if mode.class.is_vera_cooperative() && !observe {
+            local.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
+        }
         local.slot.team = if mode.must_ally {
             LaunchTeam::Team(0)
         } else {

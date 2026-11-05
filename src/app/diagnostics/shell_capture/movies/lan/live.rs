@@ -57,6 +57,14 @@ const GUEST_NAME: &str = "LiveGuest";
 const REQUIRED_FRAMES: u32 = 300;
 const SOLO_AI_INPUT_BOUND_FRAMES: u32 = 1;
 const VERA_COOP_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
+/// Render frames an accepted VERA Coop Start may spend before leaving the
+/// setup shell for loading. A refusal keeps the host on MainMenu, so this
+/// bounded window reports the refusal instead of the generic capture timeout.
+const VERA_COOP_START_WATCHDOG_FRAMES: u32 = 600;
+/// A VERA Coop peer that finished its own checks first keeps its transport
+/// alive while the slower peer settles, so neither fails on a peer that
+/// already exited. Both wait on each other; the wall clock bounds the wait.
+const VERA_COOP_PAIR_LINGER_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Diagnostic evidence only: a fixed local frame cannot prove that Stop has
 /// arrived from the relay. Retain the full Position after actual execution,
@@ -388,6 +396,15 @@ pub(super) struct LiveLanCapture {
     coop_setup_final: Option<Value>,
     coop_setup_guest_accepted: bool,
     coop_setup_started: Option<Instant>,
+    /// The render frame the VERA Coop host clicked the production Start.
+    coop_setup_started_frame: Option<u32>,
+    /// First committed frame whose authored map locked tactical input.
+    locked_frames: Option<u32>,
+    /// First committed frame whose VERA Coop pair conditions were met.
+    pair_linger_at: Option<u32>,
+    pair_linger_wall: Option<Instant>,
+    /// The peer-House control probe, recorded once after GO.
+    vera_probe: Option<Value>,
 }
 
 impl LiveLanCapture {
@@ -470,6 +487,11 @@ impl LiveLanCapture {
             coop_setup_final: None,
             coop_setup_guest_accepted: false,
             coop_setup_started: None,
+            coop_setup_started_frame: None,
+            locked_frames: None,
+            pair_linger_at: None,
+            pair_linger_wall: None,
+            vera_probe: None,
             guest_watched: false,
             sides: 0,
             cooperative: target.live_cooperative().then(|| {
@@ -803,16 +825,16 @@ impl LiveLanCapture {
                 );
             }
         }
-        if matches!(
-            self.target,
-            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
-        ) {
-            ensure!(
-                !matches!(
-                    state.frontend.screen,
-                    GameScreen::Loading | GameScreen::InGame
-                ),
-                "VERA Coop setup-only capture crossed GO"
+        if self.target == LanTarget::LiveVeraCoopHost
+            && self.phase == Phase::Loading
+            && state.frontend.screen != GameScreen::Loading
+            && state.frontend.screen != GameScreen::InGame
+            && frame.saturating_sub(self.coop_setup_started_frame.unwrap_or(frame))
+                > VERA_COOP_START_WATCHDOG_FRAMES
+        {
+            anyhow::bail!(
+                "VERA Coop Start did not leave setup within {VERA_COOP_START_WATCHDOG_FRAMES} render frames: {}",
+                vera_coop_setup_watchdog_snapshot(self, state, rendered)
             );
         }
         if let Some(latency) = self.latency.as_mut() {
@@ -1050,6 +1072,13 @@ impl LiveLanCapture {
                     self.rounds = Some(rounds);
                     result?
                 } else if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) {
+                    if self.target == LanTarget::LiveVeraCoopHost {
+                        // The production chooser runs this same discovery owner
+                        // when its VERA Coop mode row is selected; the
+                        // diagnostic commits the discovered Entry map directly
+                        // through the normal Use Map transaction.
+                        crate::app::shell_network_setup::refresh_vera_coop_campaign_entries(state);
+                    }
                     self.prepare_host_setup(
                         state,
                         selected.as_deref(),
@@ -1293,7 +1322,16 @@ impl LiveLanCapture {
             "action": "guest Ready received by host over real LAN",
             "state": final_snapshot,
         }));
-        self.phase = Phase::Finished;
+        // mode+14's VERA Coop admission validates the frozen role/House roster
+        // against the effective map, then freezes it for the loader's own
+        // re-verification and the shared command grants.
+        setup_button(state, crate::ui::multiplayer_setup::START)?;
+        self.event(
+            frame,
+            "host Start clicked; VERA Coop admission and frozen start",
+        );
+        self.coop_setup_started_frame = Some(frame);
+        self.phase = Phase::Loading;
         Ok(())
     }
 
@@ -1306,6 +1344,9 @@ impl LiveLanCapture {
             return Ok(());
         }
         ensure!(!session.host(), "live Coop guest lost the admitted mode");
+        if self.coop_setup_final.is_some() {
+            return Ok(());
+        }
         let (_, guest) = coop_setup_rows(launch)?;
         if !self.coop_setup_guest_accepted {
             if session.network_map_status(guest) != Some(1)
@@ -1332,6 +1373,21 @@ impl LiveLanCapture {
                 "production Accept did not set guest Ready"
             );
             self.coop_setup_guest_accepted = true;
+            // Record the guest-local Ready transition immediately: the host
+            // may publish GO before this step runs again, which would skip the
+            // later final snapshot and leave the receipt incomplete.
+            let initial = self
+                .coop_setup_initial
+                .clone()
+                .context("initial VERA Coop guest snapshot")?;
+            let final_snapshot = vera_coop_setup_snapshot(state)?;
+            ensure_coop_setup_ready_transition(&initial, &final_snapshot, false)?;
+            self.coop_setup_final = Some(final_snapshot.clone());
+            self.route.push(json!({
+                "render_frame": frame,
+                "action": "guest local Ready confirmed after real host options and map acceptance",
+                "state": final_snapshot,
+            }));
             self.event(
                 frame,
                 "guest accepted the host's VERA Coop map through production setup",
@@ -1354,7 +1410,8 @@ impl LiveLanCapture {
             "action": "guest local Ready confirmed after real host options and map acceptance",
             "state": final_snapshot,
         }));
-        self.phase = Phase::Finished;
+        // The guest stays in setup until the host's accepted Start publishes
+        // GO; the shared loading/InGame transition below takes over then.
         Ok(())
     }
 
@@ -1457,10 +1514,28 @@ impl LiveLanCapture {
             .context("live simulation")?
             .simulation;
         let committed = simulation.session().binary_frame();
+        if matches!(
+            self.target,
+            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+        ) && self.actor.is_some()
+            && self.pair_linger_at.is_none()
+            && committed >= self.required_frames() + 600
+        {
+            anyhow::bail!(
+                "VERA Coop capture incomplete at native frame {committed}: actions={}, stopped={}, stop_settled={}, checksums={}, simple_applied={}, move_applied={}",
+                json!(self.actions),
+                self.stopped,
+                self.stop_observation.position().is_some(),
+                self.checksums.len(),
+                self.simple_inputs_applied(),
+                self.move_input_applied()
+            );
+        }
         if let Some(ai) = self.ai.as_mut() {
             ai.observe(state)?;
         }
         if self.battle.is_none()
+            && self.pair_linger_at.is_none()
             && let Some(actor) = self.actor
         {
             let entity = simulation
@@ -1524,8 +1599,15 @@ impl LiveLanCapture {
         // The pair runner still requires and compares both complete prefixes.
         let lan_battle_prefix =
             self.battle.is_some() && !self.target.online() && committed >= required_frames;
+        // A VERA Coop peer holds its transport after its own completion so the
+        // slower peer can settle; the peer's ordinary exit is expected here.
+        let vera_pair_lingering = self.pair_linger_at.is_some()
+            && matches!(
+                self.target,
+                LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            );
         ensure!(
-            lan_battle_prefix || live.peers().len() + 1 == active_players,
+            lan_battle_prefix || vera_pair_lingering || live.peers().len() + 1 == active_players,
             "live diagnostic peer disappeared"
         );
         let wait = format!("{:?}", live.wait_info());
@@ -1605,10 +1687,18 @@ impl LiveLanCapture {
             }
             return Ok(());
         }
+        if matches!(
+            self.target,
+            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+        ) && self.vera_probe.is_none()
+            && committed >= 5
+        {
+            self.vera_probe = Some(vera_coop_probe(state)?);
+        }
         if committed >= 10 && self.actor.is_none() {
             self.issue_move(state, committed)?;
         }
-        if committed >= 80 && !self.stopped {
+        if committed >= 80 && !self.stopped && self.move_input_applied() {
             let actor = self.actor.context("local move actor")?;
             battle::mobile_stop_with_keyboard(state, actor)?;
             self.stopped = true;
@@ -1663,6 +1753,7 @@ impl LiveLanCapture {
                     && entity.navigation.nav_queue().is_empty(),
                 "Stop did not retain a stable position through the final frames"
             );
+            let peer_frames: Vec<i32> = live.peers().iter().map(|peer| peer.frame()).collect();
             MoviesCapture::restore_neutral_pointer(state);
             if let Some(failure) = self.failure.as_mut() {
                 failure.arm(state)?;
@@ -1674,6 +1765,14 @@ impl LiveLanCapture {
                         "shared 300-frame prefix complete; host awaits real peer disappearance"
                     },
                 );
+            } else if matches!(
+                self.target,
+                LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            ) && !self.pair_linger_done(committed, &peer_frames)
+            {
+                // Hold this process on the frame loop until the peer is past
+                // its own completion margin; exiting first makes the slower
+                // peer fail with "live diagnostic peer disappeared".
             } else {
                 self.phase = Phase::Finished;
             }
@@ -1681,7 +1780,58 @@ impl LiveLanCapture {
         Ok(())
     }
 
+    /// Whether this VERA Coop process may leave the frame loop: the peer has
+    /// advertised the linger margin after our own completion, or the wall
+    /// clock wait expired. The first observation is recorded once.
+    fn pair_linger_done(&mut self, committed: u32, peer_frames: &[i32]) -> bool {
+        let Some(started) = self.pair_linger_at else {
+            self.pair_linger_at = Some(committed);
+            self.pair_linger_wall = Some(Instant::now());
+            self.event(
+                committed,
+                "VERA Coop pair conditions met; holding the transport until the peer settles",
+            );
+            return false;
+        };
+        let _ = started;
+        let peer_gone = peer_frames.is_empty();
+        let waited = self
+            .pair_linger_wall
+            .is_some_and(|wall| wall.elapsed() >= VERA_COOP_PAIR_LINGER_WAIT);
+        if !peer_gone && !waited {
+            return false;
+        }
+        self.route.push(json!({
+            "native_frame": committed,
+            "input": "VERA Coop pair complete",
+            "linger_frames": committed.saturating_sub(self.pair_linger_at.unwrap_or(committed)),
+            "peer_gone": peer_gone,
+        }));
+        true
+    }
+
     fn issue_move(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+        // Authored campaign maps may open with scripted input-lock actions
+        // (trigger actions 46/47). Wait for the map's own unlock instead of
+        // failing the diagnostic; the observation retries every frame until an
+        // actor is retained.
+        if crate::app::input::campaign_input::is_locked(state) {
+            if self.locked_frames.is_none() {
+                self.locked_frames = Some(frame);
+                self.event(
+                    frame,
+                    "authored mission locked tactical input; waiting for its unlock",
+                );
+            }
+            return Ok(());
+        }
+        if let Some(locked) = self.locked_frames.take() {
+            self.route.push(json!({
+                "native_frame": frame,
+                "input": "tactical Move deferred",
+                "input_locked_frames": frame.saturating_sub(locked),
+            }));
+        }
         state
             .match_state
             .match_diagnostics
@@ -1699,6 +1849,14 @@ impl LiveLanCapture {
                 .actions
                 .iter()
                 .all(|action| action.get("application_frame").is_some())
+    }
+
+    /// Whether the Move command reached a receiver application observation.
+    fn move_input_applied(&self) -> bool {
+        self.actions.iter().any(|action| {
+            action.get("input").and_then(|input| input.as_str()) == Some("tactical Move")
+                && action.get("application_frame").is_some()
+        })
     }
 
     fn observe_simple_input_applications(
@@ -1853,21 +2011,27 @@ impl LiveLanCapture {
             ensure!(
                 self.ready()
                     && self.coop_setup_initial.is_some()
-                    && self.coop_setup_final.is_some(),
-                "live VERA Coop setup capture did not finish"
+                    && self.coop_setup_final.is_some()
+                    && self.startup.is_some(),
+                "live VERA Coop capture did not reach the running mission: phase={:?}, ready={}, coop_initial={}, coop_final={}, startup={}",
+                self.phase,
+                self.ready(),
+                self.coop_setup_initial.is_some(),
+                self.coop_setup_final.is_some(),
+                self.startup.is_some()
             );
-            return Ok(json!({
-                    "target": format!("{:?}", self.target),
-                    "service_boundary": "two independent App processes over direct LAN UDP; production host options, guest receipt, map verification, and Ready transport",
-            "scope": "VERA Coop setup only: host options/config received over LAN, local map verification, roles and LAN-authoritative Ready/map status; stopped before GO",
-                    "observation": if self.host() { "host-authored setup and remote Ready" } else { "received host setup and local Ready" },
-            "ready_proof": if self.host() { "host snapshot observes both room rows after LAN updates" } else { "guest snapshot taken locally before Accept, then local Ready after Accept; remote host K/A1 is not mirrored on a guest" },
-                    "process_id": std::process::id(),
-                    "initial": self.coop_setup_initial,
-                    "after_guest_ready": self.coop_setup_final,
-                    "route": self.route,
-                    "started_game": false,
-                }));
+            let mut receipt = self.observed_receipt(state)?;
+            receipt["scope"] = json!(
+                "VERA Coop LAN: production host map/config commit and LAN options, both real Ready rows, mode+14 start admission, frozen role/House grants, then 300 native frames with local Move/Stop and a peer-House control probe; bounded runtime validation, not whole-match/native parity"
+            );
+            receipt["coop_setup"] = json!({
+                "initial": self.coop_setup_initial,
+                "after_guest_ready": self.coop_setup_final,
+                "start_clicked": self.coop_setup_started_frame.is_some(),
+                "start_clicked_frame": self.coop_setup_started_frame,
+            });
+            receipt["vera_coop"] = vera_coop_runtime_receipt(state, self.vera_probe.as_ref())?;
+            return Ok(receipt);
         }
         if let Some(run) = &self.cooperative {
             if let Some(online) = &self.rounds {
@@ -2031,6 +2195,197 @@ fn vera_cooperative_mode_id(state: &AppState) -> Result<i32> {
         .context("VERA Cooperative mode")
 }
 
+/// The frozen role/House grant matrix both peers received from the start
+/// roster and the external campaign overlay. It is read through
+/// ScenarioSession's public grant queries, never rebuilt here.
+fn vera_coop_grants(state: &AppState) -> Result<Value> {
+    let sim = &state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .context("VERA Coop simulation")?
+        .simulation;
+    let session = sim.session();
+    ensure!(
+        session.has_network_house_grants(),
+        "VERA Coop mission has no shared House grant table"
+    );
+    let houses: Vec<String> = sim
+        .houses()
+        .order()
+        .iter()
+        .map(|owner| sim.interner().resolve(*owner).to_owned())
+        .collect();
+    let mut grants = Vec::new();
+    for (source, primary) in session.network_sources(houses.len()).collect::<Vec<_>>() {
+        let controlled: Vec<String> = houses
+            .iter()
+            .enumerate()
+            .filter(|(house, _)| session.network_source_controls_house(source, *house))
+            .map(|(_, name)| name.clone())
+            .collect();
+        grants.push(json!({
+            "source": source,
+            "primary": houses.get(primary),
+            "controlled": controlled,
+        }));
+    }
+    let current = session.current_house();
+    let local_primary = current.and_then(|owner| {
+        sim.houses()
+            .order()
+            .iter()
+            .position(|candidate| *candidate == owner)
+    });
+    Ok(json!({
+        "houses": houses,
+        "shared_house_sources": session.shares_houses(),
+        "current_house": current.map(|owner| sim.interner().resolve(owner)),
+        "local_primary": local_primary,
+        "grants": grants,
+    }))
+}
+
+/// Prove the peer's primary House is outside the local command authority:
+/// the grant matrix must exclude it both ways, and the production pick and
+/// selection owners must not select one of its mobile objects.
+fn vera_coop_probe(state: &mut AppState) -> Result<Value> {
+    let (local_source, local_primary, peer_source, peer_primary, peer_entity) = {
+        let sim = &state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .context("VERA Coop probe simulation")?
+            .simulation;
+        let session = sim.session();
+        ensure!(
+            session.has_network_house_grants(),
+            "VERA Coop mission has no shared House grant table"
+        );
+        let houses: Vec<String> = sim
+            .houses()
+            .order()
+            .iter()
+            .map(|owner| sim.interner().resolve(*owner).to_owned())
+            .collect();
+        let current = session.current_house().context("probe current House")?;
+        let local_primary = sim
+            .houses()
+            .order()
+            .iter()
+            .position(|candidate| *candidate == current)
+            .context("probe current House index")?;
+        let sources: Vec<(i8, usize)> = session.network_sources(houses.len()).collect();
+        let local_source = sources
+            .iter()
+            .find(|(_, primary)| *primary == local_primary)
+            .map(|(source, _)| *source)
+            .context("probe local command source")?;
+        ensure!(
+            session.network_source_controls_house(local_source, local_primary),
+            "local command source does not control its own primary House"
+        );
+        for &(source, primary) in &sources {
+            if primary == local_primary {
+                continue;
+            }
+            ensure!(
+                !session.network_source_controls_house(local_source, primary),
+                "local command source controls another role's primary House {primary}"
+            );
+            ensure!(
+                !session.network_source_controls_house(source, local_primary),
+                "peer command source {source} controls the local primary House {local_primary}"
+            );
+        }
+        let (peer_source, peer_primary) = sources
+            .iter()
+            .copied()
+            .find(|(source, primary)| *source != local_source && *primary != local_primary)
+            .context("probe peer primary House")?;
+        let peer_owner = sim.houses().order()[peer_primary];
+        let peer_entity = sim
+            .entities()
+            .values_sorted()
+            .filter(|entity| {
+                entity.owner() == peer_owner
+                    && entity.is_alive()
+                    && !entity.in_limbo()
+                    && matches!(
+                        entity.category(),
+                        crate::map::entities::EntityCategory::Unit
+                            | crate::map::entities::EntityCategory::Infantry
+                    )
+            })
+            .map(|entity| entity.stable_id())
+            .next()
+            .with_context(|| {
+                format!(
+                    "peer primary House {} has no mobile object to probe",
+                    houses[peer_primary]
+                )
+            })?;
+        (
+            local_source,
+            local_primary,
+            peer_source,
+            peer_primary,
+            peer_entity,
+        )
+    };
+    let (picked, selection) = battle::selection_after_clicking(state, peer_entity)?;
+    ensure!(
+        picked == Some(peer_entity),
+        "peer-House selection probe missed object {peer_entity}: picked={picked:?}, selection={selection:?}"
+    );
+    ensure!(
+        !selection.contains(&peer_entity),
+        "peer-granted House object {peer_entity} entered the local selection {selection:?}"
+    );
+    Ok(json!({
+        "local_source": local_source,
+        "local_primary": local_primary,
+        "peer_source": peer_source,
+        "peer_primary": peer_primary,
+        "peer_object": peer_entity,
+        "peer_object_picked": picked,
+        "selection_after_peer_click": selection,
+        "selection_empty": selection.is_empty(),
+    }))
+}
+
+/// The running mission's VERA Coop identity plus the grants and the probe.
+fn vera_coop_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value> {
+    let session = &state.match_state.session;
+    let setup = session
+        .network_setup()
+        .context("VERA Coop runtime roster")?;
+    let config = session.network_vera_coop_map_config();
+    let humans: Vec<Value> = setup
+        .humans
+        .iter()
+        .map(|human| {
+            json!({
+                "name": human.name,
+                "raw_slot_index": human.raw_slot_index,
+                "role": human.role.native_value(),
+                "observer": human.is_observer(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "map_file": setup.selected_map_file,
+        "local_player_index": setup.local_player_index,
+        "host": session.host(),
+        "campaign_directory": config.and_then(|config| config.campaign_directory.clone()),
+        "campaign_sha256": config.and_then(|config| config.campaign_sha256.clone()),
+        "config_sha256": config.map(|config| config.config_sha256.clone()),
+        "humans": humans,
+        "grants": vera_coop_grants(state)?,
+        "control_probe": probe,
+    }))
+}
+
 /// Error-only snapshot for the new VERA Coop setup targets. It reads current
 /// owners without sending requests, accepting the map, or writing a receipt.
 fn vera_coop_setup_watchdog_snapshot(
@@ -2143,15 +2498,32 @@ fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
     let metadata = session
         .network_map_metadata()
         .context("accepted VERA Coop map metadata")?;
-    let source = session
-        .network_local_map_source()
-        .context("verified local VERA Coop map source")?;
-    let (byte_length, physical_sha256) = source
-        .physical_identity()
-        .context("physical VERA Coop map identity")?;
-    let effective_digest = session
-        .network_local_map_effective_digest()
-        .context("verified local VERA Coop effective digest")?;
+    // VERA Coop LAN exchanges only the map/config identity in HostOptions: the
+    // authored file is preinstalled on both peers, so the ordinary map
+    // transfer never binds a local source. In that case the accepted host
+    // metadata carries the same physical identity, and the frozen loader
+    // re-verifies the actual bytes against the campaign config before start.
+    let source = session.network_local_map_source();
+    let (byte_length, physical_sha256, effective_digest) = match source {
+        Some(source) => {
+            let (byte_length, physical_sha256) = source
+                .physical_identity()
+                .context("physical VERA Coop map identity")?;
+            let effective_digest = session
+                .network_local_map_effective_digest()
+                .context("verified local VERA Coop effective digest")?;
+            (
+                byte_length,
+                physical_sha256.to_owned(),
+                effective_digest.to_owned(),
+            )
+        }
+        None => (
+            usize::try_from(metadata.byte_length)?,
+            metadata.source_sha256.clone(),
+            metadata.effective_digest.clone(),
+        ),
+    };
     let config = session
         .network_vera_coop_map_config()
         .context("accepted VERA Coop map config")?;
@@ -2184,6 +2556,7 @@ fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
         "map_file": file,
         "map_source_sha256": metadata.source_sha256,
         "physical_source_sha256": physical_sha256,
+        "bound_local_source": source.is_some(),
         "byte_length": byte_length,
         "effective_digest": effective_digest,
         "config": {

@@ -3122,6 +3122,16 @@ fn load_map_first_step(
                                         &rules,
                                     )?,
                                 )
+                            } else if vera_coop_startup.is_some() {
+                                // VERA Coop authored LAN start: campaign-ordered
+                                // Houses over the effective map, no campaign
+                                // startup or stock start assignment.
+                                FreshScenarioPrefix::VeraCooperative {
+                                    native_rules_receipt,
+                                    rules: &rules,
+                                    map_data: &map_data,
+                                    house_roster: &house_roster,
+                                }
                             } else {
                                 let campaign = campaign
                                     .as_ref()
@@ -3198,6 +3208,7 @@ fn load_map_first_step(
                                     Some(bound.projection())
                                 }
                                 FreshScenarioPrefix::Campaign { .. } => None,
+                                FreshScenarioPrefix::VeraCooperative { .. } => None,
                             },
                         ),
                         pixel_conversion_bounds: Default::default(),
@@ -3456,7 +3467,9 @@ fn load_map_first_step(
                         let assignments = startup
                             .vera_coop_houses()
                             .expect("admitted VERA Coop startup assignments");
-                        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+                        // The authored prefix already built this map's Houses;
+                        // only the frozen sender-to-House authority is missing.
+                        crate::sim::scenario_bootstrap::install_vera_cooperative_house_authority(
                             sim,
                             &house_roster,
                             ruleset,

@@ -511,9 +511,17 @@ fn apply_vera_coop_roles(
     roles: &[crate::skirmish_launch::LaunchHumanRole],
 ) -> Result<()> {
     ensure!(
-        launch.mode.class.is_vera_cooperative() && roles.len() == launch.humans.len(),
-        "LAN VERA Coop options lack the role roster"
+        launch.mode.class.is_vera_cooperative(),
+        "LAN VERA Coop role roster without the VERA Coop mode"
     );
+    // The roster is positional over the host's admitted rows. A guest can
+    // receive the options snapshot before its own roster revision, so a
+    // lagging roster must not drop the whole packet: the stored snapshot is
+    // re-applied by `reapply_received_options` once the Roster revision
+    // arrives.
+    if roles.len() != launch.humans.len() {
+        return Ok(());
+    }
     let mut claimed = [false; 4];
     for (human, role) in launch.humans.iter_mut().zip(roles.iter().copied()) {
         let value = role.native_value();
@@ -733,6 +741,10 @@ pub(super) fn receive_extended(
             let names: Vec<String> = serde_json::from_slice(bytes)?;
             let rows = parsed_roster(&state.match_state.session, &names)?;
             state.match_state.session.accept_network_roster(rows)?;
+            // A stored options revision precedes this roster when the host
+            // publishes both for one change: re-run its parser so positional
+            // fields (VERA Coop roles) now reach every admitted row.
+            reapply_received_options(state)?;
             state.platform.window.request_redraw();
             Ok(())
         }
@@ -1351,6 +1363,55 @@ mod tests {
                 .collect::<Vec<_>>(),
             teams
         );
+    }
+
+    #[test]
+    fn vera_coop_role_roster_lagging_the_local_roster_defers_instead_of_dropping() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        let mode = modes
+            .iter()
+            .find(|mode| mode.class.is_vera_cooperative())
+            .unwrap();
+        let mut host = fixture(true);
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode = SkirmishLaunchMode::from_game_mode(mode);
+        for human in &mut launch.humans {
+            human.role = LaunchHumanRole::Player { group: -2 };
+        }
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        // A guest can receive the options snapshot before its roster revision,
+        // so take a one-row baseline from the all-Random roster first.
+        let mut lagging = host.network_setup().unwrap().clone();
+        lagging.humans.truncate(1);
+        lagging.local_player_index = 0;
+        let complete = host.network_setup().unwrap().clone();
+        host.set_network_vera_coop_role(0, LaunchHumanRole::Player { group: 0 })
+            .unwrap();
+        host.set_network_vera_coop_role(1, LaunchHumanRole::Player { group: 1 })
+            .unwrap();
+        let roles: Vec<_> = host
+            .network_setup()
+            .unwrap()
+            .humans
+            .iter()
+            .map(|human| human.role)
+            .collect();
+
+        // The lagging roster defers the positional roles without refusing the
+        // packet, so the stored revision can be re-applied once it arrives.
+        apply_vera_coop_roles(&mut lagging, &roles).unwrap();
+        assert_eq!(
+            lagging.humans[0].role,
+            LaunchHumanRole::Player { group: -2 }
+        );
+
+        // The complete roster applies the same roles positionally.
+        let mut applied = complete;
+        apply_vera_coop_roles(&mut applied, &roles).unwrap();
+        assert_eq!(applied.humans[0].role, LaunchHumanRole::Player { group: 0 });
+        assert_eq!(applied.humans[1].role, LaunchHumanRole::Player { group: 1 });
     }
 
     #[test]

@@ -419,6 +419,16 @@ pub enum FreshScenarioPrefix<'a> {
         campaign_index: i32,
         restart_carry_over: crate::sim::campaign_carry_over::CampaignCarryOver,
     },
+    /// VERA Coop's authored LAN start: campaign-ordered House construction over
+    /// the effective map, but a network Scenario session with no campaign
+    /// startup. The loading callback installs the frozen sender-to-House
+    /// command authority on the Houses built here.
+    VeraCooperative {
+        native_rules_receipt: crate::rules::process_owner::NativeScenarioRulesReceipt,
+        rules: &'a RuleSet,
+        map_data: &'a MapFile,
+        house_roster: &'a HouseRoster,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2729,41 +2739,12 @@ impl ScenarioBootstrapRng {
                 campaign_index,
                 restart_carry_over,
             } => {
-                NativeStartBounds::from_map_header(&map_data.header)
-                    .ok_or(PreFillScenarioPrefixPlanError::InvalidMapCellExtent)?;
-                if house_roster.houses.is_empty() {
-                    return Err(FreshScenarioPrefixError::MissingCampaignHouseRoster);
-                }
-                // ReadHouseType475540 can allocate an unknown nonempty
-                // Country at4755B8. That path must extend the live Rules
-                // registry/ID owner; the selected stock route has only known
-                // or missing tokens. Reject it before any House IDs/RNG,
-                // rather than silently binding another Country's defaults.
-                for house in &house_roster.houses {
-                    if rules
-                        .scenario_country_name(house.country.as_deref())
-                        .is_none()
-                    {
-                        return Err(match &house.country {
-                            Some(country) => {
-                                FreshScenarioPrefixError::UnsupportedCampaignCountryConstructor {
-                                    house: house.name.clone(),
-                                    country: country.clone(),
-                                }
-                            }
-                            None => FreshScenarioPrefixError::MissingCampaignCountryRegistry,
-                        });
-                    }
-                }
-                let (early, rebuilt) = native_rules_receipt.into_parts();
-                let (early_events, _) = early.into_parts();
-                let (rebuilt_events, super_weapon_type_count) = rebuilt.into_parts();
-                if super_weapon_type_count != rules.super_weapon_order.len() {
-                    return Err(FreshScenarioPrefixError::SuperWeaponRegistryMismatch {
-                        allocated: super_weapon_type_count,
-                        projected: rules.super_weapon_order.len(),
-                    });
-                }
+                let (early_events, rebuilt_events) = take_authored_house_prefix(
+                    native_rules_receipt,
+                    rules,
+                    map_data,
+                    house_roster,
+                )?;
                 // House4F6202..4F6290 constructs every registered Super via
                 // 6CAF90, even when Type+B4 is -1 or has no implemented
                 // dispatch body. The instance owner already uses this order;
@@ -2786,8 +2767,8 @@ impl ScenarioBootstrapRng {
                 );
                 simulation.install_native_unique_id_cursor(
                     crate::sim::native_identity::NativeUniqueIdCursor::begin_campaign_prefix(
-                        early_events.len(),
-                        rebuilt_events.len(),
+                        early_events,
+                        rebuilt_events,
                     ),
                 );
                 initialize_map_roster_houses(
@@ -2806,6 +2787,49 @@ impl ScenarioBootstrapRng {
                     .native_unique_ids
                     .as_mut()
                     .expect("campaign prefix installed the sole native-ID cursor")
+                    .finish_campaign_prefix_after_resize(
+                        map_data.header.width,
+                        map_data.header.height,
+                    )?;
+                Ok((simulation, None))
+            }
+            FreshScenarioPrefix::VeraCooperative {
+                native_rules_receipt,
+                rules,
+                map_data,
+                house_roster,
+            } => {
+                let (early_events, rebuilt_events) = take_authored_house_prefix(
+                    native_rules_receipt,
+                    rules,
+                    map_data,
+                    house_roster,
+                )?;
+                // VERA Coop is a network Scenario, but its authored Houses are
+                // built with the campaign construction order: the effective
+                // map supplies the roster, no campaign startup or start
+                // assignment runs, and the loading callback installs the frozen
+                // sender-to-House authority before map objects populate.
+                let mut simulation = self.into_simulation(descriptor);
+                let mut start_header = crate::map::preview::ScenarioStartHeader::default();
+                start_header.read_ini(&map_data.ini);
+                simulation.session.install_start_header(start_header);
+                simulation.install_native_unique_id_cursor(
+                    crate::sim::native_identity::NativeUniqueIdCursor::begin_campaign_prefix(
+                        early_events,
+                        rebuilt_events,
+                    ),
+                );
+                initialize_map_roster_houses(
+                    &mut simulation,
+                    house_roster,
+                    rules,
+                    Some(&map_data.ini),
+                );
+                simulation
+                    .native_unique_ids
+                    .as_mut()
+                    .expect("VERA Coop prefix installed the sole native-ID cursor")
                     .finish_campaign_prefix_after_resize(
                         map_data.header.width,
                         map_data.header.height,
@@ -2840,6 +2864,49 @@ impl ScenarioBootstrapRng {
         }
         sim
     }
+}
+
+/// Verify the authored House construction every campaign-like fresh family
+/// shares, then consume the Rules receipt into its two constructor counts.
+fn take_authored_house_prefix(
+    native_rules_receipt: crate::rules::process_owner::NativeScenarioRulesReceipt,
+    rules: &RuleSet,
+    map_data: &MapFile,
+    house_roster: &HouseRoster,
+) -> Result<(usize, usize), FreshScenarioPrefixError> {
+    NativeStartBounds::from_map_header(&map_data.header)
+        .ok_or(PreFillScenarioPrefixPlanError::InvalidMapCellExtent)?;
+    if house_roster.houses.is_empty() {
+        return Err(FreshScenarioPrefixError::MissingCampaignHouseRoster);
+    }
+    // ReadHouseType475540 can allocate an unknown nonempty Country at4755B8.
+    // That path must extend the live Rules registry/ID owner; the selected
+    // stock route has only known or missing tokens. Reject it before any House
+    // IDs/RNG, rather than silently binding another Country's defaults.
+    for house in &house_roster.houses {
+        if rules
+            .scenario_country_name(house.country.as_deref())
+            .is_none()
+        {
+            return Err(match &house.country {
+                Some(country) => FreshScenarioPrefixError::UnsupportedCampaignCountryConstructor {
+                    house: house.name.clone(),
+                    country: country.clone(),
+                },
+                None => FreshScenarioPrefixError::MissingCampaignCountryRegistry,
+            });
+        }
+    }
+    let (early, rebuilt) = native_rules_receipt.into_parts();
+    let (early_events, _) = early.into_parts();
+    let (rebuilt_events, super_weapon_type_count) = rebuilt.into_parts();
+    if super_weapon_type_count != rules.super_weapon_order.len() {
+        return Err(FreshScenarioPrefixError::SuperWeaponRegistryMismatch {
+            allocated: super_weapon_type_count,
+            projected: rules.super_weapon_order.len(),
+        });
+    }
+    Ok((early_events.len(), rebuilt_events.len()))
 }
 
 fn replay_generated_construction_trace_with_rng(
@@ -3204,6 +3271,24 @@ pub fn initialize_vera_cooperative_houses(
         .validate_for_launch(launch)
         .map_err(anyhow::Error::msg)?;
     initialize_map_roster_houses(sim, house_roster, rules, Some(map_ini));
+    install_vera_cooperative_house_authority(sim, house_roster, rules, map_ini, launch, assignments)
+}
+
+/// Install the frozen VERA Coop command authority on an authored House roster
+/// that the caller already built. The authored loader builds the Houses in its
+/// fresh prefix (campaign construction order) and reaches this half from the
+/// population callback, before map objects are read.
+pub fn install_vera_cooperative_house_authority(
+    sim: &mut Simulation,
+    house_roster: &HouseRoster,
+    rules: &RuleSet,
+    map_ini: &crate::rules::ini_parser::IniFile,
+    launch: &crate::skirmish_launch::SkirmishLaunchSession,
+    assignments: &crate::skirmish_launch::VeraCoopHouseAssignments,
+) -> anyhow::Result<()> {
+    assignments
+        .validate_for_launch(launch)
+        .map_err(anyhow::Error::msg)?;
 
     let basic = crate::map::basic::parse_basic_section(map_ini);
     let slots = normalized_launch_slots(launch);

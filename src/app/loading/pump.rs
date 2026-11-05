@@ -2780,8 +2780,12 @@ fn ensure_loading_composition_snapshot(state: &mut AppState) {
         };
         let context = &prepared.context;
         let initial = &prepared.initial;
-        let launch_session = context.stock_offline_launch().session();
-        let projection = context.stock_offline_projection();
+        // Campaign loads paint the campaign screen; a VERA Coop authored start
+        // has its frozen network roster but no stock-offline start projection.
+        let Some(launch_session) = context.loading_prefix_launch_session() else {
+            return;
+        };
+        let projection = context.loading_prefix_projection();
         let render_size = [
             state.renderer.gpu.config.width,
             state.renderer.gpu.config.height,
@@ -2789,7 +2793,7 @@ fn ensure_loading_composition_snapshot(state: &mut AppState) {
         let scale = loading_scale(state);
         match native.progress_cadence {
             NativeLoadingProgressCadence::SelectedMap => {
-                let assignments = selected_map_start_assignments(launch_session, Some(projection));
+                let assignments = selected_map_start_assignments(launch_session, projection);
                 build_loading_composition(
                     initial.map_data(),
                     launch_session,
@@ -2800,6 +2804,10 @@ fn ensure_loading_composition_snapshot(state: &mut AppState) {
                 )
             }
             NativeLoadingProgressCadence::RandomMapHalved => {
+                // A random-map load always owns a stock-offline projection.
+                let Some(projection) = projection else {
+                    return;
+                };
                 let preview = session.job.ra2_dir.as_deref().and_then(|root| {
                     let preview = match session.stage.startup() {
                         LoadingStartup::Network(startup) => startup.random_map_preview(),
