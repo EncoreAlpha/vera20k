@@ -635,10 +635,11 @@ impl App {
         // enters scenario loading directly, with no splash either.
         let process_movies =
             !external_launch && capture_dimensions.is_none() && main_menu_shell_error.is_none();
-        // `[VERA] SkipStartupLogo=` drops only the logo: the splash and the
-        // first-run intro still play.
-        let play_logo = process_movies && !options_profile.skip_startup_logo;
-        let mut startup_splash = if process_movies {
+        // `[VERA] SkipIntro=` starts straight at the main menu: no logo, no
+        // splash and no first-run intro, which stays due for a later start.
+        // The load then runs behind the black frame presented below.
+        let play_startup = process_movies && !options_profile.skip_intro;
+        let mut startup_splash = if play_startup {
             startup_asset_manager
                 .as_ref()
                 .zip(startup_fnt.as_ref())
@@ -667,7 +668,7 @@ impl App {
             // Without it the splash goes up now and the load is spent inside
             // its hold. A present that did not reach the screen stays unarmed
             // for the frame loop to retry.
-            let splash = startup_splash.as_mut().filter(|_| !play_logo);
+            let splash = startup_splash.as_mut().filter(|_| !play_startup);
             match startup_splash::render_and_present(
                 &gpu,
                 &batch_renderer,
@@ -946,7 +947,7 @@ impl App {
                 // `0x0052CA65`. Sealed captures and client-selected launches
                 // keep the profile untouched, like the retail options snapshot,
                 // and play nothing.
-                let play_intro = process_movies
+                let play_intro = play_startup
                     && game_config.as_ref().is_some_and(|config| {
                         crate::app::persistence::intro_play::consume(config.paths.settings_dir())
                     });
@@ -1122,7 +1123,8 @@ impl App {
                 campaign_speed_control: startup_options.campaign_speed_control,
                 external_launch: false,
                 external_launch_error: None,
-                external_match_result: None,
+                match_result: None,
+                match_winners: None,
                 external_progress: Default::default(),
                 network_goodbye_deadline: None,
                 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
@@ -1177,6 +1179,7 @@ impl App {
                 startup_intro_pending: false,
                 shell_message_box: None,
                 options_dialog: None,
+                options_reopen_at: None,
                 keyboard_dialog: None,
                 movie_list: None,
                 movie_list_selection: -1,
@@ -1190,11 +1193,11 @@ impl App {
                 wol_account: Default::default(),
                 wol_test_credentials: Vec::new(),
                 native_shell_ui: false,
-                network_options: None,
                 lan: None,
                 multiplayer_setup: None,
                 room_limits: Default::default(),
                 wol_room_name: None,
+                wol_room_unranked: false,
                 lan_rematch: None,
                 network_setup_protocol: None,
                 wol_welcome_art: None,
@@ -1273,7 +1276,7 @@ impl App {
                 // starts the first-run intro once the splash hold ends.
                 if process_movies && state.frontend.screen == GameScreen::MainMenu {
                     state.frontend.startup_intro_pending = play_intro;
-                    if play_logo {
+                    if play_startup {
                         Self::start_fullscreen_movie(
                             &mut state,
                             crate::app::frontend::fullscreen_movie::STARTUP_LOGO_MOVIE,

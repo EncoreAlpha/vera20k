@@ -43,7 +43,7 @@ pub(crate) fn launcher_values_from_profile(
         shift_queue: profile.shift_queue,
         wol_test_service: profile.wol_test_service,
         fps_counter: false,
-        skip_startup_logo: profile.skip_startup_logo,
+        skip_intro: profile.skip_intro,
         custom_end_game_banner: profile.custom_end_game_banner,
         custom_end_game_score: profile.custom_end_game_score,
         custom_end_game_movie: profile.custom_end_game_movie,
@@ -114,7 +114,7 @@ pub(crate) trait LauncherPreviewOperations: AudioVolumeOperations {
     fn store_shift_queue(&mut self, shift_queue: bool);
     fn store_wol_test_service(&mut self, wol_test_service: bool);
     fn set_fps_counter(&mut self, shown: bool);
-    fn store_skip_startup_logo(&mut self, skip: bool);
+    fn store_skip_intro(&mut self, skip: bool);
     /// Whether a finished match draws the country's own end-game picture.
     fn store_custom_end_game_banner(&mut self, enabled: bool);
     /// Whether a finished match starts the country's own end-game music.
@@ -168,8 +168,8 @@ pub(crate) fn dispatch_launcher_preview_event(
             operations.store_wol_test_service(wol_test_service);
         }
         LauncherOptionsEvent::FpsCounterChanged(shown) => operations.set_fps_counter(shown),
-        LauncherOptionsEvent::SkipStartupLogoChanged(skip) => {
-            operations.store_skip_startup_logo(skip);
+        LauncherOptionsEvent::SkipIntroChanged(skip) => {
+            operations.store_skip_intro(skip);
         }
         LauncherOptionsEvent::CustomEndGameBannerChanged(enabled) => {
             operations.store_custom_end_game_banner(enabled);
@@ -217,8 +217,6 @@ pub(crate) trait LauncherParentOperations {
     fn apply_voice_output(&mut self, value: f32);
     fn primary_dropped(&mut self);
     fn persist_profile(&mut self);
-    fn prepare_network_settings(&mut self);
-    fn route_network(&mut self);
     fn route_keyboard(&mut self);
     fn reopen_parent(&mut self);
 }
@@ -258,7 +256,7 @@ fn apply_launcher_parent(
 ///
 /// gamemd-derived: `OptionsClass__ShowLauncherDialog @ 0x0055FC80` always
 /// applies and destroys the primary before child preparation/route or the one
-/// final write. Network/Keyboard then rebuild a fresh primary without writing.
+/// final write. Keyboard then rebuilds a fresh primary without writing.
 pub(crate) fn dispatch_launcher_parent_result(
     operations: &mut impl LauncherParentOperations,
     dialog: OptionsDialogState,
@@ -273,11 +271,6 @@ pub(crate) fn dispatch_launcher_parent_result(
     match result {
         LauncherParentResult::Back | LauncherParentResult::Terminal => {
             operations.persist_profile();
-        }
-        LauncherParentResult::Network => {
-            operations.prepare_network_settings();
-            operations.route_network();
-            operations.reopen_parent();
         }
         LauncherParentResult::Keyboard => {
             operations.route_keyboard();
@@ -381,7 +374,7 @@ mod tests {
             show_hidden: true,
             yr_original_style: true,
             coop_expansion: true,
-            skip_startup_logo: true,
+            skip_intro: true,
             render_interpolation: false,
             mouse_wheel_zoom: true,
             shift_queue: true,
@@ -393,7 +386,7 @@ mod tests {
         assert!(booleans.show_hidden);
         assert!(booleans.yr_original_style);
         assert!(booleans.coop_expansion);
-        assert!(booleans.skip_startup_logo);
+        assert!(booleans.skip_intro);
         assert!(!booleans.render_interpolation);
         assert!(booleans.mouse_wheel_zoom);
         assert!(booleans.shift_queue);

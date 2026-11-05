@@ -10,12 +10,14 @@ arriving bodies. Every JSON string and property name must be well-formed Unicode
 Escaped unpaired surrogates are rejected, not replaced, before any event or
 persistent state is created.
 
-`POST /v1/sessions` accepts exactly `{nickname,protocol:4}` and returns
+`POST /v1/sessions` accepts exactly `{nickname,protocol:4,ladder_key?}` and returns
 `{player_id,nickname,token,expires_at}`, plus `motd` while an operator welcome is set:
 text the game prints in the chat lobby in place of its own welcome, one line per `\n`.
 Each entry receives a fresh random player
 UUID and bearer token. `expires_at` is a Unix timestamp in seconds. An active name
 returns 409 `name_unavailable`; entering its name never replaces that session.
+A name on the ranked ladder signs in only with its `ladder_key` and otherwise returns
+403 `name_claimed` ([Ranked games](#ranked-games)).
 Guest locale, buddies and relay admission counters belong to this player identity
 and are removed with its session on logout or expiry. Idle lobby visits expire
 after 120 seconds without a request or stream ack; admitted v4 players retain their session during
@@ -112,7 +114,7 @@ Commands and their payloads:
 | operation | payload |
 | --- | --- |
 | `join` | `{channel:<channel name>,key}` |
-| `create` | `{channel:<Channel>,key}` |
+| `create` | `{channel:<Channel>,key,ranked?}` |
 | `leave` | `{}` |
 | `logout` | `{}` |
 | `options` | `{options:<HostOptions>}` |
@@ -121,7 +123,7 @@ Commands and their payloads:
 | `map_status` | `{status,revision,version,rules_digest,map_digest,effective_map_digest,staging_digest}` |
 | `advertise` | `{channel:<Channel>}` |
 | `start` | `{users:[name],revision,version,rules_digest,effective_map_digest,staging_digest}` |
-| `finish` | `{match_id,back_to_room?,network_quality?}` |
+| `finish` | `{match_id,back_to_room?,result?,winners?,network_quality?}` |
 | `relay_ready` | `{match_id}` |
 | `latency_ready` | `{match_id,pings:[{source_index,round_trip_ms}]}` |
 | `renew_relay` | `{match_id}` |
@@ -133,6 +135,7 @@ Commands and their payloads:
 | `buddies` | `{}` |
 | `add_buddy` / `remove_buddy` / `locate` | `{name}` |
 | `kick` | `{name,keep_out?}` |
+| `ladder` | `{names:[name]}` |
 
 HostOptions is `{launch,map_metadata,vacancies,observer_row,cooperative_difficulty,seed}`.
 Generated maps add `random_map:{start_staging,preview:{source_sha256,byte_length}}`.
@@ -174,7 +177,7 @@ Event kinds and payloads:
 | `chat` | `{from:<Member>,text,private,action,sent_at,ansi?,quick_match?}` |
 | `game_started` | `{match_id,revision,version,rules_digest,seed,users:[{player_id,name,flags,source_index}],relay:<RelayGrant>}` |
 | `start_confirmed` | `{match_id}` |
-| `timing_confirmed` | `{match_id,pings:[integer],relay:<RelayGrant>}` |
+| `timing_confirmed` | `{match_id,pings:[integer],relay:<RelayGrant>,ranked?,ladder_key?}` |
 | `relay_renewed` | `{match_id,relay:<RelayGrant>}` |
 | `map_available` | `{digest,byte_length,resource?}` |
 | `start_rejected` | `{message}` |
@@ -182,6 +185,8 @@ Event kinds and payloads:
 | `buddies` | `{names:[name]}` |
 | `located` | `{channel:<Channel or null>}` |
 | `kicked` | `{channel:<Channel>,user:<Member>,by:<Member>}` |
+| `ladder` | `{season,records:[{name,points,rank,wins,losses,disconnects}]}` |
+| `balance` | `{teams:[{name,team}]}` |
 | `error` | `{code,message}` |
 
 A `chat` event's `sent_at` is the Unix time in seconds the service sent it. Games from
@@ -200,7 +205,12 @@ a compromised lobby could disclose or replace payload keys; relay-blind payload
 encryption does not protect against that compromise. `source_index` is the immutable canonical user index, 0–29.
 `ordering_certificate` is 66 base64url-encoded bytes: `VO1C`, room UUID16,
 source mask LEu32, fixed FPS LEu16, expiry LEu64, then HMAC-SHA256 over the
-first34 bytes with domain `VERA20k relay ordering certificate v1\0`. The signed
+first34 bytes with domain `VERA20k relay ordering certificate v1\0`. A lobby
+whose every member build reads relay rate markers may instead issue a 67-byte
+`VO2C` certificate: the same fields, then a flags byte (bit 0: the host turned
+relay pacing off; other bits zero), then HMAC-SHA256 over the first35 bytes with
+domain `VERA20k relay ordering certificate v2\0`. Every grant of one match carries
+the same version and flags; clients reject a renewal whose pacing differs. The signed
 mask includes all human sources (including observers); AI has no source. FPS
 follows launch speed `[60,45,30,20,15,12,10]`. The certificate lasts24 hours;
 every UDP control still needs a live authenticated short-lived ticket. The relay
@@ -453,8 +463,9 @@ sets the welcome that sign-in responses carry as `motd`: non-blank text of at mo
 2048 UTF-8 bytes. `{text:null}` clears it. Both return `{welcome}`, the text or `null`.
 
 Released clients sign in with `User-Agent: VERA20k/<MAJOR.MINOR.PATCH> multiplayer-client`.
-A client that names a version older than 0.2.4 is refused at sign-in with 426
-`upgrade_required`; one that names no version is not.
+A client that names a version older than 0.2.6 is refused at sign-in with 426
+`upgrade_required`, since clients before it cannot play through the relays' turn
+transport (#3845); one that names no version is not.
 A session whose version is older than `version` in
 `https://downloads.vera20k.org/latest.json`, which the lobby reads at most every
 10 minutes, receives one such chat line per newer release, naming both versions,
@@ -473,7 +484,7 @@ version and, when the list holds none for the session, says how to start a game.
 
 ## Quick Match
 
-1v1 and unranked; Quick Co-op (`Lob_39_`) has no lobby. Games that play it send
+1v1, ranked while a season runs ([Ranked games](#ranked-games)); Quick Co-op (`Lob_39_`) has no lobby. Games that play it send
 `Vera-Quick-Match: 1` on `POST /v1/sessions`, beside `Vera-Relay-Federation: 1`. Only
 those sessions see `GET /v1/channels?kind=0` list, after `Lob_41_2`, the chat channel
 `{id:"quick-match",kind:0,name:"Lob_40_0",max_users:<lobby cap>,users,tournament:0,flags:0,game_flags:0,ping:-1,ex_info:""}`
@@ -517,3 +528,46 @@ the mode admits. A guest colour the host holds becomes Random; each Random is th
 `seed`, a country from the game's list and a colour the other player does not hold. The host
 ignores the guest's `choices`; the guest's game accepts the options by itself, and the
 host's starts once it has.
+
+## Ranked games
+
+While the operator runs a season, the lobby ranks a 1v1 Quick Match pairing played by its
+two players alone, and a game room's match in a mode that lets players ally, with every
+player on one of two teams of the same size (at least two each) whose chances are within
+80/20. Ranked matches have no AI, and every player's game can hold a ladder key.
+
+A host who unticks Ranked game at Create Game sends `ranked:false` on `create`, and that
+room's games never rank; its odds line says why. A ticked box sends nothing, as a lobby
+from before the choice refuses the field.
+
+A game that can hold one sends `ladder_key` at sign-in: the name's key, or `null` when it
+holds none for that name. A game that omits the field plays unranked. As a ranked match
+begins play, the lobby claims each of its names not yet on the ladder, and sends that
+player's game its key once, as `ladder_key` in `timing_confirmed`: 32 bytes, base64url
+without padding. VERA20k keeps it in `LadderKeys.json` beside `VERA.INI`, one key per
+lobby and lowercased name, readable only by its owner. A name whose key is lost signs in again once
+the operator releases it. One network claims at most 3 names a day; past that, the match
+plays unranked. `ranked:true` in `timing_confirmed` marks a ranked match.
+
+A `finish` after play adds the game's own `result`: `won`, `lost`, `quit` (the player
+left) or `disconnected` (the game lost its connection). A player who leaves after the game
+decided their House reports that result: `lost` once it was defeated, `won` once it won. When the game saw the match
+decided, `winners` names the players still in it whose Houses won. A lobby from before
+team ladders refuses `winners`; the game then finishes again without it.
+
+`ladder` with up to 64 names answers with the running season's records of those that
+played a rated game in it (`season` is `null` and `records` empty when no season runs).
+The game shows them as each player's rank and badge: one lookup fills both its ladder
+and high-score tables.
+
+While a season runs, the host's options for a game room whose players are all on two
+teams give an odds line, which the room hears from the `VERA20k` notice sender each time
+it changes: `Team A 54%, Team B 46%. Ranked.`, or `Unranked:` and why. Quick Match
+rooms get none. In a game room the host's chat line `/balance` is a command, not chat.
+The room hears the two teams with the most even odds on the team ratings, keeping as
+many players on their teams as it can, and the host's game gets a `balance` event with
+every playing human's `team` (0 to 3 for A to D). The host's game moves each named player
+to that team, as their own team choice would, and publishes the options. A game that
+ignores the event leaves the teams to the host. The host alone hears why nothing moves:
+a Quick Match room, a mode without teams, AI players, fewer than two players, or teams
+already as even as they can be. Anyone else typing `/balance` hears that only the host can.

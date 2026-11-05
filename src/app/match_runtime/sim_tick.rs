@@ -128,7 +128,7 @@ pub(crate) fn drive_local_player_outcome_exit(state: &mut AppState, wall_ms: u64
         "Match end ready for local player '{owner}': {}",
         crate::app::match_runtime::scenario_exit::outcome_title(outcome)
     );
-    crate::app::App::record_external_match_result(
+    crate::app::App::record_match_result(
         state,
         match outcome {
             crate::sim::house_state::HouseOutcomeKind::Victory => {
@@ -582,9 +582,10 @@ fn build_score_screen_model(
     let observing = local_owner.is_some_and(|owner| sim.session().is_observer_house(owner));
     let theme = (!observing)
         .then(|| {
-            state
-                .process_assets
-                .side_score_theme(side, crate::rules::ruleset::ScoreTheme::Multiplayer { defeated })
+            state.process_assets.side_score_theme(
+                side,
+                crate::rules::ruleset::ScoreTheme::Multiplayer { defeated },
+            )
         })
         .flatten()
         .map(str::to_owned);
@@ -1772,8 +1773,13 @@ fn advance_one_simulation_frame(
                 // reached the synchronous boundary above exactly once.
                 return false;
             }
-            let tick_ms = advance_started.elapsed().as_secs_f32() * 1000.0;
+            let tick_cost = advance_started.elapsed();
+            let tick_ms = tick_cost.as_secs_f32() * 1000.0;
             state.match_state.network_quality.record_tick(tick_ms);
+            // The relay's pace reports carry the simulation's own cost.
+            if let Some(live) = state.match_state.live_network.as_mut() {
+                live.record_tick_cost(tick_cost);
+            }
             #[cfg(feature = "telemetry-dashboard")]
             {
                 let tick = rt.simulation.session().tick();
@@ -2825,6 +2831,29 @@ mod tests {
                 })
             ),
             (rx, ry)
+        );
+    }
+
+    #[test]
+    fn high_terrain_picking_round_trips_camera_and_zoom() {
+        let cells = (0..32)
+            .flat_map(|ry| {
+                (0..32).map(move |rx| {
+                    let mut cell = ResolvedTerrainCell::clear_for_test(rx, ry);
+                    cell.level = 16;
+                    cell
+                })
+            })
+            .collect();
+        let terrain = ResolvedTerrainGrid::from_cells(32, 32, cells);
+        let camera = (-93.5, 80.25);
+        let zoom = 1.5;
+        let (x, y) = crate::map::terrain::iso_to_screen(16, 16, 16);
+        let screen = ((x + 30.0 - camera.0) * zoom, (y + 15.0 - camera.1) * zoom);
+        let world = super::screen_point_to_world_with_camera(screen, camera, zoom);
+        assert_eq!(
+            world_point_to_cell(world.0, world.1, Some(&terrain)),
+            (16, 16)
         );
     }
 

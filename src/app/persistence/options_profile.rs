@@ -102,9 +102,6 @@ pub(crate) struct RetailOptionsProfile {
     pub(crate) network_socket: u16,
     pub(crate) network_card: i32,
     pub(crate) network_destination: String,
-    // SessionClass__ReadMultiPlayerSettings 6981E6..698228 and D7 560480.
-    pub(crate) network_send_delay: bool,
-    pub(crate) network_port: i32,
 
     // [WOnline]'s nine WOL preferences, outside OptionsClass: the same
     // profile object (RA2MD.INI in native) `WOL_Main`'s reader `0x0077DED0` reads at every WOL
@@ -132,10 +129,11 @@ pub(crate) struct RetailOptionsProfile {
     /// `[VERA] CoopExpansion=`: include VERA's cooperative mode alongside
     /// the original cooperative mode in the launcher. Off by default.
     pub(crate) coop_expansion: bool,
-    /// `[VERA] SkipStartupLogo=`: start without the logo movie `Init_Game`
-    /// plays before its splash. Off by default, so new profiles play it like
-    /// gamemd; the splash and the first-run intro play either way.
-    pub(crate) skip_startup_logo: bool,
+    /// `[VERA] SkipIntro=`: start straight at the main menu, without the logo
+    /// movie, the splash and the first-run intro that `Init_Game` plays before
+    /// it. Off by default, so new profiles start like gamemd. A profile from
+    /// before the rename keeps its `SkipStartupLogo=` choice.
+    pub(crate) skip_intro: bool,
     /// `[VERA] RenderInterpolation=`: client-only motion smoothing. Off by
     /// default, so new profiles draw the original tick-stepped motion; it never
     /// changes the simulation rate or saves.
@@ -146,8 +144,8 @@ pub(crate) struct RetailOptionsProfile {
     /// `[VERA] RightClickOrders=`: left selects, right issues context orders.
     /// VERA-only input preference; off by default.
     pub(crate) right_click_orders: bool,
-    /// `[VERA] LockCursor=`: keep the pointer inside the game window. On
-    /// unless the player turns it off.
+    /// `[VERA] LockCursor=`: keep the pointer inside the game window. Off
+    /// unless the player turns it on, so a new install leaves the pointer free.
     pub(crate) lock_cursor: bool,
     /// `[VERA] VeraIcon=`: the window, taskbar and Dock show VERA's artwork
     /// instead of Red Alert 2's red star. Off by default; the installed
@@ -189,10 +187,9 @@ pub(crate) struct RetailOptionsProfile {
     /// `[VERA] CustomEndGameBanner=`: the match's own verdict, shown where the
     /// match is decided — the country's `VictoryArt=`/`DefeatArt=` picture
     /// drawn over the tactical view where the retail `GRFXTXT` banner sits,
-    /// and its `VictoryMusic=`/`DefeatMusic=` theme started with it. On by
-    /// default, so a rules set that names them just works; untick it from
-    /// Options ("Custom End Game Verdict") to keep the retail banner and let
-    /// the battle theme run on. Presentation only: the simulation never reads
+    /// and its `VictoryMusic=`/`DefeatMusic=` theme started with it. Off by
+    /// default like every VERA box, so the retail banner shows and the battle
+    /// theme runs on until the player ticks it in Options. Presentation only: the simulation never reads
     /// it, and the score page has its own switch below.
     pub(crate) custom_end_game_banner: bool,
     /// `[VERA] CustomEndGameScore=`: the score page's own picture and theme —
@@ -297,8 +294,6 @@ impl Default for RetailOptionsProfile {
             network_socket: u16::MAX,
             network_card: 0,
             network_destination: String::new(),
-            network_send_delay: false,
-            network_port: 0,
             wol_preferences: Default::default(),
             full_screen: false,
             zoom: crate::ui::main_menu_dialogs::options::Zoom::Auto,
@@ -306,11 +301,11 @@ impl Default for RetailOptionsProfile {
             sidebar: crate::ui::main_menu_dialogs::options::SidebarSize::Normal,
             yr_original_style: false,
             coop_expansion: false,
-            skip_startup_logo: false,
+            skip_intro: false,
             render_interpolation: false,
             mouse_wheel_zoom: false,
             right_click_orders: false,
-            lock_cursor: true,
+            lock_cursor: false,
             vera_icon: false,
             window_maximized: false,
             house_color_strength: crate::rules::house_colors::STRENGTH_RETAIL,
@@ -319,9 +314,9 @@ impl Default for RetailOptionsProfile {
             wol_test_service: false,
             solo_skirmish: false,
             commander_feedback: true,
-            custom_end_game_banner: true,
-            custom_end_game_score: true,
-            custom_end_game_movie: true,
+            custom_end_game_banner: false,
+            custom_end_game_score: false,
+            custom_end_game_movie: false,
             health_bars: crate::ui::main_menu_dialogs::options::HealthBarMode::Vanilla,
             translate_chat: None,
             language: crate::i18n::DEFAULT_LANGUAGE.to_owned(),
@@ -528,9 +523,6 @@ impl RetailOptionsProfile {
         self.network_socket = network.read_int("Socket", i32::from(self.network_socket)) as u16;
         self.network_card = network.read_int("NetCard", self.network_card);
         self.network_destination = network.read_string("DestNet", "", 0x40);
-        let multiplayer = ini.section_or_empty("MultiPlayer");
-        self.network_send_delay = multiplayer.read_bool("SendDelay", false);
-        self.network_port = multiplayer.read_int("PortNumberOverride", 0);
         self.wol_preferences = read_wol_preferences(ini.section_or_empty(WONLINE_SECTION));
 
         if let Some(vera) = ini.section(VERA_SECTION) {
@@ -544,7 +536,10 @@ impl RetailOptionsProfile {
             );
             self.yr_original_style = vera.read_bool("YROriginalStyle", self.yr_original_style);
             self.coop_expansion = vera.read_bool("CoopExpansion", self.coop_expansion);
-            self.skip_startup_logo = vera.read_bool("SkipStartupLogo", self.skip_startup_logo);
+            // `SkipStartupLogo=` named this switch while it skipped only the
+            // logo; the writer drops it.
+            let legacy_skip = vera.read_bool("SkipStartupLogo", self.skip_intro);
+            self.skip_intro = vera.read_bool("SkipIntro", legacy_skip);
             self.render_interpolation =
                 vera.read_bool("RenderInterpolation", self.render_interpolation);
             self.mouse_wheel_zoom = vera.read_bool("MouseWheelZoom", self.mouse_wheel_zoom);
@@ -690,10 +685,7 @@ impl RetailOptionsProfile {
                     "CoopExpansion",
                     format_bool(self.coop_expansion).to_string(),
                 ),
-                (
-                    "SkipStartupLogo",
-                    format_bool(self.skip_startup_logo).to_string(),
-                ),
+                ("SkipIntro", format_bool(self.skip_intro).to_string()),
                 ("ShiftQueue", format_bool(self.shift_queue).to_string()),
                 ("ShiftQueueCount", self.shift_queue_count.to_string()),
                 (
@@ -780,7 +772,7 @@ impl RetailOptionsProfile {
         crate::util::ini_writer::remove_ini_keys(
             &output,
             VERA_SECTION,
-            &["RA2Look", "SoundDefaultsApplied"],
+            &["RA2Look", "SoundDefaultsApplied", "SkipStartupLogo"],
         )
     }
 
@@ -791,13 +783,6 @@ impl RetailOptionsProfile {
     /// from destroying profile bytes owned by other systems.
     pub(crate) fn commit_settings(&self, ra2_dir: &Path) -> io::Result<()> {
         profile_file::update(ra2_dir, |input| self.transform_settings(input))
-    }
-
-    /// D7's accepted firewall settings write only these two MultiPlayer keys
-    /// (NetworkOptionsDialog__DlgProc_D7 at 560480). LAN fields are written
-    /// by the parent Options writer.
-    pub(crate) fn commit_network_options(&self, ra2_dir: &Path) -> io::Result<()> {
-        profile_file::update(ra2_dir, |input| self.transform_network_options(input))
     }
 
     /// WOL Options' writer `0x0077DFD0`: the nine `[WOnline]` keys in the
@@ -845,17 +830,6 @@ impl RetailOptionsProfile {
                 ("DisplayLatin", p.display_latin.to_string()),
                 ("DisplayBuddies", format_bool(p.display_buddies).to_owned()),
                 ("DisplayClan", format_bool(p.display_clan).to_owned()),
-            ],
-        )
-    }
-
-    fn transform_network_options(&self, input: &[u8]) -> Vec<u8> {
-        apply_formatted_section(
-            input,
-            "MultiPlayer",
-            &[
-                ("SendDelay", format_bool(self.network_send_delay).to_owned()),
-                ("PortNumberOverride", self.network_port.to_string()),
             ],
         )
     }
@@ -986,78 +960,15 @@ mod tests {
     #[test]
     fn network_settings_read_native_defaults_and_narrow_socket_only() {
         let defaults = load_snapshot(&RetailStartupOptions::default(), b"").retained_profile;
-        assert_eq!(
-            (
-                defaults.network_socket,
-                defaults.network_card,
-                defaults.network_port
-            ),
-            (65535, 0, 0)
-        );
-        assert!(!defaults.network_send_delay);
+        assert_eq!((defaults.network_socket, defaults.network_card), (65535, 0));
         assert!(defaults.network_destination.is_empty());
-        let loaded = load_snapshot(&RetailStartupOptions::default(), b"[Network]\nSocket=65536\nNetCard=-2\nDestNet=  aa.bb.cc.dd  \n[MultiPlayer]\nSendDelay=yes\nPortNumberOverride=-1\n").retained_profile;
-        assert_eq!(
-            (
-                loaded.network_socket,
-                loaded.network_card,
-                loaded.network_port
-            ),
-            (0, -2, -1)
-        );
-        assert!(loaded.network_send_delay);
+        let loaded = load_snapshot(
+            &RetailStartupOptions::default(),
+            b"[Network]\nSocket=65536\nNetCard=-2\nDestNet=  aa.bb.cc.dd  \n",
+        )
+        .retained_profile;
+        assert_eq!((loaded.network_socket, loaded.network_card), (0, -2));
         assert_eq!(loaded.network_destination, "aa.bb.cc.dd");
-    }
-
-    #[test]
-    fn d7_commit_keeps_lan_pending_until_parent_options_write() {
-        let input = b"; keep\r\n[Network]\r\nSocket=5\r\nNetCard=1\r\nDestNet=1.2.3.4\r\n[MultiPlayer]\r\nHandle=unchanged\r\nSendDelay=no\r\nPortNumberOverride=0\r\n";
-        let profile = RetailOptionsProfile {
-            network_socket: 123,
-            network_card: 2,
-            network_destination: "aa.bb.cc.dd".into(),
-            network_send_delay: true,
-            network_port: -1,
-            ..Default::default()
-        };
-        let d7 = profile.transform_network_options(input);
-        let parsed = IniFile::from_bytes(&d7).unwrap();
-        assert_eq!(parsed.section_or_empty("Network").read_int("Socket", 0), 5);
-        assert_eq!(
-            parsed
-                .section_or_empty("MultiPlayer")
-                .read_string("Handle", "", 64),
-            "unchanged"
-        );
-        assert!(
-            parsed
-                .section_or_empty("MultiPlayer")
-                .read_bool("SendDelay", false)
-        );
-        assert_eq!(
-            parsed
-                .section_or_empty("MultiPlayer")
-                .read_int("PortNumberOverride", 0),
-            -1
-        );
-        let parent = profile.transform_settings(&d7);
-        let parsed = IniFile::from_bytes(&parent).unwrap();
-        assert_eq!(
-            parsed.section_or_empty("Network").read_int("Socket", 0),
-            123
-        );
-        assert_eq!(
-            parsed
-                .section_or_empty("Network")
-                .read_string("DestNet", "", 64),
-            "aa.bb.cc.dd"
-        );
-        assert_eq!(
-            parsed
-                .section_or_empty("MultiPlayer")
-                .read_int("PortNumberOverride", 0),
-            -1
-        );
     }
 
     #[test]
@@ -1541,7 +1452,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         assert_eq!(load.retained_profile.sidebar, SidebarSize::Large);
         assert!(load.retained_profile.coop_expansion);
         assert!(!load.retained_profile.yr_original_style);
-        assert!(!load.retained_profile.skip_startup_logo);
+        assert!(!load.retained_profile.skip_intro);
         assert!(load.retained_profile.shift_queue);
         assert!(load.retained_profile.wol_test_service);
         assert!(load.retained_profile.solo_skirmish);
@@ -1558,7 +1469,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
             sidebar: SidebarSize::ExtraLarge,
             yr_original_style: true,
             coop_expansion: true,
-            skip_startup_logo: true,
+            skip_intro: true,
             shift_queue: true,
             shift_queue_count: 7,
             wol_test_service: true,
@@ -1570,7 +1481,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
                 .unwrap();
         assert!(
             output.contains(
-                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nCoopExpansion=yes\r\nSkipStartupLogo=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
+                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nCoopExpansion=yes\r\nSkipIntro=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
             ),
             "{output}"
         );
@@ -1581,11 +1492,22 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         assert_eq!(reread.retained_profile.sidebar, SidebarSize::ExtraLarge);
         assert!(reread.retained_profile.coop_expansion);
         assert!(reread.retained_profile.yr_original_style);
-        assert!(reread.retained_profile.skip_startup_logo);
+        assert!(reread.retained_profile.skip_intro);
         assert!(reread.retained_profile.shift_queue);
         assert!(reread.retained_profile.wol_test_service);
         assert!(reread.retained_profile.solo_skirmish);
         assert_eq!(reread.retained_profile.shift_queue_count, 7);
+
+        // A profile saved while the switch was `SkipStartupLogo=` keeps its
+        // choice, and the next write renames the key.
+        let legacy = b"[VERA]\nSkipStartupLogo=yes\n";
+        let load = load_snapshot(&RetailStartupOptions::default(), legacy);
+        assert!(load.retained_profile.skip_intro);
+        let written = String::from_utf8(load.retained_profile.transform_settings(legacy)).unwrap();
+        assert!(
+            written.contains("SkipIntro=yes") && !written.contains("SkipStartupLogo"),
+            "{written}"
+        );
     }
 
     #[test]
@@ -1638,18 +1560,18 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         let unset = RetailOptionsProfile::default().transform_settings(b"");
         let unset = load_snapshot(&startup, &unset).retained_profile;
         assert_eq!(unset.window_placement, None);
-        // The lock starts on, a window starts unmaximised and its icon is the
+        // The lock starts off, a window starts unmaximised and its icon is the
         // red star; all three round-trip.
-        assert!(unset.lock_cursor && !unset.window_maximized && !unset.vera_icon);
+        assert!(!unset.lock_cursor && !unset.window_maximized && !unset.vera_icon);
         let changed = RetailOptionsProfile {
-            lock_cursor: false,
+            lock_cursor: true,
             window_maximized: true,
             vera_icon: true,
             ..RetailOptionsProfile::default()
         }
         .transform_settings(b"");
         let changed = load_snapshot(&startup, &changed).retained_profile;
-        assert!(!changed.lock_cursor && changed.window_maximized && changed.vera_icon);
+        assert!(changed.lock_cursor && changed.window_maximized && changed.vera_icon);
     }
 
     #[test]
@@ -1855,48 +1777,51 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         }
     }
 
-    /// The three `CustomEndGame*=` switches are independent: turning one off
-    /// never touches the other two, so a player can keep the score page's
-    /// picture and drop the battlefield verdict, or keep both and cut the
-    /// closing movie short.
+    /// The three `CustomEndGame*=` switches start off and are independent:
+    /// turning one on never touches the other two, so a player can take the
+    /// score page's picture without the battlefield verdict, or both without
+    /// waiting for the closing movie.
     #[test]
     fn the_custom_end_game_switches_round_trip_independently() {
         let startup = RetailStartupOptions::default();
         let stock = load_snapshot(&startup, b"").retained_profile;
-        assert!(stock.custom_end_game_banner, "verdict defaults on");
-        assert!(stock.custom_end_game_score, "score page defaults on");
-        assert!(stock.custom_end_game_movie, "movie defaults on");
+        assert!(!stock.custom_end_game_banner, "verdict defaults off");
+        assert!(!stock.custom_end_game_score, "score page defaults off");
+        assert!(!stock.custom_end_game_movie, "movie defaults off");
         for key in [
             "CustomEndGameBanner",
             "CustomEndGameScore",
             "CustomEndGameMovie",
         ] {
-            let input = format!("[VERA]\n{key}=no\nUnowned=keep\n");
+            let input = format!("[VERA]\n{key}=yes\nUnowned=keep\n");
             let profile = load_snapshot(&startup, input.as_bytes()).retained_profile;
             let (banner, score, movie) = (
                 profile.custom_end_game_banner,
                 profile.custom_end_game_score,
                 profile.custom_end_game_movie,
             );
-            let off = match key {
-                "CustomEndGameBanner" => !banner,
-                "CustomEndGameScore" => !score,
-                _ => !movie,
+            let on = match key {
+                "CustomEndGameBanner" => banner,
+                "CustomEndGameScore" => score,
+                _ => movie,
             };
-            assert!(off, "{key}=no switched its own key off");
+            assert!(on, "{key}=yes switched its own key on");
             assert_eq!(
                 (banner, score, movie),
                 (
-                    key != "CustomEndGameBanner",
-                    key != "CustomEndGameScore",
-                    key != "CustomEndGameMovie"
+                    key == "CustomEndGameBanner",
+                    key == "CustomEndGameScore",
+                    key == "CustomEndGameMovie"
                 ),
-                "{key}=no left the other two alone"
+                "{key}=yes left the other two alone"
             );
             let written = profile.transform_settings(input.as_bytes());
             let text = String::from_utf8_lossy(&written).into_owned();
             assert!(text.contains("Unowned=keep"));
-            assert!(text.contains(&format!("{key}=no")), "{key} is written back");
+            assert!(
+                text.contains(&format!("{key}=yes")),
+                "{key} is written back"
+            );
             let reloaded = load_snapshot(&startup, &written).retained_profile;
             assert_eq!(
                 (
