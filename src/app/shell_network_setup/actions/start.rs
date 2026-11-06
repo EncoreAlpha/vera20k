@@ -569,7 +569,8 @@ mod tests {
                     raw_slot_index: 0,
                     player_index: 0,
                     owner_name: "Alpha".to_owned(),
-                }]
+                }],
+                ..Default::default()
             }
         );
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
@@ -581,7 +582,8 @@ mod tests {
                     raw_slot_index: 0,
                     player_index: 1,
                     owner_name: "Beta".to_owned(),
-                }]
+                }],
+                ..Default::default()
             }
         );
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 0 };
@@ -723,6 +725,7 @@ mod tests {
                     owner_name: "Beta".into(),
                 },
             ],
+            ..Default::default()
         };
         let mut sim = crate::sim::world::Simulation::new();
         sim.session_mut_for_test()
@@ -839,6 +842,7 @@ mod tests {
                     owner_name: "Beta".into(),
                 },
             ],
+            ..Default::default()
         };
 
         // The authored loader builds the roster in its fresh prefix (campaign

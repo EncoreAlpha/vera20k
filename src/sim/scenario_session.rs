@@ -817,6 +817,12 @@ pub struct ScenarioSession {
     start_header: crate::map::preview::ScenarioStartHeader,
     #[serde(default)]
     campaign: Option<CampaignScenarioState>,
+    /// VERA Coop: frozen lobby difficulty row for TriggerType difficulty flags
+    /// (0 = Easy, 1 = Normal, 2 = Hard). Process-shared start input; only
+    /// VeraCoop installs it, so stock sessions keep the field absent and their
+    /// exact hash stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vera_coop_trigger_difficulty: Option<i32>,
     /// Scenario+35A0: SetDefaults6839C7 clears the raw stage word. MapSelect
     /// 5AE1FA/5AE0B8 writes the selected index; Scenario save/load retains it.
     campaign_map_stage: u16,
@@ -1753,6 +1759,21 @@ impl ScenarioSession {
             .map(|campaign| (campaign.player_difficulty, campaign.computer_difficulty))
     }
 
+    /// Install the VERA Coop frozen lobby difficulty row. The caller has
+    /// already validated the 0..=2 range; clamp here keeps a corrupted frozen
+    /// payload from indexing past TriggerType's three flags.
+    pub(crate) fn install_vera_cooperative_trigger_difficulty(&mut self, difficulty: i32) {
+        debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
+        self.vera_coop_trigger_difficulty = Some(difficulty.clamp(0, 2));
+    }
+
+    /// VERA Coop's TriggerType difficulty row, when this scenario was started
+    /// from a frozen co-op lobby. Separate from campaign difficulty because the
+    /// two owners have different scales and consumers.
+    pub(crate) fn vera_cooperative_trigger_difficulty(&self) -> Option<i32> {
+        self.vera_coop_trigger_difficulty
+    }
+
     pub fn current_house(&self) -> Option<InternedId> {
         self.current_house
     }
@@ -1820,6 +1841,10 @@ impl ScenarioSession {
         if let Some(campaign) = s.campaign {
             b"scenario-campaign-startup-v1".hash(hasher);
             campaign.hash(hasher);
+        }
+        if let Some(difficulty) = s.vera_coop_trigger_difficulty {
+            b"scenario-vera-coop-trigger-difficulty-v1".hash(hasher);
+            difficulty.hash(hasher);
         }
         if s.campaign_map_stage != 0 {
             b"scenario-map-stage-v1".hash(hasher);
@@ -2062,6 +2087,7 @@ impl ScenarioSession {
             local_shared_house_source: None,
             start_header: crate::map::preview::ScenarioStartHeader::default(),
             campaign: None,
+            vera_coop_trigger_difficulty: None,
             campaign_map_stage: 0,
             input_locked: false,
             chrono_screen: crate::sim::superweapon::chrono_screen::ChronoScreenState::default(),
@@ -2278,6 +2304,44 @@ mod tests {
         a.native_unique_ids =
             Some(crate::sim::native_identity::NativeUniqueIdCursor::for_synthetic_simulation());
         assert_eq!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn vera_coop_trigger_difficulty_is_shared_and_roundtrips_while_absent_for_stock() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let fold = |session: &ScenarioSession| {
+            let mut hasher = DefaultHasher::new();
+            session.fold_identity(&[], &mut hasher);
+            hasher.finish()
+        };
+        let mut session = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
+        let stock = fold(&session);
+        session.install_vera_cooperative_trigger_difficulty(2);
+        assert_eq!(session.vera_cooperative_trigger_difficulty(), Some(2));
+        assert_ne!(
+            fold(&session),
+            stock,
+            "the frozen row is peer-visible state"
+        );
+
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let restored: ScenarioSession = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(restored.vera_cooperative_trigger_difficulty(), Some(2));
+
+        // Stock sessions never install the field: the hash stream must stay
+        // byte-identical to the pre-field contract.
+        let mut fresh = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
+        assert_eq!(fold(&fresh), stock);
+        fresh.install_vera_cooperative_trigger_difficulty(0);
+        assert_eq!(
+            fold(&fresh),
+            fold(&{
+                let mut same = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
+                same.install_vera_cooperative_trigger_difficulty(0);
+                same
+            })
+        );
     }
 
     #[test]

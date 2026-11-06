@@ -1,8 +1,38 @@
 # VERA 合作战役开发记录
 
-这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.20-dev`（已提交：任务结束的团队胜负与最小结算）；上一版本 `0.1.19-dev`。
+这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.21-dev`（进行中：全量触发语义审计的前置修复）；上一版本 `0.1.20-dev`（已提交：任务结束的团队胜负与最小结算）。
 
 ## 当前状态
+
+### `0.1.21-dev` 前置：全量触发语义审计与两项修复（进行中）
+
+按用户拍板的合作模型，先做了触发 action/event 的全量只读审计，再实现审计中唯二需要改引擎的两项；结算界面/下一关仍按原计划留在审计修复之后。
+
+审计结论（分报告在 `.scratch/vera-coop-live/research/audit-*.md`，汇总 `audit-register.md`，均不入库）：
+
+- action 0–145：146 个 ID，C=95、W=45、F=1（51）、N=5；event 0–61（默认构建）：62 种，C=33、W=25、N=4，另有跨事件候选。绝大多数是“作者每角色各写一份”的责任（W）或天然全队共享（C）。
+- 需要引擎决策的 F 项：`<Player @ X>`/`start_slot_houses` 在 VeraCoop 不建表（改为支持地图自建国家）、同 Country 多角色折叠（作者用不同国家规避，引擎不校验）、51 黑幕与 139 雷达（用户判定归作者，不做聚合）、AllowWin(15) 不作合作胜利门、事件 33 不支持（列入待议）、大厅难度映射到触发器难度。用户最终确认本轮只改两项代码：地图 `[Countries]` 合并、难度映射；其余记录后不阻塞。
+- 审计期间同时记录 7 轮设计拍板（团队结果立即结算、作者手工每角色条件、不做覆盖检查、每关可重选角色、资金跟座位、房主大厅选难度、暂停/掉线边界等），见 `.scratch/vera-coop-live/decisions.md`。
+
+实现要点：
+
+- `RuleSet::merge_map_countries`（仅 VeraCoop 装载调用）：把地图 `[Countries]` 追加到本次场景的 HouseType 注册表；已有国家保持 rules 索引，新国家按地图顺序追加。新国家的 `Side=`、`Color=`、`Name=`、`UIName=` 等从地图 section 读取；地图 `[Colors]` 新增/覆盖会并入色表并重建 house color ramps。这样作者可以按“美国A/美国B + 各自 House”给每个角色写触发 owner，而不需要 `<Player @ X>`。
+- 装载器只在 `vera_coop_startup.is_some()` 时合并，随后才解析 House roster、建 House、实例化 Tag；原 Cooperative/遭遇战规则注册表与哈希不变。
+- `VeraCoopHouseAssignments` 新增冻结的 `difficulty`（0=Easy、1=Normal、2=Hard，serde 默认 Normal）；大厅 DIFFICULTY 滑条本来就对 VeraCoop 可见且全队同步，开局面按冻结值写入 assignment，装载器在 VeraCoop 前缀里安装 `ScenarioSession::vera_coop_trigger_difficulty`，`trigger_difficulty()` 优先使用它，不再恒为 Normal。难度是冻结输入、不是地图派生，两处装载器重算比对只重算地图/角色/种子身份，保留冻结难度行。
+- 该难度行只在 VeraCoop 安装；普通存档没有该字段，`fold_identity` 的 None 分支不写任何字节，stock 会话的 hash 流保持原样。
+
+验证（2026-11-06）：
+
+- 定向测试：core `rules::ruleset::tests` 155（含地图国家合并/表现字段）、`map::houses::tests` 13（自定义国家 House 可被触发 owner 寻址）、`sim::scenario_session` 17（难度行共享/往返/stock 哈希不变）、`sim::trigger_runtime::tests` 84（含大厅难度行选 Easy 触发位）；app `vera_coop` 20（含难度为 0 的冻结装载准入回归）。全部通过。
+- `cargo build --profile fast --bin vera20k` 通过；现有 `run-pair.ps1` 双进程 LAN 冒烟（stage01，无 outcome 注入）在修复两处冻结身份比对后，两端跑进任务并“shut down cleanly”，日志出现 `VERA Coop trigger difficulty row 0`（房主默认 Easy）。
+- 验证中发现并修复：冻结难度行加入 assignment 后，装载器两处“重算 assignment 再与冻结值比较”会把默认 Normal(1) 与冻结 Easy(0) 判为身份变化；现在重算只比较地图/角色/种子，难度行保留冻结值。
+
+尚未验证/遗留：
+
+- 用户将用地编改造的验收图（stage01 副本）尚未到位；自定义国家的真实地图装载、真实触发器 → 团队结局、等真实结局采集，都要等验收图后做。
+- 0.1.20 的旧运行证据保留不重跑；本版起新证据另建目录。
+- 审计中 F3/F4/F5/F6 按用户决定记录为作者责任/不支持/待议，不阻塞；完整决策表见 `decisions.md` 与 `audit-register.md`。
+- 结算 ready/Continue、下一关、失败重试、暂停/离场等仍按 0.1.21–0.1.23 计划推进。
 
 ### `0.1.20-dev`（已提交）
 
@@ -73,7 +103,7 @@
 
 1. **`0.1.19-dev` 双进程实测基座 + 首帧修复（双进程基座已完成）**：扩 `lan-live-vera-coop-*` 诊断目标到 Start/GO/跑帧，并准备 2 人测试战役；修实测暴露的呈现侧与共享判定问题。DONE：两端进入同一关、同帧校验和与固定帧 `state_hash` 一致、各自能选中/移动自己 House 的单位、对方 House 的点击被拒、无 panic。移动与点击已达成；“对方 House 的命令被拒”运行时断言待补。
 2. **`0.1.20-dev` 任务结束（团队胜负，已完成）**：把合作共享胜负从“模式类等于 Cooperative”泛化为模式能力；VERA Coop 抑制“主 House 全灭 = 任务失败”的自动结束，胜负只来自地图触发器与房主强制结束；结束路由复用 `CooperativeResult`。DONE：win 触发器两端口同时胜利；全灭主 House 后任务继续；lose 触发器两端失败；不出现 0x108。
-3. **`0.1.21-dev` 结算界面与确认**：复用 `CooperativeRound`（ready 槽位与行数已参数化）；每个玩家主 House 一行，房主自动准备、客人准备，全准备后房主 Continue；VERA Coop 不写 `coopsave.ini`。DONE：两端行与时间一致；只有房主 Continue 能开下一关；Quit 全员回合作大厅；单人掉线走现有机制。
+3. **`0.1.21-dev` 结算界面与确认**（前置：全量触发语义审计的地图国家合并/难度映射已完成，见上）：复用 `CooperativeRound`（ready 槽位与行数已参数化）；每个玩家主 House 一行，房主自动准备、客人准备，全准备后房主 Continue；VERA Coop 不写 `coopsave.ini`。DONE：两端行与时间一致；只有房主 Continue 能开下一关；Quit 全员回合作大厅；单人掉线走现有机制。
 4. **`0.1.22-dev` 下一关与战役完成**：战役身份（目录 + 摘要）带入比赛期；任务结束时按当前 Entry 从外部 campaign.ini 解析 `NextScenario`（`SkipMapSelect=yes` 且全局变量 1 时取 `AltNextScenario`），各端本地重算并核对摘要后走与首关相同的冻结开始时序；角色保留，按角色继承资金（`CarryOverMoney`/`CarryOverCap`，扩展现有 `CampaignCarryOver`）；全局变量与战役计时器沿用现有继承；`EndOfGame=yes` 则全员确认后回大厅；失败由房主选择重试本关或回大厅。DONE：第 1 关胜利后再进第 2 关且角色/资金一致；EndOfGame 回大厅；失败重试同图；摘要不一致时两端拒绝继续并提示。
 5. **`0.1.23-dev` 边界规则**：任意玩家可暂停、只有暂停者或房主可恢复、二者都掉线自动恢复；房主强制结束回大厅；任务中离场（不接管 AI、不许中途加入、最后一人离开结束房间）；难度仅房主可改且全队统一；游戏速度房主可调。DONE：状态机定向测试 + 双进程各跑一遍暂停/恢复/离场。
 

@@ -370,6 +370,7 @@ fn parse_scenario_base_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::ruleset::CountryIdx;
 
     fn base_plan_rules() -> RuleSet {
         RuleSet::from_ini(&IniFile::from_str(
@@ -406,6 +407,39 @@ mod tests {
                 hsv: *hsv,
             })
             .collect()
+    }
+
+    #[test]
+    fn map_country_registry_merge_makes_custom_house_owner_addressable() {
+        let map = IniFile::from_str(
+            "[Countries]\n0=Americans\n1=美国A\n\
+             [美国A]\nSide=Allies\nColor=DarkBlue\nUIName=NAME:USAA\nName=AmericaA\n\
+             [Houses]\n0=American House\n1=美军A House\n\
+             [American House]\nCountry=Americans\n\
+             [美军A House]\nCountry=美国A\n",
+        );
+        let mut rules = RuleSet::from_ini(&IniFile::from_str(
+            "[Countries]\n0=Americans\n[Sides]\nAllies=Americans\n\
+             [Colors]\nLightGold=25,255,255\nGold=43,239,255\nLightGrey=0,0,240\n\
+             Grey=0,0,131\nRed=20,255,184\nDarkRed=0,230,255\nDarkBlue=153,214,212\n",
+        ))
+        .expect("rules country/side/color registries parse");
+        rules.merge_map_countries(&map);
+
+        let roster = parse_house_roster(&map, &rules.color_schemes, Some(&rules));
+        let custom = roster
+            .houses
+            .iter()
+            .find(|house| house.name == "美军A House")
+            .expect("map House registered");
+        assert_eq!(custom.country.as_deref(), Some("美国A"));
+        // The House's Country resolves against the merged registry, and the
+        // same registration is what a TriggerType owner token selects.
+        assert_eq!(
+            rules.country_index(custom.country.as_deref().unwrap()),
+            Some(CountryIdx(1))
+        );
+        assert_eq!(rules.trigger_house_type_index("美国A"), Some(CountryIdx(1)));
     }
 
     #[test]

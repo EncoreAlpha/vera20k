@@ -550,7 +550,7 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                 .source
                 .physical_identity()
                 .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-            let assignments =
+            let mut assignments =
                 crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
                     &map.ini,
                     file,
@@ -559,6 +559,14 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                     launch,
                     agreed_seed,
                 )?;
+            // The lane-synchronized lobby row is the team's TriggerType
+            // difficulty for this start (0=Easy, 1=Normal, 2=Hard). Every peer
+            // receives the same row through the LAN options payload, so the
+            // frozen assignment identity stays identical.
+            assignments.difficulty = state
+                .frontend
+                .multiplayer_shell_runtime
+                .cooperative_difficulty();
             Ok(Some(assignments))
         })();
     let vera_coop_houses = match vera_coop_houses {

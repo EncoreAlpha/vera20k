@@ -4120,6 +4120,7 @@ mod tests {
                     },
                 })
                 .collect(),
+            difficulty: 1,
         };
         let mut session = MatchSession::default();
         session.enter_network(NetworkReturnContext::LanLobby);

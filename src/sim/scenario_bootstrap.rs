@@ -428,6 +428,9 @@ pub enum FreshScenarioPrefix<'a> {
         rules: &'a RuleSet,
         map_data: &'a MapFile,
         house_roster: &'a HouseRoster,
+        /// Frozen lobby row: 0 = Easy, 1 = Normal, 2 = Hard. TriggerType
+        /// difficulty flags use this row; no campaign startup supplies one.
+        difficulty: i32,
     },
 }
 
@@ -2798,6 +2801,7 @@ impl ScenarioBootstrapRng {
                 rules,
                 map_data,
                 house_roster,
+                difficulty,
             } => {
                 let (early_events, rebuilt_events) = take_authored_house_prefix(
                     native_rules_receipt,
@@ -2811,6 +2815,10 @@ impl ScenarioBootstrapRng {
                 // assignment runs, and the loading callback installs the frozen
                 // sender-to-House authority before map objects populate.
                 let mut simulation = self.into_simulation(descriptor);
+                simulation
+                    .session
+                    .install_vera_cooperative_trigger_difficulty(difficulty);
+                log::info!("VERA Coop trigger difficulty row {difficulty}");
                 let mut start_header = crate::map::preview::ScenarioStartHeader::default();
                 start_header.read_ini(&map_data.ini);
                 simulation.session.install_start_header(start_header);

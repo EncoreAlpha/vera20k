@@ -9355,6 +9355,84 @@ impl RuleSet {
         })
     }
 
+    /// VERA Coop: merge the map INI's `[Countries]` registry into this
+    /// scenario's HouseType registry, as the native scenario INI layer does.
+    ///
+    /// gamemd registers each map `[Countries]` value at its own map-read point;
+    /// values already known keep their rules index and only unseen values
+    /// append after the last rules country (FA2SP 地图ini: 全局国家在前，新建
+    /// 国家从全局数量之后排). A new country's map section supplies the same
+    /// fields HouseTypeClass::ReadINI reads; `Color` uses ReadColor474A90
+    /// (`0x005118CF..0x00511928`) and `Side` resolves through the existing
+    /// `[Sides]` registry. No consumers outside the VeraCooperative loader call
+    /// this, so stock scenarios keep their exact rules registry.
+    pub fn merge_map_countries(&mut self, map_ini: &IniFile) {
+        // A map can also append or override `[Colors]` entries; resolve them
+        // before reading country `Color=` names, then rebuild the ramps that
+        // were built from the rules-only scheme list.
+        let mut colors_changed = false;
+        for entry in crate::rules::color_scheme::parse_color_schemes(map_ini) {
+            if let Some(existing) = self
+                .color_schemes
+                .iter_mut()
+                .find(|known| known.name.eq_ignore_ascii_case(&entry.name))
+            {
+                if existing.hsv != entry.hsv {
+                    existing.hsv = entry.hsv;
+                    colors_changed = true;
+                }
+            } else {
+                self.color_schemes.push(entry);
+                colors_changed = true;
+            }
+        }
+        if colors_changed {
+            let strength = self.house_color_ramps.strength();
+            self.house_color_ramps =
+                crate::rules::house_colors::HouseColorRamps::from_schemes(&self.color_schemes);
+            self.house_color_ramps.set_strength(strength);
+        }
+        let Some(section) = map_ini.section("Countries") else {
+            return;
+        };
+        // The map section borrows the same file the per-country sections come
+        // from, so copy the registry values before mutating self.
+        let mut attrs = Vec::new();
+        for key in section.keys() {
+            let Some(id) = section.read_name(key, 0x80) else {
+                continue;
+            };
+            let id = id.trim().to_string();
+            if id.is_empty() || id.starts_with('<') {
+                continue;
+            }
+            if self.country_indices.contains_key(&id.to_ascii_uppercase()) {
+                continue;
+            }
+            let country = map_ini.section_or_empty(&id);
+            let mut fields = CountryRules::from_ini_section(country);
+            fields.color_scheme = country.read_color_scheme(
+                "Color",
+                0,
+                self.color_schemes.iter().map(|entry| entry.name.as_str()),
+            );
+            fields.parent_country = country.read_string("ParentCountry", &id, 25);
+            let side = country
+                .read_name("Side", 0x20)
+                .and_then(|name| self.side_indices.get(&name.to_ascii_uppercase()).copied());
+            attrs.push((id, fields, side));
+        }
+        for (id, fields, side) in attrs {
+            let index = CountryIdx(
+                u16::try_from(self.country_ids.len()).expect("[Countries] exceeds u16 identity"),
+            );
+            self.country_ids.push(id.clone());
+            self.country_indices.insert(id.to_ascii_uppercase(), index);
+            self.country_sides.push(side);
+            self.countries.insert(id, fields);
+        }
+    }
+
     /// Cooperative5C34F0/5C35F0 draw over the complete retained HouseType
     /// registry, then49D9F0 matches ID/Name. Passive and non-playable entries
     /// remain rejection candidates and therefore affect Scenario RNG order.
@@ -11919,6 +11997,43 @@ CellSpread=0
         assert_eq!(rules.side_index("north"), Some(SideIdx(0)));
         assert_eq!(rules.side_index("SOUTH"), Some(SideIdx(1)));
         assert_eq!(rules.side_name(SideIdx(0)), Some("North"));
+    }
+
+    #[test]
+    fn map_countries_append_after_rules_and_read_map_presentation() {
+        let mut rules = RuleSet::from_ini(&IniFile::from_str(
+            "[Countries]\n0=Americans\n1=Russians\n\
+             [Sides]\nAllies=Americans\nSoviet=Russians\n\
+             [Colors]\nGold=43,239,255\nRed=255,0,0\n",
+        ))
+        .expect("rules country/side registries parse");
+        // A map can register its own countries (FA2SP 地图ini: map
+        // `[Countries]` merges into the global HouseType registry). Existing
+        // entries keep their rules index; unseen entries append in map order.
+        rules.merge_map_countries(&IniFile::from_str(
+            "[Countries]\n0=Americans\n1=美国A\n2=美国B\n\
+             [Colors]\nVeraGold=12,34,56\n\
+             [美国A]\nSide=Allies\nColor=VeraGold\nUIName=NAME:USAA\nName=AmericaA\n\
+             [美国B]\nSide=Soviet\nColor=Red\nUIName=NAME:USAB\nName=AmericaB\n",
+        ));
+
+        assert_eq!(rules.country_index("Americans"), Some(CountryIdx(0)));
+        assert_eq!(rules.country_index("美国A"), Some(CountryIdx(2)));
+        assert_eq!(rules.country_index("美国B"), Some(CountryIdx(3)));
+        assert_eq!(rules.country_name(CountryIdx(3)), Some("美国B"));
+        // Trigger owner tokens use the merged HouseType registry, and the
+        // country's `Name=` alias is also a valid owner spelling.
+        assert_eq!(rules.trigger_house_type_index("美国A"), Some(CountryIdx(2)));
+        assert_eq!(
+            rules.trigger_house_type_index("AmericaA"),
+            Some(CountryIdx(2))
+        );
+        // `Color=` resolves through ReadColor474A90's scheme scan, including a
+        // `[Colors]` entry the map itself appended (index 2 -> scheme 5), and
+        // `Side=` through the existing side registry.
+        assert_eq!(rules.country_color_scheme("美国A"), 5);
+        assert_eq!(rules.country_side_index("美国A"), Some(SideIdx(0)));
+        assert_eq!(rules.country_side_index("美国B"), Some(SideIdx(1)));
     }
 
     /// Phobos `ValueableIdx<ColorScheme>` in each rules pass: a name finds the

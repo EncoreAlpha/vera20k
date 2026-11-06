@@ -1393,6 +1393,9 @@ fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() 
     )
     .with_vera_coop_houses(VeraCoopHouseAssignments {
         participants: assignments.participants.clone(),
+        // The lobby row is a frozen input the map cannot derive; admission
+        // must keep it while still recomputing the map/role identity.
+        difficulty: 0,
     })
     .with_vera_coop_map_config(config.clone());
     let startup = LoadingStartup::Network(std::sync::Arc::new(startup));

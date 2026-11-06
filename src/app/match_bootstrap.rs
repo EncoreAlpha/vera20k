@@ -417,7 +417,10 @@ pub(crate) fn resolve_vera_cooperative_houses(
         });
     }
     participants.sort_by_key(|assignment| assignment.raw_slot_index);
-    let assignments = crate::skirmish_launch::VeraCoopHouseAssignments { participants };
+    let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+        participants,
+        ..Default::default()
+    };
     assignments
         .validate_for_launch(launch)
         .map_err(anyhow::Error::msg)?;

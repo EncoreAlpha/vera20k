@@ -596,13 +596,34 @@ pub struct VeraCoopHouseAssignment {
     pub owner_name: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VeraCoopHouseAssignments {
     pub participants: Vec<VeraCoopHouseAssignment>,
+    /// Frozen lobby difficulty row: 0 = Easy, 1 = Normal, 2 = Hard.
+    /// TriggerType difficulty flags read this row for VeraCoop; stock starts
+    /// never carry these assignments.
+    #[serde(default = "default_vera_coop_difficulty")]
+    pub difficulty: i32,
+}
+
+fn default_vera_coop_difficulty() -> i32 {
+    1
+}
+
+impl Default for VeraCoopHouseAssignments {
+    fn default() -> Self {
+        Self {
+            participants: Vec::new(),
+            difficulty: default_vera_coop_difficulty(),
+        }
+    }
 }
 
 impl VeraCoopHouseAssignments {
     pub fn validate_for_launch(&self, launch: &SkirmishLaunchSession) -> Result<(), String> {
+        if !(0..=2).contains(&self.difficulty) {
+            return Err("VERA Coop frozen difficulty is outside the lobby rows 0..=2".to_owned());
+        }
         let players = launch
             .humans
             .iter()

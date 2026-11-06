@@ -2850,11 +2850,17 @@ fn load_map_first_step(
                     .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
                 let effective_ini =
                     config.apply_to_map(selected_map, source_sha256, &map_data.ini)?;
-                let recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
+                let mut recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
                     &effective_ini,
                     startup.launch_session(),
                     startup.seed.value,
                 )?;
+                // Difficulty is a frozen lobby input, not derived from the
+                // effective map, so retain the frozen row for the identity
+                // comparison.
+                if let Some(frozen) = startup.vera_coop_houses() {
+                    recomputed.difficulty = frozen.difficulty;
+                }
                 anyhow::ensure!(
                     startup.vera_coop_houses() == Some(&recomputed),
                     "VERA Coop effective map config, House assignments, or seed changed after freeze"
@@ -3072,6 +3078,15 @@ fn load_map_first_step(
                                 .map(|launch| launch.session());
                             let csf = Some(load_csf(services.asset_manager)?);
                             let overlay_registry = rules.overlay_registry().clone();
+                            // VERA Coop maps may register their own countries
+                            // (e.g. two Houses of one side addressed as separate
+                            // trigger owners). Native scenario reads merge the
+                            // map `[Countries]` registry before Houses and
+                            // triggers are built; stock modes keep the rules
+                            // registry untouched.
+                            if vera_coop_startup.is_some() {
+                                rules.merge_map_countries(&map_data.ini);
+                            }
                             // Campaign House construction and its map reads precede Map Resize/Fill.
                             // The same roster later supplies presentation and post-load consumers.
                             let house_roster = houses::parse_house_roster(
@@ -3125,12 +3140,19 @@ fn load_map_first_step(
                             } else if vera_coop_startup.is_some() {
                                 // VERA Coop authored LAN start: campaign-ordered
                                 // Houses over the effective map, no campaign
-                                // startup or stock start assignment.
+                                // startup or stock start assignment. The frozen
+                                // lobby difficulty row gates TriggerType
+                                // difficulty flags for this start.
+                                let difficulty = vera_coop_startup
+                                    .as_ref()
+                                    .and_then(|startup| startup.vera_coop_houses())
+                                    .map_or(1, |assignments| assignments.difficulty);
                                 FreshScenarioPrefix::VeraCooperative {
                                     native_rules_receipt,
                                     rules: &rules,
                                     map_data: &map_data,
                                     house_roster: &house_roster,
+                                    difficulty,
                                 }
                             } else {
                                 let campaign = campaign

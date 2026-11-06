@@ -185,7 +185,7 @@ impl FreshScenarioLoadContextDescriptor {
             let (_, source_sha256) = physical_source
                 .physical_identity()
                 .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-            let recomputed =
+            let mut recomputed =
                 crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
                     &map.ini,
                     selected_map,
@@ -194,6 +194,10 @@ impl FreshScenarioLoadContextDescriptor {
                     launch,
                     prepared.seed.value,
                 )?;
+            // The lobby difficulty is not derived from the map: freeze already
+            // validated it. Only the map/roles/seed identity is recomputable
+            // here, so keep the frozen row when comparing.
+            recomputed.difficulty = frozen.difficulty;
             anyhow::ensure!(
                 &recomputed == frozen,
                 "VERA Coop map, participant roles, or shared seed changed after start freeze"
@@ -251,7 +255,7 @@ impl FreshScenarioLoadContextDescriptor {
                     let (_, source_sha256) = physical_source
                         .physical_identity()
                         .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-                    let recomputed =
+                    let mut recomputed =
                         crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
                             &map.ini,
                             selected_map,
@@ -260,6 +264,9 @@ impl FreshScenarioLoadContextDescriptor {
                             &session,
                             match_seed,
                         )?;
+                    // See the admitted-start branch: difficulty is a frozen
+                    // lobby input, not a map-derived field.
+                    recomputed.difficulty = frozen.difficulty;
                     anyhow::ensure!(
                         &recomputed == frozen,
                         "VERA Coop map, participant roles, or shared seed changed after start freeze"
