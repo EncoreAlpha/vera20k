@@ -1349,6 +1349,36 @@ fn vera_coop_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
 }
 
 #[test]
+fn vera_coop_does_not_auto_defeat_empty_scenario_houses() {
+    use crate::sim::world::SimSoundEvent;
+
+    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let scenario = sim.interner.intern("scenario");
+    let country = sim.interner.intern("Country3");
+    sim.houses
+        .register(HouseState::new(scenario, 3, Some(country), false, 0, 10));
+
+    sim.check_defeat(Some(&rules), None);
+
+    for owner in [shared, scenario] {
+        assert!(
+            !sim.houses[&owner].is_defeated(),
+            "an authored scenario house with no objects is not a skirmish player"
+        );
+        assert!(
+            !sim.sound_events.iter().any(|event| {
+                matches!(event, SimSoundEvent::PlayerDefeated { house } if *house == owner)
+            }),
+            "an empty scenario house must not announce a defeat at mission start"
+        );
+    }
+    assert!(
+        sim.houses[&houses[0]].is_defeated(),
+        "an admitted role primary House keeps the defeat gate"
+    );
+}
+
+#[test]
 fn vera_coop_house_loss_never_completes_the_match() {
     use crate::sim::scenario_session::ScenarioGameMode;
     use crate::sim::world::FrameEffects;

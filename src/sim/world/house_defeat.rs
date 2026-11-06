@@ -231,6 +231,21 @@ impl Simulation {
         let defeat_gate = defeat_pass
             && self.session.game_mode_nonzero()
             && (self.session.binary_frame() as i32) > 0;
+        // A VERA network world runs a game mode other than the campaign's
+        // mode 0, but its map is an authored campaign map: houses that carry
+        // scenario teams/triggers are not skirmish players. Native's defeat
+        // gate (`0x004F8E86`) is campaign-skipped, so keep it to the admitted
+        // role primary Houses; otherwise every empty scenario house is marked
+        // defeated and announces `TXT_PLAYER_DEFEATED` at mission start.
+        let vera_viewpoints = if self
+            .session
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.mission_outcome_from_triggers_only())
+        {
+            Some(self.outcome_viewpoints())
+        } else {
+            None
+        };
         // Logic55B68D reloads the live House count after each complete body.
         // A House's power/radar and activation must precede its own teams,
         // EVA, defeat and production; no global half-body sweeps intervene.
@@ -288,7 +303,10 @@ impl Simulation {
             crate::sim::ai_team_creation::update_team_creation(self, rules, owner, frame_effects);
             crate::sim::house_eva::update_house_eva(self, rules, owner);
             crate::sim::superweapon::tick_house_superweapon_instances(self, rules, owner);
-            if defeat_gate && self.house_holds_nothing(owner, rules) {
+            let auto_defeat_house = vera_viewpoints
+                .as_ref()
+                .is_none_or(|viewpoints| viewpoints.contains(&owner));
+            if defeat_gate && auto_defeat_house && self.house_holds_nothing(owner, rules) {
                 self.house_blowup(
                     owner,
                     HouseBlowupSubset::All,
