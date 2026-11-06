@@ -431,11 +431,11 @@ impl App {
         };
         #[cfg(not(feature = "verax"))]
         let current_record_index = current_record_index;
-        let vera_coop_mode =
+        let vmce_mode =
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, selected_mode_id)
-                .is_some_and(|mode| mode.class.is_vera_cooperative());
-        let current_record_index = if vera_coop_mode {
-            crate::app::shell_network_setup::refresh_vera_coop_campaign_entries(state);
+                .is_some_and(|mode| mode.class.is_vmce());
+        let current_record_index = if vmce_mode {
+            crate::app::shell_network_setup::refresh_vmce_entries(state);
             state
                 .frontend
                 .scenario_catalog
@@ -444,7 +444,7 @@ impl App {
                 .position(|record| {
                     matches!(
                         &record.source,
-                        crate::map::skirmish_scenarios::SkirmishScenarioSource::VeraCoopCampaign(_)
+                        crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(_)
                     )
                 })
         } else {
@@ -452,11 +452,11 @@ impl App {
         };
         let layout = Self::skirmish_choose_map_layout(state);
         let network_setup = state.frontend.shell_route.network_setup();
-        let vera_cooperative_enabled = network_setup
+        let vmce_enabled = network_setup
             && state.persistence.options_profile.coop_expansion
             && state.match_state.session.host();
         state.frontend.skirmish_shell_state.choose_map_modal = Some(
-            crate::ui::skirmish_shell::ChooseMapModalState::open_with_vera_cooperative(
+            crate::ui::skirmish_shell::ChooseMapModalState::open_with_vmce(
                 if network_setup {
                     {
                         let room = state.match_state.session.network_room();
@@ -478,7 +478,7 @@ impl App {
                 &state.frontend.skirmish_modes,
                 state.frontend.scenario_catalog.records(),
                 &layout,
-                vera_cooperative_enabled,
+                vmce_enabled,
             ),
         );
         // VERA: online rooms list the online map library under its own row.

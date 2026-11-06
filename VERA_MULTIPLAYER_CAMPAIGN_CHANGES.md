@@ -35,20 +35,20 @@
 
 已实现：
 
-- `RuleSet::merge_map_countries` 只在 VERA Campaign 装载时调用：地图 `[Countries]` 追加到本次场景的 HouseType 注册表，已有国家保持原索引，新国家按地图顺序追加；对应 `[Colors]` 合并并重建颜色渐变。这样作者可以用“不同国家 + 各自 House”给每个角色写触发 owner，而不依赖 `<Player @ X>`。
+- `RuleSet::merge_map_countries` 只在 VMCE 装载时调用：地图 `[Countries]` 追加到本次场景的 HouseType 注册表，已有国家保持原索引，新国家按地图顺序追加；对应 `[Colors]` 合并并重建颜色渐变。这样作者可以用“不同国家 + 各自 House”给每个角色写触发 owner，而不依赖 `<Player @ X>`。
 - 地图 `[Countries]` 合并后，角色主 House、共享 House、触发 owner 和自定义国家都能使用地图新增国家；原 Cooperative 和普通遭遇战的规则注册表与哈希不变。
-- `VeraCoopHouseAssignments` 增加冻结的 `difficulty`（0=Easy、1=Normal、2=Hard）：大厅难度由房主选择并在开局冻结，装载器安装 `ScenarioSession::vera_coop_trigger_difficulty`，触发器难度不再恒为 Normal。普通存档没有该行，stock 会话的哈希流不变。
-- `install_vera_cooperative_house_authority` 在安装命令授权和人类标记后，安装地图 `[Houses] Allies=` 的盟友图。网络遭遇战只在 GameMode 0 读地图盟友，VERA 没有 launch teams，此前角色主 House 会默认互不结盟；现在按地图原有规则结盟。
+- `VmceHouseAssignments` 增加冻结的 `difficulty`（0=Easy、1=Normal、2=Hard）：大厅难度由房主选择并在开局冻结，装载器安装 `ScenarioSession::vmce_trigger_difficulty`，触发器难度不再恒为 Normal。普通存档没有该行，stock 会话的哈希流不变。
+- `install_vmce_house_authority` 在安装命令授权和人类标记后，安装地图 `[Houses] Allies=` 的盟友图。网络遭遇战只在 GameMode 0 读地图盟友，VERA 没有 launch teams，此前角色主 House 会默认互不结盟；现在按地图原有规则结盟。
 - 审计中确认暂不做的项目：`<Player @ X>` 改为作者写自定义国家；同 Country 多角色不折叠，由作者用不同国家规避；51 黑幕、139 雷达归作者；AllowWin(15) 不作合作胜利门；事件 33 不支持，列入待议。
 
-验证：审计修复当时跑过 `rules::ruleset`、`map::houses`、`sim::scenario_session`、`sim::trigger_runtime` 和装载准入相关定向测试；五个真实触发器变体均出现 `VERA Campaign authored alliances installed for ... Houses` 日志。此前的审计证据和逐项结论仍保留在 scratch。
+验证：审计修复当时跑过 `rules::ruleset`、`map::houses`、`sim::scenario_session`、`sim::trigger_runtime` 和装载准入相关定向测试；五个真实触发器变体均出现 `VMCE authored alliances installed for ... Houses` 日志。此前的审计证据和逐项结论仍保留在 scratch。
 
 ### 结算 ready/Continue 与下一关
 
 - 结果行仍按每名角色主 House 一行，共用 House 不单独占行；行数、结果和时间来自当前结果页模型。VERA 结果页没有单独胜利/失败标题，也不显示难度控件。
 - VERA 房主进入 BC6 即自动 ready，并广播自己的 ready；客人按 Continue 只标记自己 ready。全员 ready 后，只有房主 Continue 会返回 `Assign` 并开始下一关；客人 Continue 不能推进下一关。
 - 胜利且当前 `campaign.ini` 的 `[Scenario:<当前地图>] NextScenario` 存在时，两端本地解析下一关：按已准入 campaign 的目录与 `campaign.ini` 摘要复核，读取并校验下一关配置和地图，再按与首关相同的冻结开始时序装载。LAN 不传输地图或配置。
-- 新 `VeraCoopNextStage` 携带下一关地图路径、外部战役场景配置、地图元数据、本地 loose map source 和 effective digest。`freeze_cooperative_round` 把它和上一关的角色 House 授权一起装进新的 `PreparedNetworkStartup`，同时刷新下一关 LAN 选项使用的 map metadata；下一关加载仍走外部战役路径并再次核对身份。
+- 新 `VmceNextStage` 携带下一关地图路径、外部战役场景配置、地图元数据、本地 loose map source 和 effective digest。`freeze_cooperative_round` 把它和上一关的角色 House 授权一起装进新的 `PreparedNetworkStartup`，同时刷新下一关 LAN 选项使用的 map metadata；下一关加载仍走外部战役路径并再次核对身份。
 - 结果页在 VERA 下隐藏 stock 的国家/颜色/起始位置组合、难度滑杆和地图预览，只保留分数行、ready 标记、下一关路径、Continue、Quit 和聊天；`CoopScoreModel.vera` 由结果页拥有者设置，渲染和输入共用。
 - 失败、`EndOfGame=yes` 或没有 `NextScenario` 时 `can_continue=false`，结果页只提供 Quit；不写 `coopsave.ini`，不写跨关进度。
 
@@ -57,7 +57,7 @@
 - 真实胜利：`stage01` 的地图触发链以 action 67 结束，两端结果页行数都是 2、任务时间都是 `00:00:23`、`can_continue=true`；房主本地 ready，客人 Continue 后房主 Continue，两端进入 `stage02/all01umd.map`。下一关 native frame 60 两端 `state_hash` 相同，收尾干净；各出 `vera-result-real-win.png`、`vera-next-mission.png`。
 - 真实失败：两端 `can_continue=false`、时间 `00:00:13`，只走 Quit 并回合作大厅。
 - 真实触发器五变体：之前生成的最小失败/最小胜利/每角色失败/每角色胜利/自定义国家 owner 五张验收图，均两端同帧打开结果页；自定义国家 owner 的触发链被真实解析。详细触发链和结果表在 `evidence-0.1.21/` 的采集收据和日志里。
-- 定向测试：`app::match_runtime::session::cooperative_round` 10、`app::shell_network_setup::coop_map` 5、`ui::coop_score_shell` 4、`app::diagnostics::shell_capture` 89、core `sim::scenario_bootstrap` 70、core `sim::world::house_defeat` 21；`cargo build --profile fast --bin vera20k` 通过。
+- 定向测试：`app::match_runtime::session::cooperative_round` 10、`app::shell_network_setup` 26（其中 `vmce_map` 7）、`ui::coop_score_shell` 4、`app::diagnostics::shell_capture` 89、core `sim::scenario_bootstrap` 70、core `sim::world::house_defeat` 21；`cargo build --profile fast --bin vera20k` 通过。
 
 #### 结算后修复：战役地图的空场景 House 不再自动判负
 
@@ -65,19 +65,31 @@
 
 原因：原生 `HouseClass::Update` 的自动判负门（`0x004F8E86`）只在非战役模式运行；单人战役的 GameMode 0 直接跳过，所以地图里没有单位的剧情 House 不会被判负。VERA 用 LAN 非零 GameMode 跑战役地图，旧逻辑把所有“没有单位、不是 `MultiplayPassive`”的场景 House 都判负，并发出 `TXT_PLAYER_DEFEATED`。
 
-修复：`Simulation::house_rung` 在 VERA Campaign 下只让每名角色主 House（`outcome_viewpoints`）通过自动判负门；共享 House 和地图剧情 House 保持战役/触发器生命周期，不再在开局被标 defeated 或播报。角色主 House 的判负和继续任务行为不变。
+修复：`Simulation::house_rung` 在 VMCE 下只让每名角色主 House（`outcome_viewpoints`）通过自动判负门；共享 House 和地图剧情 House 保持战役/触发器生命周期，不再在开局被标 defeated 或播报。角色主 House 的判负和继续任务行为不变。
 
-验证：新增 `sim::world::house_defeat` 回归 `vera_coop_does_not_auto_defeat_empty_scenario_houses`（21 项该模块测试通过）；真实双进程下一关截图不再出现六条被击败消息，下一关 native frame 60 两端 `state_hash` 仍一致。
+验证：新增 `sim::world::house_defeat` 回归 `vmce_does_not_auto_defeat_empty_scenario_houses`（21 项该模块测试通过）；真实双进程下一关截图不再出现六条被击败消息，下一关 native frame 60 两端 `state_hash` 仍一致。
 
 #### 战役语义修正：随机箱、ShortGame、Special House/Secret Lab
 
 VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不够，以下多人专属步骤也会改变战役：
 
-- `install_vera_cooperative_campaign_options` 在 VERA fresh 装载时关闭 `short_game` 和 `crates`：角色主 House 的判负按“所有对象都没了”计算，而不是只掉建筑；随机箱系统不再运行。
+- `install_vmce_campaign_options` 在 VERA fresh 装载时关闭 `short_game` 和 `crates`：角色主 House 的判负按“所有对象都没了”计算，而不是只掉建筑；随机箱系统不再运行。
 - `finalize_scenario_post_map` 识别 VERA 的 trigger-only 战役语义，跳过 `Post_Map_Init` 的 Special House 全体结盟和 Secret Lab 随机生产；地图作者自己的 `[Houses] Allies=` 图仍由 VERA authority 安装。
 - 这两项不改变普通 LAN/遭遇战；普通模式仍按 GameMode 非零和对应 lobby 选项执行。VERA 大厅里的 ShortGame/Crates 复选框保留显示但禁用，避免出现“勾了却不生效”的误解。
 
-验证：新增 `vera_coop_post_map_skips_the_special_house_pass`（9 项 `sim::scenario_post_map` 测试通过）、`vera_coop_campaign_options_keep_role_houses_alive_with_units`（21 项 `sim::world::house_defeat` 测试通过）；真实双进程胜利仍两关同帧，下一关 native frame 60 两端 `state_hash` 一致。
+验证：新增 `vmce_post_map_skips_the_special_house_pass`（9 项 `sim::scenario_post_map` 测试通过）、`vmce_campaign_options_keep_role_houses_alive_with_units`（21 项 `sim::world::house_defeat` 测试通过）；真实双进程胜利仍两关同帧，下一关 native frame 60 两端 `state_hash` 一致。
+
+#### VMCE 命名与系列目录（2026-11-06）
+
+把内部标识从含糊的 `VeraCampaign`/`Campaign` 改为 `Vmce`/`vmce_*`/`VMCE_*`，并把战役目录从“根下散落地图 + 子目录只放 `campaign.ini`”改成“每个系列一个子目录”：
+
+- 类型/模块：`MpModeClass::Vmce`、`VmceHouseAssignments`、`VmceMapConfig`、`VmceNextStage`、`VmceSeriesIdentity`；模块 `vmce_map`、`vmce_config`。旧的 `VeraCoop`/`VeraCampaign`/`coop_map`/`coop_config` 标识不再保留。
+- 模式行文案保持 **Multiplayer Campaign**；产品名仍是 VERA Multiplayer Campaign Expansion。
+- 目录硬切换为 `settings/Maps/VMCE/<系列>/`：`campaign.ini`、地图和系列 CSF 都在系列目录内，`Entry`/`ScenarioN`/`NextScenario` 相对该系列目录。旧 `Maps/VeraCampaign` 和过渡版 `Maps/Vmce` 不再读取。
+- `[Campaign] Name=<CSF 标签>` 可选；显示名优先用系列目录的 `ra2md.csf`，其次基础游戏 CSF，最后回退系列目录名。示例 `Name=Name:AD03` → 林德拉克计划。
+- 旧日志/诊断里的 “VERA Coop” 文案改为 VMCE 命名；不改变任务规则、结果页、触发器语义或普通 LAN 行为。
+
+验证：`app::shell_network_setup` 26 项、`app::shell_network_setup::vmce_map` 7 项、`app::diagnostics::shell_capture` 89 项、core `skirmish_modes` 11 项、`sim::scenario_post_map` 9 项、`sim::world::house_defeat` 21 项、`sim::scenario_bootstrap` 70 项、`ui::multiplayer_setup` 9 项通过；`cargo build --profile fast --bin vera20k` 通过。真实双进程胜利验收走 `settings/Maps/VMCE/testcampaign/`，系列显示名从该系列 `ra2md.csf` 的 `Name:AD03` 解析为「林德拉克计划」，下一关为 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash` 一致；失败验收两端 `can_continue=false`。
 
 ### `0.1.21-dev` 遗留
 
@@ -123,7 +135,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 ## 当前实现边界
 
 - 只支持 LAN；WOL/CnCNet 不支持。
-- 玩家需自行安装相同地图和 `settings/Maps/VeraCoop/<campaign>/campaign.ini`；LAN 只核对摘要，不传地图或配置。
+- 玩家需自行安装相同地图和 `settings/Maps/VMCE/<series>/campaign.ini`；LAN 只核对摘要，不传地图或配置。
 - 配置格式、字段、64 KiB 上限、地图必须为 loose `.map`、角色 House 必须互不相同等规则以 VMCE 说明书为准。
 - 地图 `[Countries]` 合并、`[Colors]` 合并和 `[Houses] Allies=` 安装只在 VERA 装载路径生效；地图 `[Sides]` 不合并。
 - 结果页复用原生 BC6 对话框：行数由角色主 House 数决定，但原生布局只有两行，超过两行的分数/ready 显示需要后续补。
@@ -140,7 +152,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 - `Simulation::outcome_viewpoints` 返回每个网络 source 的主 House；结果行和胜负标记共用这份判定。普通联机仍按真人 House 选择，离线仍按当前 House。
 - `multiplayer_decision` 在 VERA 下返回 `None`；`complete_multiplayer_after_defeat` 只标记 House，不结束任务。
 - `request_player_outcome` 在 VERA 下对全部角色主 House 应用团队结果；动作 69 保留先前结果；原 Cooperative 的逐 PlayerPtr 判定不变。
-- 结果页模式标签用 VERA 模式行自身文本；装载器在 `install_vera_cooperative_house_authority` 里安装已准入的 mode class。
+- 结果页模式标签用 VERA 模式行自身文本；装载器在 `install_vmce_house_authority` 里安装已准入的 mode class。
 - 采集目标新增 `--vera-outcome win|lose|houses`，在同一 committed frame 通过生产 outcome 所有者注入，并登记结果页、继续任务后和任务全景 PNG。
 
 验证：win/lose 两端进入 BC6，行数 2、`can_continue=false`，注入帧同为 native frame 1400，Quit 后回大厅；300/300 帧校验和与 20 个固定帧 `state_hash` 一致。houses 模式把两端两个角色主 House 标为 defeated 后没有结算页、任务继续。真实地图触发器和真实下一关由 `0.1.21` 接续验证。
@@ -158,7 +170,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 - 恢复 VERA 房间时 campaign Entry 不在目录；建房间前先发现 Entry。
 - 恢复 LAN 存档时两个座位都继承 role 0；VERA 座位默认 Random，角色只在大厅显式选择。
 - 装载画面组装对 VERA 误用 stock-offline 访问器导致 panic；改为使用冻结的 network launch 名单。
-- 装载器 fresh prefix 选择处 panic；新增 VERA Campaign fresh prefix 族，按 campaign 顺序建 authored House roster，populate 只安装冻结授权。
+- 装载器 fresh prefix 选择处 panic；新增 VMCE fresh prefix 族，按 campaign 顺序建 authored House roster，populate 只安装冻结授权。
 - 测试地图开场锁定输入；诊断目标等解锁后下发 Move 并记录延迟。
 - 双进程收尾竞态；先完成的一端保持传输等另一端落定。
 
@@ -168,7 +180,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 
 ### `0.1.18-dev`
 
-接通 VERA 的 LAN 开局：房主 Start 时先用冻结的外部战役配置、选中 loose 地图和共享 seed 复核角色与 House 分配，再放行 GO；加载器在读取地图对象前调用 `initialize_vera_cooperative_houses`，建立 sender→House 命令授权表。本地玩家主 House 成为 `current_house`；被授权控制的 House 按共享 `IsHuman` 标记为人类，其 AI 不再接管；未授权 House 仍由 AI 运行。移除大厅和装载器的两处 VERA 开局拦截。
+接通 VERA 的 LAN 开局：房主 Start 时先用冻结的外部战役配置、选中 loose 地图和共享 seed 复核角色与 House 分配，再放行 GO；加载器在读取地图对象前调用 `initialize_vmce_houses`，建立 sender→House 命令授权表。本地玩家主 House 成为 `current_house`；被授权控制的 House 按共享 `IsHuman` 标记为人类，其 AI 不再接管；未授权 House 仍由 AI 运行。移除大厅和装载器的两处 VERA 开局拦截。
 
 验证：`sim::world::world_commands`、`sim::scenario_bootstrap`、`app::shell_network_setup`、`app::input::dispatch`、`app::loading::init`、`app::input::context_order` 等定向测试通过；新增 bootstrap 测试覆盖两玩家加共享额外 House 的授权表、快照往返和房主/客机 `state_hash` 一致。
 
@@ -184,7 +196,7 @@ VERA 额外 House 支持普通单元格点击下达移动命令：本地点击�
 
 延续 House grant 准备路径，并修正 Infantry 第二次 idle fidget 的 `VoiceComment=` Main RNG 消耗：VERA 网络端按各角色主/额外 House grant 的并集，在同一共享条件下消费该 draw；声音只由本地 current House 中未选中的单位播放，不扩展到额外 House。未被 grant 的 AI House 不消费该 draw；其他模式保留旧的本地 House/selection gate。
 
-同时确定配置根目录为 `settings/Maps/VeraCoop`，每个直接子目录包含 `campaign.ini`；地图路径相对该根目录。房主选图时发现唯一包含该地图的有效战役，检查清单地图存在且路径留在根目录，并从 `[Scenario:<map>]` 读取角色和 House 控制键；每个角色主 House 必须不同，地图旧合作字段不用于填补缺失角色。加载时要求 source 是根目录下清单路径对应的 loose 文件，拒绝同名 retail 地图和 MIX 来源；配置验证 `NextScenario`/`AltNextScenario`/`EndOfGame` 及重复区段/键。LAN 只交换战役目录、完整 INI 摘要和地图源摘要，不传文件。当时实际关卡跳转和结算尚未实现。
+同时确定配置根目录为 `settings/Maps/VMCE`，每个直接子目录是一个系列，包含 `campaign.ini`；地图路径相对该系列目录。房主选图时发现唯一包含该地图的有效战役，检查清单地图存在且路径留在系列目录，并从 `[Scenario:<map>]` 读取角色和 House 控制键；每个角色主 House 必须不同，地图旧合作字段不用于填补缺失角色。加载时要求 source 是根目录下清单路径对应的 loose 文件，拒绝同名 retail 地图和 MIX 来源；配置验证 `NextScenario`/`AltNextScenario`/`EndOfGame` 及重复区段/键。LAN 只交换战役目录、完整 INI 摘要和地图源摘要，不传文件。当时实际关卡跳转和结算尚未实现。
 
 ### `0.1.12-dev` 及更早
 
@@ -196,7 +208,7 @@ VERA 额外 House 支持普通单元格点击下达移动命令：本地点击�
 | `0.1.11-dev` | 外部合作配置草稿与地图/配置身份校验；loose 地图从旁读取，MIX 地图从游戏目录或 `settings_dir/Maps` 查找；旧的每关 `.coop.ini` sidecar 和 `[Basic] PlayerX` 方案后来被 `campaign.ini` 取代，仅作历史 |
 | `0.1.10-dev` | 外部配置白名单解析：`[Basic] Player1..4` 和地图 `[Houses]` 中已有的 House 控制键；仅 map 层解析，未接房间或开局 |
 | `0.1.9-dev` | 合作大厅显示角色颜色，增加战役简报、难度和游戏速度控件；检查 800×600 画面 |
-| `0.1.8-dev` | VERA Options 增加多人战役开关；开启后房主可选 VERA Campaign，默认关闭 |
+| `0.1.8-dev` | VERA Options 增加多人战役开关；开启后房主可选 VMCE，默认关闭 |
 | `0.1.7-dev` | 合作大厅复用原版侧栏布局，使预览、地图信息和按钮与底图对齐 |
 | `0.1.6-dev` | 大厅玩家/角色选择边框对齐，空的观察者占位不再显示 |
 | `0.1.5-dev` | 合作大厅独立布局：按窗口调整，角色选择对应地图所属方，按钮放在地图预览右侧 |

@@ -381,14 +381,14 @@ impl Simulation {
     /// viewpoints in one lockstep world, through the same House flags and
     /// shared +298 timer; nonhuman House behavior is not broadened.
     ///
-    /// The mission's player viewpoints: each VERA Coop role's primary House,
+    /// The mission's player viewpoints: each VMCE role's primary House,
     /// every human House in a stock network match, or the current House
     /// offline. Diagnostics and result rows read this owner.
     pub fn player_outcome_viewpoints(&self) -> Vec<InternedId> {
         self.outcome_viewpoints()
     }
 
-    /// VERA Coop's grant table names one primary House per network source. A
+    /// VMCE's grant table names one primary House per network source. A
     /// shared House another source also controls is not a separate player, so
     /// the team's viewpoints are the source primaries, not every House marked
     /// human.
@@ -396,7 +396,7 @@ impl Simulation {
         if self.session.game_mode().is_network() {
             if self.session.has_network_house_grants() {
                 let mut viewpoints: Vec<InternedId> = Vec::new();
-                for &index in self.session.cooperative_source_houses() {
+                for &index in self.session.campaign_source_houses() {
                     let Some(owner) = self.houses.order().get(usize::from(index)).copied() else {
                         continue;
                     };
@@ -593,7 +593,7 @@ impl Simulation {
     /// survivors and a human remain, else each outcome viewpoint and whether
     /// it wins.
     fn multiplayer_decision(&self) -> Option<Vec<(InternedId, bool)>> {
-        // VERA Coop's outcome comes from the authored mission's own outcome
+        // VMCE's outcome comes from the authored mission's own outcome
         // actions and the host leaving; eliminating every player House keeps
         // the mission running, so the completion scan never resolves one.
         if self
@@ -790,7 +790,7 @@ impl Simulation {
         rules: &RuleSet,
         effects: FrameEffects<'_>,
     ) -> bool {
-        // VERA Coop's authored missions decide the whole team. Original
+        // VMCE's authored missions decide the whole team. Original
         // Cooperative and every other mode keep the per-PlayerPtr decision
         // below, including its country comparison.
         if self
@@ -850,7 +850,7 @@ impl Simulation {
         handled
     }
 
-    /// VERA Coop's team outcome: one result for every role primary House.
+    /// VMCE's team outcome: one result for every role primary House.
     /// Authored campaign actions name PlayerPtr's country, which a cooperative
     /// team cannot split, so action 1/67 win the whole team and 2/68 lose it;
     /// the country parameter is not compared. Action 69 keeps whatever result
@@ -923,7 +923,7 @@ impl Simulation {
         )
     }
 
-    /// Diagnostic producer for a VERA Coop player House's defeat edge: marks
+    /// Diagnostic producer for a VMCE player House's defeat edge: marks
     /// the House defeated and runs the same multiplayer completion scan a
     /// destroyed House reaches. Only diagnostic capture routes call it;
     /// shipping builds omit it. VERA's scan is a no-op by design, so the

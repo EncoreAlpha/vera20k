@@ -38,7 +38,7 @@ fn setup_control_at_row(
     }
     anyhow::bail!("setup page navigation did not reach the participant")
 }
-use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport, VeraCoopOutcome};
+use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport, VmceOutcome};
 use crate::net::udp::UdpBindConfig;
 use crate::ui::multiplayer_setup::{SetupAction, SetupColumn};
 use std::collections::{BTreeMap, BTreeSet};
@@ -56,15 +56,15 @@ const HOST_NAME: &str = "LiveHost";
 const GUEST_NAME: &str = "LiveGuest";
 const REQUIRED_FRAMES: u32 = 300;
 const SOLO_AI_INPUT_BOUND_FRAMES: u32 = 1;
-const VERA_COOP_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
-/// Render frames an accepted VERA Coop Start may spend before leaving the
+const VMCE_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
+/// Render frames an accepted VMCE Start may spend before leaving the
 /// setup shell for loading. A refusal keeps the host on MainMenu, so this
 /// bounded window reports the refusal instead of the generic capture timeout.
-const VERA_COOP_START_WATCHDOG_FRAMES: u32 = 600;
-/// A VERA Coop peer that finished its own checks first keeps its transport
+const VMCE_START_WATCHDOG_FRAMES: u32 = 600;
+/// A VMCE peer that finished its own checks first keeps its transport
 /// alive while the slower peer settles, so neither fails on a peer that
 /// already exited. Both wait on each other; the wall clock bounds the wait.
-const VERA_COOP_PAIR_LINGER_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+const VMCE_PAIR_LINGER_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Diagnostic evidence only: a fixed local frame cannot prove that Stop has
 /// arrived from the relay. Retain the full Position after actual execution,
@@ -396,17 +396,17 @@ pub(super) struct LiveLanCapture {
     coop_setup_final: Option<Value>,
     coop_setup_guest_accepted: bool,
     coop_setup_started: Option<Instant>,
-    /// The render frame the VERA Coop host clicked the production Start.
+    /// The render frame the VMCE host clicked the production Start.
     coop_setup_started_frame: Option<u32>,
     /// First committed frame whose authored map locked tactical input.
     locked_frames: Option<u32>,
-    /// First committed frame whose VERA Coop pair conditions were met.
+    /// First committed frame whose VMCE pair conditions were met.
     pair_linger_at: Option<u32>,
     pair_linger_wall: Option<Instant>,
     /// The peer-House control probe, recorded once after GO.
     vera_probe: Option<Value>,
     /// `--vera-outcome`: the mission outcome to inject after the prefix.
-    vera_outcome: Option<VeraCoopOutcome>,
+    vera_outcome: Option<VmceOutcome>,
     vera_outcome_phase: VeraOutcomePhase,
     vera_outcome_evidence: Option<Value>,
     vera_outcome_injected_frame: Option<u32>,
@@ -611,7 +611,7 @@ impl LiveLanCapture {
                 | LanTarget::LiveCoopHost
                 | LanTarget::LiveCoopSavedHost
                 | LanTarget::LiveCoopFinalHost
-                | LanTarget::LiveVeraCoopHost
+                | LanTarget::LiveVmceHost
                 | LanTarget::BattleHost
         )
     }
@@ -866,30 +866,30 @@ impl LiveLanCapture {
     ) -> Result<()> {
         if matches!(
             self.target,
-            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
         ) && matches!(
             self.phase,
             Phase::Discover | Phase::HostSetup | Phase::HostReady | Phase::GuestSetup
         ) {
             let started = *self.coop_setup_started.get_or_insert_with(Instant::now);
-            if started.elapsed() >= VERA_COOP_SETUP_WATCHDOG {
+            if started.elapsed() >= VMCE_SETUP_WATCHDOG {
                 anyhow::bail!(
-                    "live VERA Coop setup watchdog expired after {}s: {}",
-                    VERA_COOP_SETUP_WATCHDOG.as_secs(),
-                    vera_coop_setup_watchdog_snapshot(self, state, rendered)
+                    "live VMCE setup watchdog expired after {}s: {}",
+                    VMCE_SETUP_WATCHDOG.as_secs(),
+                    vmce_setup_watchdog_snapshot(self, state, rendered)
                 );
             }
         }
-        if self.target == LanTarget::LiveVeraCoopHost
+        if self.target == LanTarget::LiveVmceHost
             && self.phase == Phase::Loading
             && state.frontend.screen != GameScreen::Loading
             && state.frontend.screen != GameScreen::InGame
             && frame.saturating_sub(self.coop_setup_started_frame.unwrap_or(frame))
-                > VERA_COOP_START_WATCHDOG_FRAMES
+                > VMCE_START_WATCHDOG_FRAMES
         {
             anyhow::bail!(
-                "VERA Coop Start did not leave setup within {VERA_COOP_START_WATCHDOG_FRAMES} render frames: {}",
-                vera_coop_setup_watchdog_snapshot(self, state, rendered)
+                "VMCE Start did not leave setup within {VMCE_START_WATCHDOG_FRAMES} render frames: {}",
+                vmce_setup_watchdog_snapshot(self, state, rendered)
             );
         }
         if let Some(latency) = self.latency.as_mut() {
@@ -1017,12 +1017,12 @@ impl LiveLanCapture {
                 let isolated_ra2 = LanCapture::isolated_root(state)?;
                 if matches!(
                     self.target,
-                    LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+                    LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
                 ) {
                     let isolated_settings = LanCapture::isolated_settings_root(state)?;
                     ensure!(
                         isolated_ra2 != isolated_settings,
-                        "VERA Coop setup capture needs separate isolated assets and settings roots"
+                        "VMCE setup capture needs separate isolated assets and settings roots"
                     );
                 }
                 ensure!(
@@ -1108,8 +1108,8 @@ impl LiveLanCapture {
             }
             Phase::HostSetup => {
                 let selected = self.config.as_ref().and_then(|config| config.map.clone());
-                let mode_id = if self.target == LanTarget::LiveVeraCoopHost {
-                    Some(vera_cooperative_mode_id(state)?)
+                let mode_id = if self.target == LanTarget::LiveVmceHost {
+                    Some(vmce_mode_id(state)?)
                 } else {
                     None
                 };
@@ -1127,12 +1127,12 @@ impl LiveLanCapture {
                     self.rounds = Some(rounds);
                     result?
                 } else if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) {
-                    if self.target == LanTarget::LiveVeraCoopHost {
+                    if self.target == LanTarget::LiveVmceHost {
                         // The production chooser runs this same discovery owner
-                        // when its VERA Coop mode row is selected; the
+                        // when its VMCE mode row is selected; the
                         // diagnostic commits the discovered Entry map directly
                         // through the normal Use Map transaction.
-                        crate::app::shell_network_setup::refresh_vera_coop_campaign_entries(state);
+                        crate::app::shell_network_setup::refresh_vmce_entries(state);
                     }
                     self.prepare_host_setup(
                         state,
@@ -1148,8 +1148,8 @@ impl LiveLanCapture {
                 if prepared {
                     self.event(
                         frame,
-                        if self.target == LanTarget::LiveVeraCoopHost {
-                            "host selected the VERA Coop map through production setup owner"
+                        if self.target == LanTarget::LiveVmceHost {
+                            "host selected the VMCE map through production setup owner"
                         } else {
                             "host selected the map and open human rows through normal setup"
                         },
@@ -1160,8 +1160,8 @@ impl LiveLanCapture {
             Phase::HostReady
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) =>
             {
-                if self.target == LanTarget::LiveVeraCoopHost {
-                    self.step_vera_coop_host_setup(state, frame)?;
+                if self.target == LanTarget::LiveVmceHost {
+                    self.step_vmce_host_setup(state, frame)?;
                     return Ok(());
                 }
                 let session = &state.match_state.session;
@@ -1188,8 +1188,8 @@ impl LiveLanCapture {
             Phase::GuestSetup
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, false) =>
             {
-                if self.target == LanTarget::LiveVeraCoopGuest {
-                    self.step_vera_coop_guest_setup(state, frame)?;
+                if self.target == LanTarget::LiveVmceGuest {
+                    self.step_vmce_guest_setup(state, frame)?;
                     return Ok(());
                 }
                 // The guest's game accepts the received options and map by
@@ -1326,15 +1326,14 @@ impl LiveLanCapture {
         self.open_human_rows(state, ai)
     }
 
-    fn step_vera_coop_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+    fn step_vmce_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         let session = &state.match_state.session;
-        let launch = session.network_setup().context("VERA Coop host setup")?;
+        let launch = session.network_setup().context("VMCE host setup")?;
         if launch.humans.len() < 2 {
             return Ok(());
         }
         ensure!(
-            session.host()
-                && launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative,
+            session.host() && launch.mode.class == crate::skirmish_modes::MpModeClass::Vmce,
             "live Coop host lost its admitted mode"
         );
         let (host, guest) = coop_setup_rows(launch)?;
@@ -1347,7 +1346,7 @@ impl LiveLanCapture {
             if !host_ready || !host_map {
                 return Ok(());
             }
-            self.coop_setup_initial = Some(vera_coop_setup_snapshot(state)?);
+            self.coop_setup_initial = Some(vmce_setup_snapshot(state)?);
             self.event(
                 frame,
                 if guest_ready && guest_map {
@@ -1363,11 +1362,11 @@ impl LiveLanCapture {
         if !host_ready || !guest_ready || !host_map || !guest_map {
             return Ok(());
         }
-        let final_snapshot = vera_coop_setup_snapshot(state)?;
+        let final_snapshot = vmce_setup_snapshot(state)?;
         ensure_coop_setup_ready_transition(
             self.coop_setup_initial
                 .as_ref()
-                .context("initial VERA Coop host snapshot")?,
+                .context("initial VMCE host snapshot")?,
             &final_snapshot,
             true,
         )?;
@@ -1377,23 +1376,20 @@ impl LiveLanCapture {
             "action": "guest Ready received by host over real LAN",
             "state": final_snapshot,
         }));
-        // mode+14's VERA Coop admission validates the frozen role/House roster
+        // mode+14's VMCE admission validates the frozen role/House roster
         // against the effective map, then freezes it for the loader's own
         // re-verification and the shared command grants.
         setup_button(state, crate::ui::multiplayer_setup::START)?;
-        self.event(
-            frame,
-            "host Start clicked; VERA Coop admission and frozen start",
-        );
+        self.event(frame, "host Start clicked; VMCE admission and frozen start");
         self.coop_setup_started_frame = Some(frame);
         self.phase = Phase::Loading;
         Ok(())
     }
 
-    fn step_vera_coop_guest_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+    fn step_vmce_guest_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         let session = &state.match_state.session;
-        let launch = session.network_setup().context("VERA Coop guest setup")?;
-        if launch.mode.class != crate::skirmish_modes::MpModeClass::VeraCooperative
+        let launch = session.network_setup().context("VMCE guest setup")?;
+        if launch.mode.class != crate::skirmish_modes::MpModeClass::Vmce
             || launch.selected_map_file.is_none()
         {
             return Ok(());
@@ -1406,7 +1402,7 @@ impl LiveLanCapture {
         if !self.coop_setup_guest_accepted {
             if session.network_map_status(guest) != Some(1)
                 || !setup::view(state)
-                    .context("VERA Coop guest view")?
+                    .context("VMCE guest view")?
                     .accept_enabled
             {
                 return Ok(());
@@ -1415,7 +1411,7 @@ impl LiveLanCapture {
                 !session.network_player_ready(guest),
                 "guest was already Ready before the diagnostic Accept"
             );
-            self.coop_setup_initial = Some(vera_coop_setup_snapshot(state)?);
+            self.coop_setup_initial = Some(vmce_setup_snapshot(state)?);
             setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
             let accepted = state
                 .match_state
@@ -1434,8 +1430,8 @@ impl LiveLanCapture {
             let initial = self
                 .coop_setup_initial
                 .clone()
-                .context("initial VERA Coop guest snapshot")?;
-            let final_snapshot = vera_coop_setup_snapshot(state)?;
+                .context("initial VMCE guest snapshot")?;
+            let final_snapshot = vmce_setup_snapshot(state)?;
             ensure_coop_setup_ready_transition(&initial, &final_snapshot, false)?;
             self.coop_setup_final = Some(final_snapshot.clone());
             self.route.push(json!({
@@ -1445,7 +1441,7 @@ impl LiveLanCapture {
             }));
             self.event(
                 frame,
-                "guest accepted the host's VERA Coop map through production setup",
+                "guest accepted the host's VMCE map through production setup",
             );
             return Ok(());
         }
@@ -1453,11 +1449,11 @@ impl LiveLanCapture {
         let initial = self
             .coop_setup_initial
             .as_ref()
-            .context("initial VERA Coop guest snapshot")?;
+            .context("initial VMCE guest snapshot")?;
         if session.network_map_status(guest) != Some(1) || !session.network_player_ready(guest) {
             return Ok(());
         }
-        let final_snapshot = vera_coop_setup_snapshot(state)?;
+        let final_snapshot = vmce_setup_snapshot(state)?;
         ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
         self.coop_setup_final = Some(final_snapshot.clone());
         self.route.push(json!({
@@ -1590,14 +1586,14 @@ impl LiveLanCapture {
         let committed = simulation.session().binary_frame();
         if matches!(
             self.target,
-            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
         ) && self.actor.is_some()
             && self.pair_linger_at.is_none()
             && self.vera_outcome.is_none()
             && committed >= self.required_frames() + 600
         {
             anyhow::bail!(
-                "VERA Coop capture incomplete at native frame {committed}: actions={}, stopped={}, stop_settled={}, checksums={}, simple_applied={}, move_applied={}",
+                "VMCE capture incomplete at native frame {committed}: actions={}, stopped={}, stop_settled={}, checksums={}, simple_applied={}, move_applied={}",
                 json!(self.actions),
                 self.stopped,
                 self.stop_observation.position().is_some(),
@@ -1670,12 +1666,12 @@ impl LiveLanCapture {
         // The pair runner still requires and compares both complete prefixes.
         let lan_battle_prefix =
             self.battle.is_some() && !self.target.online() && committed >= required_frames;
-        // A VERA Coop peer holds its transport after its own completion so the
+        // A VMCE peer holds its transport after its own completion so the
         // slower peer can settle; the peer's ordinary exit is expected here.
         let vera_pair_lingering = self.pair_linger_at.is_some()
             && matches!(
                 self.target,
-                LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+                LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
             );
         // A VERA outcome run keeps observing after the result dialog has taken
         // the LIVE transport into the co-op round owner, so the ordinary
@@ -1770,11 +1766,11 @@ impl LiveLanCapture {
         }
         if matches!(
             self.target,
-            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
         ) && self.vera_probe.is_none()
             && committed >= 5
         {
-            self.vera_probe = Some(vera_coop_probe(state)?);
+            self.vera_probe = Some(vmce_probe(state)?);
         }
         if committed >= 10 && self.actor.is_none() {
             self.issue_move(state, committed)?;
@@ -1859,7 +1855,7 @@ impl LiveLanCapture {
                 );
             } else if matches!(
                 self.target,
-                LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+                LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
             ) && !self.pair_linger_done(committed, &peer_frames)
             {
                 // Hold this process on the frame loop until the peer is past
@@ -1872,7 +1868,7 @@ impl LiveLanCapture {
         Ok(())
     }
 
-    /// Whether this VERA Coop process may leave the frame loop: the peer has
+    /// Whether this VMCE process may leave the frame loop: the peer has
     /// advertised the linger margin after our own completion, or the wall
     /// clock wait expired. The first observation is recorded once.
     fn pair_linger_done(&mut self, committed: u32, peer_frames: &[i32]) -> bool {
@@ -1881,7 +1877,7 @@ impl LiveLanCapture {
             self.pair_linger_wall = Some(Instant::now());
             self.event(
                 committed,
-                "VERA Coop pair conditions met; holding the transport until the peer settles",
+                "VMCE pair conditions met; holding the transport until the peer settles",
             );
             return false;
         };
@@ -1889,13 +1885,13 @@ impl LiveLanCapture {
         let peer_gone = peer_frames.is_empty();
         let waited = self
             .pair_linger_wall
-            .is_some_and(|wall| wall.elapsed() >= VERA_COOP_PAIR_LINGER_WAIT);
+            .is_some_and(|wall| wall.elapsed() >= VMCE_PAIR_LINGER_WAIT);
         if !peer_gone && !waited {
             return false;
         }
         self.route.push(json!({
             "native_frame": committed,
-            "input": "VERA Coop pair complete",
+            "input": "VMCE pair complete",
             "linger_frames": committed.saturating_sub(self.pair_linger_at.unwrap_or(committed)),
             "peer_gone": peer_gone,
         }));
@@ -1929,7 +1925,7 @@ impl LiveLanCapture {
         let kind = outcome.as_str();
         // Real-trigger runs never inject: arm a receipt as soon as the mission
         // is live, then let `finish_vera_outcome` observe the map's own chain.
-        if outcome == VeraCoopOutcome::Real {
+        if outcome == VmceOutcome::Real {
             // The receipt/exit validators consume the regular 300-frame
             // checksum/hash prefix, so arm once that prefix exists rather than
             // on an arbitrary early frame.
@@ -1987,19 +1983,19 @@ impl LiveLanCapture {
                     // from the mutable simulation borrow.
                     let rules = &runtime.resources.rules;
                     match outcome {
-                        VeraCoopOutcome::Win => {
+                        VmceOutcome::Win => {
                             runtime.simulation.dev_trigger_current_house_outcome(
                                 &rules,
                                 HouseOutcomeKind::Victory,
                             );
                         }
-                        VeraCoopOutcome::Lose => {
+                        VmceOutcome::Lose => {
                             runtime.simulation.dev_trigger_current_house_outcome(
                                 &rules,
                                 HouseOutcomeKind::Defeat,
                             );
                         }
-                        VeraCoopOutcome::HouseLoss => {
+                        VmceOutcome::HouseLoss => {
                             let owners = runtime.simulation.player_outcome_viewpoints();
                             let marked: Vec<String> = owners
                                 .iter()
@@ -2012,7 +2008,7 @@ impl LiveLanCapture {
                             }
                             self.vera_outcome_houses = Some(json!(marked));
                         }
-                        VeraCoopOutcome::Real => {
+                        VmceOutcome::Real => {
                             unreachable!("real-trigger mode never injects an outcome")
                         }
                     }
@@ -2022,12 +2018,12 @@ impl LiveLanCapture {
                     self.event(
                         committed,
                         match outcome {
-                            VeraCoopOutcome::Win => "VERA outcome: team victory injected",
-                            VeraCoopOutcome::Lose => "VERA outcome: team defeat injected",
-                            VeraCoopOutcome::HouseLoss => {
+                            VmceOutcome::Win => "VERA outcome: team victory injected",
+                            VmceOutcome::Lose => "VERA outcome: team defeat injected",
+                            VmceOutcome::HouseLoss => {
                                 "VERA outcome: every player House marked defeated"
                             }
-                            VeraCoopOutcome::Real => {
+                            VmceOutcome::Real => {
                                 "VERA outcome: real-trigger mode has no injected outcome"
                             }
                         },
@@ -2053,16 +2049,16 @@ impl LiveLanCapture {
         let render_frame = self.vera_outcome_render_frames;
         match self.vera_outcome_phase {
             VeraOutcomePhase::Observe => match outcome {
-                VeraCoopOutcome::Win | VeraCoopOutcome::Lose => {
+                VmceOutcome::Win | VmceOutcome::Lose => {
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         let victory = page.victory;
                         ensure!(
-                            victory == (outcome == VeraCoopOutcome::Win),
-                            "VERA Coop result dialog reported the wrong verdict"
+                            victory == (outcome == VmceOutcome::Win),
+                            "VMCE result dialog reported the wrong verdict"
                         );
                         ensure!(
                             page.model.rows.len() > 0,
-                            "VERA Coop result dialog has no role rows"
+                            "VMCE result dialog has no role rows"
                         );
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
@@ -2090,16 +2086,16 @@ impl LiveLanCapture {
                     } else {
                         ensure!(
                             render_frame < 900,
-                            "VERA Coop result dialog did not open after the injected outcome"
+                            "VMCE result dialog did not open after the injected outcome"
                         );
                     }
                 }
-                VeraCoopOutcome::Real => {
+                VmceOutcome::Real => {
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         let victory = page.victory;
                         let rows = page.model.rows.len();
                         let can_continue = page.model.can_continue;
-                        ensure!(rows > 0, "VERA Coop real outcome page has no role rows");
+                        ensure!(rows > 0, "VMCE real outcome page has no role rows");
                         let native_frame = state
                             .match_state
                             .sim_runtime
@@ -2168,16 +2164,16 @@ impl LiveLanCapture {
                     } else {
                         ensure!(
                             render_frame < VERA_OUTCOME_REAL_TIMEOUT_FRAMES,
-                            "VERA Coop real trigger outcome did not open the result dialog: render_frame={render_frame}"
+                            "VMCE real trigger outcome did not open the result dialog: render_frame={render_frame}"
                         );
                     }
                 }
-                VeraCoopOutcome::HouseLoss => {
+                VmceOutcome::HouseLoss => {
                     ensure!(
                         state.frontend.screen == GameScreen::InGame
                             && state.frontend.coop_score_page.is_none()
                             && state.match_state.scenario_exit.is_none(),
-                        "VERA Coop ended after every player House was marked defeated"
+                        "VMCE ended after every player House was marked defeated"
                     );
                     if render_frame >= VERA_OUTCOME_CONTINUED_FRAMES {
                         let continued_native_frame = state
@@ -2218,7 +2214,7 @@ impl LiveLanCapture {
                 }
                 ensure!(
                     render_frame < opened.saturating_add(1_200),
-                    "VERA Coop round did not become ready: host={}, continue_enabled={}",
+                    "VMCE round did not become ready: host={}, continue_enabled={}",
                     self.host(),
                     state
                         .match_state
@@ -2302,7 +2298,7 @@ impl LiveLanCapture {
                     } else {
                         ensure!(
                             render_frame.saturating_sub(first) < 600,
-                            "VERA Coop next campaign stage did not reach native frame 60"
+                            "VMCE next campaign stage did not reach native frame 60"
                         );
                     }
                 } else {
@@ -2312,7 +2308,7 @@ impl LiveLanCapture {
                                 .vera_outcome_dialog_frame
                                 .unwrap_or(0)
                                 .saturating_add(VERA_OUTCOME_REAL_TIMEOUT_FRAMES),
-                        "VERA Coop next campaign stage did not load: render_frame={render_frame}"
+                        "VMCE next campaign stage did not load: render_frame={render_frame}"
                     );
                 }
             }
@@ -2543,14 +2539,14 @@ impl LiveLanCapture {
             self.coop_setup_initial.is_some()
                 && self.coop_setup_final.is_some()
                 && self.startup.is_some(),
-            "live VERA Coop capture did not reach the running mission: coop_initial={}, coop_final={}, startup={}",
+            "live VMCE capture did not reach the running mission: coop_initial={}, coop_final={}, startup={}",
             self.coop_setup_initial.is_some(),
             self.coop_setup_final.is_some(),
             self.startup.is_some()
         );
         let mut receipt = self.observed_receipt(state)?;
         receipt["scope"] = json!(
-            "VERA Coop LAN: production host map/config commit and LAN options, both real Ready rows, mode+14 start admission, frozen role/House grants, then 300 native frames with local Move/Stop and a peer-House control probe; bounded runtime validation, not whole-match/native parity"
+            "VMCE LAN: production host map/config commit and LAN options, both real Ready rows, mode+14 start admission, frozen role/House grants, then 300 native frames with local Move/Stop and a peer-House control probe; bounded runtime validation, not whole-match/native parity"
         );
         receipt["coop_setup"] = json!({
             "initial": self.coop_setup_initial,
@@ -2558,7 +2554,7 @@ impl LiveLanCapture {
             "start_clicked": self.coop_setup_started_frame.is_some(),
             "start_clicked_frame": self.coop_setup_started_frame,
         });
-        receipt["vera_coop"] = vera_coop_runtime_receipt(state, self.vera_probe.as_ref())?;
+        receipt["vmce"] = vmce_runtime_receipt(state, self.vera_probe.as_ref())?;
         Ok(receipt)
     }
 
@@ -2568,7 +2564,7 @@ impl LiveLanCapture {
         }
         if matches!(
             self.target,
-            LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
+            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
         ) {
             // An outcome run retires the match before the process finishes, so
             // its receipt was built while the world and roster were resident.
@@ -2729,30 +2725,30 @@ fn terminal_simulation_receipt(state: &AppState) -> Result<Value> {
     )
 }
 
-fn vera_cooperative_mode_id(state: &AppState) -> Result<i32> {
+fn vmce_mode_id(state: &AppState) -> Result<i32> {
     state
         .frontend
         .skirmish_modes
         .iter()
-        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
+        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Vmce)
         .map(|mode| mode.id)
-        .context("VERA Cooperative mode")
+        .context("VMCE mode")
 }
 
 /// The frozen role/House grant matrix both peers received from the start
 /// roster and the external campaign overlay. It is read through
 /// ScenarioSession's public grant queries, never rebuilt here.
-fn vera_coop_grants(state: &AppState) -> Result<Value> {
+fn vmce_grants(state: &AppState) -> Result<Value> {
     let sim = &state
         .match_state
         .sim_runtime
         .as_ref()
-        .context("VERA Coop simulation")?
+        .context("VMCE simulation")?
         .simulation;
     let session = sim.session();
     ensure!(
         session.has_network_house_grants(),
-        "VERA Coop mission has no shared House grant table"
+        "VMCE mission has no shared House grant table"
     );
     let houses: Vec<String> = sim
         .houses()
@@ -2793,18 +2789,18 @@ fn vera_coop_grants(state: &AppState) -> Result<Value> {
 /// Prove the peer's primary House is outside the local command authority:
 /// the grant matrix must exclude it both ways, and the production pick and
 /// selection owners must not select one of its mobile objects.
-fn vera_coop_probe(state: &mut AppState) -> Result<Value> {
+fn vmce_probe(state: &mut AppState) -> Result<Value> {
     let (local_source, local_primary, peer_source, peer_primary, peer_entity) = {
         let sim = &state
             .match_state
             .sim_runtime
             .as_ref()
-            .context("VERA Coop probe simulation")?
+            .context("VMCE probe simulation")?
             .simulation;
         let session = sim.session();
         ensure!(
             session.has_network_house_grants(),
-            "VERA Coop mission has no shared House grant table"
+            "VMCE mission has no shared House grant table"
         );
         let houses: Vec<String> = sim
             .houses()
@@ -2898,13 +2894,11 @@ fn vera_coop_probe(state: &mut AppState) -> Result<Value> {
     }))
 }
 
-/// The running mission's VERA Coop identity plus the grants and the probe.
-fn vera_coop_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value> {
+/// The running mission's VMCE identity plus the grants and the probe.
+fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value> {
     let session = &state.match_state.session;
-    let setup = session
-        .network_setup()
-        .context("VERA Coop runtime roster")?;
-    let config = session.network_vera_coop_map_config();
+    let setup = session.network_setup().context("VMCE runtime roster")?;
+    let config = session.network_vmce_map_config();
     let humans: Vec<Value> = setup
         .humans
         .iter()
@@ -2921,18 +2915,18 @@ fn vera_coop_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<
         "map_file": setup.selected_map_file,
         "local_player_index": setup.local_player_index,
         "host": session.host(),
-        "campaign_directory": config.and_then(|config| config.campaign_directory.clone()),
-        "campaign_sha256": config.and_then(|config| config.campaign_sha256.clone()),
+        "series_directory": config.and_then(|config| config.series_directory.clone()),
+        "series_sha256": config.and_then(|config| config.series_sha256.clone()),
         "config_sha256": config.map(|config| config.config_sha256.clone()),
         "humans": humans,
-        "grants": vera_coop_grants(state)?,
+        "grants": vmce_grants(state)?,
         "control_probe": probe,
     }))
 }
 
-/// Error-only snapshot for the new VERA Coop setup targets. It reads current
+/// Error-only snapshot for the new VMCE setup targets. It reads current
 /// owners without sending requests, accepting the map, or writing a receipt.
-fn vera_coop_setup_watchdog_snapshot(
+fn vmce_setup_watchdog_snapshot(
     capture: &LiveLanCapture,
     state: &AppState,
     rendered: PresentedShell,
@@ -2956,7 +2950,7 @@ fn vera_coop_setup_watchdog_snapshot(
             .collect::<Vec<_>>()
     });
     let metadata = session.network_map_metadata();
-    let config = session.network_vera_coop_map_config();
+    let config = session.network_vmce_map_config();
     let source = session.network_local_map_source();
     let protocol = state.frontend.network_setup_protocol.as_ref();
     let setup_view = setup::view(state);
@@ -2979,7 +2973,7 @@ fn vera_coop_setup_watchdog_snapshot(
             "player_capacity": metadata.player_capacity,
         })),
         "local_map_source_identity": source.and_then(|source| source.physical_identity()),
-        "coop_config": config.map(|config| json!({
+        "vmce_config": config.map(|config| json!({
             "map_file": config.map_file,
             "source_sha256": config.source_sha256,
             "config_sha256": config.config_sha256,
@@ -3010,7 +3004,7 @@ fn coop_setup_rows(
                 .humans
                 .iter()
                 .all(|human| human.raw_slot_index.is_some()),
-        "VERA Coop setup capture requires exactly two admitted human rows"
+        "VMCE setup capture requires exactly two admitted human rows"
     );
     let host = launch
         .humans
@@ -3026,23 +3020,21 @@ fn coop_setup_rows(
     Ok((host, guest))
 }
 
-fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
+fn vmce_setup_snapshot(state: &AppState) -> Result<Value> {
     let session = &state.match_state.session;
-    let launch = session
-        .network_setup()
-        .context("VERA Coop setup snapshot")?;
+    let launch = session.network_setup().context("VMCE setup snapshot")?;
     ensure!(
-        launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative,
-        "setup snapshot is not VERA Coop"
+        launch.mode.class == crate::skirmish_modes::MpModeClass::Vmce,
+        "setup snapshot is not VMCE"
     );
     let file = launch
         .selected_map_file
         .as_deref()
-        .context("selected VERA Coop map")?;
+        .context("selected VMCE map")?;
     let metadata = session
         .network_map_metadata()
-        .context("accepted VERA Coop map metadata")?;
-    // VERA Coop LAN exchanges only the map/config identity in HostOptions: the
+        .context("accepted VMCE map metadata")?;
+    // VMCE LAN exchanges only the map/config identity in HostOptions: the
     // authored file is preinstalled on both peers, so the ordinary map
     // transfer never binds a local source. In that case the accepted host
     // metadata carries the same physical identity, and the frozen loader
@@ -3052,10 +3044,10 @@ fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
         Some(source) => {
             let (byte_length, physical_sha256) = source
                 .physical_identity()
-                .context("physical VERA Coop map identity")?;
+                .context("physical VMCE map identity")?;
             let effective_digest = session
                 .network_local_map_effective_digest()
-                .context("verified local VERA Coop effective digest")?;
+                .context("verified local VMCE effective digest")?;
             (
                 byte_length,
                 physical_sha256.to_owned(),
@@ -3069,15 +3061,15 @@ fn vera_coop_setup_snapshot(state: &AppState) -> Result<Value> {
         ),
     };
     let config = session
-        .network_vera_coop_map_config()
-        .context("accepted VERA Coop map config")?;
+        .network_vmce_map_config()
+        .context("accepted VMCE map config")?;
     config.validate_binding(file, &metadata.source_sha256)?;
     ensure!(
         byte_length == usize::try_from(metadata.byte_length)?
             && physical_sha256 == metadata.source_sha256
             && effective_digest == metadata.effective_digest
             && metadata.source_sha256 == config.source_sha256,
-        "local VERA Coop bytes or effective map differ from the accepted host identity"
+        "local VMCE bytes or effective map differ from the accepted host identity"
     );
     let (host, guest) = coop_setup_rows(launch)?;
     let participants = launch
@@ -3122,12 +3114,12 @@ fn ensure_coop_setup_ready_transition(
     for field in ["map_file", "map_source_sha256", "effective_digest"] {
         ensure!(
             initial[field] == final_state[field],
-            "VERA Coop map identity changed while accepting the guest: {field}"
+            "VMCE map identity changed while accepting the guest: {field}"
         );
     }
     ensure!(
         initial["config"]["config_sha256"] == final_state["config"]["config_sha256"],
-        "VERA Coop config changed during the Ready transition"
+        "VMCE config changed during the Ready transition"
     );
     let initial_host = coop_setup_participant(initial, HOST_NAME)?;
     let initial_guest = coop_setup_participant(initial, GUEST_NAME)?;
@@ -3157,7 +3149,7 @@ fn ensure_coop_setup_ready_transition(
         let after = coop_setup_participant(final_state, name)?;
         ensure!(
             before["raw_row"] == after["raw_row"] && before["role"] == after["role"],
-            "VERA Coop participant role changed while accepting: {name}"
+            "VMCE participant role changed while accepting: {name}"
         );
     }
     Ok(())
@@ -3166,10 +3158,10 @@ fn ensure_coop_setup_ready_transition(
 fn coop_setup_participant<'a>(snapshot: &'a Value, name: &str) -> Result<&'a Value> {
     snapshot["participants"]
         .as_array()
-        .context("VERA Coop participant snapshot")?
+        .context("VMCE participant snapshot")?
         .iter()
         .find(|row| row["name"] == name)
-        .with_context(|| format!("VERA Coop {name} participant"))
+        .with_context(|| format!("VMCE {name} participant"))
 }
 
 fn local_owner(state: &AppState) -> Result<String> {

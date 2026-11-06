@@ -411,29 +411,24 @@ fn mode_start(
         .network_setup()
         .expect("validated setup")
         .clone();
-    if mode.class.is_vera_cooperative() {
+    if mode.class.is_vmce() {
         let Some(file) = launch.selected_map_file.as_deref() else {
-            message(state, "VERA Coop requires a selected map.", &[]);
+            message(state, "VMCE requires a selected map.", &[]);
             return Ok(false);
         };
         if state.match_state.session_mode() != crate::app::match_runtime::session::SessionMode::Lan
         {
             message(
                 state,
-                "VERA Coop map configuration sync is currently LAN-only.",
+                "VMCE map configuration sync is currently LAN-only.",
                 &[],
             );
             return Ok(false);
         }
-        let Some(config) = state
-            .match_state
-            .session
-            .network_vera_coop_map_config()
-            .cloned()
-        else {
+        let Some(config) = state.match_state.session.network_vmce_map_config().cloned() else {
             message(
                 state,
-                "VERA Coop host options omit the selected map configuration.",
+                "VMCE host options omit the selected map configuration.",
                 &[],
             );
             return Ok(false);
@@ -457,13 +452,13 @@ fn mode_start(
                 .match_state
                 .session
                 .network_start_seed()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no accepted shared seed"))
+                .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted shared seed"))
                 .and_then(|seed| {
                     let (_, source_sha256) = map
                         .source
                         .physical_identity()
-                        .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-                    crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                        .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
+                    crate::app::match_bootstrap::resolve_vmce_houses_with_config(
                         &map.ini,
                         file,
                         source_sha256,
@@ -478,26 +473,26 @@ fn mode_start(
                     // assignments and the loader installs the shared House
                     // command grants from the same effective map.
                     log::info!(
-                        "VERA Coop role roster resolves to {} player Houses",
+                        "VMCE role roster resolves to {} player Houses",
                         assignments.participants.len()
                     );
                     true
                 }
                 Err(error) => {
-                    log::warn!("VERA Coop map role configuration is invalid: {error}");
+                    log::warn!("VMCE map role configuration is invalid: {error}");
                     message(
                         state,
-                        "VERA Coop requires Basic Player entries that name distinct Houses in the selected map.",
+                        "VMCE requires Basic Player entries that name distinct Houses in the selected map.",
                         &[],
                     );
                     false
                 }
             },
             Err(error) => {
-                log::warn!("VERA Coop could not read map role configuration: {error:#}");
+                log::warn!("VMCE could not read map role configuration: {error:#}");
                 message(
                     state,
-                    "VERA Coop could not read role data from the selected map.",
+                    "VMCE could not read role data from the selected map.",
                     &[],
                 );
                 false
@@ -542,12 +537,12 @@ fn mode_start(
 /// Resolve the synchronized lobby roles against the selected map's authored
 /// Basic Player roster. Random roles consume the remaining configured Houses
 /// in a seed-stable order shared by every participant.
-fn resolve_vera_cooperative_houses(
+fn resolve_vmce_houses(
     ini: &crate::rules::ini_parser::IniFile,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     seed: u32,
-) -> Result<crate::skirmish_launch::VeraCoopHouseAssignments, String> {
-    crate::app::match_bootstrap::resolve_vera_cooperative_houses(ini, launch, seed)
+) -> Result<crate::skirmish_launch::VmceHouseAssignments, String> {
+    crate::app::match_bootstrap::resolve_vmce_houses(ini, launch, seed)
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -556,15 +551,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vera_coop_start_resolves_distinct_configured_map_houses() {
+    fn vmce_start_resolves_distinct_configured_map_houses() {
         let valid = crate::rules::ini_parser::IniFile::from_str(
             "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
         );
         let mut launch = fixture();
         assert_eq!(
-            resolve_vera_cooperative_houses(&valid, &launch, 7).unwrap(),
-            crate::skirmish_launch::VeraCoopHouseAssignments {
-                participants: vec![crate::skirmish_launch::VeraCoopHouseAssignment {
+            resolve_vmce_houses(&valid, &launch, 7).unwrap(),
+            crate::skirmish_launch::VmceHouseAssignments {
+                participants: vec![crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: launch.humans[0].name.clone(),
                     raw_slot_index: 0,
                     player_index: 0,
@@ -575,9 +570,9 @@ mod tests {
         );
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
         assert_eq!(
-            resolve_vera_cooperative_houses(&valid, &launch, 7).unwrap(),
-            crate::skirmish_launch::VeraCoopHouseAssignments {
-                participants: vec![crate::skirmish_launch::VeraCoopHouseAssignment {
+            resolve_vmce_houses(&valid, &launch, 7).unwrap(),
+            crate::skirmish_launch::VmceHouseAssignments {
+                participants: vec![crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: launch.humans[0].name.clone(),
                     raw_slot_index: 0,
                     player_index: 1,
@@ -591,10 +586,10 @@ mod tests {
         let missing = crate::rules::ini_parser::IniFile::from_str(
             "[Basic]\nPlayer1=Missing\n[Houses]\n0=Alpha\n",
         );
-        assert!(resolve_vera_cooperative_houses(&missing, &launch, 7).is_err());
+        assert!(resolve_vmce_houses(&missing, &launch, 7).is_err());
 
         let empty = crate::rules::ini_parser::IniFile::from_str("[Houses]\n0=Alpha\n");
-        assert!(resolve_vera_cooperative_houses(&empty, &launch, 7).is_err());
+        assert!(resolve_vmce_houses(&empty, &launch, 7).is_err());
 
         launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
         let mut second = launch.humans[0].clone();
@@ -604,14 +599,14 @@ mod tests {
         let two_players = crate::rules::ini_parser::IniFile::from_str(
             "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
         );
-        let first = resolve_vera_cooperative_houses(&two_players, &launch, 123).unwrap();
-        let second = resolve_vera_cooperative_houses(&two_players, &launch, 123).unwrap();
+        let first = resolve_vmce_houses(&two_players, &launch, 123).unwrap();
+        let second = resolve_vmce_houses(&two_players, &launch, 123).unwrap();
         assert_eq!(first, second);
         assert_ne!(
             first.participants[0].owner_name, first.participants[1].owner_name,
             "random roles must not share a House"
         );
-        let by_name = |assignments: &crate::skirmish_launch::VeraCoopHouseAssignments| {
+        let by_name = |assignments: &crate::skirmish_launch::VmceHouseAssignments| {
             assignments
                 .participants
                 .iter()
@@ -627,7 +622,7 @@ mod tests {
         let mut reordered = launch.clone();
         reordered.humans.reverse();
         assert_eq!(
-            by_name(&resolve_vera_cooperative_houses(&two_players, &reordered, 123).unwrap()),
+            by_name(&resolve_vmce_houses(&two_players, &reordered, 123).unwrap()),
             expected
         );
         let mut too_many = launch.clone();
@@ -635,29 +630,27 @@ mod tests {
         third.name = "Third".to_owned();
         third.raw_slot_index = Some(2);
         too_many.humans.push(third);
-        assert!(resolve_vera_cooperative_houses(&two_players, &too_many, 123).is_err());
+        assert!(resolve_vmce_houses(&two_players, &too_many, 123).is_err());
     }
 
     #[test]
-    fn vera_coop_sidecar_changes_the_resolved_house_and_is_bound_to_map_bytes() {
+    fn vmce_sidecar_changes_the_resolved_house_and_is_bound_to_map_bytes() {
         let map = crate::rules::ini_parser::IniFile::from_str(
             "[Basic]\nPlayer1=Alpha\n[Houses]\n0=Alpha\n1=Beta\n[Alpha]\n[Beta]\n",
         );
         let supplemental = crate::rules::ini_parser::IniFile::from_str(
             "[Basic]\nPlayer1=Beta\n[Alpha]\nPlayer1Control=yes\n",
         );
-        let config =
-            crate::map::coop_config::VeraCoopMapConfig::from_ini(&map, &supplemental).unwrap();
-        let snapshot = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let config = crate::map::vmce_config::VmceMapConfig::from_ini(&map, &supplemental).unwrap();
+        let snapshot = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
             "test.map".into(),
             "a".repeat(64),
             config,
         )
         .unwrap();
         let launch = fixture();
-        let native =
-            crate::app::match_bootstrap::resolve_vera_cooperative_houses(&map, &launch, 7).unwrap();
-        let configured = crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+        let native = crate::app::match_bootstrap::resolve_vmce_houses(&map, &launch, 7).unwrap();
+        let configured = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
             &map,
             "test.map",
             &"a".repeat(64),
@@ -688,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_bootstrap_installs_deterministic_shared_house_command_grants() {
+    fn vmce_bootstrap_installs_deterministic_shared_house_command_grants() {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let authored = crate::rules::ini_parser::IniFile::from_str(
@@ -698,7 +691,7 @@ mod tests {
             "[Neutral]\nPlayerControl=yes\nPlayer2Control=yes\n",
         );
         let config =
-            crate::map::coop_config::VeraCoopMapConfig::from_ini(&authored, &external).unwrap();
+            crate::map::vmce_config::VmceMapConfig::from_ini(&authored, &external).unwrap();
         let effective = config.apply_to_map(&authored).unwrap();
         let roster = crate::map::houses::parse_house_roster(&effective, &[], None);
 
@@ -710,15 +703,15 @@ mod tests {
         guest.role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
         guest.slot.color_index = 1;
         launch.humans.push(guest);
-        let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+        let assignments = crate::skirmish_launch::VmceHouseAssignments {
             participants: vec![
-                crate::skirmish_launch::VeraCoopHouseAssignment {
+                crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: launch.humans[0].name.clone(),
                     raw_slot_index: 0,
                     player_index: 0,
                     owner_name: "Alpha".into(),
                 },
-                crate::skirmish_launch::VeraCoopHouseAssignment {
+                crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: "Guest".into(),
                     raw_slot_index: 1,
                     player_index: 1,
@@ -731,7 +724,7 @@ mod tests {
         sim.session_mut_for_test()
             .set_game_mode(ScenarioGameMode::Lan);
         sim.session_mut_for_test().install_network_timing(5);
-        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+        crate::sim::scenario_bootstrap::initialize_vmce_houses(
             &mut sim,
             &roster,
             &crate::rules::ruleset::RuleSet::empty_for_test(),
@@ -746,7 +739,7 @@ mod tests {
         let neutral = sim.interner().get("Neutral").unwrap();
         assert!(
             crate::map::houses::is_allied_with(sim.house_alliances().as_map(), "Alpha", "Beta"),
-            "VERA Coop installs the map's authored House allies"
+            "VMCE installs the map's authored House allies"
         );
         assert!(crate::map::houses::is_allied_with(
             sim.house_alliances().as_map(),
@@ -806,7 +799,7 @@ mod tests {
             .session_mut_for_test()
             .set_game_mode(ScenarioGameMode::Lan);
         guest_sim.session_mut_for_test().install_network_timing(5);
-        crate::sim::scenario_bootstrap::initialize_vera_cooperative_houses(
+        crate::sim::scenario_bootstrap::initialize_vmce_houses(
             &mut guest_sim,
             &roster,
             &crate::rules::ruleset::RuleSet::empty_for_test(),
@@ -820,7 +813,7 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_house_authority_installs_on_an_authored_roster_built_by_the_prefix() {
+    fn vmce_house_authority_installs_on_an_authored_roster_built_by_the_prefix() {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let authored = crate::rules::ini_parser::IniFile::from_str(
@@ -830,13 +823,13 @@ mod tests {
             "[Neutral]\nPlayerControl=yes\nPlayer2Control=yes\n",
         );
         let config =
-            crate::map::coop_config::VeraCoopMapConfig::from_ini(&authored, &external).unwrap();
+            crate::map::vmce_config::VmceMapConfig::from_ini(&authored, &external).unwrap();
         let effective = config.apply_to_map(&authored).unwrap();
         let roster = crate::map::houses::parse_house_roster(&effective, &[], None);
         let rules = crate::rules::ruleset::RuleSet::empty_for_test();
 
         let mut launch = fixture();
-        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         launch.humans[0].raw_slot_index = Some(0);
         let mut guest = launch.humans[0].clone();
         guest.name = "Guest".into();
@@ -844,15 +837,15 @@ mod tests {
         guest.role = crate::skirmish_launch::LaunchHumanRole::Player { group: 1 };
         guest.slot.color_index = 1;
         launch.humans.push(guest);
-        let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+        let assignments = crate::skirmish_launch::VmceHouseAssignments {
             participants: vec![
-                crate::skirmish_launch::VeraCoopHouseAssignment {
+                crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: launch.humans[0].name.clone(),
                     raw_slot_index: 0,
                     player_index: 0,
                     owner_name: "Alpha".into(),
                 },
-                crate::skirmish_launch::VeraCoopHouseAssignment {
+                crate::skirmish_launch::VmceHouseAssignment {
                     participant_name: "Guest".into(),
                     raw_slot_index: 1,
                     player_index: 1,
@@ -879,7 +872,7 @@ mod tests {
             !sim.houses().is_empty(),
             "the prefix built the authored Houses"
         );
-        crate::sim::scenario_bootstrap::install_vera_cooperative_house_authority(
+        crate::sim::scenario_bootstrap::install_vmce_house_authority(
             &mut sim,
             &roster,
             &rules,
@@ -894,7 +887,7 @@ mod tests {
         let neutral = sim.interner().get("Neutral").unwrap();
         assert!(
             crate::map::houses::is_allied_with(sim.house_alliances().as_map(), "Alpha", "Beta"),
-            "VERA Coop installs the map's authored House allies"
+            "VMCE installs the map's authored House allies"
         );
         assert!(crate::map::houses::is_allied_with(
             sim.house_alliances().as_map(),
@@ -915,7 +908,7 @@ mod tests {
         assert!(sim.houses()[&neutral].is_human());
         assert_eq!(
             sim.session().multiplayer_mode_class(),
-            Some(crate::skirmish_modes::MpModeClass::VeraCooperative),
+            Some(crate::skirmish_modes::MpModeClass::Vmce),
             "the authored start installs the admitted mode class for the mission outcome"
         );
     }

@@ -918,7 +918,7 @@ pub(super) fn received_options(
         .match_state
         .session
         .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+        .is_some_and(|launch| launch.mode.class.is_vmce())
     {
         maps.cancel();
         state
@@ -957,7 +957,7 @@ pub(super) fn poll(state: &mut AppState) {
         .match_state
         .session
         .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+        .is_some_and(|launch| launch.mode.class.is_vmce())
     {
         let active = state
             .match_state
@@ -1024,7 +1024,7 @@ pub(super) fn receive(state: &mut AppState, source: SocketAddrV4, bytes: &[u8]) 
         .match_state
         .session
         .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+        .is_some_and(|launch| launch.mode.class.is_vmce())
     {
         // A stale or unsolicited transfer from a previous options revision
         // must never be installed into a Coop LAN room.
@@ -1069,7 +1069,7 @@ pub(super) fn setup_request(
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+            .is_some_and(|launch| launch.mode.class.is_vmce());
     if coop_lan && is_asset_request(request) {
         return Ok(Some(true));
     }

@@ -3794,7 +3794,7 @@ fn click_entity(state: &mut AppState, id: u64) -> Result<()> {
 
 /// Diagnostic probe: point at `id`, left-click through the production pick and
 /// selection owners, and return what the pointer hit and what entered the
-/// local selection. The VERA Coop capture uses it to prove a peer-granted
+/// local selection. The VMCE capture uses it to prove a peer-granted
 /// House's object cannot be selected locally.
 pub(super) fn selection_after_clicking(
     state: &mut AppState,

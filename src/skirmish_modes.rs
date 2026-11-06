@@ -19,7 +19,7 @@ pub enum MpModeClass {
     FreeForAll,
     Cooperative,
     /// VERA's independent, map-authored cooperative campaign mode.
-    VeraCooperative,
+    Vmce,
 }
 
 impl MpModeClass {
@@ -40,8 +40,8 @@ impl MpModeClass {
         matches!(self, Self::Battle | Self::FreeForAll)
     }
 
-    pub const fn is_vera_cooperative(self) -> bool {
-        matches!(self, Self::VeraCooperative)
+    pub const fn is_vmce(self) -> bool {
+        matches!(self, Self::Vmce)
     }
 
     /// Modes whose mission end routes through the cooperative result path
@@ -49,14 +49,14 @@ impl MpModeClass {
     /// `0x108`). Original Cooperative (`0x005C4EE0`) and VERA's authored coop
     /// mode share the route even though their outcome sources differ.
     pub const fn shares_cooperative_result(self) -> bool {
-        matches!(self, Self::Cooperative | Self::VeraCooperative)
+        matches!(self, Self::Cooperative | Self::Vmce)
     }
 
-    /// VERA Coop's mission outcome comes from the map's own outcome actions
+    /// VMCE's mission outcome comes from the map's own outcome actions
     /// (and the host leaving), never from the multiplayer completion scan.
     /// Eliminating every player House does not end the mission.
     pub const fn mission_outcome_from_triggers_only(self) -> bool {
-        matches!(self, Self::VeraCooperative)
+        matches!(self, Self::Vmce)
     }
 
     /// Vtable `+0x4` and `+0x8`, which the sidebar Diplomacy button asks
@@ -93,12 +93,12 @@ impl MpModeClass {
 
     /// Mode-specific cap used alongside the map's capacity by5EC3A0/5E9E70.
     /// Original Cooperative's native vtable+98 (`5C42C0`) returns2; ordinary
-    /// `5C0F30` returns-1 (no extra cap). VERA Coop's four-seat cap is a
+    /// `5C0F30` returns-1 (no extra cap). VMCE's four-seat cap is a
     /// separate product rule, not native Cooperative behavior.
     pub const fn setup_player_limit(self) -> Option<usize> {
         match self {
             Self::Cooperative => Some(2),
-            Self::VeraCooperative => Some(4),
+            Self::Vmce => Some(4),
             _ => None,
         }
     }
@@ -119,7 +119,7 @@ impl MpModeClass {
         roles: &[i32],
     ) -> Result<ModeStartEffect, Option<&'static str>> {
         match self {
-            Self::Battle | Self::ManBattle | Self::VeraCooperative => Ok(ModeStartEffect::None),
+            Self::Battle | Self::ManBattle | Self::Vmce => Ok(ModeStartEffect::None),
             Self::Unholy => {
                 if bases {
                     Ok(ModeStartEffect::None)
@@ -334,7 +334,7 @@ pub fn skirmish_modes_from_selected_ini(
             archive: source.to_owned(),
         })
     } else {
-        insert_vera_cooperative_mode(&mut modes);
+        insert_vmce_mode(&mut modes);
         Ok(modes)
     }
 }
@@ -355,22 +355,22 @@ pub fn stock_skirmish_modes() -> Vec<SkirmishGameMode> {
             "[MultiplayerDialogSettings]\n{settings}"
         )))
     });
-    insert_vera_cooperative_mode(&mut modes);
+    insert_vmce_mode(&mut modes);
     modes
 }
 
-const VERA_COOP_MODE_ID: i32 = 0x7FFF_0000;
+const VMCE_MODE_ID: i32 = 0x7FFF_0000;
 
-fn insert_vera_cooperative_mode(modes: &mut Vec<SkirmishGameMode>) {
-    let mut id = VERA_COOP_MODE_ID;
+fn insert_vmce_mode(modes: &mut Vec<SkirmishGameMode>) {
+    let mut id = VMCE_MODE_ID;
     while mode_by_id(modes, id).is_some() {
         id -= 1;
     }
     modes.push(SkirmishGameMode {
-        class: MpModeClass::VeraCooperative,
+        class: MpModeClass::Vmce,
         id,
-        ui_name_key: "VERA Campaign".to_owned(),
-        tooltip_key: "VERA Campaign".to_owned(),
+        ui_name_key: "Multiplayer Campaign".to_owned(),
+        tooltip_key: "Multiplayer Campaign".to_owned(),
         override_file: String::new(),
         map_filter: "standard".to_owned(),
         random_maps_allowed: false,
@@ -394,9 +394,9 @@ mod tests {
         use super::MpModeClass;
 
         assert!(MpModeClass::Cooperative.shares_cooperative_result());
-        assert!(MpModeClass::VeraCooperative.shares_cooperative_result());
+        assert!(MpModeClass::Vmce.shares_cooperative_result());
         assert!(!MpModeClass::Battle.shares_cooperative_result());
-        assert!(MpModeClass::VeraCooperative.mission_outcome_from_triggers_only());
+        assert!(MpModeClass::Vmce.mission_outcome_from_triggers_only());
         assert!(!MpModeClass::Cooperative.mission_outcome_from_triggers_only());
         assert!(!MpModeClass::Battle.mission_outcome_from_triggers_only());
     }
@@ -421,7 +421,7 @@ mod tests {
             Ok(ModeStartEffect::CooperativePartners)
         );
         assert_eq!(
-            MpModeClass::VeraCooperative.validate_setup_start(true, &[0, 0]),
+            MpModeClass::Vmce.validate_setup_start(true, &[0, 0]),
             Ok(ModeStartEffect::None)
         );
         assert_eq!(
@@ -479,13 +479,13 @@ mod tests {
     }
 
     #[test]
-    fn stock_mode_list_exposes_vera_coop_without_replacing_original_cooperative() {
+    fn stock_mode_list_exposes_vmce_without_replacing_original_cooperative() {
         let modes = stock_skirmish_modes();
         let vera = modes
             .iter()
-            .find(|mode| mode.class == MpModeClass::VeraCooperative)
-            .expect("independent VERA Coop row");
-        assert_eq!(vera.ui_name_key, "VERA Campaign");
+            .find(|mode| mode.class == MpModeClass::Vmce)
+            .expect("independent VMCE row");
+        assert_eq!(vera.ui_name_key, "Multiplayer Campaign");
         assert_eq!(vera.map_filter, "standard");
         assert!(!vera.random_maps_allowed);
 

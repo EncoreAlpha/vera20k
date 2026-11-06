@@ -327,12 +327,12 @@ impl LanService {
     fn setup_maps_verified(&self, session: &super::match_runtime::session::MatchSession) -> bool {
         if session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+            .is_some_and(|launch| launch.mode.class.is_vmce())
         {
             // Coop LAN never starts a transfer. The session's typed config is
             // created only from the host's campaign identity and this peer's
             // locally verified campaign/map files.
-            return session.network_vera_coop_map_config().is_some();
+            return session.network_vmce_map_config().is_some();
         }
         // A direct spawn's map is the launcher's file beside spawn.ini; the
         // selected-mode agreement still compares the rules digest at GO.
@@ -2123,13 +2123,13 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                     crate::skirmish_launch::LaunchStartPosition::Position(u8::try_from(values[2])?)
                 };
                 choices.team = crate::skirmish_launch::LaunchTeam::from_shell_value(values[3]);
-                let role = (values.len() >= 5 && launch.mode.class.is_vera_cooperative())
+                let role = (values.len() >= 5 && launch.mode.class.is_vmce())
                     .then(|| crate::skirmish_launch::LaunchHumanRole::from_native(values[4]));
                 if let Some(role) = role {
                     state
                         .match_state
                         .session
-                        .validate_network_vera_coop_role(source, role)?;
+                        .validate_network_vmce_role(source, role)?;
                 }
                 let change = state.match_state.session.accept_lan_peer_choices(
                     source,
@@ -2140,7 +2140,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                     state
                         .match_state
                         .session
-                        .set_network_vera_coop_role(source, role)?;
+                        .set_network_vmce_role(source, role)?;
                 }
                 // A VERA room's guest who starts or stops watching changes
                 // rows: the roster, then the options, as WOL's R arm.
@@ -2181,7 +2181,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                 .match_state
                 .session
                 .network_setup()
-                .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                .is_some_and(|launch| launch.mode.class.is_vmce())
                 || options::validate_current_coop_campaign(state).is_ok();
             if !campaign_ok {
                 options::report_coop_campaign_unavailable(state);
@@ -2242,7 +2242,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                     .match_state
                     .session
                     .network_setup()
-                    .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                    .is_some_and(|launch| launch.mode.class.is_vmce())
                     || options::validate_current_coop_campaign(state).is_ok();
                 if !campaign_ok {
                     options::report_coop_campaign_unavailable(state);
@@ -3934,9 +3934,9 @@ fn setup_request(
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+            .is_some_and(|launch| launch.mode.class.is_vmce());
     if coop_lan && matches!(request, NetworkSetupRequest::MapStatus(2)) {
-        // There is no LAN map-transfer fallback for VERA Coop.
+        // There is no LAN map-transfer fallback for VMCE.
         return Ok(true);
     }
     if let Some(admitted) = maps::setup_request(state, request)? {
@@ -3951,7 +3951,7 @@ fn setup_request(
                 | NetworkSetupRequest::PrepareMapForHandoff { .. }
         );
     if validate_campaign && let Err(error) = options::validate_current_coop_campaign(state) {
-        log::warn!("VERA Coop local campaign validation failed: {error:#}");
+        log::warn!("VMCE local campaign validation failed: {error:#}");
         options::report_coop_campaign_unavailable(state);
         match request {
             NetworkSetupRequest::Ready(true) => {
@@ -4981,14 +4981,14 @@ mod tests {
     }
 
     #[test]
-    fn coop_lan_readiness_uses_local_campaign_config_without_transfer_state() {
+    fn coop_lan_readiness_uses_local_vmce_config_without_transfer_state() {
         let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1301);
         let service = service();
         let mut host_session = session(true, endpoint);
         let mut launch = host_session.network_setup().unwrap().clone();
-        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         host_session
-            .select_network_map(launch.mode, "VeraCoop/Campaign/01.map".into(), 8)
+            .select_network_map(launch.mode, "Vmce/Campaign/01.map".into(), 8)
             .unwrap();
         host_session
             .accept_network_map_metadata(
@@ -5006,22 +5006,22 @@ mod tests {
             )
             .unwrap();
         assert!(!service.setup_maps_verified(&host_session));
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
-            "VeraCoop/Campaign/01.map".into(),
+        let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
+            "Vmce/Campaign/01.map".into(),
             "a".repeat(64),
-            crate::map::coop_config::VeraCoopMapConfig::default(),
+            crate::map::vmce_config::VmceMapConfig::default(),
         )
         .unwrap()
-        .with_campaign_identity("Campaign".into(), "c".repeat(64))
+        .with_series_identity("Campaign".into(), "c".repeat(64))
         .unwrap();
         host_session
-            .accept_network_vera_coop_map_config(Some(config))
+            .accept_network_vmce_map_config(Some(config))
             .unwrap();
         assert!(service.setup_maps_verified(&host_session));
         let mut guest = session(false, endpoint);
         let mut guest_launch = guest.network_setup().unwrap().clone();
-        guest_launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
-        guest_launch.selected_map_file = Some("VeraCoop/Campaign/01.map".into());
+        guest_launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        guest_launch.selected_map_file = Some("Vmce/Campaign/01.map".into());
         guest
             .accept_network_setup(guest_launch, false, None, false)
             .unwrap();

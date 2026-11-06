@@ -1074,7 +1074,7 @@ impl HouseState {
         self.player_control = controlled;
     }
 
-    /// Install synchronized human identity for a VERA Coop role grant.
+    /// Install synchronized human identity for a VMCE role grant.
     pub(crate) fn assign_network_human(&mut self, human: bool) {
         self.is_human = human;
     }

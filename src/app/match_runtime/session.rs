@@ -255,9 +255,9 @@ enum NetworkPhase {
         connected: Vec<usize>,
         launch: SkirmishLaunchSession,
         round: CooperativeRoundState,
-        /// VERA Coop's next stage, resolved from its external campaign on
+        /// VMCE's next stage, resolved from its external campaign on
         /// both peers when BC6 opened. Stock Cooperative leaves this empty.
-        vera_next: Option<crate::app::match_bootstrap::VeraCoopNextStage>,
+        vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
     },
 }
 
@@ -316,8 +316,8 @@ struct NetworkSession {
     /// The IPv4 LAN adaptation uses the actual global-envelope source endpoint.
     endpoints: std::collections::BTreeMap<String, std::net::SocketAddrV4>,
     map_metadata: Option<NetworkMapMetadata>,
-    /// Host-authoritative external VERA Coop map settings for this selection.
-    vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    /// Host-authoritative external VMCE map settings for this selection.
+    vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
     /// Verified local content for the current advertised map. The lobby keeps
     /// the host's filename; only the frozen local load consumes this source.
     local_map_source: Option<crate::map::source::LoadedMapSource>,
@@ -547,7 +547,7 @@ impl MatchSession {
             loading_requests: Vec::new(),
             endpoints: Default::default(),
             map_metadata: None,
-            vera_coop_map_config: None,
+            vmce_map_config: None,
             local_map_source: None,
             local_map_effective_digest: None,
             local_random_map_preview: None,
@@ -1474,43 +1474,43 @@ impl MatchSession {
         self.network.as_ref()?.map_metadata.as_ref()
     }
 
-    pub(crate) fn network_vera_coop_map_config(
+    pub(crate) fn network_vmce_map_config(
         &self,
-    ) -> Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig> {
-        self.network.as_ref()?.vera_coop_map_config.as_ref()
+    ) -> Option<&crate::app::match_bootstrap::NetworkVmceMapConfig> {
+        self.network.as_ref()?.vmce_map_config.as_ref()
     }
 
-    pub(crate) fn accept_network_vera_coop_map_config(
+    pub(crate) fn accept_network_vmce_map_config(
         &mut self,
-        config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+        config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
     ) -> anyhow::Result<()> {
         let Some(NetworkSession {
             phase: NetworkPhase::Setup { launch, .. },
             map_metadata,
-            vera_coop_map_config,
+            vmce_map_config,
             return_context,
             ..
         }) = self.network.as_mut()
         else {
             anyhow::bail!("network setup is not editable");
         };
-        match (launch.mode.class.is_vera_cooperative(), config.as_ref()) {
+        match (launch.mode.class.is_vmce(), config.as_ref()) {
             (true, Some(config)) => {
                 let map_file = launch
                     .selected_map_file
                     .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop setup has no selected map"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE setup has no selected map"))?;
                 let metadata = map_metadata
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop setup has no map identity"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE setup has no map identity"))?;
                 config.validate_binding(map_file, &metadata.source_sha256)?;
             }
             (true, None) if *return_context == NetworkReturnContext::Wol => {}
-            (true, None) => anyhow::bail!("VERA Coop host options omit the map config"),
-            (false, Some(_)) => anyhow::bail!("non-Coop setup carries VERA Coop map settings"),
+            (true, None) => anyhow::bail!("VMCE host options omit the map config"),
+            (false, Some(_)) => anyhow::bail!("non-VMCE setup carries VMCE map settings"),
             (false, None) => {}
         }
-        *vera_coop_map_config = config;
+        *vmce_map_config = config;
         Ok(())
     }
 
@@ -1800,18 +1800,18 @@ impl MatchSession {
         Ok(())
     }
 
-    /// The map-authored Player1..Player4 assignment owned by VERA Coop setup.
+    /// The map-authored Player1..Player4 assignment owned by VMCE setup.
     /// Random is -2; native team selectors (+0x63/+0x67) remain independent.
-    pub(crate) fn set_network_vera_coop_role(
+    pub(crate) fn set_network_vmce_role(
         &mut self,
         index: usize,
         role: crate::skirmish_launch::LaunchHumanRole,
     ) -> anyhow::Result<()> {
-        self.validate_network_vera_coop_role(index, role)?;
+        self.validate_network_vmce_role(index, role)?;
         self.accept_network_human_role(index, role)
     }
 
-    pub(crate) fn validate_network_vera_coop_role(
+    pub(crate) fn validate_network_vmce_role(
         &self,
         index: usize,
         role: crate::skirmish_launch::LaunchHumanRole,
@@ -1822,15 +1822,12 @@ impl MatchSession {
             ) => launch,
             _ => anyhow::bail!("network setup is not editable"),
         };
-        anyhow::ensure!(
-            launch.mode.class.is_vera_cooperative(),
-            "not a VERA Coop setup"
-        );
+        anyhow::ensure!(launch.mode.class.is_vmce(), "not a VMCE setup");
         anyhow::ensure!(index < launch.humans.len(), "unknown participant");
         let value = role.native_value();
         anyhow::ensure!(
             value == -2 || (0..4).contains(&value),
-            "invalid VERA Coop Player role"
+            "invalid VMCE Player role"
         );
         anyhow::ensure!(
             launch
@@ -1841,7 +1838,7 @@ impl MatchSession {
                     || human.raw_slot_index.is_none()
                     || human.role.native_value() != value
                     || value == -2),
-            "VERA Coop Player role is already assigned"
+            "VMCE Player role is already assigned"
         );
         Ok(())
     }
@@ -2361,7 +2358,7 @@ impl MatchSession {
         launch.rebuild_house_roster();
         candidate.keep_spectator_row()?;
         if let Some(network) = candidate.network.as_mut() {
-            network.vera_coop_map_config = None;
+            network.vmce_map_config = None;
         }
         *self = candidate;
         Ok(removed)
@@ -2769,13 +2766,13 @@ impl MatchSession {
         &mut self,
         agreed_seed: u32,
     ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
-        self.freeze_network_start_with_vera_coop(agreed_seed, None)
+        self.freeze_network_start_with_vmce(agreed_seed, None)
     }
 
-    pub(crate) fn freeze_network_start_with_vera_coop(
+    pub(crate) fn freeze_network_start_with_vmce(
         &mut self,
         agreed_seed: u32,
-        vera_coop_houses: Option<crate::skirmish_launch::VeraCoopHouseAssignments>,
+        vmce_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
         let network = self
             .network
@@ -2788,11 +2785,11 @@ impl MatchSession {
             network.proposed_seed.is_none_or(|seed| seed == agreed_seed),
             "accepted host seed differs from admitted setup seed"
         );
-        let vera_coop_map_config = network.vera_coop_map_config.clone();
+        let vmce_map_config = network.vmce_map_config.clone();
         match (
-            launch.mode.class.is_vera_cooperative(),
-            vera_coop_houses.as_ref(),
-            vera_coop_map_config.as_ref(),
+            launch.mode.class.is_vmce(),
+            vmce_houses.as_ref(),
+            vmce_map_config.as_ref(),
         ) {
             (true, Some(assignments), Some(config)) => {
                 assignments
@@ -2801,19 +2798,19 @@ impl MatchSession {
                 let map_file = launch
                     .selected_map_file
                     .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no selected map"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE start has no selected map"))?;
                 let metadata = network
                     .map_metadata
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no map metadata"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE start has no map metadata"))?;
                 config.validate_binding(map_file, &metadata.source_sha256)?;
             }
-            (true, _, _) => anyhow::bail!("VERA Coop start has no frozen map config/assignments"),
+            (true, _, _) => anyhow::bail!("VMCE start has no frozen map config/assignments"),
             (false, Some(_), _) => {
-                anyhow::bail!("non-Coop network start carries VERA Coop assignments")
+                anyhow::bail!("non-VMCE network start carries VMCE assignments")
             }
             (false, None, Some(_)) => {
-                anyhow::bail!("non-Coop network start carries VERA Coop map settings")
+                anyhow::bail!("non-VMCE network start carries VMCE map settings")
             }
             (false, None, None) => {}
         }
@@ -2835,11 +2832,11 @@ impl MatchSession {
             max_ahead_frames,
             std::mem::take(&mut network.wol_start),
         );
-        if let Some(assignments) = vera_coop_houses {
-            prepared = prepared.with_vera_coop_houses(assignments);
+        if let Some(assignments) = vmce_houses {
+            prepared = prepared.with_vmce_houses(assignments);
         }
-        if let Some(config) = vera_coop_map_config {
-            prepared = prepared.with_vera_coop_map_config(config);
+        if let Some(config) = vmce_map_config {
+            prepared = prepared.with_vmce_map_config(config);
         }
         let startup = Arc::new(
             prepared
@@ -3546,18 +3543,18 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_limits_map_seats_and_keeps_observers_separate() {
+    fn vmce_limits_map_seats_and_keeps_observers_separate() {
         use super::NetworkVacancy;
         use crate::skirmish_modes::MpModeClass;
 
         let mut launch = network_fixture();
         launch.local_player_index = 0;
-        launch.mode.class = MpModeClass::VeraCooperative;
+        launch.mode.class = MpModeClass::Vmce;
         let mode = launch.mode.clone();
         assert_eq!(
             super::row_capacity(SessionMode::Lan, NetworkRoom::default(), &mode, 8),
             4,
-            "an eight-player map supplies four VERA Coop player seats"
+            "an eight-player map supplies four VMCE player seats"
         );
         assert_eq!(
             super::row_capacity(SessionMode::Wol, NetworkRoom::default(), &mode, 8),
@@ -4099,20 +4096,18 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_freeze_carries_only_assignments_matching_the_synced_launch() {
+    fn vmce_freeze_carries_only_assignments_matching_the_synced_launch() {
         use super::NetworkReturnContext;
-        use crate::skirmish_launch::{
-            LaunchHumanRole, VeraCoopHouseAssignment, VeraCoopHouseAssignments,
-        };
+        use crate::skirmish_launch::{LaunchHumanRole, VmceHouseAssignment, VmceHouseAssignments};
         let mut launch = network_fixture();
-        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
         launch.humans[1].role = LaunchHumanRole::Player { group: 1 };
-        let assignments = VeraCoopHouseAssignments {
+        let assignments = VmceHouseAssignments {
             participants: launch
                 .humans
                 .iter()
-                .map(|human| VeraCoopHouseAssignment {
+                .map(|human| VmceHouseAssignment {
                     participant_name: human.name.clone(),
                     raw_slot_index: human.raw_slot_index.unwrap(),
                     player_index: human.role.native_value() as u8,
@@ -4146,14 +4141,14 @@ mod tests {
             source_sha256: source_sha256.clone(),
             effective_digest: "b".repeat(64),
         });
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
             map_file,
             source_sha256,
-            crate::map::coop_config::VeraCoopMapConfig::default(),
+            crate::map::vmce_config::VmceMapConfig::default(),
         )
         .unwrap();
         session
-            .accept_network_vera_coop_map_config(Some(config.clone()))
+            .accept_network_vmce_map_config(Some(config.clone()))
             .unwrap();
         session.set_network_player_ready(0, true).unwrap();
         session.set_network_map_status(0, 2).unwrap();
@@ -4166,19 +4161,19 @@ mod tests {
             "failed freeze leaves setup editable"
         );
         let startup = session
-            .freeze_network_start_with_vera_coop(0x1234_abcd, Some(assignments.clone()))
+            .freeze_network_start_with_vmce(0x1234_abcd, Some(assignments.clone()))
             .unwrap();
         let crate::app::match_bootstrap::LoadingStartup::Network(prepared) = &startup else {
             panic!("network startup");
         };
-        assert_eq!(prepared.vera_coop_houses(), Some(&assignments));
+        assert_eq!(prepared.vmce_houses(), Some(&assignments));
 
         let mut mismatched = assignments;
         mismatched.participants[0].player_index = 3;
         let mut retry = MatchSession::default();
         retry.enter_network(NetworkReturnContext::LanLobby);
         let mut retry_launch = network_fixture();
-        retry_launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        retry_launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         retry_launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
         retry_launch.humans[1].role = LaunchHumanRole::Player { group: 1 };
         retry
@@ -4200,45 +4195,43 @@ mod tests {
             source_sha256: source_sha256.clone(),
             effective_digest: "b".repeat(64),
         });
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
             map_file,
             source_sha256,
-            crate::map::coop_config::VeraCoopMapConfig::default(),
+            crate::map::vmce_config::VmceMapConfig::default(),
         )
         .unwrap();
-        retry
-            .accept_network_vera_coop_map_config(Some(config))
-            .unwrap();
+        retry.accept_network_vmce_map_config(Some(config)).unwrap();
         retry.set_network_player_ready(0, true).unwrap();
         retry.set_network_map_status(0, 2).unwrap();
         retry.set_network_start_seed(0x1234_abcd).unwrap();
         retry.prepare_network_timing(2, || 0).unwrap();
         assert!(
             retry
-                .freeze_network_start_with_vera_coop(0x1234_abcd, Some(mismatched))
+                .freeze_network_start_with_vmce(0x1234_abcd, Some(mismatched))
                 .is_err()
         );
         assert!(retry.network_setup().is_some());
     }
 
     #[test]
-    fn wol_vera_coop_keeps_lobby_without_config_while_lan_requires_it() {
+    fn wol_vmce_keeps_lobby_without_config_while_lan_requires_it() {
         use super::NetworkReturnContext;
 
         let mut launch = network_fixture();
-        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
 
         let mut wol = MatchSession::default();
         wol.enter_network(NetworkReturnContext::Wol);
         wol.accept_network_setup(launch.clone(), true, None, false)
             .unwrap();
-        wol.accept_network_vera_coop_map_config(None).unwrap();
+        wol.accept_network_vmce_map_config(None).unwrap();
         assert!(wol.network_setup().is_some());
 
         let mut lan = MatchSession::default();
         lan.enter_network(NetworkReturnContext::LanLobby);
         lan.accept_network_setup(launch, true, None, false).unwrap();
-        assert!(lan.accept_network_vera_coop_map_config(None).is_err());
+        assert!(lan.accept_network_vmce_map_config(None).is_err());
         assert!(lan.network_setup().is_some());
     }
 
@@ -5033,29 +5026,29 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_role_owner_allows_random_but_rejects_duplicate_map_roles() {
+    fn vmce_role_owner_allows_random_but_rejects_duplicate_map_roles() {
         use crate::skirmish_launch::LaunchHumanRole;
         let mut session = MatchSession::default();
         session.enter_network(super::NetworkReturnContext::LanLobby);
         let mut setup = network_fixture();
-        setup.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        setup.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         session
             .accept_network_setup(setup, true, Some(7), false)
             .unwrap();
 
         session
-            .set_network_vera_coop_role(0, LaunchHumanRole::Player { group: 1 })
+            .set_network_vmce_role(0, LaunchHumanRole::Player { group: 1 })
             .unwrap();
         assert!(
             session
-                .set_network_vera_coop_role(1, LaunchHumanRole::Player { group: 1 })
+                .set_network_vmce_role(1, LaunchHumanRole::Player { group: 1 })
                 .is_err()
         );
         session
-            .set_network_vera_coop_role(0, LaunchHumanRole::Player { group: -2 })
+            .set_network_vmce_role(0, LaunchHumanRole::Player { group: -2 })
             .unwrap();
         session
-            .set_network_vera_coop_role(1, LaunchHumanRole::Player { group: -2 })
+            .set_network_vmce_role(1, LaunchHumanRole::Player { group: -2 })
             .unwrap();
         assert_eq!(
             session.network_setup().unwrap().humans[0]

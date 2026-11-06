@@ -92,14 +92,14 @@ fn score_contenders(houses: &Houses, session: &ScenarioSession) -> Vec<InternedI
 
 impl Simulation {
     /// `0x0046DA70`/`0x0049B7E0`: one row per human House, in `Houses[]` order.
-    /// VERA Coop's grant table names one primary House per network source, and
+    /// VMCE's grant table names one primary House per network source, and
     /// a shared House another source also controls is not a separate player,
     /// so its rows follow the same role viewpoints the mission outcome uses.
     pub fn cooperative_score_rows(&self) -> Vec<CooperativeScoreRow> {
         let owners = if self
             .session()
             .multiplayer_mode_class()
-            .is_some_and(|class| class.is_vera_cooperative())
+            .is_some_and(|class| class.is_vmce())
         {
             self.outcome_viewpoints()
         } else {
@@ -192,7 +192,7 @@ impl Simulation {
         }
         // GameExit's co-op arm (mode vt+8, `0x00685851..0x0068586A`) draws
         // the empty backdrop instead of the score dialog, so Cooperative and
-        // VERA Coop make none of its draws.
+        // VMCE make none of its draws.
         if session
             .multiplayer_mode_class()
             .is_some_and(|class| class.shares_cooperative_result())
@@ -875,13 +875,13 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_terminal_frame_makes_no_score_draw() {
+    fn vmce_terminal_frame_makes_no_score_draw() {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let mut sim = Simulation::with_seed(0x5C4E_F001);
         sim.session.set_game_mode(ScenarioGameMode::Lan);
         sim.session.install_multiplayer_house_identity(
-            crate::skirmish_modes::MpModeClass::VeraCooperative,
+            crate::skirmish_modes::MpModeClass::Vmce,
             Vec::new(),
         );
         insert_house(
@@ -910,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_rows_take_role_primaries_not_the_shared_house() {
+    fn vmce_rows_take_role_primaries_not_the_shared_house() {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let mut sim = Simulation::with_seed(0x5C4E_F002);
@@ -935,7 +935,7 @@ mod tests {
         let guest = insert("Guest", 20);
         let shared = insert("Shared", 30);
         sim.session.install_multiplayer_house_identity(
-            crate::skirmish_modes::MpModeClass::VeraCooperative,
+            crate::skirmish_modes::MpModeClass::Vmce,
             Vec::new(),
         );
         sim.session.install_network_house_grants_for_test(

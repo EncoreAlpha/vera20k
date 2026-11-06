@@ -802,7 +802,7 @@ pub struct ScenarioSession {
     /// sender is then its House index, as in gamemd. Launch installs it once.
     #[serde(default)]
     shared_house_sources: Vec<u8>,
-    /// VERA Coop only: each synchronized sender's primary House followed by
+    /// VMCE only: each synchronized sender's primary House followed by
     /// the additional Houses its campaign role may command.
     #[serde(default)]
     network_house_grants: Vec<Vec<u8>>,
@@ -817,12 +817,12 @@ pub struct ScenarioSession {
     start_header: crate::map::preview::ScenarioStartHeader,
     #[serde(default)]
     campaign: Option<CampaignScenarioState>,
-    /// VERA Coop: frozen lobby difficulty row for TriggerType difficulty flags
+    /// VMCE: frozen lobby difficulty row for TriggerType difficulty flags
     /// (0 = Easy, 1 = Normal, 2 = Hard). Process-shared start input; only
-    /// VeraCoop installs it, so stock sessions keep the field absent and their
+    /// Vmce installs it, so stock sessions keep the field absent and their
     /// exact hash stream.
     #[serde(default)]
-    vera_coop_trigger_difficulty: Option<i32>,
+    vmce_trigger_difficulty: Option<i32>,
     /// Scenario+35A0: SetDefaults6839C7 clears the raw stage word. MapSelect
     /// 5AE1FA/5AE0B8 writes the selected index; Scenario save/load retains it.
     campaign_map_stage: u16,
@@ -1360,17 +1360,17 @@ impl ScenarioSession {
         self.install_network_house_grants(source_houses, grants, local_source);
     }
 
-    /// Whether this Scenario carries the VERA Coop source-to-House authority
-    /// table. The table is installed only by the Coop authored bootstrap.
+    /// Whether this Scenario carries the VMCE source-to-House authority
+    /// table. The table is installed only by the Campaign authored bootstrap.
     pub fn has_network_house_grants(&self) -> bool {
         !self.network_house_grants.is_empty()
     }
 
-    /// Each VERA Coop network source's primary House index, in source order.
+    /// Each VMCE network source's primary House index, in source order.
     /// The shared Houses a source additionally controls are not separate
     /// players; mission viewpoints read this table. Empty without the grant
     /// table.
-    pub(crate) fn cooperative_source_houses(&self) -> &[u8] {
+    pub(crate) fn campaign_source_houses(&self) -> &[u8] {
         &self.shared_house_sources
     }
 
@@ -1398,7 +1398,7 @@ impl ScenarioSession {
     }
 
     /// Whether an authenticated synchronized sender may issue orders to a
-    /// House index under the VERA Coop authored campaign configuration.
+    /// House index under the VMCE authored campaign configuration.
     pub fn network_source_controls_house(&self, source: i8, house: usize) -> bool {
         let (Ok(source), Ok(house)) = (usize::try_from(source), u8::try_from(house)) else {
             return false;
@@ -1759,29 +1759,29 @@ impl ScenarioSession {
             .map(|campaign| (campaign.player_difficulty, campaign.computer_difficulty))
     }
 
-    /// Install the VERA Coop frozen lobby difficulty row. The caller has
+    /// Install the VMCE frozen lobby difficulty row. The caller has
     /// already validated the 0..=2 range; clamp here keeps a corrupted frozen
     /// payload from indexing past TriggerType's three flags.
-    pub(crate) fn install_vera_cooperative_trigger_difficulty(&mut self, difficulty: i32) {
+    pub(crate) fn install_vmce_trigger_difficulty(&mut self, difficulty: i32) {
         debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
-        self.vera_coop_trigger_difficulty = Some(difficulty.clamp(0, 2));
+        self.vmce_trigger_difficulty = Some(difficulty.clamp(0, 2));
     }
 
-    /// VERA Coop starts an authored campaign map under a nonzero network game
+    /// VMCE starts an authored campaign map under a nonzero network game
     /// mode. The map's campaign defeat and economy rules are not the stock
     /// skirmish defaults: the role defeat gate must count all objects (not
     /// `ShortGame` buildings only), and random lobby crates are a multiplayer
     /// system the campaign never runs.
-    pub(crate) fn install_vera_cooperative_campaign_options(&mut self) {
+    pub(crate) fn install_vmce_series_options(&mut self) {
         self.game_options.short_game = false;
         self.game_options.crates = false;
     }
 
-    /// VERA Coop's TriggerType difficulty row, when this scenario was started
+    /// VMCE's TriggerType difficulty row, when this scenario was started
     /// from a frozen co-op lobby. Separate from campaign difficulty because the
     /// two owners have different scales and consumers.
-    pub(crate) fn vera_cooperative_trigger_difficulty(&self) -> Option<i32> {
-        self.vera_coop_trigger_difficulty
+    pub(crate) fn vmce_trigger_difficulty(&self) -> Option<i32> {
+        self.vmce_trigger_difficulty
     }
 
     pub fn current_house(&self) -> Option<InternedId> {
@@ -1839,7 +1839,7 @@ impl ScenarioSession {
             timing.hash(hasher);
         }
         if !s.network_house_grants.is_empty() {
-            b"vera-coop-house-grants-v1".hash(hasher);
+            b"vera-campaign-house-grants-v1".hash(hasher);
             s.shared_house_sources.hash(hasher);
             s.network_house_grants.hash(hasher);
         }
@@ -1852,8 +1852,8 @@ impl ScenarioSession {
             b"scenario-campaign-startup-v1".hash(hasher);
             campaign.hash(hasher);
         }
-        if let Some(difficulty) = s.vera_coop_trigger_difficulty {
-            b"scenario-vera-coop-trigger-difficulty-v1".hash(hasher);
+        if let Some(difficulty) = s.vmce_trigger_difficulty {
+            b"scenario-vera-campaign-trigger-difficulty-v1".hash(hasher);
             difficulty.hash(hasher);
         }
         if s.campaign_map_stage != 0 {
@@ -2097,7 +2097,7 @@ impl ScenarioSession {
             local_shared_house_source: None,
             start_header: crate::map::preview::ScenarioStartHeader::default(),
             campaign: None,
-            vera_coop_trigger_difficulty: None,
+            vmce_trigger_difficulty: None,
             campaign_map_stage: 0,
             input_locked: false,
             chrono_screen: crate::sim::superweapon::chrono_screen::ChronoScreenState::default(),
@@ -2317,7 +2317,7 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_trigger_difficulty_is_shared_and_roundtrips_while_absent_for_stock() {
+    fn vmce_trigger_difficulty_is_shared_and_roundtrips_while_absent_for_stock() {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hasher;
         let fold = |session: &ScenarioSession| {
@@ -2327,8 +2327,8 @@ mod tests {
         };
         let mut session = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
         let stock = fold(&session);
-        session.install_vera_cooperative_trigger_difficulty(2);
-        assert_eq!(session.vera_cooperative_trigger_difficulty(), Some(2));
+        session.install_vmce_trigger_difficulty(2);
+        assert_eq!(session.vmce_trigger_difficulty(), Some(2));
         assert_ne!(
             fold(&session),
             stock,
@@ -2337,18 +2337,18 @@ mod tests {
 
         let encoded = serde_json::to_vec(&session).unwrap();
         let restored: ScenarioSession = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(restored.vera_cooperative_trigger_difficulty(), Some(2));
+        assert_eq!(restored.vmce_trigger_difficulty(), Some(2));
 
         // Stock sessions never install the field: the hash stream must stay
         // byte-identical to the pre-field contract.
         let mut fresh = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
         assert_eq!(fold(&fresh), stock);
-        fresh.install_vera_cooperative_trigger_difficulty(0);
+        fresh.install_vmce_trigger_difficulty(0);
         assert_eq!(
             fold(&fresh),
             fold(&{
                 let mut same = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
-                same.install_vera_cooperative_trigger_difficulty(0);
+                same.install_vmce_trigger_difficulty(0);
                 same
             })
         );

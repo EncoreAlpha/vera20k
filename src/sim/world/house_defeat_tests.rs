@@ -1311,9 +1311,9 @@ fn the_civilian_house_is_asked_of_its_house_type() {
     }
 }
 
-/// VERA Coop fixtures: two role primary Houses plus a shared House both
+/// VMCE fixtures: two role primary Houses plus a shared House both
 /// sources control. The grant table names one primary House per source.
-fn vera_coop_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
+fn vmce_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
     use crate::sim::scenario_session::ScenarioGameMode;
     use crate::skirmish_modes::MpModeClass;
 
@@ -1338,7 +1338,7 @@ fn vera_coop_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
     );
     sim.session.set_current_house_for_test(Some(houses[0]));
     sim.session
-        .install_multiplayer_house_identity(MpModeClass::VeraCooperative, Vec::new());
+        .install_multiplayer_house_identity(MpModeClass::Vmce, Vec::new());
     for owner in houses.iter().chain(std::iter::once(&shared)) {
         sim.houses
             .get_mut(owner)
@@ -1349,10 +1349,10 @@ fn vera_coop_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
 }
 
 #[test]
-fn vera_coop_does_not_auto_defeat_empty_scenario_houses() {
+fn vmce_does_not_auto_defeat_empty_scenario_houses() {
     use crate::sim::world::SimSoundEvent;
 
-    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let (mut sim, houses, shared, rules) = vmce_fixture();
     let scenario = sim.interner.intern("scenario");
     let country = sim.interner.intern("Country3");
     sim.houses
@@ -1379,9 +1379,9 @@ fn vera_coop_does_not_auto_defeat_empty_scenario_houses() {
 }
 
 #[test]
-fn vera_coop_campaign_options_keep_role_houses_alive_with_units() {
-    let (mut sim, houses, _shared, rules) = vera_coop_fixture();
-    sim.session.install_vera_cooperative_campaign_options();
+fn vmce_series_options_keep_role_houses_alive_with_units() {
+    let (mut sim, houses, _shared, rules) = vmce_fixture();
+    sim.session.install_vmce_series_options();
     assert!(!sim.session.game_options().short_game);
     assert!(!sim.session.game_options().crates);
 
@@ -1401,19 +1401,19 @@ fn vera_coop_campaign_options_keep_role_houses_alive_with_units() {
 }
 
 #[test]
-fn vera_coop_house_loss_never_completes_the_match() {
+fn vmce_house_loss_never_completes_the_match() {
     use crate::sim::scenario_session::ScenarioGameMode;
     use crate::sim::world::FrameEffects;
     use crate::skirmish_modes::MpModeClass;
 
-    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let (mut sim, houses, shared, rules) = vmce_fixture();
     for owner in houses.iter().chain(std::iter::once(&shared)) {
         sim.houses.get_mut(owner).unwrap().mark_defeated();
     }
     sim.complete_multiplayer_after_defeat(&rules, FrameEffects::empty());
     assert!(
         sim.multiplayer_decision().is_none(),
-        "VERA Coop's outcome comes from the mission, not House elimination"
+        "VMCE's outcome comes from the mission, not House elimination"
     );
     assert!(sim.network_match_winners().is_none());
     assert!(
@@ -1446,10 +1446,10 @@ fn vera_coop_house_loss_never_completes_the_match() {
 }
 
 #[test]
-fn vera_coop_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
+fn vmce_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
     use crate::sim::world::FrameEffects;
 
-    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let (mut sim, houses, shared, rules) = vmce_fixture();
     assert_eq!(
         sim.player_outcome_viewpoints(),
         houses,
@@ -1473,7 +1473,7 @@ fn vera_coop_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
 
     // Action 1/2 style requests also resolve the whole team; the country
     // parameter is not compared.
-    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let (mut sim, houses, shared, rules) = vmce_fixture();
     let defeat = PlayerOutcomeRequest::Country {
         country_index: 0,
         win_on_match: false,

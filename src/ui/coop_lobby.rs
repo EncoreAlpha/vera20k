@@ -1,4 +1,4 @@
-//! VERA Coop controls on the existing network setup page geometry.
+//! VMCE controls on the existing network setup page geometry.
 //!
 //! The original page owns the chrome anchors. Only the player columns are
 //! rearranged: a map role already determines its House and country.

@@ -1288,15 +1288,15 @@ pub(crate) struct LiveLanConfig {
     pub profile_check: bool,
     /// Written before an external LAN proxy/process fault; contains no secrets.
     pub failure_prefix_output: Option<PathBuf>,
-    /// VERA Coop only: inject one mission outcome through the production owner
+    /// VMCE only: inject one mission outcome through the production owner
     /// after the 300-frame prefix and observe the result dialog.
-    pub vera_outcome: Option<VeraCoopOutcome>,
+    pub vera_outcome: Option<VmceOutcome>,
 }
 
-/// A VERA Coop mission outcome the diagnostic injects once, through the same
+/// A VMCE mission outcome the diagnostic injects once, through the same
 /// production owner a map's outcome action reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VeraCoopOutcome {
+pub(crate) enum VmceOutcome {
     Win,
     Lose,
     /// Mark every role's primary House defeated and expect the mission to keep
@@ -1307,7 +1307,7 @@ pub(crate) enum VeraCoopOutcome {
     Real,
 }
 
-impl VeraCoopOutcome {
+impl VmceOutcome {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Win => "win",
@@ -1548,10 +1548,10 @@ where
             }
             "--vera-outcome" => {
                 let outcome = match next_utf8(&mut args, "value after --vera-outcome")?.as_str() {
-                    "win" => VeraCoopOutcome::Win,
-                    "lose" => VeraCoopOutcome::Lose,
-                    "houses" => VeraCoopOutcome::HouseLoss,
-                    "real" => VeraCoopOutcome::Real,
+                    "win" => VmceOutcome::Win,
+                    "lose" => VmceOutcome::Lose,
+                    "houses" => VmceOutcome::HouseLoss,
+                    "real" => VmceOutcome::Real,
                     _ => bail!("--vera-outcome requires win, lose, houses or real"),
                 };
                 set_once(&mut vera_outcome, outcome, "--vera-outcome")?;
@@ -2084,7 +2084,7 @@ where
                 matches!(
                     checkpoint,
                     ShellCaptureCheckpoint::Lan(
-                        movies::LanTarget::LiveHost | movies::LanTarget::LiveVeraCoopHost
+                        movies::LanTarget::LiveHost | movies::LanTarget::LiveVmceHost
                     )
                 ),
                 "--lan-map requires a live LAN host checkpoint"
@@ -2093,22 +2093,19 @@ where
         }
         if matches!(
             checkpoint,
-            ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVeraCoopHost)
+            ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVmceHost)
         ) {
-            ensure!(
-                lan_map.is_some(),
-                "VERA Coop host capture requires --lan-map"
-            );
+            ensure!(lan_map.is_some(), "VMCE host capture requires --lan-map");
         }
         if let Some(outcome) = vera_outcome {
             ensure!(
                 matches!(
                     checkpoint,
                     ShellCaptureCheckpoint::Lan(
-                        movies::LanTarget::LiveVeraCoopHost | movies::LanTarget::LiveVeraCoopGuest
+                        movies::LanTarget::LiveVmceHost | movies::LanTarget::LiveVmceGuest
                     )
                 ),
-                "--vera-outcome requires a VERA Coop live host or guest checkpoint"
+                "--vera-outcome requires a VMCE live host or guest checkpoint"
             );
             #[cfg(not(feature = "dev-overlays"))]
             {
@@ -3617,10 +3614,10 @@ mod tests {
     }
 
     #[test]
-    fn live_vera_coop_setup_requires_a_host_map_and_keeps_guest_map_host_authored() {
-        let output = new_output_path("live-vera-coop-setup-host");
+    fn live_vmce_setup_requires_a_host_map_and_keeps_guest_map_host_authored() {
+        let output = new_output_path("live-vera-campaign-setup-host");
         let mut host = valid_args(&output);
-        host[1] = "lan-live-vera-coop-host".into();
+        host[1] = "lan-live-vera-campaign-host".into();
         host.extend(args(&[
             "--lan-bind",
             "127.0.0.1:31000",
@@ -3635,9 +3632,9 @@ mod tests {
         let config = request.live_lan.unwrap();
         assert_eq!(config.map.as_deref(), Some("Lindrak.map"));
 
-        let output = new_output_path("live-vera-coop-setup-guest");
+        let output = new_output_path("live-vera-campaign-setup-guest");
         let mut guest = valid_args(&output);
-        guest[1] = "lan-live-vera-coop-guest".into();
+        guest[1] = "lan-live-vera-campaign-guest".into();
         guest.extend(args(&[
             "--lan-bind",
             "127.0.0.1:31010",
@@ -3646,9 +3643,9 @@ mod tests {
         ]));
         assert!(parse_launch_args(guest).is_ok());
 
-        let output = new_output_path("live-vera-coop-setup-host-missing-map");
+        let output = new_output_path("live-vera-campaign-setup-host-missing-map");
         let mut host_without_map = valid_args(&output);
-        host_without_map[1] = "lan-live-vera-coop-host".into();
+        host_without_map[1] = "lan-live-vera-campaign-host".into();
         host_without_map.extend(args(&[
             "--lan-bind",
             "127.0.0.1:31000",
@@ -3662,7 +3659,7 @@ mod tests {
     fn vera_outcome_real_keeps_the_live_coop_host_target() {
         let output = new_output_path("vera-outcome-real");
         let mut host = valid_args(&output);
-        host[1] = "lan-live-vera-coop-host".into();
+        host[1] = "lan-live-vera-campaign-host".into();
         host.extend(args(&[
             "--lan-bind",
             "127.0.0.1:31100",
@@ -3678,7 +3675,7 @@ mod tests {
         };
         assert_eq!(
             request.live_lan.unwrap().vera_outcome,
-            Some(VeraCoopOutcome::Real)
+            Some(VmceOutcome::Real)
         );
     }
 

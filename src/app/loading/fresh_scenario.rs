@@ -35,7 +35,7 @@ impl FreshMapMaterialization {
 pub(crate) enum FreshScenarioFamily {
     StockOffline,
     Campaign,
-    VeraCooperative,
+    Vmce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,7 @@ enum FreshScenarioPrefixReceipt {
     Campaign {
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
     },
-    VeraCooperative {
+    Vmce {
         startup: std::sync::Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     },
 }
@@ -98,7 +98,7 @@ pub(crate) enum FreshScenarioParts {
         signed_new_ini_format: i32,
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
     },
-    VeraCooperative {
+    Vmce {
         physical_source: LoadedMapSource,
         signed_new_ini_format: i32,
         startup: std::sync::Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
@@ -152,55 +152,54 @@ impl FreshScenarioLoadContextDescriptor {
             });
         }
         if let LoadingStartup::Network(prepared) = startup
-            && prepared.launch_session().mode.class.is_vera_cooperative()
+            && prepared.launch_session().mode.class.is_vmce()
         {
             let launch = prepared.launch_session();
             let selected_map = launch
                 .selected_map_file
                 .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
+                .ok_or_else(|| anyhow::anyhow!("VMCE startup has no selected map"))?;
             anyhow::ensure!(
                 !selected_map.trim().is_empty()
                     && selected_map.trim() == selected_map
                     && !crate::map::rmg::is_seed_selection(selected_map),
-                "VERA Coop requires an exact authored map selection"
+                "VMCE requires an exact authored map selection"
             );
             anyhow::ensure!(
                 matches!(
                     physical_source,
                     LoadedMapSource::Loose { .. } | LoadedMapSource::Mix { .. }
                 ),
-                "VERA Coop requires an authored physical map source"
+                "VMCE requires an authored physical map source"
             );
             anyhow::ensure!(
                 accepted_rmg_start_staging.is_none(),
-                "random-map staging cannot enter a VERA Coop authored-map load"
+                "random-map staging cannot enter a VMCE authored-map load"
             );
-            let frozen = prepared.vera_coop_houses().ok_or_else(|| {
-                anyhow::anyhow!("frozen VERA Coop startup has no House assignments")
-            })?;
+            let frozen = prepared
+                .vmce_houses()
+                .ok_or_else(|| anyhow::anyhow!("frozen VMCE startup has no House assignments"))?;
             let config = prepared
-                .vera_coop_map_config()
-                .ok_or_else(|| anyhow::anyhow!("frozen VERA Coop startup has no map config"))?;
+                .vmce_map_config()
+                .ok_or_else(|| anyhow::anyhow!("frozen VMCE startup has no map config"))?;
             let (_, source_sha256) = physical_source
                 .physical_identity()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-            let mut recomputed =
-                crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
-                    &map.ini,
-                    selected_map,
-                    source_sha256,
-                    config,
-                    launch,
-                    prepared.seed.value,
-                )?;
+                .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
+            let mut recomputed = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                &map.ini,
+                selected_map,
+                source_sha256,
+                config,
+                launch,
+                prepared.seed.value,
+            )?;
             // The lobby difficulty is not derived from the map: freeze already
             // validated it. Only the map/roles/seed identity is recomputable
             // here, so keep the frozen row when comparing.
             recomputed.difficulty = frozen.difficulty;
             anyhow::ensure!(
                 &recomputed == frozen,
-                "VERA Coop map, participant roles, or shared seed changed after start freeze"
+                "VMCE map, participant roles, or shared seed changed after start freeze"
             );
             return Ok(Self {
                 physical_source: physical_source.clone(),
@@ -208,7 +207,7 @@ impl FreshScenarioLoadContextDescriptor {
                 signed_new_ini_format: map.basic.new_ini_format.unwrap_or(0),
                 startup_provenance: FreshStartupProvenance::NetworkAccepted,
                 match_seed: prepared.seed.value,
-                prefix: FreshScenarioPrefixReceipt::VeraCooperative {
+                prefix: FreshScenarioPrefixReceipt::Vmce {
                     startup: std::sync::Arc::clone(prepared),
                 },
             });
@@ -240,23 +239,20 @@ impl FreshScenarioLoadContextDescriptor {
         let mut launch = MatchLaunchDescriptor::from_resolved(session.clone())
             .map_err(|err| anyhow::anyhow!("fresh stock-offline launch is unresolved: {err}"))?;
         if let LoadingStartup::Network(prepared) = startup {
-            match (
-                session.mode.class.is_vera_cooperative(),
-                prepared.vera_coop_houses(),
-            ) {
+            match (session.mode.class.is_vmce(), prepared.vmce_houses()) {
                 (true, Some(frozen)) => {
                     let selected_map = session
                         .selected_map_file
                         .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
-                    let config = prepared.vera_coop_map_config().ok_or_else(|| {
-                        anyhow::anyhow!("frozen VERA Coop startup has no map config")
-                    })?;
+                        .ok_or_else(|| anyhow::anyhow!("VMCE startup has no selected map"))?;
+                    let config = prepared
+                        .vmce_map_config()
+                        .ok_or_else(|| anyhow::anyhow!("frozen VMCE startup has no map config"))?;
                     let (_, source_sha256) = physical_source
                         .physical_identity()
-                        .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+                        .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
                     let mut recomputed =
-                        crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+                        crate::app::match_bootstrap::resolve_vmce_houses_with_config(
                             &map.ini,
                             selected_map,
                             source_sha256,
@@ -269,14 +265,14 @@ impl FreshScenarioLoadContextDescriptor {
                     recomputed.difficulty = frozen.difficulty;
                     anyhow::ensure!(
                         &recomputed == frozen,
-                        "VERA Coop map, participant roles, or shared seed changed after start freeze"
+                        "VMCE map, participant roles, or shared seed changed after start freeze"
                     );
                 }
                 (true, None) => {
-                    anyhow::bail!("frozen VERA Coop startup has no House assignments")
+                    anyhow::bail!("frozen VMCE startup has no House assignments")
                 }
                 (false, Some(_)) => {
-                    anyhow::bail!("non-Coop network startup carries VERA Coop assignments")
+                    anyhow::bail!("non-VMCE network startup carries VMCE assignments")
                 }
                 (false, None) => {}
             }
@@ -297,9 +293,9 @@ impl FreshScenarioLoadContextDescriptor {
         {
             anyhow::bail!("stock offline launch has no exact selected map record");
         }
-        if session.mode.class.is_vera_cooperative() {
+        if session.mode.class.is_vmce() {
             anyhow::bail!(
-                "VERA Coop roles are frozen and verified, but authored-map House initialization is not admitted yet"
+                "VMCE roles are frozen and verified, but authored-map House initialization is not admitted yet"
             );
         }
         // Validate the complete stock callback row before the accepted staging
@@ -409,9 +405,7 @@ impl FreshScenarioLoadContextDescriptor {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline { .. } => FreshScenarioFamily::StockOffline,
             FreshScenarioPrefixReceipt::Campaign { .. } => FreshScenarioFamily::Campaign,
-            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
-                FreshScenarioFamily::VeraCooperative
-            }
+            FreshScenarioPrefixReceipt::Vmce { .. } => FreshScenarioFamily::Vmce,
         }
     }
 
@@ -421,14 +415,14 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer launch descriptor")
             }
-            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
-                panic!("VERA Coop authored campaign has no stock-offline launch descriptor")
+            FreshScenarioPrefixReceipt::Vmce { .. } => {
+                panic!("VMCE authored campaign has no stock-offline launch descriptor")
             }
         }
     }
 
     /// The launch session the loading composition paints (participant names,
-    /// colours, countries). Authored VERA Coop starts carry their frozen
+    /// colours, countries). Authored VMCE starts carry their frozen
     /// network launch; campaign loads draw the campaign screen instead.
     pub(crate) fn loading_prefix_launch_session(
         &self,
@@ -436,13 +430,11 @@ impl FreshScenarioLoadContextDescriptor {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline { launch, .. } => Some(launch.session()),
             FreshScenarioPrefixReceipt::Campaign { .. } => None,
-            FreshScenarioPrefixReceipt::VeraCooperative { startup } => {
-                Some(startup.launch_session())
-            }
+            FreshScenarioPrefixReceipt::Vmce { startup } => Some(startup.launch_session()),
         }
     }
 
-    /// The stock-offline start projection, when this load has one. VERA Coop
+    /// The stock-offline start projection, when this load has one. VMCE
     /// authored campaigns place Houses through their own bootstrap, so they
     /// paint no stock start markers.
     pub(crate) fn loading_prefix_projection(&self) -> Option<&StockOfflinePrefixProjection> {
@@ -462,8 +454,8 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer start projection")
             }
-            FreshScenarioPrefixReceipt::VeraCooperative { .. } => {
-                panic!("VERA Coop authored campaign has no stock-offline start projection")
+            FreshScenarioPrefixReceipt::Vmce { .. } => {
+                panic!("VMCE authored campaign has no stock-offline start projection")
             }
         }
     }
@@ -498,14 +490,14 @@ impl FreshScenarioLoadContextDescriptor {
             }
             anyhow::bail!("campaign receipt cannot enter a multiplayer load");
         }
-        if let FreshScenarioPrefixReceipt::VeraCooperative { startup: admitted } = &self.prefix {
+        if let FreshScenarioPrefixReceipt::Vmce { startup: admitted } = &self.prefix {
             if let LoadingStartup::Network(startup) = startup {
                 if startup.as_ref() != admitted.as_ref() {
-                    anyhow::bail!("VERA Coop network startup changed before terminal transfer");
+                    anyhow::bail!("VMCE network startup changed before terminal transfer");
                 }
                 return Ok(());
             }
-            anyhow::bail!("VERA Coop receipt cannot enter a non-network load");
+            anyhow::bail!("VMCE receipt cannot enter a non-network load");
         }
         let (provenance, seed, session) = match startup {
             LoadingStartup::Accepted(prepared) => (
@@ -568,13 +560,11 @@ impl FreshScenarioLoadContextDescriptor {
                 signed_new_ini_format: self.signed_new_ini_format,
                 startup,
             },
-            FreshScenarioPrefixReceipt::VeraCooperative { startup } => {
-                FreshScenarioParts::VeraCooperative {
-                    physical_source: self.physical_source,
-                    signed_new_ini_format: self.signed_new_ini_format,
-                    startup,
-                }
-            }
+            FreshScenarioPrefixReceipt::Vmce { startup } => FreshScenarioParts::Vmce {
+                physical_source: self.physical_source,
+                signed_new_ini_format: self.signed_new_ini_format,
+                startup,
+            },
         }
     }
 
@@ -585,8 +575,8 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioParts::Campaign { .. } => {
                 panic!("campaign is not a stock-offline fixture")
             }
-            FreshScenarioParts::VeraCooperative { .. } => {
-                panic!("VERA Coop authored campaign is not a stock-offline fixture")
+            FreshScenarioParts::Vmce { .. } => {
+                panic!("VMCE authored campaign is not a stock-offline fixture")
             }
         }
     }

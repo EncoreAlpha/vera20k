@@ -15,7 +15,7 @@
 //!   advancing or copying that clock.
 //! - The second fidget's one-in-three `VoiceComment=` draws on Main, not the
 //!   Scenario stream. In ordinary modes its native gate is local-player-only;
-//!   VERA Coop consumes the draw from shared House grants on every peer and
+//!   VMCE consumes the draw from shared House grants on every peer and
 //!   keeps sound output local (`infantry_idle_comment`).
 //! - The idle NULL-source Scatter (`51D0D0`, from the panic and roll-8 arms)
 //!   drops the owner's bridge-state answer: none of the three native callers
@@ -660,10 +660,10 @@ impl crate::sim::world::Simulation {
         let Some(actor) = self.substrate.entities.get(id) else {
             return;
         };
-        let coop_shared =
+        let campaign_shared =
             self.session.has_network_house_grants() && self.session.game_mode().is_network();
-        if coop_shared {
-            // Coop bootstrap marks the union of primary and extra grants as
+        if campaign_shared {
+            // Campaign bootstrap marks the union of primary and extra grants as
             // House+1EC on every peer; Houses outside that union remain AI.
             if !self.owner_is_human(actor.owner()) {
                 return;
@@ -680,7 +680,7 @@ impl crate::sim::world::Simulation {
         let should_play_locally =
             !actor.selection.is_selected() && self.house_is_human_player(actor.owner());
         let voice_roll = self.main_rng.next_range_i32_inclusive(0, 2);
-        if voice_roll != 0 || (coop_shared && !should_play_locally) {
+        if voice_roll != 0 || (campaign_shared && !should_play_locally) {
             return;
         }
         let event = crate::sim::world::SimSoundEvent::voc_at_location(
@@ -1442,7 +1442,7 @@ mod tests {
         assert!(comments.is_empty());
     }
 
-    /// VERA Coop consumes VoiceComment draws for every granted human House on
+    /// VMCE consumes VoiceComment draws for every granted human House on
     /// every peer. Current-house ownership and selection independently gate
     /// local playback; an ungranted AI House consumes no draw.
     #[test]

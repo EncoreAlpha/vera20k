@@ -2780,7 +2780,7 @@ fn ensure_loading_composition_snapshot(state: &mut AppState) {
         };
         let context = &prepared.context;
         let initial = &prepared.initial;
-        // Campaign loads paint the campaign screen; a VERA Coop authored start
+        // Campaign loads paint the campaign screen; a VMCE authored start
         // has its frozen network roster but no stock-offline start projection.
         let Some(launch_session) = context.loading_prefix_launch_session() else {
             return;

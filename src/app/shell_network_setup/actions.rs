@@ -292,7 +292,7 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+            .is_some_and(|launch| launch.mode.class.is_vmce())
     {
         let launch = state.match_state.session.network_setup().unwrap();
         let index = launch
@@ -309,7 +309,7 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
         state
             .match_state
             .session
-            .set_network_vera_coop_role(index, role)?;
+            .set_network_vmce_role(index, role)?;
         if state.match_state.session.host() {
             host_option_edited(state)?;
             queue(state, NetworkSetupRequest::PublishOptions);
@@ -515,20 +515,20 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
         (false, false) => crate::app::lan_service::admitted_host_name(state)
             .map(|host| crate::app::shell_lan::LanRematch::Guest { host }),
     };
-    let vera_coop_houses =
-        (|| -> anyhow::Result<Option<crate::skirmish_launch::VeraCoopHouseAssignments>> {
+    let vmce_houses =
+        (|| -> anyhow::Result<Option<crate::skirmish_launch::VmceHouseAssignments>> {
             let launch = state
                 .match_state
                 .session
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no network setup at start commit"))?;
-            if !launch.mode.class.is_vera_cooperative() {
+            if !launch.mode.class.is_vmce() {
                 return Ok(None);
             }
             let file = launch
                 .selected_map_file
                 .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no selected map"))?;
+                .ok_or_else(|| anyhow::anyhow!("VMCE start has no selected map"))?;
             let root = &state
                 .platform
                 .game_config
@@ -544,21 +544,20 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
             let config = state
                 .match_state
                 .session
-                .network_vera_coop_map_config()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop start has no accepted map config"))?;
+                .network_vmce_map_config()
+                .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted map config"))?;
             let (_, source_sha256) = map
                 .source
                 .physical_identity()
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
-            let mut assignments =
-                crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
-                    &map.ini,
-                    file,
-                    source_sha256,
-                    config,
-                    launch,
-                    agreed_seed,
-                )?;
+                .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
+            let mut assignments = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                &map.ini,
+                file,
+                source_sha256,
+                config,
+                launch,
+                agreed_seed,
+            )?;
             // The lane-synchronized lobby row is the team's TriggerType
             // difficulty for this start (0=Easy, 1=Normal, 2=Hard). Every peer
             // receives the same row through the LAN options payload, so the
@@ -569,12 +568,12 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                 .cooperative_difficulty();
             Ok(Some(assignments))
         })();
-    let vera_coop_houses = match vera_coop_houses {
+    let vmce_houses = match vmce_houses {
         Ok(assignments) => assignments,
         Err(error) => {
-            log::error!("Cannot verify VERA Coop Houses at accepted start: {error:#}");
+            log::error!("Cannot verify VMCE Houses at accepted start: {error:#}");
             if external {
-                App::fail_external_launch(state, &format!("VERA Coop start: {error:#}"));
+                App::fail_external_launch(state, &format!("VMCE start: {error:#}"));
             } else if quick_match {
                 crate::app::shell_wol::start_aborted(state);
             } else {
@@ -586,7 +585,7 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
     match state
         .match_state
         .session
-        .freeze_network_start_with_vera_coop(agreed_seed, vera_coop_houses)
+        .freeze_network_start_with_vmce(agreed_seed, vmce_houses)
     {
         Ok(startup) => {
             if state.match_state.session_mode()
@@ -662,20 +661,20 @@ pub(crate) fn commit_map_selection(
         .ok_or_else(|| anyhow::anyhow!("unknown chosen map"))?;
     let file = map.file_name.clone();
     let metadata = super::local_map_metadata(state, &file)?;
-    let vera_coop_map_config = if mode.class.is_vera_cooperative() {
+    let vmce_map_config = if mode.class.is_vmce() {
         match state.match_state.session_mode() {
             crate::app::match_runtime::session::SessionMode::Lan => {
-                Some(super::resolve_host_vera_coop_map_config(state, &file)?)
+                Some(super::resolve_host_vmce_map_config(state, &file)?)
             }
             // WOL retains its existing lobby and map selection behavior. Its
             // options transport has no supplemental-config field.
             crate::app::match_runtime::session::SessionMode::Wol => None,
-            _ => anyhow::bail!("VERA Coop map selection requires a network session"),
+            _ => anyhow::bail!("VMCE map selection requires a network session"),
         }
     } else {
         None
     };
-    if let Some(config) = vera_coop_map_config.as_ref() {
+    if let Some(config) = vmce_map_config.as_ref() {
         config.validate_binding(&file, &metadata.source_sha256)?;
     }
     let mode_changed = state
@@ -701,8 +700,8 @@ pub(crate) fn commit_map_selection(
             .session
             .network_map_metadata()
             .is_none_or(|current| current.display_name != metadata.display_name);
-    let coop_config_changed =
-        state.match_state.session.network_vera_coop_map_config() != vera_coop_map_config.as_ref();
+    let vmce_config_changed =
+        state.match_state.session.network_vmce_map_config() != vmce_map_config.as_ref();
     // Use Map can reselect an already-uploaded source. Ask the same map
     // identity owner as received HostSetup before replacing its selection;
     // unchanged physical/effective bytes retain their image and marker bounds.
@@ -718,15 +717,15 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .network_map_requires_verification(&selected, &metadata)?;
-    let vera_coop_lan_material_changed = mode.class.is_vera_cooperative()
+    let vmce_lan_material_changed = mode.class.is_vmce()
         && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
-        && (changed || map_changed || coop_config_changed);
+        && (changed || map_changed || vmce_config_changed);
     let removed = state.match_state.session.select_network_map(
         selected.mode,
         file.clone(),
         map.player_capacity,
     )?;
-    if role_assignments_reset && mode.class.is_vera_cooperative() {
+    if role_assignments_reset && mode.class.is_vmce() {
         let count = state
             .match_state
             .session
@@ -735,7 +734,7 @@ pub(crate) fn commit_map_selection(
             .humans
             .len();
         for index in 0..count {
-            state.match_state.session.set_network_vera_coop_role(
+            state.match_state.session.set_network_vmce_role(
                 index,
                 crate::skirmish_launch::LaunchHumanRole::Player { group: -2 },
             )?;
@@ -748,8 +747,8 @@ pub(crate) fn commit_map_selection(
     state
         .match_state
         .session
-        .accept_network_vera_coop_map_config(vera_coop_map_config)?;
-    if vera_coop_lan_material_changed {
+        .accept_network_vmce_map_config(vmce_map_config)?;
+    if vmce_lan_material_changed {
         if map_changed {
             state.match_state.session.invalidate_network_agreement()?;
         } else {
@@ -773,7 +772,7 @@ pub(crate) fn commit_map_selection(
     state.frontend.skirmish_preview_texture = None;
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.invalidate_received_preview(map_changed);
-        if vera_coop_lan_material_changed {
+        if vmce_lan_material_changed {
             protocol.start_requested = false;
         }
     }

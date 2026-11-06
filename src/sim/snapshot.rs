@@ -1834,7 +1834,7 @@ impl Simulation {
             .network_house_grants_valid(self.houses.order().len())
         {
             return Err(SnapshotRestoreError::InvalidMultiplayerSession {
-                reason: "VERA Coop House grants do not match the House roster",
+                reason: "VMCE House grants do not match the House roster",
             });
         }
         let scenario_names_admitted = self

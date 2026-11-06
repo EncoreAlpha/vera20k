@@ -22,7 +22,7 @@ pub mod bridge_pavement;
 pub mod bridge_rim_tiles;
 pub mod cell_index;
 pub(crate) mod construction_trace;
-pub mod coop_config;
+pub mod vmce_config;
 pub mod entities;
 pub mod events;
 pub mod houses;

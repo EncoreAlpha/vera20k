@@ -102,57 +102,57 @@ pub struct PreparedNetworkStartup {
     /// Start_Scenario); a first start restores none.
     carry_over: Option<CampaignCarryOver>,
     /// Independently resolved on every peer from the admitted map, roles and
-    /// shared start seed; consumed by the VERA Coop House bootstrap owner.
-    vera_coop_houses: Option<crate::skirmish_launch::VeraCoopHouseAssignments>,
+    /// shared start seed; consumed by the VMCE House bootstrap owner.
+    vmce_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     /// The exact host-authoritative coop overlay used to resolve those Houses.
-    vera_coop_map_config: Option<NetworkVeraCoopMapConfig>,
+    vmce_map_config: Option<NetworkVmceMapConfig>,
 }
 
 /// Typed local campaign projection plus the physical map identity it was
-/// admitted against. LAN publishes only the campaign directory and digest.
+/// admitted against. LAN publishes only the series directory and digest.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NetworkVeraCoopMapConfig {
+pub(crate) struct NetworkVmceMapConfig {
     pub map_file: String,
     pub source_sha256: String,
     pub config_sha256: String,
-    pub config: crate::map::coop_config::VeraCoopMapConfig,
-    /// Local full-campaign identity used to detect changes after admission.
+    pub config: crate::map::vmce_config::VmceMapConfig,
+    /// Local full-series identity used to detect changes after admission.
     /// LAN sends only this identity, never this typed config or campaign data.
     #[serde(default)]
-    pub campaign_directory: Option<String>,
+    pub series_directory: Option<String>,
     #[serde(default)]
-    pub campaign_sha256: Option<String>,
+    pub series_sha256: Option<String>,
 }
 
-/// A VERA Coop campaign's next stage, resolved from the external
-/// `campaign.ini` when BC6 opens. It carries the same campaign identity as
+/// A VMCE series's next stage, resolved from the external
+/// `campaign.ini` when BC6 opens. It carries the same series identity as
 /// the current stage and a fully loaded scenario config for the next map.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct VeraCoopNextStage {
+pub(crate) struct VmceNextStage {
     pub map_file: String,
-    pub config: NetworkVeraCoopMapConfig,
+    pub config: NetworkVmceMapConfig,
     pub metadata: crate::app::match_runtime::session::NetworkMapMetadata,
     pub local_map_source: crate::map::source::LoadedMapSource,
     pub effective_digest: String,
 }
 
-impl NetworkVeraCoopMapConfig {
+impl NetworkVmceMapConfig {
     pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;
 
     pub(crate) fn new(
         map_file: String,
         source_sha256: String,
-        config: crate::map::coop_config::VeraCoopMapConfig,
+        config: crate::map::vmce_config::VmceMapConfig,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             crate::map::source::valid_source_sha256(&source_sha256),
-            "VERA Coop config has no valid map byte identity"
+            "VMCE config has no valid map byte identity"
         );
         let config_bytes = serde_json::to_vec(&config)?;
         anyhow::ensure!(
             config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES,
-            "VERA Coop config exceeds the network size limit"
+            "VMCE config exceeds the network size limit"
         );
         let config_sha256 = crate::util::sha256::sha256_hex(&config_bytes);
         Ok(Self {
@@ -160,12 +160,12 @@ impl NetworkVeraCoopMapConfig {
             source_sha256,
             config_sha256,
             config,
-            campaign_directory: None,
-            campaign_sha256: None,
+            series_directory: None,
+            series_sha256: None,
         })
     }
 
-    pub(crate) fn with_campaign_identity(
+    pub(crate) fn with_series_identity(
         mut self,
         directory: String,
         sha256: String,
@@ -177,10 +177,10 @@ impl NetworkVeraCoopMapConfig {
                     .next()
                     .is_some_and(|part| matches!(part, std::path::Component::Normal(_)))
                 && crate::map::source::valid_source_sha256(&sha256),
-            "invalid VERA Coop campaign identity"
+            "invalid VMCE series identity"
         );
-        self.campaign_directory = Some(directory);
-        self.campaign_sha256 = Some(sha256);
+        self.series_directory = Some(directory);
+        self.series_sha256 = Some(sha256);
         Ok(self)
     }
 
@@ -197,7 +197,7 @@ impl NetworkVeraCoopMapConfig {
                 && crate::map::source::valid_source_sha256(&self.config_sha256)
                 && config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES
                 && self.config_sha256 == crate::util::sha256::sha256_hex(&config_bytes),
-            "VERA Coop config does not match the selected map identity"
+            "VMCE config does not match the selected map identity"
         );
         Ok(())
     }
@@ -240,26 +240,26 @@ impl PreparedNetworkStartup {
             native_id_prefix,
             wol_start,
             carry_over: None,
-            vera_coop_houses: None,
-            vera_coop_map_config: None,
+            vmce_houses: None,
+            vmce_map_config: None,
         }
     }
 
-    pub(crate) fn with_vera_coop_houses(
+    pub(crate) fn with_vmce_houses(
         mut self,
-        assignments: crate::skirmish_launch::VeraCoopHouseAssignments,
+        assignments: crate::skirmish_launch::VmceHouseAssignments,
     ) -> Self {
-        self.vera_coop_houses = Some(assignments);
+        self.vmce_houses = Some(assignments);
         self
     }
 
-    pub(crate) fn with_vera_coop_map_config(mut self, config: NetworkVeraCoopMapConfig) -> Self {
-        self.vera_coop_map_config = Some(config);
+    pub(crate) fn with_vmce_map_config(mut self, config: NetworkVmceMapConfig) -> Self {
+        self.vmce_map_config = Some(config);
         self
     }
 
-    pub(crate) fn vera_coop_map_config(&self) -> Option<&NetworkVeraCoopMapConfig> {
-        self.vera_coop_map_config.as_ref()
+    pub(crate) fn vmce_map_config(&self) -> Option<&NetworkVmceMapConfig> {
+        self.vmce_map_config.as_ref()
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {
@@ -311,10 +311,8 @@ impl PreparedNetworkStartup {
         &self.launch
     }
 
-    pub(crate) fn vera_coop_houses(
-        &self,
-    ) -> Option<&crate::skirmish_launch::VeraCoopHouseAssignments> {
-        self.vera_coop_houses.as_ref()
+    pub(crate) fn vmce_houses(&self) -> Option<&crate::skirmish_launch::VmceHouseAssignments> {
+        self.vmce_houses.as_ref()
     }
     pub(crate) fn mode(&self) -> crate::app::match_runtime::session::SessionMode {
         self.mode
@@ -327,11 +325,11 @@ impl PreparedNetworkStartup {
 /// Resolve the synchronized lobby roles against the selected map's authored
 /// Basic Player roster. Random roles consume the remaining configured Houses
 /// in a seed-stable order shared by every participant.
-pub(crate) fn resolve_vera_cooperative_houses(
+pub(crate) fn resolve_vmce_houses(
     ini: &crate::rules::ini_parser::IniFile,
     launch: &SkirmishLaunchSession,
     seed: u32,
-) -> anyhow::Result<crate::skirmish_launch::VeraCoopHouseAssignments> {
+) -> anyhow::Result<crate::skirmish_launch::VmceHouseAssignments> {
     let basic = crate::map::basic::parse_basic_section(ini);
     let roster = crate::map::houses::parse_house_roster(ini, &[], None);
     basic
@@ -416,7 +414,7 @@ pub(crate) fn resolve_vera_cooperative_houses(
             continue;
         };
         let human = &launch.humans[human_index];
-        participants.push(crate::skirmish_launch::VeraCoopHouseAssignment {
+        participants.push(crate::skirmish_launch::VmceHouseAssignment {
             participant_name: human.name.clone(),
             raw_slot_index: human
                 .raw_slot_index
@@ -429,7 +427,7 @@ pub(crate) fn resolve_vera_cooperative_houses(
         });
     }
     participants.sort_by_key(|assignment| assignment.raw_slot_index);
-    let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+    let assignments = crate::skirmish_launch::VmceHouseAssignments {
         participants,
         ..Default::default()
     };
@@ -439,16 +437,16 @@ pub(crate) fn resolve_vera_cooperative_houses(
     Ok(assignments)
 }
 
-pub(crate) fn resolve_vera_cooperative_houses_with_config(
+pub(crate) fn resolve_vmce_houses_with_config(
     ini: &crate::rules::ini_parser::IniFile,
     map_file: &str,
     source_sha256: &str,
-    config: &NetworkVeraCoopMapConfig,
+    config: &NetworkVmceMapConfig,
     launch: &SkirmishLaunchSession,
     seed: u32,
-) -> anyhow::Result<crate::skirmish_launch::VeraCoopHouseAssignments> {
+) -> anyhow::Result<crate::skirmish_launch::VmceHouseAssignments> {
     let effective = config.apply_to_map(map_file, source_sha256, ini)?;
-    resolve_vera_cooperative_houses(&effective, launch, seed)
+    resolve_vmce_houses(&effective, launch, seed)
 }
 
 /// Explicit campaign settings, from a client or the process speed-control flag.

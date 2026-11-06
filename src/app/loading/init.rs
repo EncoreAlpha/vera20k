@@ -2790,7 +2790,7 @@ fn load_map_first_step(
         signed_new_ini_format,
     )?;
     let full_init_entry_mode = startup.session_mode();
-    let mut vera_coop_startup = None;
+    let mut vmce_startup = None;
     let (materialization, match_seed, match_launch_descriptor, scenario_prefix_plan, campaign) =
         match fresh_scenario_context.into_parts() {
             FreshScenarioParts::StockOffline(parts) => {
@@ -2820,37 +2820,37 @@ fn load_map_first_step(
                     Some(startup),
                 )
             }
-            FreshScenarioParts::VeraCooperative {
+            FreshScenarioParts::Vmce {
                 physical_source,
                 signed_new_ini_format: admitted_format,
                 startup,
             } => {
                 anyhow::ensure!(
                     physical_source == map_source,
-                    "VERA Coop source changed during load"
+                    "VMCE source changed during load"
                 );
                 anyhow::ensure!(
                     admitted_format == signed_new_ini_format,
-                    "VERA Coop NewINIFormat changed during load"
+                    "VMCE NewINIFormat changed during load"
                 );
                 anyhow::ensure!(
-                    startup.launch_session().mode.class.is_vera_cooperative(),
-                    "VERA Coop receipt no longer names the VERA Coop mode"
+                    startup.launch_session().mode.class.is_vmce(),
+                    "VMCE receipt no longer names the VMCE mode"
                 );
                 let selected_map = startup
                     .launch_session()
                     .selected_map_file
                     .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no selected map"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE startup has no selected map"))?;
                 let config = startup
-                    .vera_coop_map_config()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop startup has no frozen map config"))?;
+                    .vmce_map_config()
+                    .ok_or_else(|| anyhow::anyhow!("VMCE startup has no frozen map config"))?;
                 let (_, source_sha256) = map_source
                     .physical_identity()
-                    .ok_or_else(|| anyhow::anyhow!("VERA Coop map has no physical identity"))?;
+                    .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
                 let effective_ini =
                     config.apply_to_map(selected_map, source_sha256, &map_data.ini)?;
-                let mut recomputed = crate::app::match_bootstrap::resolve_vera_cooperative_houses(
+                let mut recomputed = crate::app::match_bootstrap::resolve_vmce_houses(
                     &effective_ini,
                     startup.launch_session(),
                     startup.seed.value,
@@ -2858,17 +2858,17 @@ fn load_map_first_step(
                 // Difficulty is a frozen lobby input, not derived from the
                 // effective map, so retain the frozen row for the identity
                 // comparison.
-                if let Some(frozen) = startup.vera_coop_houses() {
+                if let Some(frozen) = startup.vmce_houses() {
                     recomputed.difficulty = frozen.difficulty;
                 }
                 anyhow::ensure!(
-                    startup.vera_coop_houses() == Some(&recomputed),
-                    "VERA Coop effective map config, House assignments, or seed changed after freeze"
+                    startup.vmce_houses() == Some(&recomputed),
+                    "VMCE effective map config, House assignments, or seed changed after freeze"
                 );
                 // All map consumers, including Basic and House readers, now
                 // see exactly the typed overlay admitted from the host.
                 map_data = MapFile::from_ini(effective_ini)?;
-                vera_coop_startup = Some(std::sync::Arc::clone(&startup));
+                vmce_startup = Some(std::sync::Arc::clone(&startup));
                 (
                     FreshMapMaterialization::Authored,
                     startup.seed.value,
@@ -3078,13 +3078,13 @@ fn load_map_first_step(
                                 .map(|launch| launch.session());
                             let csf = Some(load_csf(services.asset_manager)?);
                             let overlay_registry = rules.overlay_registry().clone();
-                            // VERA Coop maps may register their own countries
+                            // VMCE maps may register their own countries
                             // (e.g. two Houses of one side addressed as separate
                             // trigger owners). Native scenario reads merge the
                             // map `[Countries]` registry before Houses and
                             // triggers are built; stock modes keep the rules
                             // registry untouched.
-                            if vera_coop_startup.is_some() {
+                            if vmce_startup.is_some() {
                                 rules.merge_map_countries(&map_data.ini);
                             }
                             // Campaign House construction and its map reads precede Map Resize/Fill.
@@ -3137,17 +3137,17 @@ fn load_map_first_step(
                                         &rules,
                                     )?,
                                 )
-                            } else if vera_coop_startup.is_some() {
-                                // VERA Coop authored LAN start: campaign-ordered
+                            } else if vmce_startup.is_some() {
+                                // VMCE authored LAN start: campaign-ordered
                                 // Houses over the effective map, no campaign
                                 // startup or stock start assignment. The frozen
                                 // lobby difficulty row gates TriggerType
                                 // difficulty flags for this start.
-                                let difficulty = vera_coop_startup
+                                let difficulty = vmce_startup
                                     .as_ref()
-                                    .and_then(|startup| startup.vera_coop_houses())
+                                    .and_then(|startup| startup.vmce_houses())
                                     .map_or(1, |assignments| assignments.difficulty);
-                                FreshScenarioPrefix::VeraCooperative {
+                                FreshScenarioPrefix::Vmce {
                                     native_rules_receipt,
                                     rules: &rules,
                                     map_data: &map_data,
@@ -3230,7 +3230,7 @@ fn load_map_first_step(
                                     Some(bound.projection())
                                 }
                                 FreshScenarioPrefix::Campaign { .. } => None,
-                                FreshScenarioPrefix::VeraCooperative { .. } => None,
+                                FreshScenarioPrefix::Vmce { .. } => None,
                             },
                         ),
                         pixel_conversion_bounds: Default::default(),
@@ -3464,7 +3464,7 @@ fn load_map_first_step(
                                                 theater_ext,
                                                 &map_data.header.theater,
                                             );
-                                            let coop_map_ini = map_data.ini.clone();
+                                            let campaign_map_ini = map_data.ini.clone();
                                             let output = crate::sim::runtime::finalize_and_populate_staged_authored_scenario(
                 &mut staged_simulation,
                 &mut map_data,
@@ -3485,21 +3485,21 @@ fn load_map_first_step(
                 |sim, ruleset| {
                     if let Some(launch) = match_launch_descriptor.as_ref() {
                         initialize_skirmish_launch_houses(sim, &house_roster, ruleset, launch);
-                    } else if let Some(startup) = vera_coop_startup.as_ref() {
+                    } else if let Some(startup) = vmce_startup.as_ref() {
                         let assignments = startup
-                            .vera_coop_houses()
-                            .expect("admitted VERA Coop startup assignments");
+                            .vmce_houses()
+                            .expect("admitted VMCE startup assignments");
                         // The authored prefix already built this map's Houses;
                         // only the frozen sender-to-House authority is missing.
-                        crate::sim::scenario_bootstrap::install_vera_cooperative_house_authority(
+                        crate::sim::scenario_bootstrap::install_vmce_house_authority(
                             sim,
                             &house_roster,
                             ruleset,
-                            &coop_map_ini,
+                            &campaign_map_ini,
                             startup.launch_session(),
                             assignments,
                         )
-                        .expect("validated VERA Coop House command grants");
+                        .expect("validated VMCE House command grants");
                     }
                 },
             )?;

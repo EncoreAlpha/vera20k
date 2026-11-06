@@ -19,7 +19,7 @@ pub(crate) struct HostOptions {
     pub(crate) observer_row: Option<u8>,
     pub(crate) cooperative_difficulty: i32,
     pub(crate) seed: Option<u32>,
-    pub(crate) vera_coop_map_config: Option<crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    pub(crate) vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
 }
 
 pub(crate) enum NetworkSetupEvent {
@@ -261,13 +261,13 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 // 0x5E1945..0x5E1973: the mode's +1C/+28 country check.
                 super::cooperative::admit_join_country(state, &mut human.slot);
                 super::bans::admit_slot(state, &mut human.slot);
-                // A VERA Coop seat defaults to Random; the join packet's
+                // A VMCE seat defaults to Random; the join packet's
                 // Player1 default is not a role choice.
                 if state
                     .match_state
                     .session
                     .network_setup()
-                    .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                    .is_some_and(|launch| launch.mode.class.is_vmce())
                     && !human.is_observer()
                 {
                     human.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
@@ -340,7 +340,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 state
                     .match_state
                     .session
-                    .validate_network_vera_coop_role(index, role)?;
+                    .validate_network_vmce_role(index, role)?;
             }
             super::bans::admit_slot(state, &mut choices);
             // Cooperative's mode +0x1C (0x5C17B0) admits its campaign's
@@ -366,14 +366,11 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                     .session
                     .network_setup()
                     .expect("setup remains admitted");
-                anyhow::ensure!(
-                    launch.mode.class.is_vera_cooperative(),
-                    "role update outside VERA Coop"
-                );
+                anyhow::ensure!(launch.mode.class.is_vmce(), "role update outside VMCE");
                 state
                     .match_state
                     .session
-                    .set_network_vera_coop_role(index, role)?;
+                    .set_network_vmce_role(index, role)?;
             }
             if role_changed && dialog.wol() {
                 super::wol::clear_guest_acceptance(state)?;
@@ -436,8 +433,8 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?;
             anyhow::ensure!(
-                status != 2 || dialog.wol() || !launch.mode.class.is_vera_cooperative(),
-                "VERA Coop LAN does not transfer maps"
+                status != 2 || dialog.wol() || !launch.mode.class.is_vmce(),
+                "VMCE LAN does not transfer maps"
             );
             let status = if index == launch.local_player_index {
                 1
@@ -480,7 +477,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             observer_row,
             cooperative_difficulty,
             seed,
-            vera_coop_map_config,
+            vmce_map_config,
         }) => {
             // 0x5E3E73..0x5E3E90: a WOL parse drops every option text while
             // the game runs ([0xB77DC1]) or a StartGame is pending ([0xB77E28]).
@@ -507,15 +504,15 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
                 .clone();
-            validate_host_coop_map_config(
+            validate_host_vmce_map_config(
                 dialog.host,
                 dialog.wol(),
-                launch.mode.class.is_vera_cooperative(),
+                launch.mode.class.is_vmce(),
                 launch.selected_map_file.as_deref(),
                 &map_metadata.source_sha256,
-                vera_coop_map_config.as_ref(),
+                vmce_map_config.as_ref(),
             )?;
-            let coop_local_map = if let Some(config) = vera_coop_map_config.as_ref()
+            let coop_local_map = if let Some(config) = vmce_map_config.as_ref()
                 && let Some(file) = launch.selected_map_file.as_deref()
                 && let (Some(game_config), Some(assets)) = (
                     state.platform.game_config.as_ref(),
@@ -558,8 +555,8 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             } else {
                 None
             };
-            let coop_config_changed = state.match_state.session.network_vera_coop_map_config()
-                != vera_coop_map_config.as_ref();
+            let vmce_config_changed =
+                state.match_state.session.network_vmce_map_config() != vmce_map_config.as_ref();
             // 0x5E5411..0x5E541D: the current mode's +24 on every parse.
             if super::cooperative::current(state) {
                 state
@@ -578,7 +575,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // independently of the later general-option acceptance flag.
             // A qualified local record supplies its title;
             // otherwise the accepted host metadata remains sufficient for BD.
-            // VERA Coop's preinstalled campaign Entry is not a guest catalog
+            // VMCE's preinstalled campaign Entry is not a guest catalog
             // row, so a locally re-verified campaign map stands in for it.
             let local_map = if map_changed {
                 launch.selected_map_file.as_deref().and_then(|file| {
@@ -618,11 +615,11 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                         || !(upper.contains(".MPR") && upper.contains(".YRM")))
             });
             let local_map = local_map.map(|(name, _)| name);
-            let vera_cooperative = launch.mode.class.is_vera_cooperative();
-            let coop_lan_without_local_config = launch.mode.class.is_vera_cooperative()
+            let vmce = launch.mode.class.is_vmce();
+            let coop_lan_without_local_config = launch.mode.class.is_vmce()
                 && !dialog.wol()
                 && !dialog.host
-                && vera_coop_map_config.is_none();
+                && vmce_map_config.is_none();
             let map_admission = if coop_lan_without_local_config {
                 Some(crate::app::match_runtime::session::NetworkMapAdmission::Unavailable)
             } else if map_changed {
@@ -659,7 +656,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             state
                 .match_state
                 .session
-                .accept_network_vera_coop_map_config(vera_coop_map_config)?;
+                .accept_network_vmce_map_config(vmce_map_config)?;
             // 0x5E542B..0x5E5466: a changed mode's +9C/+20, then +7C.
             if mode_changed {
                 super::cooperative::mode_entered(state)?;
@@ -683,7 +680,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 protocol.awaiting_preview_file = false;
                 protocol.local_map_verified = local_map.is_some();
                 protocol.local_map_loose = local_map_loose;
-                if local_map.is_none() && !dialog.host && !dialog.wol() && !vera_cooperative {
+                if local_map.is_none() && !dialog.host && !dialog.wol() && !vmce {
                     protocol.requests.push(NetworkSetupRequest::RequestPreview);
                 }
             }
@@ -710,7 +707,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // general-options flags. Map verification/K is already complete;
             // metadata or mode changes must also retire local acceptance.
             let material = map_changed
-                || coop_config_changed
+                || vmce_config_changed
                 || settings_materially_changed(
                     &before,
                     state
@@ -895,7 +892,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .match_state
                 .session
                 .network_setup()
-                .is_some_and(|launch| launch.mode.class.is_vera_cooperative())
+                .is_some_and(|launch| launch.mode.class.is_vmce())
                 && !dialog.wol()
             {
                 return Ok(());
@@ -1086,27 +1083,27 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
     Ok(())
 }
 
-fn validate_host_coop_map_config(
+fn validate_host_vmce_map_config(
     host: bool,
     wol: bool,
-    vera_cooperative: bool,
+    vmce: bool,
     map_file: Option<&str>,
     source_sha256: &str,
-    config: Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
+    config: Option<&crate::app::match_bootstrap::NetworkVmceMapConfig>,
 ) -> anyhow::Result<()> {
-    match (vera_cooperative, config) {
+    match (vmce, config) {
         (true, Some(config)) => {
             anyhow::ensure!(
                 !wol,
-                "WOL VERA Coop does not synchronize supplemental map config"
+                "WOL VMCE does not synchronize supplemental map config"
             );
             let file = map_file
-                .ok_or_else(|| anyhow::anyhow!("VERA Coop host options have no selected map"))?;
+                .ok_or_else(|| anyhow::anyhow!("VMCE host options have no selected map"))?;
             config.validate_binding(file, source_sha256)?;
         }
         (true, None) if wol || !host => {}
-        (true, None) => anyhow::bail!("VERA Coop host options omit the map config"),
-        (false, Some(_)) => anyhow::bail!("non-Coop host options carry VERA Coop map config"),
+        (true, None) => anyhow::bail!("VMCE host options omit the map config"),
+        (false, Some(_)) => anyhow::bail!("non-VMCE host options carry VMCE map config"),
         (false, None) => {}
     }
     Ok(())
@@ -1115,20 +1112,20 @@ fn validate_host_coop_map_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        mode_allows_automatic_accept, validate_host_coop_map_config, without_coop_lan_transfer,
+        mode_allows_automatic_accept, validate_host_vmce_map_config, without_coop_lan_transfer,
     };
 
     #[test]
-    fn modern_auto_accept_is_disabled_only_for_vera_coop() {
-        use crate::skirmish_modes::MpModeClass::{Battle, Cooperative, VeraCooperative};
+    fn modern_auto_accept_is_disabled_only_for_vmce() {
+        use crate::skirmish_modes::MpModeClass::{Battle, Cooperative, Vmce};
 
         assert!(mode_allows_automatic_accept(Battle));
         assert!(mode_allows_automatic_accept(Cooperative));
-        assert!(!mode_allows_automatic_accept(VeraCooperative));
+        assert!(!mode_allows_automatic_accept(Vmce));
     }
 
     #[test]
-    fn vera_coop_lan_never_admits_missing_custom_maps_for_transfer() {
+    fn vmce_lan_never_admits_missing_custom_maps_for_transfer() {
         use crate::app::match_runtime::session::NetworkMapAdmission::{
             NeedsTransfer, Present, Unavailable,
         };
@@ -1145,25 +1142,25 @@ mod tests {
     fn wol_coop_keeps_legacy_behavior_and_lan_guest_can_lack_local_config() {
         let map_file = "test.map";
         let source = "a".repeat(64);
-        let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
             map_file.to_owned(),
             source.clone(),
-            crate::map::coop_config::VeraCoopMapConfig::default(),
+            crate::map::vmce_config::VmceMapConfig::default(),
         )
         .unwrap();
 
         assert!(
-            validate_host_coop_map_config(true, true, true, Some(map_file), &source, None).is_ok()
+            validate_host_vmce_map_config(true, true, true, Some(map_file), &source, None).is_ok()
         );
         assert!(
-            validate_host_coop_map_config(true, true, true, Some(map_file), &source, Some(&config))
+            validate_host_vmce_map_config(true, true, true, Some(map_file), &source, Some(&config))
                 .is_err()
         );
         assert!(
-            validate_host_coop_map_config(false, true, true, Some(map_file), &source, None).is_ok()
+            validate_host_vmce_map_config(false, true, true, Some(map_file), &source, None).is_ok()
         );
         assert!(
-            validate_host_coop_map_config(
+            validate_host_vmce_map_config(
                 false,
                 true,
                 true,
@@ -1174,15 +1171,15 @@ mod tests {
             .is_err()
         );
         assert!(
-            validate_host_coop_map_config(false, false, true, Some(map_file), &source, None)
+            validate_host_vmce_map_config(false, false, true, Some(map_file), &source, None)
                 .is_ok()
         );
         assert!(
-            validate_host_coop_map_config(true, false, true, Some(map_file), &source, None)
+            validate_host_vmce_map_config(true, false, true, Some(map_file), &source, None)
                 .is_err()
         );
         assert!(
-            validate_host_coop_map_config(false, false, false, Some(map_file), &source, None)
+            validate_host_vmce_map_config(false, false, false, Some(map_file), &source, None)
                 .is_ok()
         );
     }
@@ -1640,7 +1637,7 @@ fn apply_local_map_admission(
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vera_cooperative());
+            .is_some_and(|launch| launch.mode.class.is_vmce());
     let admission = without_coop_lan_transfer(admission, coop_lan);
     let status = admission.status();
     let index = state
@@ -1683,7 +1680,7 @@ fn apply_local_map_admission(
         );
     }
     if coop_lan && status == 0 {
-        let text = "VERA Coop requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+        let text = "VMCE requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
         crate::app::shell_lan::append_chat(
             state,
             LanChatLine {
@@ -1893,7 +1890,7 @@ pub(crate) fn poll(state: &mut AppState) -> Option<Instant> {
     pings.into_iter().chain(go).chain(offer).chain(direct).min()
 }
 
-/// Modern rooms automatically accept eligible guests, except VERA Coop,
+/// Modern rooms automatically accept eligible guests, except VMCE,
 /// whose guest readiness is a deliberate manual action. Quick Match and
 /// external launches have no setup dialog.
 fn auto_accept(state: &mut AppState) {
@@ -1924,7 +1921,7 @@ fn auto_accept(state: &mut AppState) {
 }
 
 fn mode_allows_automatic_accept(class: crate::skirmish_modes::MpModeClass) -> bool {
-    !class.is_vera_cooperative()
+    !class.is_vmce()
 }
 
 /// The service could not take the local acceptance. It stays withdrawn

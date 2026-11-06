@@ -42,8 +42,8 @@ pub enum SkirmishScenarioSource {
     /// row comes from the library's copy of the map's header; Choose Map
     /// downloads the map into VERA's own Maps folder before using it.
     Online(String),
-    /// VERA: an entry map from a validated external VERA Coop campaign.
-    VeraCoopCampaign(String),
+    /// VERA: an entry map from a validated external VMCE campaign.
+    VmceSeries(String),
     Synthetic,
 }
 
@@ -254,11 +254,11 @@ pub fn is_valid_map(
 }
 
 pub fn record_matches_mode(record: &SkirmishScenarioRecord, mode: &SkirmishGameMode) -> bool {
-    if mode.class.is_vera_cooperative() {
+    if mode.class.is_vmce() {
         return record.kind == SkirmishScenarioKind::ConcreteMap
-            && matches!(&record.source, SkirmishScenarioSource::VeraCoopCampaign(_));
+            && matches!(&record.source, SkirmishScenarioSource::VmceSeries(_));
     }
-    if matches!(&record.source, SkirmishScenarioSource::VeraCoopCampaign(_)) {
+    if matches!(&record.source, SkirmishScenarioSource::VmceSeries(_)) {
         return false;
     }
     match record.kind {
@@ -413,17 +413,17 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_lists_only_campaign_entries() {
+    fn vmce_lists_only_campaign_entries() {
         let modes = crate::skirmish_modes::stock_skirmish_modes();
         let vera = modes
             .iter()
-            .find(|mode| mode.class.is_vera_cooperative())
-            .expect("VERA Coop mode");
+            .find(|mode| mode.class.is_vmce())
+            .expect("VMCE mode");
         let ini = IniFile::from_str("[Basic]\nName=Campaign Entry\n");
         let campaign = SkirmishScenarioRecord::concrete_from_ini(
             2,
-            SkirmishScenarioSource::VeraCoopCampaign("Sample".to_owned()),
-            "VeraCoop/Sample/01.map",
+            SkirmishScenarioSource::VmceSeries("Sample".to_owned()),
+            "Vmce/Sample/01.map",
             &ini,
         );
         let records = vec![
@@ -435,25 +435,22 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_campaign_entries_are_private_to_the_vera_coop_filter() {
+    fn vmce_series_entries_are_private_to_the_vmce_filter() {
         let ini = IniFile::from_str("[Basic]\nName=Campaign Entry\n");
         let mut campaign = SkirmishScenarioRecord::concrete_from_ini(
             0,
-            SkirmishScenarioSource::VeraCoopCampaign("Sample".to_owned()),
-            "VeraCoop/Sample/01.map",
+            SkirmishScenarioSource::VmceSeries("Sample".to_owned()),
+            "Vmce/Sample/01.map",
             &ini,
         );
         campaign.game_modes.clear();
         let modes = crate::skirmish_modes::stock_skirmish_modes();
         let vera = modes
             .iter()
-            .find(|mode| mode.class.is_vera_cooperative())
-            .expect("VERA Coop mode");
+            .find(|mode| mode.class.is_vmce())
+            .expect("VMCE mode");
         assert!(record_matches_mode(&campaign, vera));
-        for mode in modes
-            .iter()
-            .filter(|mode| !mode.class.is_vera_cooperative())
-        {
+        for mode in modes.iter().filter(|mode| !mode.class.is_vmce()) {
             assert!(!record_matches_mode(&campaign, mode));
         }
     }

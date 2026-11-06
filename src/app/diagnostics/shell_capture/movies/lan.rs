@@ -20,7 +20,7 @@ mod live;
 
 const TRANSFER_FILE: &str = "CONTROLLED.MAP";
 /// The Soviet campaign's first map (`coopcampmd.ini` `[Soviet]` `Map1`).
-const COOP_MAP: &str = "C2S01MD.MAP";
+const CAMPAIGN_MAP: &str = "C2S01MD.MAP";
 const TRANSFER_ROOT_MARKER: &str = ".vera20k-lan-capture-root";
 /// The controlled host's own install directory inside the isolated root, from
 /// which it generates its random map.
@@ -106,12 +106,12 @@ pub enum LanTarget {
     LiveCoopFinalHost,
     /// The final guest presses `0xBC7`'s Continue back to the shell.
     LiveCoopFinalGuest,
-    /// Real two-process VERA Coop setup: host publishes its map/config,
+    /// Real two-process VMCE setup: host publishes its map/config,
     /// receives guest Ready and stops before GO.
-    LiveVeraCoopHost,
-    /// Real two-process VERA Coop setup: guest receives host options, verifies
+    LiveVmceHost,
+    /// Real two-process VMCE setup: guest receives host options, verifies
     /// the map/config, Accepts and stops before GO.
-    LiveVeraCoopGuest,
+    LiveVmceGuest,
     BattleHost,
     BattleGuest,
     Lobby,
@@ -222,9 +222,9 @@ pub enum LanTarget {
     /// BD given Cooperative host options and the host's C0: the campaign's
     /// description and stage countries.
     CoopGuest,
-    /// The independent VERA Cooperative lobby with a controlled second room
+    /// The independent VMCE lobby with a controlled second room
     /// participant, rendered through the production LAN setup view.
-    VeraCoopHost,
+    VmceHost,
     /// The Cooperative match won (its AI Houses flagged to die, a
     /// controlled outcome): `+0xA0` advanced the record and BC6 opened.
     CoopResult,
@@ -256,8 +256,8 @@ pub(crate) const LAN_CHECKPOINTS: &[(&str, LanTarget)] = &[
     ("lan-live-coop-guest", LanTarget::LiveCoopGuest),
     ("lan-live-coop-final-host", LanTarget::LiveCoopFinalHost),
     ("lan-live-coop-final-guest", LanTarget::LiveCoopFinalGuest),
-    ("lan-live-vera-coop-host", LanTarget::LiveVeraCoopHost),
-    ("lan-live-vera-coop-guest", LanTarget::LiveVeraCoopGuest),
+    ("lan-live-vera-campaign-host", LanTarget::LiveVmceHost),
+    ("lan-live-vera-campaign-guest", LanTarget::LiveVmceGuest),
     ("lan-battle-host", LanTarget::BattleHost),
     ("lan-battle-guest", LanTarget::BattleGuest),
     ("lan-0xbb-steady", LanTarget::Lobby),
@@ -278,7 +278,7 @@ pub(crate) const LAN_CHECKPOINTS: &[(&str, LanTarget)] = &[
     ("lan-0xbc-coop-join", LanTarget::CoopJoin),
     ("lan-coop-host-loading-first", LanTarget::CoopHostGo),
     ("lan-0xbd-coop-campaign", LanTarget::CoopGuest),
-    ("lan-vera-coop-room", LanTarget::VeraCoopHost),
+    ("lan-vera-campaign-room", LanTarget::VmceHost),
     ("lan-0xbc6-coop-result", LanTarget::CoopResult),
     ("lan-coop-next-loading", LanTarget::CoopNext),
     ("lan-coop-defeat-retry", LanTarget::CoopRetry),
@@ -397,8 +397,8 @@ impl LanTarget {
                 | Self::LiveCoopGuest
                 | Self::LiveCoopFinalHost
                 | Self::LiveCoopFinalGuest
-                | Self::LiveVeraCoopHost
-                | Self::LiveVeraCoopGuest
+                | Self::LiveVmceHost
+                | Self::LiveVmceGuest
                 | Self::BattleHost
                 | Self::BattleGuest
         )
@@ -739,7 +739,7 @@ impl LanCapture {
         };
         launch.mode = SkirmishLaunchMode::from_game_mode(mode);
         let file = if self.target == LanTarget::CoopGuest {
-            COOP_MAP
+            CAMPAIGN_MAP
         } else if self.target.missing_map() {
             self.assert_map_absent(state)?;
             TRANSFER_FILE
@@ -793,7 +793,7 @@ impl LanCapture {
                 launch,
                 vacancies,
                 map_metadata: if self.target == LanTarget::CoopGuest {
-                    setup::local_map_metadata(state, COOP_MAP)?
+                    setup::local_map_metadata(state, CAMPAIGN_MAP)?
                 } else {
                     self.map_metadata()?
                 },
@@ -811,7 +811,7 @@ impl LanCapture {
                 },
                 cooperative_difficulty: 0,
                 seed: Some(self.seed()?),
-                vera_coop_map_config: None,
+                vmce_map_config: None,
             }),
         )?;
         self.assert_guest_order(state, true)
@@ -959,7 +959,7 @@ impl LanCapture {
         ensure!(launch.mode.id == mode_id, "Use Map left Cooperative");
         let file = launch.selected_map_file.clone().context("campaign map")?;
         ensure!(
-            file.eq_ignore_ascii_case(COOP_MAP),
+            file.eq_ignore_ascii_case(CAMPAIGN_MAP),
             "the Soviet row chose {file}"
         );
         ensure!(
@@ -1842,9 +1842,9 @@ impl LanCapture {
                         setup_button(state, crate::ui::multiplayer_setup::CHOOSE_MAP)?;
                         self.phase = LanPhase::Chooser;
                     }
-                    LanTarget::VeraCoopHost if !self.cooperative_committed => {
+                    LanTarget::VmceHost if !self.cooperative_committed => {
                         self.offline_selection = Some(offline_selection(state));
-                        let file = commit_vera_cooperative_fixture_map(state)?;
+                        let file = commit_vmce_fixture_map(state)?;
                         ensure!(
                             self.offline_selection == Some(offline_selection(state)),
                             "LAN capture changed the offline Skirmish selection"
@@ -1852,13 +1852,11 @@ impl LanCapture {
                         self.cooperative_committed = true;
                         self.event(
                             frame,
-                            &format!(
-                                "VERA Cooperative selected through production map owner: {file}"
-                            ),
+                            &format!("VMCE selected through production map owner: {file}"),
                         );
                         self.phase = LanPhase::Host;
                     }
-                    LanTarget::VeraCoopHost => {
+                    LanTarget::VmceHost => {
                         setup::service_event(
                             state,
                             NetworkSetupEvent::ParticipantJoined(self.human(false)?),
@@ -1870,11 +1868,8 @@ impl LanCapture {
                                 status: 1,
                             },
                         )?;
-                        let view = setup::view(state).context("VERA Cooperative BC")?;
-                        ensure!(
-                            view.vera_cooperative,
-                            "capture selected the stock Cooperative mode"
-                        );
+                        let view = setup::view(state).context("VMCE BC")?;
+                        ensure!(view.vmce, "capture selected the stock Cooperative mode");
                         ensure!(
                             state
                                 .match_state
@@ -1883,7 +1878,7 @@ impl LanCapture {
                                 .is_some_and(|launch| {
                                     launch.humans.len() == 2
                                         && launch.mode.class
-                                            == crate::skirmish_modes::MpModeClass::VeraCooperative
+                                            == crate::skirmish_modes::MpModeClass::Vmce
                                         && launch.selected_map_file.is_some()
                                         && launch
                                             .humans
@@ -1898,12 +1893,9 @@ impl LanCapture {
                         );
                         ensure!(
                             view.selected_map_index.is_some() && !view.map_label.is_empty(),
-                            "VERA Cooperative setup view has no selected map"
+                            "VMCE setup view has no selected map"
                         );
-                        self.event(
-                            frame,
-                            "VERA Cooperative host and fixture guest room settled",
-                        );
+                        self.event(frame, "VMCE host and fixture guest room settled");
                         self.settle(state);
                     }
                     LanTarget::CoopHost => self.settle(state),
@@ -4606,7 +4598,7 @@ fn cooperative_mode(state: &AppState) -> Result<&crate::skirmish_modes::Skirmish
 /// Choose the host fixture's already-catalogued map and route it through the
 /// production Use Map owner. This target captures the resulting room, so it
 /// does not need an additional chooser-row click.
-fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
+fn commit_vmce_fixture_map(state: &mut AppState) -> Result<String> {
     // Presentation-only fixture: expose the unmodified first Allied campaign
     // map in the temporary capture catalog. Two seats allow the existing host
     // and guest fixture to be displayed; this does not make the map playable.
@@ -4633,11 +4625,11 @@ fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
         .frontend
         .skirmish_modes
         .iter()
-        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
-        .context("VERA Cooperative mode is not registered")?
+        .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Vmce)
+        .context("VMCE mode is not registered")?
         .id;
     let mode = crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
-        .context("VERA Cooperative mode")?;
+        .context("VMCE mode")?;
     let map_index = state
         .frontend
         .scenario_catalog
@@ -4664,13 +4656,13 @@ fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
                     crate::map::skirmish_scenarios::is_valid_map(record, mode, false)
                 })
         })
-        .context("VERA Cooperative has no catalogued local map")?;
+        .context("VMCE has no catalogued local map")?;
     let file = state
         .frontend
         .scenario_catalog
         .records()
         .get(map_index)
-        .context("selected VERA Cooperative record")?
+        .context("selected VMCE record")?
         .file_name
         .clone();
     crate::app::shell_network_setup::commit_map_selection(state, mode_id, map_index, None)?;
@@ -4678,11 +4670,11 @@ fn commit_vera_cooperative_fixture_map(state: &mut AppState) -> Result<String> {
         .match_state
         .session
         .network_setup()
-        .context("VERA Cooperative setup")?;
+        .context("VMCE setup")?;
     ensure!(
-        launch.mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative
+        launch.mode.class == crate::skirmish_modes::MpModeClass::Vmce
             && launch.selected_map_file.as_deref() == Some(file.as_str()),
-        "production map owner did not commit the VERA Cooperative map"
+        "production map owner did not commit the VMCE map"
     );
     Ok(file)
 }

@@ -116,7 +116,7 @@ pub(crate) const HOUSE_COLOR_STRENGTH_HELP: &str = "How strongly team colours st
 pub(crate) const DISPLAY_AUTO_LABEL: &str = "Auto";
 pub(crate) const COOP_EXPANSION_LABEL: &str = "Coop Expansion";
 pub(crate) const COOP_EXPANSION_HELP: &str =
-    "Show the experimental VERA Coop mode alongside the original Cooperative mode.";
+    "Show the experimental VMCE mode alongside the original Cooperative mode.";
 /// The Developer page's Check for Updates: the desktop updater
 /// (`app::updater`) checks once the dialog has slid out. The browser build
 /// has no updater.

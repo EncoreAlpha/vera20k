@@ -53,10 +53,10 @@ fn team_value(team: LaunchTeam) -> i32 {
     }
 }
 
-fn vera_coop_role_metadata(
+fn vmce_role_metadata(
     ini: &crate::rules::ini_parser::IniFile,
     rules: Option<&crate::rules::ruleset::RuleSet>,
-) -> super::VeraCoopMapDetails {
+) -> super::VmceMapDetails {
     let basic = crate::map::basic::parse_basic_section(ini);
     let schemes = rules.map_or(&[][..], |rules| rules.color_schemes.as_slice());
     let roster = crate::map::houses::parse_house_roster(ini, schemes, rules);
@@ -65,7 +65,7 @@ fn vera_coop_role_metadata(
         .validate_against_roster(&roster)
         .is_err()
     {
-        return super::VeraCoopMapDetails::default();
+        return super::VmceMapDetails::default();
     }
     let owners = basic.campaign_players.players.map(|player| player.owner);
     let colors = std::array::from_fn(|i| {
@@ -76,44 +76,44 @@ fn vera_coop_role_metadata(
         let scheme = schemes.get(usize::from(house.color.0))?;
         Some(crate::rules::color_scheme::hsv_to_rgb(scheme.hsv))
     });
-    super::VeraCoopMapDetails {
+    super::VmceMapDetails {
         owners,
         colors,
         briefing: None,
     }
 }
 
-fn vera_coop_role_metadata_with_config(
+fn vmce_role_metadata_with_config(
     ini: &crate::rules::ini_parser::IniFile,
     rules: Option<&crate::rules::ruleset::RuleSet>,
     file: &str,
     source_sha256: &str,
-    config: Option<&crate::app::match_bootstrap::NetworkVeraCoopMapConfig>,
-) -> Option<super::VeraCoopMapDetails> {
+    config: Option<&crate::app::match_bootstrap::NetworkVmceMapConfig>,
+) -> Option<super::VmceMapDetails> {
     match config {
         Some(config) => {
             let effective = config.apply_to_map(file, source_sha256, ini).ok()?;
-            Some(vera_coop_role_metadata(&effective, rules))
+            Some(vmce_role_metadata(&effective, rules))
         }
-        None => Some(vera_coop_role_metadata(ini, rules)),
+        None => Some(vmce_role_metadata(ini, rules)),
     }
 }
 
-fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
+fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
     let Some(file) = state
         .match_state
         .session
         .network_setup()
         .and_then(|launch| launch.selected_map_file.as_deref())
     else {
-        return super::VeraCoopMapDetails::default();
+        return super::VmceMapDetails::default();
     };
     let (Some(config), Some(assets), Some(protocol)) = (
         state.platform.game_config.as_ref(),
         state.process_assets.manager(),
         state.frontend.network_setup_protocol.as_ref(),
     ) else {
-        return super::VeraCoopMapDetails::default();
+        return super::VmceMapDetails::default();
     };
     let root = config.paths.ra2_dir.clone();
     let source_digest = state
@@ -121,15 +121,15 @@ fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
         .session
         .network_map_metadata()
         .map_or_else(String::new, |metadata| metadata.source_sha256.clone());
-    let coop_config = state.match_state.session.network_vera_coop_map_config();
+    let vmce_config = state.match_state.session.network_vmce_map_config();
     let digest = format!(
         "{}:{}",
         source_digest,
-        coop_config.map_or("", |config| config.config_sha256.as_str())
+        vmce_config.map_or("", |config| config.config_sha256.as_str())
     );
     let key_file = file.to_ascii_lowercase();
     let cached = protocol
-        .vera_coop_role_cache
+        .vmce_role_cache
         .borrow()
         .as_ref()
         .filter(|(cached_root, cached_file, cached_digest, _)| {
@@ -144,12 +144,12 @@ fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
                     .source
                     .physical_identity()
                     .map_or("", |(_, digest)| digest);
-                let mut details = vera_coop_role_metadata_with_config(
+                let mut details = vmce_role_metadata_with_config(
                     &loaded.ini,
                     state.rules(),
                     file,
                     actual_digest,
-                    coop_config,
+                    vmce_config,
                 )?;
                 // The campaign's Brief= is a movie; mission text lives in
                 // MISSIONMD.INI under the scenario filename (restate reader).
@@ -175,20 +175,17 @@ fn vera_coop_map_details(state: &AppState) -> super::VeraCoopMapDetails {
                 Some(details)
             })
             .unwrap_or_default();
-        protocol.vera_coop_role_cache.replace(Some((
-            root.clone(),
-            key_file,
-            digest,
-            details.clone(),
-        )));
+        protocol
+            .vmce_role_cache
+            .replace(Some((root.clone(), key_file, digest, details.clone())));
         details
     })
 }
 
-fn vera_coop_role_choices(
+fn vmce_role_choices(
     state: &AppState,
     row: u8,
-    details: &super::VeraCoopMapDetails,
+    details: &super::VmceMapDetails,
 ) -> (i32, Vec<SetupChoice>) {
     let launch = state
         .match_state
@@ -247,10 +244,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let launch = session.network_setup()?;
     let protocol = state.frontend.network_setup_protocol.as_ref()?;
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
-    let vera_details = mode
-        .class
-        .is_vera_cooperative()
-        .then(|| vera_coop_map_details(state));
+    let vera_details = mode.class.is_vmce().then(|| vmce_map_details(state));
     let host = session.host();
     let host_name = protocol.wol_host.as_deref();
     let local = launch.humans.get(launch.local_player_index)?;
@@ -369,18 +363,17 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         let is_local = local.raw_slot_index == Some(row);
         let observer = human.is_some_and(|(_, human)| human.is_observer())
             || vacancy == Some(NetworkVacancy::OpenObserver);
-        let visible =
-            (several || usize::from(row) < visible_limit || observer_row == Some(usize::from(row)))
-                && !(mode.class.is_vera_cooperative()
-                    && observer_row == Some(usize::from(row))
-                    && human.is_none());
+        let visible = (several
+            || usize::from(row) < visible_limit
+            || observer_row == Some(usize::from(row)))
+            && !(mode.class.is_vmce() && observer_row == Some(usize::from(row)) && human.is_none());
         // A VERA room's Open, Add slot and Waiting rows show only their
         // Player combo.
         let adding = Some(row) == add_slot;
         let bare = several && human.is_none() && ai.is_none();
-        // Modern rooms auto-accept their guest; VERA Coop instead uses the
+        // Modern rooms auto-accept their guest; VMCE instead uses the
         // original manual acceptance and locks the guest's choices once ready.
-        let accepted = (!dialog.modern || mode.class.is_vera_cooperative())
+        let accepted = (!dialog.modern || mode.class.is_vmce())
             && session.network_player_ready(launch.local_player_index);
         let editable = ((is_local && (host || !accepted)) || host && ai.is_some()) && !observer;
         // A VERA room's guest picks Observer in its Side list to watch while
@@ -640,8 +633,8 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 choice
             })
             .collect::<Vec<_>>();
-        let (team, teams) = if mode.class.is_vera_cooperative() {
-            vera_coop_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
+        let (team, teams) = if mode.class.is_vmce() {
+            vmce_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
         } else {
             (
                 team,
@@ -668,7 +661,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             combos.push(SetupCombo {
                 id: column.control(visible_row),
                 row,
-                enabled: if column == SetupColumn::Team && mode.class.is_vera_cooperative() {
+                enabled: if column == SetupColumn::Team && mode.class.is_vmce() {
                     !observer && (host || is_local && !accepted)
                 } else {
                     (editable || switching && column == SetupColumn::Country)
@@ -676,11 +669,9 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 },
                 visible: visible
                     && !bare
-                    && (!mode.class.is_vera_cooperative() || column == SetupColumn::Team)
+                    && (!mode.class.is_vmce() || column == SetupColumn::Team)
                     && (column == SetupColumn::Country || !observer)
-                    && !(column == SetupColumn::Team
-                        && clan_room
-                        && !mode.class.is_vera_cooperative()),
+                    && !(column == SetupColumn::Team && clan_room && !mode.class.is_vmce()),
                 selected,
                 choices,
             });
@@ -727,14 +718,14 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             value: options.starting_credits,
             range: bounds.range(SkirmishTrackbarId::Credits0x511),
             enabled: host,
-            visible: !mode.class.is_vera_cooperative(),
+            visible: !mode.class.is_vmce(),
         },
         SetupTrackbar {
             id: UNITS,
             value: options.unit_count,
             range: bounds.range(SkirmishTrackbarId::UnitCount0x50c),
             enabled: host,
-            visible: !mode.class.is_vera_cooperative(),
+            visible: !mode.class.is_vmce(),
         },
         SetupTrackbar {
             id: DIFFICULTY,
@@ -749,7 +740,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             ),
             range: TrackbarRange::new(0, 2, 1),
             enabled: host,
-            visible: cooperative || mode.class.is_vera_cooperative(),
+            visible: cooperative || mode.class.is_vmce(),
         },
     ];
     // 7A0E50 from 5EA3E0: rows without a node show no ping image.
@@ -772,7 +763,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         // C2's lockout (0x78F85E..0x78F907, 0x79132A..0x7913D1): Short Game
         // checked and disabled in a tournament or clan room.
         short_game_locked: host && profile_is_wol(state) && room.tournament_or_clan(),
-        campaign_options_locked: mode.class.is_vera_cooperative(),
+        campaign_options_locked: mode.class.is_vmce(),
         team_header: !clan_room,
         accept_enabled: accept_enabled(state),
         start_requested: protocol.start_requested
@@ -820,8 +811,8 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         no_preview: protocol.wol_no_preview().0,
         preview_hidden: protocol.wol_no_preview().1,
         cooperative,
-        vera_cooperative: mode.class.is_vera_cooperative(),
-        cooperative_description: if mode.class.is_vera_cooperative() {
+        vmce: mode.class.is_vmce(),
+        cooperative_description: if mode.class.is_vmce() {
             Some(
                 vera_details
                     .and_then(|details| details.briefing)
@@ -850,14 +841,14 @@ mod tests {
     use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
 
     #[test]
-    fn vera_coop_role_colors_follow_each_authored_house() {
+    fn vmce_role_colors_follow_each_authored_house() {
         let rules = RuleSet::from_ini(&IniFile::from_str(
             "[Colors]\nRed=0,255,255\nBlue=170,255,255\n[Countries]\n0=Americans\n[Americans]\nColor=Blue\n",
         )).unwrap();
         let ini = IniFile::from_str(
             "[Basic]\nPlayer=First\nPlayer2=Second\n[Houses]\n0=First\n1=Second\n[First]\nCountry=Americans\nColor=Red\n[Second]\nCountry=Americans\n",
         );
-        let details = vera_coop_role_metadata(&ini, Some(&rules));
+        let details = vmce_role_metadata(&ini, Some(&rules));
         assert_eq!(details.owners[0].as_deref(), Some("First"));
         assert_eq!(details.owners[1].as_deref(), Some("Second"));
         assert_eq!(details.colors[0], Some([255, 0, 0]));
@@ -866,33 +857,26 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_lobby_uses_accepted_map_config_and_rejects_wrong_map() {
+    fn vmce_lobby_uses_accepted_map_config_and_rejects_wrong_map() {
         let ini = IniFile::from_str(
             "[Basic]\nPlayer1=Alpha\n[Houses]\n0=Alpha\n1=Beta\n[Alpha]\n[Beta]\n",
         );
-        let config = crate::map::coop_config::VeraCoopMapConfig::from_bytes(
-            &ini,
-            b"[Basic]\nPlayer1=Beta\n",
-        )
-        .unwrap();
+        let config =
+            crate::map::vmce_config::VmceMapConfig::from_bytes(&ini, b"[Basic]\nPlayer1=Beta\n")
+                .unwrap();
         let digest = crate::util::sha256::sha256_hex(b"map bytes");
-        let accepted = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        let accepted = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
             "mission.map".to_owned(),
             digest.clone(),
             config,
         )
         .unwrap();
-        let details = vera_coop_role_metadata_with_config(
-            &ini,
-            None,
-            "mission.map",
-            &digest,
-            Some(&accepted),
-        )
-        .unwrap();
+        let details =
+            vmce_role_metadata_with_config(&ini, None, "mission.map", &digest, Some(&accepted))
+                .unwrap();
         assert_eq!(details.owners[0].as_deref(), Some("Beta"));
         assert!(
-            vera_coop_role_metadata_with_config(&ini, None, "other.map", &digest, Some(&accepted),)
+            vmce_role_metadata_with_config(&ini, None, "other.map", &digest, Some(&accepted),)
                 .is_none()
         );
     }

@@ -138,7 +138,7 @@ impl Simulation {
             return self.building_cell_move_action(viewer, id, cell, query, rules, registry);
         }
         // What_Action is asked by this process's cursor and click producers;
-        // VERA Coop grants extra Houses to that local input owner even though
+        // VMCE grants extra Houses to that local input owner even though
         // they are not the shared current House (`0x0050B6F0`). The command
         // carries the chosen destination and its receiver revalidates the
         // synchronized sender grant before changing shared state.

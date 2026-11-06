@@ -181,7 +181,7 @@ fn query(mouse_over: bool, shift: bool) -> CellActionQuery {
 }
 
 #[test]
-fn vera_coop_local_extra_house_click_encodes_and_executes_move() {
+fn vmce_local_extra_house_click_encodes_and_executes_move() {
     use crate::sim::scenario_session::ScenarioGameMode;
 
     let (mut sim, rules, actor) = Simulation::walk_cell_input_test_scene(false);

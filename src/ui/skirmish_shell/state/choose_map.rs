@@ -206,7 +206,7 @@ pub enum ChooseMapContext {
 impl ChooseMapContext {
     /// `FillModeList` (`0x005D6130`), with its room tests at
     /// `0x005D6203..0x005D6237`.
-    fn permits(self, mode: &SkirmishGameMode, vera_cooperative_enabled: bool) -> bool {
+    fn permits(self, mode: &SkirmishGameMode, vmce_enabled: bool) -> bool {
         let context_allows = match self {
             Self::Skirmish => mode.class.lists_in_skirmish(),
             Self::Network {
@@ -219,7 +219,7 @@ impl ChooseMapContext {
                     && (mode.wonline_clan_tournament_allowed || !clan_room)
             }
         };
-        context_allows && (!mode.class.is_vera_cooperative() || vera_cooperative_enabled)
+        context_allows && (!mode.class.is_vmce() || vmce_enabled)
     }
 
     /// `IsValidMap`'s room test (`0x005D6409`): a tournament or clan room
@@ -252,7 +252,7 @@ impl ChooseMapModalState {
         records: &[SkirmishScenarioRecord],
         layout: &ChooseMapModalLayout,
     ) -> Self {
-        Self::open_with_vera_cooperative(
+        Self::open_with_vmce(
             context,
             current_mode_id,
             current_record_index,
@@ -266,14 +266,14 @@ impl ChooseMapModalState {
     /// Opens the chooser with the user preference controlling whether VERA's
     /// independent cooperative mode is offered as a selectable row. The mode
     /// remains in `modes` so a guest can resolve the host's selected id.
-    pub fn open_with_vera_cooperative(
+    pub fn open_with_vmce(
         context: ChooseMapContext,
         current_mode_id: i32,
         current_record_index: Option<usize>,
         modes: &[SkirmishGameMode],
         records: &[SkirmishScenarioRecord],
         layout: &ChooseMapModalLayout,
-        vera_cooperative_enabled: bool,
+        vmce_enabled: bool,
     ) -> Self {
         let selected_mode_id = mode_by_id(modes, current_mode_id)
             .or_else(|| modes.first())
@@ -286,7 +286,7 @@ impl ChooseMapModalState {
             },
             mode_rows: modes
                 .iter()
-                .filter(|mode| context.permits(mode, vera_cooperative_enabled))
+                .filter(|mode| context.permits(mode, vmce_enabled))
                 .map(|mode| mode.id)
                 .collect(),
             selected_mode_id,
@@ -845,12 +845,12 @@ mod tests {
     use crate::skirmish_modes::stock_skirmish_modes;
 
     #[test]
-    fn vera_cooperative_row_is_opt_in_without_removing_registry_mode() {
+    fn vmce_row_is_opt_in_without_removing_registry_mode() {
         let modes = stock_skirmish_modes();
         let vera = modes
             .iter()
-            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::VeraCooperative)
-            .expect("VeraCooperative remains registered for network mode ids");
+            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Vmce)
+            .expect("Vmce remains registered for network mode ids");
         let vera_id = vera.id;
         let layout = compute_choose_map_modal_layout(800, 600);
         let context = crate::ui::skirmish_shell::ChooseMapContext::Network {
@@ -861,7 +861,7 @@ mod tests {
         let disabled = ChooseMapModalState::open(context, 1, None, &modes, &[], &layout);
         assert!(!disabled.mode_rows().contains(&vera_id));
 
-        let skirmish = ChooseMapModalState::open_with_vera_cooperative(
+        let skirmish = ChooseMapModalState::open_with_vmce(
             crate::ui::skirmish_shell::ChooseMapContext::Skirmish,
             1,
             None,
@@ -872,15 +872,8 @@ mod tests {
         );
         assert!(!skirmish.mode_rows().contains(&vera_id));
 
-        let enabled = ChooseMapModalState::open_with_vera_cooperative(
-            context,
-            1,
-            None,
-            &modes,
-            &[],
-            &layout,
-            true,
-        );
+        let enabled =
+            ChooseMapModalState::open_with_vmce(context, 1, None, &modes, &[], &layout, true);
         assert!(enabled.mode_rows().contains(&vera_id));
         let original_coop_id = modes
             .iter()

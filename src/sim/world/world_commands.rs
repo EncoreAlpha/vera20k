@@ -2921,7 +2921,7 @@ impl Simulation {
 
     /// Local input counterpart to the synchronized TechnoClass::Select gate.
     /// `Command::Select` is process-local presentation state: the app's input
-    /// ledger applies that gate before emitting the ordered snapshot, so Coop
+    /// ledger applies that gate before emitting the ordered snapshot, so Campaign
     /// participants may select an additional granted House even when it is not
     /// `current_house`. The snapshot itself stays native and un-gated.
     /// Discovery remains the native first gate; local grants replace only the
@@ -3695,7 +3695,7 @@ mod tests {
     }
 
     #[test]
-    fn vera_coop_unit_command_gate_uses_authenticated_source_grants() {
+    fn vmce_unit_command_gate_uses_authenticated_source_grants() {
         use crate::sim::house_state::HouseState;
         use crate::sim::scenario_session::ScenarioGameMode;
 

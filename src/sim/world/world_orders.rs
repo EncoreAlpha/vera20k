@@ -754,7 +754,7 @@ impl Simulation {
         Self::is_human_player(&self.session, &self.houses, owner)
     }
 
-    /// Process-local input/presentation access for VERA Coop's extra House
+    /// Process-local input/presentation access for VMCE's extra House
     /// grants. Simulation decisions continue to use `house_is_human_player`
     /// and shared `House::is_human` state so peers remain lockstep-identical.
     pub fn house_is_locally_controlled_player(&self, owner: InternedId) -> bool {
@@ -883,7 +883,7 @@ impl Simulation {
         })
     }
 
-    /// App input counterpart for a VERA Coop participant's additional Houses.
+    /// App input counterpart for a VMCE participant's additional Houses.
     /// The shared simulation predicate above remains unchanged for all sim
     /// decisions; this local grant is consumed only by input callers.
     pub fn locally_controllable_techno(&self, id: u64, rules: &RuleSet) -> bool {

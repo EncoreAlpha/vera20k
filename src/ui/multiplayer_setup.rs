@@ -434,7 +434,7 @@ pub(crate) struct SetupView {
     pub(crate) locked: bool,
     /// C2's Short Game is held on in a tournament or clan room.
     pub(crate) short_game_locked: bool,
-    /// VERA Coop runs an authored campaign: the stock ShortGame/Crates lobby
+    /// VMCE runs an authored campaign: the stock ShortGame/Crates lobby
     /// switches do not reach the mission, so keep them visible but disabled.
     pub(crate) campaign_options_locked: bool,
     /// The team header `0x794`; hidden in a clan room.
@@ -462,7 +462,7 @@ pub(crate) struct SetupView {
     pub(crate) preview_hidden: bool,
     pub(crate) cooperative: bool,
     /// VERA's map-authored campaign mode, separate from retail Cooperative.
-    pub(crate) vera_cooperative: bool,
+    pub(crate) vmce: bool,
     pub(crate) cooperative_description: Option<String>,
 }
 impl SetupView {
@@ -1013,7 +1013,7 @@ impl MultiplayerSetupLayout {
         let in_room = |id: &u16| {
             self.game_options.is_none()
                 || !OPTION_TRACKBARS.contains(id)
-                || (view.vera_cooperative && *id == SPEED)
+                || (view.vmce && *id == SPEED)
         };
         let paged = view.row_count > view.dialog.rows_per_page();
         view.combos
@@ -1030,7 +1030,7 @@ impl MultiplayerSetupLayout {
             .chain(
                 CHECKBOXES
                     .into_iter()
-                    .filter(|_| self.game_options.is_none() && !view.vera_cooperative),
+                    .filter(|_| self.game_options.is_none() && !view.vmce),
             )
             .chain([CHAT, CHAT_LOG])
             .chain(
@@ -1263,7 +1263,7 @@ mod tests {
             no_preview: false,
             preview_hidden: false,
             cooperative: false,
-            vera_cooperative: false,
+            vmce: false,
             cooperative_description: None,
         };
         let center = |rect: RectPx| (rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -1285,7 +1285,7 @@ mod tests {
         let (x, y) = center(popup_layout.checkboxes[0]);
         assert_ne!(popup_layout.control_at(&view, x, y), Some(CHECKBOXES[0]));
         // Coop moves its speed control out of the ordinary options popup.
-        view.vera_cooperative = true;
+        view.vmce = true;
         view.trackbars = [SPEED, DIFFICULTY]
             .into_iter()
             .map(|id| SetupTrackbar {
@@ -1302,7 +1302,7 @@ mod tests {
             let (x, y) = center(coop.control_rect(id).unwrap());
             assert_eq!(coop.control_at(&view, x, y), Some(id));
         }
-        view.vera_cooperative = false;
+        view.vmce = false;
         view.dialog = dialog(true, SetupFlavor::Wol, false);
         let native = MultiplayerSetupLayout::new(view.dialog, 800, 600, false);
         assert!(native.game_options.is_none());

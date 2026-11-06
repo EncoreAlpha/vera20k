@@ -48,63 +48,71 @@ VMCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然
 
 ### 战役目录
 
-VMCE 的战役放在 VERA20k 的设置目录下：
+VMCE 的战役放在 VERA20k 的设置目录下。**每个直接子目录是一个系列战役**，`campaign.ini`、地图和（可选的）系列 CSF 都放在该子目录内：
 
 ```text
-<VERA20k 设置目录>/Maps/VeraCoop/
-├── my-first-campaign/
-│   └── campaign.ini
-├── mission01/
-│   └── co-op-01.map
-└── mission02/
-    └── co-op-02.map
+<VERA20k 设置目录>/Maps/VMCE/
+├── 林德拉克计划/
+│   ├── campaign.ini
+│   ├── ra2md.csf          可选；系列自己的 CSF
+│   ├── all01umd.map
+│   ├── all02umd.map
+│   └── ...
+└── 另一个系列/
+    ├── campaign.ini
+    ├── ra2md.csf
+    └── ...
 ```
 
-- `campaign.ini` 必须位于 `Maps/VeraCoop/<战役名>/` 这一层子目录中，一个子目录代表一个可被发现的战役。
-- 地图文件可以放在 `Maps/VeraCoop/` 下的任意子目录；`campaign.ini` 中的路径以 `Maps/VeraCoop/` 为根。
-- 地图必须是松散文件（`.map`），不能是 `.mix` 内的地图，也不能是随机地图生成器产生的临时地图。
-- 同一个地图只能属于一个有效战役。如果一张地图同时被两个战役列出，VMCE 会拒绝选择它。
+- `campaign.ini` 必须位于 `Maps/VMCE/<系列目录>/` 这一层；一个子目录代表一个可被发现的系列战役。
+- `campaign.ini` 里的 `Entry`、`Scenario1..ScenarioN`、`NextScenario` 都以**该系列目录**为根，不要再写系列目录名。
+- 地图可以是系列目录下的松散 `.map` 文件，也可以放在其子目录；不能是 `.mix` 内的地图或随机地图生成器产生的临时地图。
+- 同一个地图只能属于一个有效系列。如果一张地图同时被两个系列列出，VMCE 会拒绝选择它。
+- 系列显示名默认取目录名；`campaign.ini` 的 `[Campaign] Name=<CSF 标签>` 可覆盖。解析顺序是：**系列目录的 `ra2md.csf` → 基础游戏 CSF → 目录名**。例如 `Name=Name:AD03` 会显示为「林德拉克计划」。
+- 旧的 `Maps/VeraCampaign/` 和过渡版 `Maps/Vmce/` 目录不再读取；把每个系列整体移到 `Maps/VMCE/<系列>/`，目录内 `campaign.ini` 的相对路径不用改。
 
 ### 最小 campaign.ini
 
 ```ini
 [Campaign]
-Entry=mission01/co-op-01.map
+Name=Name:AD03
+Entry=all01umd.map
 ScenarioCount=2
-Scenario1=mission01/co-op-01.map
-Scenario2=mission02/co-op-02.map
+Scenario1=all01umd.map
+Scenario2=all02umd.map
 
-[Scenario:mission01/co-op-01.map]
+[Scenario:all01umd.map]
 PlayerCount=2
 Player1=Americans House
 Player2=Alliance House
 
-[Scenario:mission01/co-op-01.map:French House]
+[Scenario:all01umd.map:French House]
 Player1Control=yes
 Player2Control=yes
 
-[Scenario:mission02/co-op-02.map]
+[Scenario:all02umd.map]
 PlayerCount=2
 Player1=Americans House
 Player2=Alliance House
 EndOfGame=yes
 ```
 
-这个例子说明三件事：
+这个例子说明四件事：
 
-- `Entry` 是当前开始的那一关；它必须出现在 `Scenario1..ScenarioCount` 中。
-- 每关的 `[Scenario:<地图路径>]` 段把 `Player1..PlayerN` 绑定到地图 `[Houses]` 中的 House 名称。
-- 可选地，`[Scenario:<地图路径>:<House 名称>]` 段把一条额外 House 的控制权授予某个角色。这个例子把 `French House` 同时授予两名玩家。
+- `Entry` 是当前开始的那一关；它必须出现在 `Scenario1..ScenarioCount` 中，路径相对系列目录。
+- 每关的 `[Scenario:<地图相对路径>]` 段把 `Player1..PlayerN` 绑定到地图 `[Houses]` 中的 House 名称。
+- 可选地，`[Scenario:<地图相对路径>:<House 名称>]` 段把一条额外 House 的控制权授予某个角色。这个例子把 `French House` 同时授予两名玩家。
+- `Name` 是可选的大厅系列显示名，值为 CSF 标签；不写时显示目录名。
 
 ### 启动一局
 
-1. 房主和所有玩家放好同一份 `Maps/VeraCoop/` 内容。目录名、`campaign.ini` 内容，以及**当前所选地图**的字节必须一致；`ScenarioN` 里列出的其他地图只需在两端都存在（本局不会读取它们）。
-2. 进入 LAN 房间，把游戏模式选为 **VERA Campaign**。游戏会从外部战役目录中列出可用的合作地图。
+1. 房主和所有玩家放好同一份 `Maps/VMCE/` 内容。系列目录名、`campaign.ini` 内容，以及**当前所选地图**的字节必须一致；`ScenarioN` 里列出的其他地图只需在两端都存在（本局不会读取它们）。
+2. 进入 LAN 房间，把游戏模式选为 **Multiplayer Campaign**。游戏会从外部系列目录中列出可用的战役地图，显示名来自 `Name`/目录名。
 3. 房主选择地图；客人的地图状态必须是可用（Ready），否则无法开始。
 4. 每名玩家确认角色、准备；房主开始。
 5. 装载完成后，双方进入同一张地图、同一个确定性模拟。双方看到的开局、剧本和结果应当一致。
 
-如果客人缺少地图或 `campaign.ini`，他会在准备阶段被拒绝；VMCE 不会自动把文件发给客人。
+如果客人缺少地图、`campaign.ini` 或系列 CSF，他会在准备阶段被拒绝；VMCE 不会自动把文件发给客人。
 
 ### 如何阅读本页的代码片段
 
@@ -151,7 +159,7 @@ LAN 大厅里的难度滑条对 VMCE 可见，并且由房主统一控制：
 任务结束后，双方进入 BC6 合作结果页：
 
 - 每名角色主 House 一行，列出击杀、损失、建造和分数；同时显示任务时间。
-- 当前 VERA 结果页没有单独的胜利/失败标题，也不显示难度选择控件；模式标签显示 `VERA Campaign`，下一关显示战役里的地图路径。
+- 当前 VERA 结果页没有单独的胜利/失败标题，也不显示难度选择控件；模式标签显示 `Multiplayer Campaign`，下一关显示战役里的地图路径。
 - 结果页不提供国家、颜色、起始位置和难度编辑；只保留每名玩家的分数行、ready 标记、Continue 和 Quit。
 - 胜利且战役给出下一关时：房主自动 ready，客人按 Continue 表示 ready；全员 ready 后只有房主能按 Continue 进入下一关。下一关仍会按外部战役配置校验地图与角色，并重新加载战场。
 - 失败、`EndOfGame=yes` 或没有 `NextScenario` 时：Continue 不出现，只能退出；退出后回到合作大厅。
@@ -237,7 +245,7 @@ ROLE2_FAIL=Alliance,<none>,Role2 lost yard,0,1,1,1,0
 
 ### 地图自定义国家
 
-VMCE 支持地图自己注册国家（只在 VERA Campaign 装载路径合并；VERA20k 的普通战役和遭遇战路径尚未应用这一合并，仍按原有读法）。这让你可以在不改 `rulesmd.ini` 的情况下给角色分配独立国家，例如「美国A / 美国B」。
+VMCE 支持地图自己注册国家（只在 Multiplayer Campaign 装载路径合并；VERA20k 的普通战役和遭遇战路径尚未应用这一合并，仍按原有读法）。这让你可以在不改 `rulesmd.ini` 的情况下给角色分配独立国家，例如「美国A / 美国B」。
 
 在地图 INI 中新增 `[Countries]` 条目，并追加国家段：
 
@@ -428,9 +436,10 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `Entry` | 地图路径 | 无（必填） | 当前开始关卡；必须在 `Scenario1..ScenarioCount` 中 |
+| `Name` | CSF 标签 | 空（用系列目录名） | 大厅系列显示名；优先查系列目录的 `ra2md.csf`，再查基础游戏 CSF |
+| `Entry` | 地图路径 | 无（必填） | 当前开始关卡；相对系列目录，必须在 `Scenario1..ScenarioCount` 中 |
 | `ScenarioCount` | 整数 `1..512` | 无（必填） | 本战役列出的地图数量 |
-| `Scenario1..ScenarioN` | 地图路径 | 无（必填） | 相对 `Maps/VeraCoop/` 的松散 `.map` 路径；不能重复 |
+| `Scenario1..ScenarioN` | 地图路径 | 无（必填） | 相对系列目录的松散 `.map` 路径；不能重复 |
 
 `[Scenario:<地图路径>]`：
 
@@ -438,7 +447,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|---|---|
 | `PlayerCount` | 整数 `1..4` | `0`（非法） | 本关玩家角色数；超出范围的 `PlayerN` 键会被拒绝 |
 | `Player1..PlayerN` | House 名称 | 无（必填） | 必须出现在地图 `[Houses]` 中；角色 House 必须互不相同 |
-| `NextScenario` | 地图路径 | 空 | 胜利后结果页的下一关；目标必须在 `ScenarioCount` 中 |
+| `NextScenario` | 地图路径 | 空 | 胜利后结果页的下一关；相对系列目录，目标必须在 `ScenarioCount` 中 |
 | `AltNextScenario` | 地图路径 | 空 | 目前只校验；`SkipMapSelect`/全局变量分支尚未执行 |
 | `EndOfGame` | 布尔 | 空 | `yes` 使本关成为战役末关：结果页不提供 Continue |
 
@@ -466,7 +475,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 | `[<House 名称>]` | `Country=` | 所属方的国家；角色 House 必须使用不同国家 |
 | `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Allies=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/盟友列表/颜色；沿用原版读法 |
 
-`[Houses]` 里的 `Allies=` 会在 VERA Campaign 装载时安装成外交图；网络遭遇战本身不读它，但 VERA Campaign 没有 launch teams，因此以地图写的盟友关系为准。
+`[Houses]` 里的 `Allies=` 会在 Multiplayer Campaign 装载时安装成外交图；网络遭遇战本身不读它，但 Multiplayer Campaign 没有 launch teams，因此以地图写的盟友关系为准。
 
 ### 触发器格式
 
@@ -506,7 +515,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 
 ### 故障排查
 
-- **地图不出现在 VERA Campaign 列表里**：检查 `campaign.ini` 是否在 `Maps/VeraCoop/<战役>/` 下，`Entry` 是否在 `Scenario1..N` 中，地图是否真实存在且是松散 `.map`。日志里以 `ignoring invalid VERA Campaign campaign` 开头的行会给出原因。
+- **地图不出现在 Multiplayer Campaign 列表里**：检查 `campaign.ini` 是否在 `Maps/VMCE/<系列>/` 下，`Entry` 是否在 `Scenario1..N` 中，地图是否真实存在且是松散 `.map`。日志里以 `ignoring invalid VMCE series` 开头的行会给出原因。
 - **客人一直不能 Ready / 地图不可用**：客人缺少同一份 `campaign.ini` 或所选地图，或者所选地图字节与房主不一致。VMCE 不传输文件，请手动复制同一份内容。
 - **提示 `campaign is missing [Scenario:...]`**：`[Scenario:<地图路径>]` 段的写法与 `ScenarioN` 中的路径不一致。路径用 `/` 或 `\` 都可以，比较时忽略 ASCII 大小写；但磁盘上要确实存在对应文件。
 - **角色 House 找不到**：`campaign.ini` 的 `PlayerN` 名字必须与地图 `[Houses]` 注册表中的名称一致。

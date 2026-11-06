@@ -344,7 +344,7 @@ pub const COOP_SCORE_CONTROLS: [CoopScoreControlSpec; 38] = [
     control(DESCRIPTION, RectPx::new(7, 182, 407, 39), None, None, Left),
 ];
 
-/// Controls the stock BC6 hides only on the final mission but that VERA Coop
+/// Controls the stock BC6 hides only on the final mission but that VMCE
 /// also hides because its slots are authored Houses, not lobby choices.
 pub fn hidden_for_vera(id: u16) -> bool {
     id == DIFFICULTY
@@ -531,7 +531,7 @@ pub struct CoopScoreModel {
     /// The next mission's shell map, for the preview `0x468`.
     pub map_index: Option<usize>,
     pub can_continue: bool,
-    /// VERA Coop's authored result page: the score rows stay, but the stock
+    /// VMCE's authored result page: the score rows stay, but the stock
     /// country/colour/start combos and difficulty slider do not apply.
     pub vera: bool,
 }

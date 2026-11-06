@@ -207,7 +207,7 @@ pub(crate) fn destroy_connection(
     })
 }
 
-/// Resolve the House that owns this synchronized participant. VERA Coop's
+/// Resolve the House that owns this synchronized participant. VMCE's
 /// lobby participant name is not the map-authored House name, so use the
 /// already authenticated sender mapping installed with its frozen role grants.
 /// Other network modes keep their existing participant-name lookup.

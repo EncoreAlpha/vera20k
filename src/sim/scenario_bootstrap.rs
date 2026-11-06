@@ -419,11 +419,11 @@ pub enum FreshScenarioPrefix<'a> {
         campaign_index: i32,
         restart_carry_over: crate::sim::campaign_carry_over::CampaignCarryOver,
     },
-    /// VERA Coop's authored LAN start: campaign-ordered House construction over
+    /// VMCE's authored LAN start: campaign-ordered House construction over
     /// the effective map, but a network Scenario session with no campaign
     /// startup. The loading callback installs the frozen sender-to-House
     /// command authority on the Houses built here.
-    VeraCooperative {
+    Vmce {
         native_rules_receipt: crate::rules::process_owner::NativeScenarioRulesReceipt,
         rules: &'a RuleSet,
         map_data: &'a MapFile,
@@ -2796,7 +2796,7 @@ impl ScenarioBootstrapRng {
                     )?;
                 Ok((simulation, None))
             }
-            FreshScenarioPrefix::VeraCooperative {
+            FreshScenarioPrefix::Vmce {
                 native_rules_receipt,
                 rules,
                 map_data,
@@ -2809,19 +2809,17 @@ impl ScenarioBootstrapRng {
                     map_data,
                     house_roster,
                 )?;
-                // VERA Coop is a network Scenario, but its authored Houses are
+                // VMCE is a network Scenario, but its authored Houses are
                 // built with the campaign construction order: the effective
                 // map supplies the roster, no campaign startup or start
                 // assignment runs, and the loading callback installs the frozen
                 // sender-to-House authority before map objects populate.
                 let mut simulation = self.into_simulation(descriptor);
+                simulation.session.install_vmce_series_options();
                 simulation
                     .session
-                    .install_vera_cooperative_campaign_options();
-                simulation
-                    .session
-                    .install_vera_cooperative_trigger_difficulty(difficulty);
-                log::info!("VERA Coop trigger difficulty row {difficulty}");
+                    .install_vmce_trigger_difficulty(difficulty);
+                log::info!("VMCE trigger difficulty row {difficulty}");
                 let mut start_header = crate::map::preview::ScenarioStartHeader::default();
                 start_header.read_ini(&map_data.ini);
                 simulation.session.install_start_header(start_header);
@@ -2840,7 +2838,7 @@ impl ScenarioBootstrapRng {
                 simulation
                     .native_unique_ids
                     .as_mut()
-                    .expect("VERA Coop prefix installed the sole native-ID cursor")
+                    .expect("VMCE prefix installed the sole native-ID cursor")
                     .finish_campaign_prefix_after_resize(
                         map_data.header.width,
                         map_data.header.height,
@@ -3264,38 +3262,38 @@ pub fn initialize_map_roster_houses(
     }
 }
 
-/// Build authored VERA Coop Houses and install the frozen role-to-House
+/// Build authored VMCE Houses and install the frozen role-to-House
 /// command grants before map objects are read. Each participant's Basic
 /// Player House is always theirs; PlayerXControl adds Houses, and those may
 /// be shared by several participants. This project-specific path consumes
 /// the existing campaign House parser and the sender identity retained by
 /// ScenarioSession; it does not change ordinary LAN or stock Cooperative.
-pub fn initialize_vera_cooperative_houses(
+pub fn initialize_vmce_houses(
     sim: &mut Simulation,
     house_roster: &HouseRoster,
     rules: &RuleSet,
     map_ini: &crate::rules::ini_parser::IniFile,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
-    assignments: &crate::skirmish_launch::VeraCoopHouseAssignments,
+    assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
     assignments
         .validate_for_launch(launch)
         .map_err(anyhow::Error::msg)?;
     initialize_map_roster_houses(sim, house_roster, rules, Some(map_ini));
-    install_vera_cooperative_house_authority(sim, house_roster, rules, map_ini, launch, assignments)
+    install_vmce_house_authority(sim, house_roster, rules, map_ini, launch, assignments)
 }
 
-/// Install the frozen VERA Coop command authority on an authored House roster
+/// Install the frozen VMCE command authority on an authored House roster
 /// that the caller already built. The authored loader builds the Houses in its
 /// fresh prefix (campaign construction order) and reaches this half from the
 /// population callback, before map objects are read.
-pub fn install_vera_cooperative_house_authority(
+pub fn install_vmce_house_authority(
     sim: &mut Simulation,
     house_roster: &HouseRoster,
     rules: &RuleSet,
     map_ini: &crate::rules::ini_parser::IniFile,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
-    assignments: &crate::skirmish_launch::VeraCoopHouseAssignments,
+    assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
     assignments
         .validate_for_launch(launch)
@@ -3320,22 +3318,22 @@ pub fn install_vera_cooperative_house_authority(
                 human.raw_slot_index == Some(assignment.raw_slot_index)
                     && human.name == assignment.participant_name
             })
-            .ok_or_else(|| anyhow::anyhow!("VERA Coop participant disappeared"))?;
+            .ok_or_else(|| anyhow::anyhow!("VMCE participant disappeared"))?;
         let source = source_by_human[human_index]
-            .ok_or_else(|| anyhow::anyhow!("VERA Coop participant has no command source"))?;
-        let source_index = usize::try_from(source)
-            .map_err(|_| anyhow::anyhow!("negative VERA Coop command source"))?;
+            .ok_or_else(|| anyhow::anyhow!("VMCE participant has no command source"))?;
+        let source_index =
+            usize::try_from(source).map_err(|_| anyhow::anyhow!("negative VMCE command source"))?;
         anyhow::ensure!(
             source_index < source_houses.len(),
-            "VERA Coop command source is outside the frozen participant roster"
+            "VMCE command source is outside the frozen participant roster"
         );
         let primary_name = basic.campaign_players.players[usize::from(assignment.player_index)]
             .owner
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("VERA Coop role has no Basic Player House"))?;
+            .ok_or_else(|| anyhow::anyhow!("VMCE role has no Basic Player House"))?;
         anyhow::ensure!(
             primary_name.eq_ignore_ascii_case(&assignment.owner_name),
-            "VERA Coop frozen primary House differs from the effective Basic Player roster"
+            "VMCE frozen primary House differs from the effective Basic Player roster"
         );
         let primary = sim
             .houses
@@ -3346,16 +3344,17 @@ pub fn install_vera_cooperative_house_authority(
                     .resolve(*owner)
                     .eq_ignore_ascii_case(primary_name)
             })
-            .ok_or_else(|| anyhow::anyhow!("VERA Coop primary House is absent"))?;
+            .ok_or_else(|| anyhow::anyhow!("VMCE primary House is absent"))?;
         let primary = u8::try_from(primary)
-            .map_err(|_| anyhow::anyhow!("VERA Coop House index exceeds command format"))?;
+            .map_err(|_| anyhow::anyhow!("VMCE House index exceeds command format"))?;
         source_houses[source_index] = primary;
         grants[source_index].push(primary);
         for (house_index, house) in house_roster.houses.iter().enumerate() {
             if house.campaign_player_controls[usize::from(assignment.player_index)] == Some(true) {
-                grants[source_index].push(u8::try_from(house_index).map_err(|_| {
-                    anyhow::anyhow!("VERA Coop House index exceeds command format")
-                })?);
+                grants[source_index].push(
+                    u8::try_from(house_index)
+                        .map_err(|_| anyhow::anyhow!("VMCE House index exceeds command format"))?,
+                );
             }
         }
         grants[source_index].sort_unstable();
@@ -3397,7 +3396,7 @@ pub fn install_vera_cooperative_house_authority(
     // no observer Houses yet, so the observer list is empty.
     sim.session
         .install_multiplayer_house_identity(launch.mode.class, Vec::new());
-    // Authored VERA Coop Houses follow the map's own `[Houses] Allies=` graph.
+    // Authored VMCE Houses follow the map's own `[Houses] Allies=` graph.
     // Network skirmish drives diplomacy from launch teams and never reads the
     // map graph; a cooperative campaign map has no launch teams, so install
     // the authored graph on the same constructed roster before map objects
@@ -3407,7 +3406,7 @@ pub fn install_vera_cooperative_house_authority(
         rules,
     );
     log::info!(
-        "VERA Coop authored alliances installed for {} Houses",
+        "VMCE authored alliances installed for {} Houses",
         house_roster.houses.len()
     );
     Ok(())
@@ -5981,7 +5980,7 @@ mod tests {
         // about the stock roster's prefix families, so keep it out.
         let modes: Vec<_> = crate::skirmish_modes::stock_skirmish_modes()
             .into_iter()
-            .filter(|mode| !mode.class.is_vera_cooperative())
+            .filter(|mode| !mode.class.is_vmce())
             .collect();
         assert_eq!(modes.len(), 9);
         for mode in modes {

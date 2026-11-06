@@ -201,7 +201,7 @@ impl Options {
             observer_row: self.observer_row,
             cooperative_difficulty: self.cooperative_difficulty,
             seed: self.seed,
-            vera_coop_map_config: None,
+            vmce_map_config: None,
         })
     }
 

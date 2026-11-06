@@ -160,7 +160,7 @@ pub(crate) fn send_first_choices(state: &mut AppState) {
                 .match_state
                 .session
                 .network_setup()
-                .filter(|launch| launch.mode.class.is_vera_cooperative() && !observer)
+                .filter(|launch| launch.mode.class.is_vmce() && !observer)
                 .map(|launch| launch.local_player().role),
         },
     );

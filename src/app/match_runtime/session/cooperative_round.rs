@@ -40,7 +40,7 @@ pub(crate) struct CooperativeRoundState {
     can_continue: bool,
     /// `A8D580`, the human House count of the mission's rows.
     rows: usize,
-    /// Authored VERA Coop: the host is auto-ready and only its Continue
+    /// Authored VMCE: the host is auto-ready and only its Continue
     /// starts the next stage; a guest Continue is its ready action.
     vera: bool,
     /// `0x89E04C` once the loop left: true runs the next mission.
@@ -153,12 +153,12 @@ impl MatchSession {
         self.enter_cooperative_round_with_vera(next_map_file, can_continue, rows, None)
     }
 
-    /// VERA Coop's BC6 entry: the next external campaign stage was resolved
+    /// VMCE's BC6 entry: the next external campaign stage was resolved
     /// locally by both peers, so carry it through the round and into the
     /// frozen next start.
-    pub(crate) fn enter_vera_cooperative_round(
+    pub(crate) fn enter_vmce_round(
         &mut self,
-        next: Option<crate::app::match_bootstrap::VeraCoopNextStage>,
+        next: Option<crate::app::match_bootstrap::VmceNextStage>,
         can_continue: bool,
         rows: usize,
     ) -> anyhow::Result<()> {
@@ -171,7 +171,7 @@ impl MatchSession {
         next_map_file: Option<String>,
         can_continue: bool,
         rows: usize,
-        vera_next: Option<crate::app::match_bootstrap::VeraCoopNextStage>,
+        vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
     ) -> anyhow::Result<()> {
         let network = self
             .network
@@ -205,7 +205,7 @@ impl MatchSession {
                 ready[usize::from(row)] = false;
             }
         }
-        let vera = launch.mode.class.is_vera_cooperative();
+        let vera = launch.mode.class.is_vmce();
         let mut round = CooperativeRoundState {
             ready,
             local_ready: false,
@@ -219,7 +219,7 @@ impl MatchSession {
         };
         let host = self.host;
         if vera && host {
-            // VERA Coop's authoring decision: the host is ready from the
+            // VMCE's authoring decision: the host is ready from the
             // start and waits for the guests; only its Continue starts the
             // next stage.
             round.local_ready = true;
@@ -284,7 +284,7 @@ impl MatchSession {
     }
 
     /// `0x0046FB50`: Continue is enabled while every row's player is still
-    /// connected and the local player is not ready. VERA Coop's host is
+    /// connected and the local player is not ready. VMCE's host is
     /// auto-ready, so its Continue enables only after every guest is ready;
     /// a guest's Continue remains its ready action.
     pub(crate) fn cooperative_round_continue_enabled(&self) -> bool {
@@ -344,13 +344,13 @@ impl MatchSession {
                 round.can_continue && round.all_ready(),
                 "the host Continue waits for every guest"
             );
-            log::debug!("VERA Coop round: host Continue pressed; starting the next stage");
+            log::debug!("VMCE round: host Continue pressed; starting the next stage");
             return Ok(CooperativeRoundStep::Assign);
         }
         let local = launch.local_player_index;
         round.local_ready = true;
         if round.vera {
-            log::debug!("VERA Coop round: guest ready pressed");
+            log::debug!("VMCE round: guest ready pressed");
         }
         if let Some(row) = launch
             .humans
@@ -442,7 +442,7 @@ impl MatchSession {
                 }
                 if round.vera {
                     log::debug!(
-                        "VERA Coop round: PeerReady source={source}, all_ready={}, host={host}",
+                        "VMCE round: PeerReady source={source}, all_ready={}, host={host}",
                         round.all_ready()
                     );
                 }
@@ -546,10 +546,10 @@ impl MatchSession {
         super::admit_network_start_roster(launch)?;
         let seed = previous.seed.value;
         let mode = previous.mode();
-        let previous_vera_houses = previous.vera_coop_houses().cloned();
+        let previous_vera_houses = previous.vmce_houses().cloned();
         let vera_next = vera_next.clone();
         if let Some(next) = vera_next.as_ref() {
-            network.vera_coop_map_config = Some(next.config.clone());
+            network.vmce_map_config = Some(next.config.clone());
             network.map_metadata = Some(next.metadata.clone());
             network.local_map_source = Some(next.local_map_source.clone());
             network.local_map_effective_digest = Some(next.effective_digest.clone());
@@ -573,12 +573,12 @@ impl MatchSession {
         )
         .with_carry_over(carry_over);
         if let Some(houses) = previous_vera_houses {
-            prepared = prepared.with_vera_coop_houses(houses);
+            prepared = prepared.with_vmce_houses(houses);
         }
         if let Some(next) = vera_next {
             prepared = prepared
                 .with_local_map_source(Some(next.local_map_source), Some(next.effective_digest))
-                .with_vera_coop_map_config(next.config);
+                .with_vmce_map_config(next.config);
         }
         let startup = Arc::new(prepared);
         network.max_ahead_frames = Some(max_ahead_frames);
@@ -744,7 +744,7 @@ mod tests {
         (session, startup)
     }
 
-    /// The same frozen two-player LAN start in the authored VERA Coop mode.
+    /// The same frozen two-player LAN start in the authored VMCE mode.
     fn frozen_vera(
         local: usize,
     ) -> (
@@ -752,7 +752,7 @@ mod tests {
         Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     ) {
         let mut launch = super::super::tests::network_fixture();
-        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
         for (index, human) in launch.humans.iter_mut().enumerate() {
             human.role = crate::skirmish_launch::LaunchHumanRole::Player {
                 group: index as i32,
@@ -781,16 +781,16 @@ mod tests {
             effective_digest: "b".repeat(64),
         });
         session
-            .accept_network_vera_coop_map_config(Some(
-                crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            .accept_network_vmce_map_config(Some(
+                crate::app::match_bootstrap::NetworkVmceMapConfig::new(
                     map_file,
                     source_sha256,
-                    crate::map::coop_config::VeraCoopMapConfig::default(),
+                    crate::map::vmce_config::VmceMapConfig::default(),
                 )
                 .unwrap(),
             ))
             .unwrap();
-        let assignments = crate::skirmish_launch::VeraCoopHouseAssignments {
+        let assignments = crate::skirmish_launch::VmceHouseAssignments {
             participants: session
                 .network_setup()
                 .unwrap()
@@ -798,7 +798,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(
-                    |(index, human)| crate::skirmish_launch::VeraCoopHouseAssignment {
+                    |(index, human)| crate::skirmish_launch::VmceHouseAssignment {
                         participant_name: human.name.clone(),
                         raw_slot_index: human.raw_slot_index.expect("fixture lobby row"),
                         player_index: index as u8,
@@ -813,7 +813,7 @@ mod tests {
         session.set_network_start_seed(SEED).unwrap();
         session.prepare_network_timing(2, || 0).unwrap();
         let LoadingStartup::Network(startup) = session
-            .freeze_network_start_with_vera_coop(SEED, Some(assignments))
+            .freeze_network_start_with_vmce(SEED, Some(assignments))
             .unwrap()
         else {
             panic!("network start");
@@ -886,12 +886,12 @@ mod tests {
     #[test]
     fn vera_round_freezes_the_resolved_next_stage_into_the_next_start() {
         let (mut session, _) = frozen_vera(0);
-        let next = crate::app::match_bootstrap::VeraCoopNextStage {
+        let next = crate::app::match_bootstrap::VmceNextStage {
             map_file: "mission02.map".into(),
-            config: crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+            config: crate::app::match_bootstrap::NetworkVmceMapConfig::new(
                 "mission02.map".into(),
                 "a".repeat(64),
-                crate::map::coop_config::VeraCoopMapConfig::default(),
+                crate::map::vmce_config::VmceMapConfig::default(),
             )
             .unwrap(),
             metadata: super::super::NetworkMapMetadata {
@@ -912,7 +912,7 @@ mod tests {
             effective_digest: "b".repeat(64),
         };
         session
-            .enter_vera_cooperative_round(Some(next.clone()), true, 2)
+            .enter_vmce_round(Some(next.clone()), true, 2)
             .unwrap();
         session.take_network_loading_requests();
         assert_eq!(
@@ -943,11 +943,11 @@ mod tests {
         );
         assert_eq!(
             startup
-                .vera_coop_map_config()
+                .vmce_map_config()
                 .map(|config| config.map_file.as_str()),
             Some("mission02.map")
         );
-        assert!(startup.vera_coop_houses().is_some());
+        assert!(startup.vmce_houses().is_some());
     }
 
     #[test]

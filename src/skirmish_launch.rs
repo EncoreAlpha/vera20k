@@ -585,11 +585,11 @@ pub enum LaunchHumanRole {
     Player { group: i32 },
 }
 
-/// Frozen VERA Coop mapping from a synchronized lobby participant seat and
+/// Frozen VMCE mapping from a synchronized lobby participant seat and
 /// role to the map-authored primary House. Generated from the agreed start
 /// seed and selected map, then carried unchanged into simulation bootstrap.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct VeraCoopHouseAssignment {
+pub struct VmceHouseAssignment {
     pub participant_name: String,
     pub raw_slot_index: u8,
     pub player_index: u8,
@@ -597,32 +597,32 @@ pub struct VeraCoopHouseAssignment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct VeraCoopHouseAssignments {
-    pub participants: Vec<VeraCoopHouseAssignment>,
+pub struct VmceHouseAssignments {
+    pub participants: Vec<VmceHouseAssignment>,
     /// Frozen lobby difficulty row: 0 = Easy, 1 = Normal, 2 = Hard.
-    /// TriggerType difficulty flags read this row for VeraCoop; stock starts
+    /// TriggerType difficulty flags read this row for Vmce; stock starts
     /// never carry these assignments.
-    #[serde(default = "default_vera_coop_difficulty")]
+    #[serde(default = "default_vmce_difficulty")]
     pub difficulty: i32,
 }
 
-fn default_vera_coop_difficulty() -> i32 {
+fn default_vmce_difficulty() -> i32 {
     1
 }
 
-impl Default for VeraCoopHouseAssignments {
+impl Default for VmceHouseAssignments {
     fn default() -> Self {
         Self {
             participants: Vec::new(),
-            difficulty: default_vera_coop_difficulty(),
+            difficulty: default_vmce_difficulty(),
         }
     }
 }
 
-impl VeraCoopHouseAssignments {
+impl VmceHouseAssignments {
     pub fn validate_for_launch(&self, launch: &SkirmishLaunchSession) -> Result<(), String> {
         if !(0..=2).contains(&self.difficulty) {
-            return Err("VERA Coop frozen difficulty is outside the lobby rows 0..=2".to_owned());
+            return Err("VMCE frozen difficulty is outside the lobby rows 0..=2".to_owned());
         }
         let players = launch
             .humans
@@ -630,7 +630,7 @@ impl VeraCoopHouseAssignments {
             .filter(|human| !human.is_observer())
             .collect::<Vec<_>>();
         if players.len() != self.participants.len() {
-            return Err("VERA Coop frozen assignment count differs from participants".to_owned());
+            return Err("VMCE frozen assignment count differs from participants".to_owned());
         }
         let mut rows = [false; NETWORK_PLAYER_SLOT_COUNT];
         let mut roles = [false; 4];
@@ -638,30 +638,28 @@ impl VeraCoopHouseAssignments {
         for assignment in &self.participants {
             let row_index = usize::from(assignment.raw_slot_index);
             if row_index >= rows.len() || rows[row_index] {
-                return Err(
-                    "VERA Coop frozen assignment has an invalid or duplicate row".to_owned(),
-                );
+                return Err("VMCE frozen assignment has an invalid or duplicate row".to_owned());
             }
             rows[row_index] = true;
             let player = players
                 .iter()
                 .find(|human| human.raw_slot_index == Some(assignment.raw_slot_index))
                 .filter(|human| human.name == assignment.participant_name)
-                .ok_or_else(|| "VERA Coop frozen assignment participant changed".to_owned())?;
+                .ok_or_else(|| "VMCE frozen assignment participant changed".to_owned())?;
             let role = player.role.native_value();
             if role != -2 && role != i32::from(assignment.player_index) {
-                return Err("VERA Coop frozen assignment role changed".to_owned());
+                return Err("VMCE frozen assignment role changed".to_owned());
             }
             let role_index = usize::from(assignment.player_index);
             if role_index >= roles.len() || roles[role_index] {
-                return Err("VERA Coop frozen assignment has duplicate player roles".to_owned());
+                return Err("VMCE frozen assignment has duplicate player roles".to_owned());
             }
             roles[role_index] = true;
             if owners
                 .iter()
                 .any(|owner: &String| owner == &assignment.owner_name)
             {
-                return Err("VERA Coop frozen assignment has duplicate Houses".to_owned());
+                return Err("VMCE frozen assignment has duplicate Houses".to_owned());
             }
             owners.push(assignment.owner_name.clone());
         }

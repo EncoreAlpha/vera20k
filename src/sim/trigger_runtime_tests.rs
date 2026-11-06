@@ -124,16 +124,16 @@ fn local_retention_reaches_incoming_trigger_and_saved_world() {
 }
 
 #[test]
-fn vera_coop_lobby_difficulty_selects_the_matching_trigger_flag() {
+fn vmce_lobby_difficulty_selects_the_matching_trigger_flag() {
     let body = "[Triggers]\nDIFF=<none>,<none>,Difficulty,0,1,0,0,0\n\
                 [Events]\nDIFF=2,13,0,0,36,0,0\n\
                 [Actions]\nDIFF=1,28,0,12,0,0,0,0,A\n\
                 [Tags]\nDIFF_TAG=0,Difficulty,DIFF\n";
     // The frozen lobby row is installed before tags instantiate, exactly like
-    // the loader's VeraCooperative prefix.
+    // the loader's Vmce prefix.
     for (row, expected) in [(0, true), (1, false), (2, false)] {
         let mut sim = Simulation::new();
-        sim.session.install_vera_cooperative_trigger_difficulty(row);
+        sim.session.install_vmce_trigger_difficulty(row);
         install_event_ingress_map(
             &mut sim,
             &crate::rules::ruleset::RuleSet::empty_for_test(),

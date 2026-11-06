@@ -1,10 +1,10 @@
-//! Whitelisted external map settings for VERA cooperative multiplayer.
+//! Whitelisted external map settings for VMCE multiplayer.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::rules::ini_parser::IniFile;
 
-/// Normalized external settings admitted for a VERA Coop map.
+/// Normalized external settings admitted for a VMCE map.
 ///
 /// Only `[Basic] Player1..Player4` and control fields for Houses already named
 /// by the map's `[Houses]` section can be represented. Fields stay private so
@@ -12,11 +12,11 @@ use crate::rules::ini_parser::IniFile;
 /// values do when parsed here.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct VeraCoopMapConfig {
+pub struct VmceMapConfig {
     #[serde(default)]
     basic_players: [Option<String>; 4],
     #[serde(default)]
-    houses: BTreeMap<String, VeraCoopHouseConfig>,
+    houses: BTreeMap<String, VmceHouseConfig>,
     /// Campaign INIs replace map-authored cooperative assignments entirely.
     #[serde(default)]
     replace_map_values: bool,
@@ -24,14 +24,14 @@ pub struct VeraCoopMapConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct VeraCoopHouseConfig {
+struct VmceHouseConfig {
     #[serde(default)]
     player_control: Option<bool>,
     #[serde(default)]
     player_controls: [Option<bool>; 4],
 }
 
-impl VeraCoopMapConfig {
+impl VmceMapConfig {
     /// Parse raw supplemental INI bytes with empty-value presence retained,
     /// then validate and normalize the allowed fields.
     pub fn from_bytes(map_ini: &IniFile, supplemental: &[u8]) -> anyhow::Result<Self> {
@@ -60,7 +60,7 @@ impl VeraCoopMapConfig {
             let Some(section) = supplemental.section(&house_name) else {
                 continue;
             };
-            let mut values = VeraCoopHouseConfig::default();
+            let mut values = VmceHouseConfig::default();
             values.player_control = read_control(section, "PlayerControl")?;
             for (index, control) in values.player_controls.iter_mut().enumerate() {
                 *control = read_control(section, &format!("Player{}Control", index + 1))?;
@@ -251,12 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn coop_config_projects_only_allowed_values_and_keeps_player1_control_precedence() {
+    fn vmce_config_projects_only_allowed_values_and_keeps_player1_control_precedence() {
         let map = map_ini();
         let supplemental = IniFile::from_str(
             "[Basic]\nPlayer2=Beta\n[Alpha]\nPlayerControl=no\nPlayer2Control=yes\n",
         );
-        let config = VeraCoopMapConfig::from_ini(&map, &supplemental).unwrap();
+        let config = VmceMapConfig::from_ini(&map, &supplemental).unwrap();
         let projected = config.apply_to_map(&map).unwrap();
 
         assert_eq!(
@@ -273,16 +273,16 @@ mod tests {
     }
 
     #[test]
-    fn coop_config_rejects_unknown_house_and_disallowed_keys() {
+    fn vmce_config_rejects_unknown_house_and_disallowed_keys() {
         let map = map_ini();
         let unknown_house = IniFile::from_str("[Gamma]\nPlayerControl=yes\n");
-        assert!(VeraCoopMapConfig::from_ini(&map, &unknown_house).is_err());
+        assert!(VmceMapConfig::from_ini(&map, &unknown_house).is_err());
 
         let disallowed = IniFile::from_str("[Basic]\nName=not allowed\n");
-        assert!(VeraCoopMapConfig::from_ini(&map, &disallowed).is_err());
+        assert!(VmceMapConfig::from_ini(&map, &disallowed).is_err());
         let unapproved_basic_house_field = IniFile::from_str("[Basic]\nCountry=not allowed\n");
-        assert!(VeraCoopMapConfig::from_ini(&map, &unapproved_basic_house_field).is_err());
-        let config: VeraCoopMapConfig = serde_json::from_str(
+        assert!(VmceMapConfig::from_ini(&map, &unapproved_basic_house_field).is_err());
+        let config: VmceMapConfig = serde_json::from_str(
             r#"{"basic_players":[null,null,null,null],"houses":{"Gamma":{"player_control":true,"player_controls":[null,null,null,null]}}}"#,
         )
         .unwrap();
@@ -294,7 +294,7 @@ mod tests {
         let map = IniFile::from_str(
             "[Basic]\nPlayer1=Alpha\nPlayerControl=no\nPlayer1Control=yes\n[Houses]\n0=Basic\n1=Alpha\n[Alpha]\n",
         );
-        let config = VeraCoopMapConfig::from_bytes(
+        let config = VmceMapConfig::from_bytes(
             &map,
             b"[Basic]\nPlayer2=Alpha\nPlayerControl=yes\nPlayer1Control=no",
         )
@@ -308,7 +308,7 @@ mod tests {
             Some("Alpha")
         );
         assert!(
-            VeraCoopMapConfig::from_bytes(
+            VmceMapConfig::from_bytes(
                 &map,
                 b"[Basic]\nPlayer2=Alpha\nPlayerControl=yes\nCountry=not allowed"
             )
@@ -329,7 +329,7 @@ mod tests {
         let ordinary = IniFile::from_bytes(b"[Basic]\nPlayer1=\n").unwrap();
         assert!(ordinary.section("Basic").is_none());
 
-        let config = VeraCoopMapConfig::from_bytes(&map, b"[Basic]\nPlayer1=\n").unwrap();
+        let config = VmceMapConfig::from_bytes(&map, b"[Basic]\nPlayer1=\n").unwrap();
         let projected = config.apply_to_map(&map).unwrap();
         assert_eq!(
             parse_basic_section(&projected).campaign_players.players[0]

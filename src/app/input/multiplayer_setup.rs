@@ -36,7 +36,7 @@ pub(crate) fn layout(state: &AppState) -> MultiplayerSetupLayout {
         .and_then(|launch| {
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
         })
-        .is_some_and(|mode| mode.class.is_vera_cooperative())
+        .is_some_and(|mode| mode.class.is_vmce())
     {
         crate::ui::coop_lobby::apply(
             &mut layout,

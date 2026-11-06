@@ -1276,9 +1276,9 @@ fn load_descriptor_source_family_format_matrix() {
 }
 
 #[test]
-fn vera_coop_fresh_admission_rejects_generated_sources_before_house_resolution() {
+fn vmce_fresh_admission_rejects_generated_sources_before_house_resolution() {
     let mut launch = test_launch_session(LaunchCountry::America);
-    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
     launch.selected_map_file = Some("mp01t4.map".to_owned());
     let startup = crate::app::match_bootstrap::PreparedNetworkStartup::new(
         launch,
@@ -1300,15 +1300,15 @@ fn vera_coop_fresh_admission_rejects_generated_sources_before_house_resolution()
 
     let error = match request.prepare_initial(initial) {
         Err(error) => error,
-        Ok(_) => panic!("VERA Coop fresh admission must reject generated sources"),
+        Ok(_) => panic!("VMCE fresh admission must reject generated sources"),
     };
     assert!(error.to_string().contains("authored physical map source"));
 }
 
 #[test]
-fn vera_coop_authored_admission_requires_frozen_house_assignments() {
+fn vmce_authored_admission_requires_frozen_house_assignments() {
     let mut launch = test_launch_session(LaunchCountry::America);
-    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
     let startup = crate::app::match_bootstrap::PreparedNetworkStartup::new(
         launch,
         73,
@@ -1331,22 +1331,22 @@ fn vera_coop_authored_admission_requires_frozen_house_assignments() {
 
     let error = match request.prepare_initial(initial) {
         Err(error) => error,
-        Ok(_) => panic!("VERA Coop authored admission needs frozen House assignments"),
+        Ok(_) => panic!("VMCE authored admission needs frozen House assignments"),
     };
     assert!(
         error
             .to_string()
-            .contains("frozen VERA Coop startup has no House assignments")
+            .contains("frozen VMCE startup has no House assignments")
     );
 }
 
 #[test]
-fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() {
+fn vmce_authored_admission_preserves_network_receipt_with_frozen_mapping() {
     use crate::app::loading::fresh_scenario::FreshScenarioFamily;
-    use crate::skirmish_launch::{LaunchHumanRole, VeraCoopHouseAssignments};
+    use crate::skirmish_launch::{LaunchHumanRole, VmceHouseAssignments};
 
     let mut launch = test_launch_session(LaunchCountry::America);
-    launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
+    launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
     launch.selected_map_file = Some("flat.map".to_owned());
     launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
     let mut map_text = include_str!("../../../../tests/maps/flat.map").to_owned();
@@ -1365,14 +1365,14 @@ fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() 
         source_sha256: crate::util::sha256::sha256_hex(map_text.as_bytes()),
     };
     let (_, source_sha256) = source.physical_identity().unwrap();
-    let config = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+    let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
         "flat.map".into(),
         source_sha256.to_owned(),
-        crate::map::coop_config::VeraCoopMapConfig::from_bytes(&map.ini, b"[Basic]\nPlayer1=Beta")
+        crate::map::vmce_config::VmceMapConfig::from_bytes(&map.ini, b"[Basic]\nPlayer1=Beta")
             .unwrap(),
     )
     .unwrap();
-    let assignments = crate::app::match_bootstrap::resolve_vera_cooperative_houses_with_config(
+    let assignments = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
         &map.ini,
         "flat.map",
         source_sha256,
@@ -1391,24 +1391,21 @@ fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() 
         2,
         crate::app::match_runtime::session::WolStartTerms::default(),
     )
-    .with_vera_coop_houses(VeraCoopHouseAssignments {
+    .with_vmce_houses(VmceHouseAssignments {
         participants: assignments.participants.clone(),
         // The lobby row is a frozen input the map cannot derive; admission
         // must keep it while still recomputing the map/role identity.
         difficulty: 0,
     })
-    .with_vera_coop_map_config(config.clone());
+    .with_vmce_map_config(config.clone());
     let startup = LoadingStartup::Network(std::sync::Arc::new(startup));
     let initial =
         crate::app::loading::init::MapLoadInitial::from_test_map_source(map, source.clone());
     let prepared = LoadingRequest::network(startup.clone())
         .prepare_initial(initial)
-        .expect("VERA Coop admitted authored network source and frozen mapping");
+        .expect("VMCE admitted authored network source and frozen mapping");
 
-    assert_eq!(
-        prepared.context.family(),
-        FreshScenarioFamily::VeraCooperative
-    );
+    assert_eq!(prepared.context.family(), FreshScenarioFamily::Vmce);
     prepared
         .context
         .validate_terminal_transfer(
@@ -1424,7 +1421,7 @@ fn vera_coop_authored_admission_preserves_network_receipt_with_frozen_mapping() 
     let LoadingStartup::Network(frozen) = prepared.request.startup() else {
         panic!("network startup remains frozen through LoadingRequest");
     };
-    assert_eq!(frozen.vera_coop_map_config(), Some(&config));
+    assert_eq!(frozen.vmce_map_config(), Some(&config));
 }
 
 #[test]

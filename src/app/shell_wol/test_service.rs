@@ -349,7 +349,7 @@ fn host_options(
             observer_row: None,
             cooperative_difficulty: 0,
             seed: Some(HOST_SEED),
-            vera_coop_map_config: None,
+            vmce_map_config: None,
         }),
     )
 }
@@ -728,7 +728,7 @@ const QUICK_MATCH_LOBBY: &str = "Lob_40_0";
 const QUICK_COOP_LOBBY: &str = "Lob_39_0";
 /// The map the stand-in matchbot names for Quick Co-op: the Soviet
 /// campaign's first (`coopcampmd.ini` `[Soviet]` `Map1`).
-pub(crate) const QUICK_COOP_MAP: &str = "C2S01MD.MAP";
+pub(crate) const QUICK_CAMPAIGN_MAP: &str = "C2S01MD.MAP";
 const MATCHBOT: &str = "matchbot";
 
 fn quick_match_members() -> Vec<WolMember> {
@@ -781,7 +781,7 @@ pub(crate) fn matchbot_options(
     // Allied one, whose stage admits only Americans (index 0); a peer
     // country outside it turns Random, which the shell never resolves.
     let ((host_country, guest_country), map) = if super::quick_match::quick_coop(state) {
-        ((0, 0), MatchMap::Named(QUICK_COOP_MAP))
+        ((0, 0), MatchMap::Named(QUICK_CAMPAIGN_MAP))
     } else {
         ((5, 4), MatchMap::First)
     };
@@ -861,7 +861,14 @@ fn games(hash: i32, map: &str) -> Vec<WolChannel> {
             "Transylvania_but_much_longer_still.yro",
         ),
         // A co-op room with one of its two seats taken.
-        game("Vladimir", 1, 3, 90, hash.wrapping_add(1), QUICK_COOP_MAP),
+        game(
+            "Vladimir",
+            1,
+            3,
+            90,
+            hash.wrapping_add(1),
+            QUICK_CAMPAIGN_MAP,
+        ),
     ]
 }
 

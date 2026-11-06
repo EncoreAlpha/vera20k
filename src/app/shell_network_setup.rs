@@ -7,12 +7,10 @@
 mod actions;
 pub(crate) mod agreement;
 pub(crate) mod bans;
-pub(crate) mod coop_map;
-pub(crate) use coop_map::{
-    host_campaign_identity as vera_coop_host_campaign_identity,
-    refresh_campaign_entry_records as refresh_vera_coop_campaign_entries,
-    resolve_host_vera_coop_map_config,
-    resolve_local_campaign_config as resolve_local_vera_coop_campaign_config,
+pub(crate) mod vmce_map;
+pub(crate) use vmce_map::{
+    host_vmce_identity, refresh_vmce_entries, resolve_host_vmce_map_config,
+    resolve_local_vmce_config,
 };
 mod cooperative;
 pub(crate) use cooperative::{
@@ -137,7 +135,7 @@ pub(crate) enum OnlineStartPhase {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct VeraCoopMapDetails {
+pub(super) struct VmceMapDetails {
     pub owners: [Option<String>; 4],
     pub colors: [Option<[u8; 3]>; 4],
     pub briefing: Option<String>,
@@ -146,8 +144,8 @@ pub(super) struct VeraCoopMapDetails {
 pub(crate) struct NetworkSetupProtocol {
     /// Parsed map-authored Player1..Player4 labels, keyed by local map identity.
     /// The lobby view is rebuilt every frame, so it must not reload a map there.
-    pub(super) vera_coop_role_cache:
-        std::cell::RefCell<Option<(std::path::PathBuf, String, String, VeraCoopMapDetails)>>,
+    pub(super) vmce_role_cache:
+        std::cell::RefCell<Option<(std::path::PathBuf, String, String, VmceMapDetails)>>,
     locked: bool,
     /// WOL Quick Match (`[0xA8B244]` 1): the game channel's nodes and start
     /// run without C2/C9 (`0x007A6208..0x007A6229`, `0x0078A36C..0x0078A386`)
@@ -370,7 +368,7 @@ impl NetworkSetupProtocol {
         // runs without C2.
         let wol_host = dialog.wol() && host && !quick_match;
         Self {
-            vera_coop_role_cache: std::cell::RefCell::new(None),
+            vmce_role_cache: std::cell::RefCell::new(None),
             locked: false,
             quick_match,
             external: false,
@@ -721,11 +719,11 @@ impl App {
             host: true,
             ..dialog(state)
         };
-        // A restored VERA Coop mode's saved map is a campaign Entry that the
+        // A restored VMCE mode's saved map is a campaign Entry that the
         // startup catalog scan does not include. Discover those records first,
         // or the restored setup reports "no eligible map" and no room opens.
-        // Discovery is inert without a VeraCoop settings folder.
-        refresh_vera_coop_campaign_entries(state);
+        // Discovery is inert without a Vmce settings folder.
+        refresh_vmce_entries(state);
         // VERA's compact online flow opens a mode that offers AI opponents.
         // Native diagnostic visits retain their saved mode selection.
         let prefer_computer_mode = dialog.wol()
@@ -1039,7 +1037,7 @@ pub(crate) fn show_statics(state: &mut AppState) {
     let Some(view) = view(state) else {
         return;
     };
-    let heading = if view.vera_cooperative {
+    let heading = if view.vmce {
         "Cooperative Lobby".to_owned()
     } else {
         App::csf_label(state, view.page().title_key, view.page().title_key)

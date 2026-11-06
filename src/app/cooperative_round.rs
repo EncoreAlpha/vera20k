@@ -63,13 +63,13 @@ pub(crate) fn mission_ended(state: &mut AppState, elapsed_ticks: i32) {
     else {
         return;
     };
-    // VERA Coop has no Cooperative progress record: it neither writes
+    // VMCE has no Cooperative progress record: it neither writes
     // coopsave.ini nor picks the record's next stage. Its campaign progression
     // is the external campaign's own and belongs to the next slices.
     if sim
         .session()
         .multiplayer_mode_class()
-        .is_some_and(|class| class.is_vera_cooperative())
+        .is_some_and(|class| class.is_vmce())
     {
         return;
     }
@@ -164,7 +164,7 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
 /// The dialog's rows are this mission's live statistics (`0x0046DA70`),
 /// read while the world is still resident.
 ///
-/// VERA Coop opens the same dialog with ready slots: it resolves the next
+/// VMCE opens the same dialog with ready slots: it resolves the next
 /// external campaign stage locally on both peers; a missing/EndOfGame next
 /// stage leaves Continue hidden and Quit returns to the shell.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
@@ -173,20 +173,16 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         .sim_runtime
         .as_ref()
         .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
-        .is_some_and(|class| class.is_vera_cooperative());
+        .is_some_and(|class| class.is_vmce());
     let vera_next = if vera && victory {
-        let current = state
-            .match_state
-            .session
-            .network_vera_coop_map_config()
-            .cloned();
+        let current = state.match_state.session.network_vmce_map_config().cloned();
         current.and_then(|current| {
-            match crate::app::shell_network_setup::coop_map::resolve_next_campaign_stage(
+            match crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(
                 state, &current,
             ) {
                 Ok(next) => next,
                 Err(error) => {
-                    log::warn!("VERA Coop next campaign stage is unavailable: {error:#}");
+                    log::warn!("VMCE next campaign stage is unavailable: {error:#}");
                     None
                 }
             }
@@ -261,7 +257,7 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         state
             .match_state
             .session
-            .enter_vera_cooperative_round(vera_next, can_continue, rows)
+            .enter_vmce_round(vera_next, can_continue, rows)
     } else {
         state
             .match_state
@@ -382,7 +378,7 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         .and_then(|index| catalog.shell_maps().get(index))
         .map(|map| map.display_name.clone())
         .unwrap_or_default();
-    // VERA Coop's external campaign has no CSF entry for its mode row; that
+    // VMCE's external campaign has no CSF entry for its mode row; that
     // row's own text is its display name (the same fallback the setup shell
     // uses), not a missing label. Stock modes keep their CSF lookup.
     let mode_label = state
@@ -395,7 +391,7 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         .map_or_else(
             || resolve_csf(state, "GUI:None").into_owned(),
             |mode| {
-                if mode.class.is_vera_cooperative() {
+                if mode.class.is_vmce() {
                     mode.ui_name_key.clone()
                 } else {
                     resolve_csf(state, &mode.ui_name_key).into_owned()
@@ -771,8 +767,8 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
         .network_setup()
         .ok_or_else(|| anyhow::anyhow!("no round roster"))?
         .clone();
-    if launch.mode.class.is_vera_cooperative() {
-        // VERA Coop's next stage and role assignments were resolved from the
+    if launch.mode.class.is_vmce() {
+        // VMCE's next stage and role assignments were resolved from the
         // external campaign on both peers; only the BC6 begin/options
         // exchange remains before the next frozen start.
         let difficulty = state

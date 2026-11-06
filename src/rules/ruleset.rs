@@ -9355,7 +9355,7 @@ impl RuleSet {
         })
     }
 
-    /// VERA Coop: merge the map INI's `[Countries]` registry into this
+    /// VMCE: merge the map INI's `[Countries]` registry into this
     /// scenario's HouseType registry, as the native scenario INI layer does.
     ///
     /// gamemd registers each map `[Countries]` value at its own map-read point;
@@ -9364,7 +9364,7 @@ impl RuleSet {
     /// 国家从全局数量之后排). A new country's map section supplies the same
     /// fields HouseTypeClass::ReadINI reads; `Color` uses ReadColor474A90
     /// (`0x005118CF..0x00511928`) and `Side` resolves through the existing
-    /// `[Sides]` registry. No consumers outside the VeraCooperative loader call
+    /// `[Sides]` registry. No consumers outside the Vmce loader call
     /// this, so stock scenarios keep their exact rules registry.
     pub fn merge_map_countries(&mut self, map_ini: &IniFile) {
         // A map can also append or override `[Colors]` entries; resolve them

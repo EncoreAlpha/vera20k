@@ -3292,7 +3292,7 @@ mod item83_selection_order_tests {
     }
 
     #[test]
-    fn vera_coop_local_selection_reaches_shared_house_stop_command() {
+    fn vmce_local_selection_reaches_shared_house_stop_command() {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let (mut sim, rules) = two_house_fixture(&[]);
