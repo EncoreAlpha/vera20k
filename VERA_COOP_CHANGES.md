@@ -1,12 +1,12 @@
 # VERA 合作战役开发记录
 
-这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.21-dev`（进行中：全量触发语义审计的前置修复）；上一版本 `0.1.20-dev`（已提交：任务结束的团队胜负与最小结算）。
+这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.21-dev`（已实现：审计两项修复、真实结局采集、结算 ready/Continue 与下一关；后续 `0.1.22`–`0.1.23`）；上一版本 `0.1.20-dev`（已提交：任务结束的团队胜负与最小结算）。
 
 ## 当前状态
 
-### `0.1.21-dev` 前置：全量触发语义审计与两项修复（进行中）
+### `0.1.21-dev` 前置：全量触发语义审计与两项修复（本版）
 
-按用户拍板的合作模型，先做了触发 action/event 的全量只读审计，再实现审计中唯二需要改引擎的两项；结算界面/下一关仍按原计划留在审计修复之后。
+按用户拍板的合作模型，先做了触发 action/event 的全量只读审计，再实现审计中唯二需要改引擎的两项；结算界面与下一关随后在同一 0.1.21 片中实现。
 
 审计结论（分报告在 `.scratch/vera-coop-live/research/audit-*.md`，汇总 `audit-register.md`，均不入库）：
 
@@ -34,7 +34,7 @@
 - 用户要求代改的验收图已生成并跑通（见下）；自定义国家的真实地图装载、真实触发器 → 团队结局、等真实结局采集均已验证。
 - 0.1.20 的旧运行证据保留不重跑；本版起新证据另建目录。
 - 审计中 F3/F4/F5/F6 按用户决定记录为作者责任/不支持/待议，不阻塞；完整决策表见 `decisions.md` 与 `audit-register.md`。
-- 结算 ready/Continue、下一关、失败重试、暂停/离场等仍按 0.1.21–0.1.23 计划推进。
+- 结算 ready/Continue 与下一关已在本版完成（见下节）；失败重试、`EndOfGame` 战役完成页、暂停/离场等仍在 `0.1.22`–`0.1.23` 计划。
 
 #### 真实触发器验收（2026-11-06，scratch）
 
@@ -58,7 +58,26 @@
 | real-win-p2 | victory=true | 2 / false | 630 | 相同 | 01000930 @450 启用 01000855 → 67 @630 |
 | real-custom-owner-win | victory=true | 2 / false | 630 | 相同 | 自定义国家 01000940 @0 启用 01000942 → 450 启用 01000855 → 67 @630 |
 
-五个变体均两端同帧进结果页、各出一张 `vera-result-real-<win|lose>.png`，Quit 后正常退出；这补上了 0.1.20 遗留的“真实地图触发器 → 团队结局”运行时证据，也验证了地图自定义国家 owner 的真实解析。验收图为 scratch 产物，不提交；结算页 ready/Continue 与下一关仍是后续片。
+五个变体均两端同帧进结果页、各出一张 `vera-result-real-<win|lose>.png`，Quit 后正常退出；这补上了 0.1.20 遗留的“真实地图触发器 → 团队结局”运行时证据，也验证了地图自定义国家 owner 的真实解析。验收图为 scratch 产物，不提交；胜负结算后的 ready/Continue 与下一关见下节。
+
+#### `0.1.21-dev` 结算 ready/Continue 与下一关
+
+实现要点：
+
+- 新 `VeraCoopNextStage`（`match_bootstrap.rs`）携带下一关的地图路径、外部战役场景配置、地图元数据与本地 loose map source；`coop_map::resolve_next_campaign_stage` 在当前战役身份下读取 `campaign.ini` 的 `[Scenario:<当前地图>] NextScenario`，按同一 campaign.ini 摘要重算下一关配置并核对目标在 `ScenarioCount` 中。两端各自本地解析，不传输地图。
+- `MatchSession::enter_vera_cooperative_round` 把下一关带入 `NetworkPhase::CooperativeRound`；BC6 行数仍来自当前任务的角色主 House 数。VERA 的房主进入结果页即自动 ready，并广播该 ready；客人按 Continue 只标记自己 ready；全员 ready 后只有房主 Continue 会返回 `Assign`，客人不能被推进下一关。
+- `assign` 在 VERA 下跳过 stock 的 country/start 分配，直接走 BC6 的 begin/options；`freeze_cooperative_round` 把下一关 config、上一关角色 House 授权、本地地图 source 和 effective digest 装进新 `PreparedNetworkStartup`，同时刷新 LAN 选项使用的 map metadata，下一关加载沿用与首关相同的 VERA 外部战役路径。
+- 结果页在 VERA 下只保留分数行、ready 标记、下一关路径与 Continue/Quit：隐藏 stock 的国家/颜色/起始位置组合和难度滑杆，避免把只读角色行画成大厅选项；`CoopScoreModel.vera` 由结果页拥有者设置，渲染与输入共同遵守。
+- 胜利且 `NextScenario` 存在时才提供 Continue；失败、`EndOfGame` 或没有下一关时保持 `can_continue=false`，只有 Quit。采集目标 `--vera-outcome real` 延伸到下一关：胜利后两端走生产 ready/Continue，观察下一关 native frame、截图和 `state_hash`。
+- 下一关配置校验仍由现有 loader/identity 复核；当前沿用上一关 seed、角色分配和未继承的资金（跨关资金/新 seed 归 `0.1.22`）。
+
+验证（本地双进程，2026-11-06；scratch 证据在 `.scratch/vera-coop-live/run1/evidence-0.1.21/`）：
+
+- 真实胜利（stage01 → campaign.ini NextScenario=stage02）：两端结果页行数 2、时间一致，`can_continue=true`；房主本地 ready=true，客人按 Continue 发 ready，房主 Continue 后两端进入 `stage02/all01umd.map`；下一关 native frame 60 的 `state_hash` 两端相同，Quit/收尾干净；各出 `vera-result-real-win.png`、`vera-next-mission.png`。
+- 真实失败：`can_continue=false`，只走 Quit，两端正常回大厅。
+- 定向测试：`app::match_runtime::session::cooperative_round` 10（VERA 房主自动 ready、客人 ready、host Continue 门禁、下一关 config/houses 冻结、stock 回归）、`app::shell_network_setup::coop_map` 5（Next/EndOfGame/路径校验）、`ui::coop_score_shell` 4（VERA 隐藏 stock 控件、保留 Continue/Quit）、`app::diagnostics::shell_capture` 89、core `sim::scenario_bootstrap` 70；`cargo build --profile fast --bin vera20k` 通过。
+
+遗留：下一关 seed 仍复用上一关（规划改新 seed）；失败重试、`EndOfGame` 战役完成页、`AltNextScenario`/`SkipMapSelect` 分支、跨关角色重选与资金继承、`coopsave.ini`/进度保存未实现；BC6 的 ready 图标布局仍只有原生两行，3–4 人会话数据支持但未做真机/UI 行数验收。
 
 ### `0.1.20-dev`（已提交）
 

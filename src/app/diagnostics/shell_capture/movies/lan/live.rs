@@ -411,6 +411,8 @@ pub(super) struct LiveLanCapture {
     vera_outcome_evidence: Option<Value>,
     vera_outcome_injected_frame: Option<u32>,
     vera_outcome_dialog_frame: Option<u32>,
+    /// First render frame of the continued next mission.
+    vera_outcome_next_frame: Option<u32>,
     /// Render frames observed since the injection (the shared sim may be done).
     vera_outcome_render_frames: u32,
     /// House names the houses-mode injection marked defeated.
@@ -431,6 +433,10 @@ enum VeraOutcomePhase {
     Inject,
     /// Win/lose: wait for BC6. Houses: wait out the continued-mission window.
     Observe,
+    /// The result page offers Continue: guest readies, host starts.
+    Round,
+    /// The next mission is loading/loaded; wait for its first live frame.
+    NextMission,
     /// The BC6 page is up; quit after a short hold.
     Quit,
 }
@@ -536,6 +542,7 @@ impl LiveLanCapture {
             vera_outcome_evidence: None,
             vera_outcome_injected_frame: None,
             vera_outcome_dialog_frame: None,
+            vera_outcome_next_frame: None,
             vera_outcome_render_frames: 0,
             vera_outcome_houses: None,
             final_receipt: None,
@@ -1542,7 +1549,10 @@ impl LiveLanCapture {
         if self.vera_outcome.is_some()
             && matches!(
                 self.vera_outcome_phase,
-                VeraOutcomePhase::Observe | VeraOutcomePhase::Quit
+                VeraOutcomePhase::Observe
+                    | VeraOutcomePhase::Round
+                    | VeraOutcomePhase::NextMission
+                    | VeraOutcomePhase::Quit
             )
         {
             #[cfg(feature = "dev-overlays")]
@@ -2024,7 +2034,10 @@ impl LiveLanCapture {
                     );
                 }
             }
-            VeraOutcomePhase::Observe | VeraOutcomePhase::Quit => {}
+            VeraOutcomePhase::Observe
+            | VeraOutcomePhase::Round
+            | VeraOutcomePhase::NextMission
+            | VeraOutcomePhase::Quit => {}
         }
         Ok(())
     }
@@ -2048,8 +2061,8 @@ impl LiveLanCapture {
                             "VERA Coop result dialog reported the wrong verdict"
                         );
                         ensure!(
-                            !page.model.can_continue,
-                            "VERA Coop's first result dialog must not offer Continue"
+                            page.model.rows.len() > 0,
+                            "VERA Coop result dialog has no role rows"
                         );
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
@@ -2087,10 +2100,6 @@ impl LiveLanCapture {
                         let rows = page.model.rows.len();
                         let can_continue = page.model.can_continue;
                         ensure!(rows > 0, "VERA Coop real outcome page has no role rows");
-                        ensure!(
-                            !can_continue,
-                            "VERA Coop's first result dialog must not offer Continue"
-                        );
                         let native_frame = state
                             .match_state
                             .sim_runtime
@@ -2101,14 +2110,37 @@ impl LiveLanCapture {
                             .sim_runtime
                             .as_ref()
                             .map(|runtime| runtime.simulation.state_hash());
+                        let local_ready = state
+                            .match_state
+                            .session
+                            .cooperative_round()
+                            .is_some_and(|round| round.local_ready());
+                        let slot_ready: Vec<bool> = (0..4)
+                            .map(|index| {
+                                state
+                                    .match_state
+                                    .session
+                                    .cooperative_round_slot_ready(index)
+                            })
+                            .collect();
+                        let continue_enabled = state
+                            .match_state
+                            .session
+                            .cooperative_round_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
                             "dialog": {
                                 "victory": victory,
                                 "rows": rows,
+                                "time": page.model.time,
                                 "can_continue": can_continue,
                                 "render_frame": render_frame,
+                            },
+                            "round": {
+                                "local_ready": local_ready,
+                                "slot_ready": slot_ready,
+                                "continue_enabled": continue_enabled,
                             },
                             "native_frame": native_frame,
                             "state_hash": state_hash,
@@ -2128,7 +2160,11 @@ impl LiveLanCapture {
                             "VERA outcome: map's real trigger chain opened the cooperative result dialog",
                         );
                         self.vera_outcome_dialog_frame = Some(render_frame);
-                        self.vera_outcome_phase = VeraOutcomePhase::Quit;
+                        self.vera_outcome_phase = if victory && can_continue {
+                            VeraOutcomePhase::Round
+                        } else {
+                            VeraOutcomePhase::Quit
+                        };
                     } else {
                         ensure!(
                             render_frame < VERA_OUTCOME_REAL_TIMEOUT_FRAMES,
@@ -2172,6 +2208,114 @@ impl LiveLanCapture {
                     }
                 }
             },
+            VeraOutcomePhase::Round => {
+                let Some(opened) = self.vera_outcome_dialog_frame else {
+                    anyhow::bail!("VERA result dialog frame missing");
+                };
+                if state.frontend.coop_score_page.is_none() {
+                    self.vera_outcome_phase = VeraOutcomePhase::NextMission;
+                    return Ok(());
+                }
+                ensure!(
+                    render_frame < opened.saturating_add(1_200),
+                    "VERA Coop round did not become ready: host={}, continue_enabled={}",
+                    self.host(),
+                    state
+                        .match_state
+                        .session
+                        .cooperative_round_continue_enabled()
+                );
+                if !state
+                    .match_state
+                    .session
+                    .cooperative_round_continue_enabled()
+                {
+                    return Ok(());
+                }
+                crate::app::cooperative_round::apply_action(
+                    state,
+                    crate::ui::coop_score_shell::CoopScoreAction::Continue,
+                );
+                if let Some(evidence) = self.vera_outcome_evidence.as_mut()
+                    && let Some(object) = evidence.as_object_mut()
+                {
+                    object.insert("round_continue_frame".to_owned(), json!(render_frame));
+                }
+                self.event(
+                    render_frame,
+                    if self.host() {
+                        "VERA outcome: host Continue started the next stage"
+                    } else {
+                        "VERA outcome: guest ready sent from the result dialog"
+                    },
+                );
+                self.vera_outcome_phase = VeraOutcomePhase::NextMission;
+            }
+            VeraOutcomePhase::NextMission => {
+                if state.frontend.screen == GameScreen::InGame
+                    && state.frontend.coop_score_page.is_none()
+                {
+                    let native_frame = state
+                        .match_state
+                        .sim_runtime
+                        .as_ref()
+                        .map(|runtime| runtime.simulation.session().binary_frame());
+                    let first = *self.vera_outcome_next_frame.get_or_insert(render_frame);
+                    // Both peers must read the same frame; frame 60 is after
+                    // the loading handoff has settled.
+                    if native_frame == Some(60) {
+                        let state_hash = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.state_hash());
+                        let map_file = state
+                            .match_state
+                            .session
+                            .network_setup()
+                            .and_then(|launch| launch.selected_map_file.clone());
+                        self.request_screenshot("vera-next-mission");
+                        if let Some(evidence) = self.vera_outcome_evidence.as_mut()
+                            && let Some(object) = evidence.as_object_mut()
+                        {
+                            object.insert(
+                                "next_mission".to_owned(),
+                                json!({
+                                    "map": map_file,
+                                    "native_frame": native_frame,
+                                    "state_hash": state_hash,
+                                    "render_frame": render_frame,
+                                }),
+                            );
+                        }
+                        if let (Some(receipt), Some(evidence)) = (
+                            self.final_receipt.as_mut(),
+                            self.vera_outcome_evidence.as_ref(),
+                        ) {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.event(
+                            render_frame,
+                            "VERA outcome: the next campaign stage is live",
+                        );
+                        self.phase = Phase::Finished;
+                    } else {
+                        ensure!(
+                            render_frame.saturating_sub(first) < 600,
+                            "VERA Coop next campaign stage did not reach native frame 60"
+                        );
+                    }
+                } else {
+                    ensure!(
+                        render_frame
+                            < self
+                                .vera_outcome_dialog_frame
+                                .unwrap_or(0)
+                                .saturating_add(VERA_OUTCOME_REAL_TIMEOUT_FRAMES),
+                        "VERA Coop next campaign stage did not load: render_frame={render_frame}"
+                    );
+                }
+            }
             VeraOutcomePhase::Quit => {
                 let opened = self
                     .vera_outcome_dialog_frame

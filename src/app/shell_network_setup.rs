@@ -7,7 +7,7 @@
 mod actions;
 pub(crate) mod agreement;
 pub(crate) mod bans;
-mod coop_map;
+pub(crate) mod coop_map;
 pub(crate) use coop_map::{
     host_campaign_identity as vera_coop_host_campaign_identity,
     refresh_campaign_entry_records as refresh_vera_coop_campaign_entries,

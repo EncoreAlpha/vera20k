@@ -125,6 +125,18 @@ pub(crate) struct NetworkVeraCoopMapConfig {
     pub campaign_sha256: Option<String>,
 }
 
+/// A VERA Coop campaign's next stage, resolved from the external
+/// `campaign.ini` when BC6 opens. It carries the same campaign identity as
+/// the current stage and a fully loaded scenario config for the next map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VeraCoopNextStage {
+    pub map_file: String,
+    pub config: NetworkVeraCoopMapConfig,
+    pub metadata: crate::app::match_runtime::session::NetworkMapMetadata,
+    pub local_map_source: crate::map::source::LoadedMapSource,
+    pub effective_digest: String,
+}
+
 impl NetworkVeraCoopMapConfig {
     pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;
 

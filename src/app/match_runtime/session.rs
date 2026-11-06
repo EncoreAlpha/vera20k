@@ -255,6 +255,9 @@ enum NetworkPhase {
         connected: Vec<usize>,
         launch: SkirmishLaunchSession,
         round: CooperativeRoundState,
+        /// VERA Coop's next stage, resolved from its external campaign on
+        /// both peers when BC6 opened. Stock Cooperative leaves this empty.
+        vera_next: Option<crate::app::match_bootstrap::VeraCoopNextStage>,
     },
 }
 

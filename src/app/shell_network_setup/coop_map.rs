@@ -179,6 +179,102 @@ pub(crate) fn resolve_local_campaign_config(
     Ok((config, campaign_sha256))
 }
 
+fn next_scenario_token(ini: &IniFile, map_file: &str) -> Result<Option<String>> {
+    let normalized = normalize_map_name(map_file)?;
+    let section_name = format!("Scenario:{normalized}");
+    let section = ini
+        .section(&section_name)
+        .with_context(|| format!("campaign is missing [{section_name}]"))?;
+    if section.read_bool_value("EndOfGame").unwrap_or(false) {
+        return Ok(None);
+    }
+    let next = section
+        .read_string("NextScenario", "", 1024)
+        .trim()
+        .to_owned();
+    if next.is_empty() {
+        return Ok(None);
+    }
+    crate::map::source::validate_network_map_name(&next)
+        .with_context(|| format!("invalid [{section_name}] NextScenario"))?;
+    Ok(Some(next))
+}
+
+/// Resolve the next stage for the current VERA Coop campaign map. Both
+/// peers resolve locally from the already-admitted campaign identity; this
+/// function never transfers a map. `AltNextScenario` is left for the
+/// `SkipMapSelect`/global-variable branch.
+pub(crate) fn resolve_next_campaign_stage(
+    state: &AppState,
+    current: &crate::app::match_bootstrap::NetworkVeraCoopMapConfig,
+) -> Result<Option<crate::app::match_bootstrap::VeraCoopNextStage>> {
+    let Some(directory) = current.campaign_directory.as_deref() else {
+        return Ok(None);
+    };
+    let Some(expected_sha256) = current.campaign_sha256.as_deref() else {
+        return Ok(None);
+    };
+    let (maps_root, coop_root) = campaign_roots(state)?;
+    let campaign_path = coop_root.join(directory).join(CAMPAIGN_FILE);
+    let bytes = read_bounded(&campaign_path)?;
+    ensure!(
+        crate::util::sha256::sha256_hex(&bytes) == expected_sha256,
+        "local campaign.ini differs from the admitted campaign identity"
+    );
+    let ini = IniFile::from_bytes_preserving_empty_values(&bytes)?;
+    let manifest = parse_manifest(&ini)?;
+    let canonical_root = coop_root.canonicalize()?;
+    validate_manifest_maps(&canonical_root, &manifest.maps)?;
+    let Some(target) = next_scenario_token(&ini, &map_path_from_catalog(&current.map_file)?)?
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        manifest.maps.iter().any(|map| same_map_name(map, &target)),
+        "campaign NextScenario is absent from ScenarioCount"
+    );
+    let assets = state
+        .process_assets
+        .manager()
+        .context("VERA Coop next stage requires active retail assets")?;
+    let loaded = load_campaign_map_ini(&maps_root, &coop_root, &target, assets)?;
+    let (byte_length, source_sha256) = loaded
+        .source
+        .physical_identity()
+        .map(|(length, digest)| (length, digest.to_owned()))
+        .context("VERA Coop next stage requires a physical authored map")?;
+    let effective_digest = crate::map::source::effective_network_map_digest(&loaded.ini, false);
+    let display_name = loaded
+        .ini
+        .section("Basic")
+        .map(|section| section.read_string("Name", "", 0x20))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| target.clone());
+    let config = load_campaign_scenario(&coop_root, &target, &loaded.ini)?;
+    let next = crate::app::match_bootstrap::NetworkVeraCoopMapConfig::new(
+        target.clone(),
+        source_sha256.clone(),
+        config,
+    )?
+    .with_campaign_identity(directory.to_owned(), expected_sha256.to_owned())?;
+    let metadata = crate::app::match_runtime::session::NetworkMapMetadata {
+        display_name,
+        player_capacity: 8,
+        official: false,
+        byte_length: i32::try_from(byte_length).unwrap_or(i32::MAX),
+        digest: String::new(),
+        source_sha256,
+        effective_digest: effective_digest.clone(),
+    };
+    Ok(Some(crate::app::match_bootstrap::VeraCoopNextStage {
+        map_file: target,
+        config: next,
+        metadata,
+        local_map_source: loaded.source,
+        effective_digest,
+    }))
+}
+
 fn campaign_roots(state: &AppState) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
     let game_config = state
         .platform
@@ -326,7 +422,7 @@ fn validate_campaign_source(source: &LoadedMapSource, expected: &Path) -> Result
     Ok(())
 }
 
-fn load_campaign_scenario(
+pub(crate) fn load_campaign_scenario(
     coop_root: &Path,
     map_file: &str,
     map_ini: &IniFile,
@@ -768,5 +864,24 @@ mod tests {
         };
         assert!(validate_campaign_source(&archive, &expected).is_err());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn next_scenario_token_prefers_end_of_game_and_requires_a_listed_target() {
+        let ini = IniFile::from_str(
+            "[Scenario:mission/01.map]\nNextScenario=mission/02.map\n[Scenario:mission/02.map]\nNextScenario=mission/01.map\nEndOfGame=yes\n",
+        );
+        assert_eq!(
+            next_scenario_token(&ini, "mission/01.map")
+                .unwrap()
+                .as_deref(),
+            Some("mission/02.map")
+        );
+        assert_eq!(next_scenario_token(&ini, "mission/02.map").unwrap(), None);
+        let empty = IniFile::from_str("[Scenario:mission/03.map]\nPlayerCount=2\n");
+        assert_eq!(next_scenario_token(&empty, "mission/03.map").unwrap(), None);
+        let escaping =
+            IniFile::from_str("[Scenario:mission/03.map]\nNextScenario=../outside.map\n");
+        assert!(next_scenario_token(&escaping, "mission/03.map").is_err());
     }
 }

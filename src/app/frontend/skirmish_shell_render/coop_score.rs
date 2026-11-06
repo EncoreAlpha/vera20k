@@ -42,15 +42,16 @@ pub(crate) fn render_coop_score(
     let (width, height) = (state.render_width(), state.render_height());
     let fills = crate::app::frontend::shell_layout::fills_window(state);
     let now = Instant::now();
-    let (can_continue, map_index) = {
+    let (can_continue, map_index, vera) = {
         let model = &state.frontend.coop_score_page.as_ref().expect("view").model;
-        (model.can_continue, model.map_index)
+        (model.can_continue, model.map_index, model.vera)
     };
     match map_index.filter(|_| can_continue) {
         Some(index) => ensure_map_preview_texture(state, index),
         None => state.frontend.skirmish_preview_texture = None,
     }
-    let shown = |id: u16| can_continue || !hidden_on_final_mission(id);
+    let shown =
+        |id: u16| (can_continue || !hidden_on_final_mission(id)) && !(vera && hidden_for_vera(id));
     let controller_hover = state
         .frontend
         .coop_score_page
@@ -204,7 +205,7 @@ pub(crate) fn render_coop_score(
         {
             push_flag_entry_clipped_centered(&mut controls, icon, rect, scale, SHELL_CONTROL_DEPTH);
         }
-        if !can_continue {
+        if !can_continue || vera {
             continue;
         }
         if let Some(flag) = slot
@@ -252,7 +253,10 @@ pub(crate) fn render_coop_score(
             }
         }
     }
-    if can_continue && let Some(rect) = layout.control_rect(DIFFICULTY) {
+    if can_continue
+        && !vera
+        && let Some(rect) = layout.control_rect(DIFFICULTY)
+    {
         // 0x0046DE20's slider: range 0..2 at [0xA8EB68], no value plaque.
         let bar = crate::ui::multiplayer_setup::SetupTrackbar {
             id: crate::ui::multiplayer_setup::DIFFICULTY,

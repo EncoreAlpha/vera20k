@@ -164,10 +164,9 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
 /// The dialog's rows are this mission's live statistics (`0x0046DA70`),
 /// read while the world is still resident.
 ///
-/// VERA Coop has no retail progress record yet, so it opens the same dialog
-/// with `Continue` disabled: the rows, verdict and time come from the live
-/// simulation, and Quit returns to the shell. Ready/Continue and the next
-/// stage belong to the later slices.
+/// VERA Coop opens the same dialog with ready slots: it resolves the next
+/// external campaign stage locally on both peers; a missing/EndOfGame next
+/// stage leaves Continue hidden and Quit returns to the shell.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     let vera = state
         .match_state
@@ -175,8 +174,28 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         .as_ref()
         .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
         .is_some_and(|class| class.is_vera_cooperative());
+    let vera_next = if vera && victory {
+        let current = state
+            .match_state
+            .session
+            .network_vera_coop_map_config()
+            .cloned();
+        current.and_then(|current| {
+            match crate::app::shell_network_setup::coop_map::resolve_next_campaign_stage(
+                state, &current,
+            ) {
+                Ok(next) => next,
+                Err(error) => {
+                    log::warn!("VERA Coop next campaign stage is unavailable: {error:#}");
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
     let can_continue = if vera {
-        false
+        vera_next.is_some()
     } else {
         let Some(can_continue) = state
             .frontend
@@ -193,10 +212,21 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let Some(model) = build_model(state, can_continue, elapsed) else {
+    let Some(mut model) = build_model(state, can_continue, elapsed) else {
         App::leave_mission_result_screen(state);
         return;
     };
+    if vera {
+        model.vera = true;
+        model.map_index = None;
+        if let Some(next) = vera_next.as_ref() {
+            // The map's own Basic Name is often a placeholder in authored
+            // campaign maps; the campaign path identifies the next stage.
+            model.next_mission = next.map_file.clone();
+            model.map_label = next.map_file.clone();
+            model.description.clear();
+        }
+    }
     // GameExit__Victory's tail saves the carry-over record (0x004C6180)
     // before Start_Scenario; the defeat path saves none. VERA's carry-over
     // belongs to its own campaign progression.
@@ -210,7 +240,7 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         })
         .flatten();
     let next_map = if vera {
-        None
+        vera_next.as_ref().map(|next| next.map_file.clone())
     } else {
         state
             .frontend
@@ -227,12 +257,18 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     // transport to return.
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) =
+    let entered = if vera {
+        state
+            .match_state
+            .session
+            .enter_vera_cooperative_round(vera_next, can_continue, rows)
+    } else {
         state
             .match_state
             .session
             .enter_cooperative_round(next_map, can_continue, rows)
-    {
+    };
+    if let Err(error) = entered {
         log::error!("Could not open the co-op result dialog: {error:#}");
         return_to_shell(state);
         return;
@@ -387,6 +423,7 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         side,
         map_index,
         can_continue,
+        vera: false,
     })
 }
 
@@ -516,6 +553,7 @@ pub(crate) struct CoopScoreView {
     pub(crate) continue_enabled: bool,
     pub(crate) quit_enabled: bool,
     pub(crate) difficulty: i32,
+    pub(crate) vera: bool,
 }
 
 pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
@@ -590,6 +628,11 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
             .frontend
             .multiplayer_shell_runtime
             .cooperative_difficulty(),
+        vera: state
+            .frontend
+            .coop_score_page
+            .as_ref()
+            .is_some_and(|page| page.model.vera),
     })
 }
 
@@ -728,6 +771,20 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
         .network_setup()
         .ok_or_else(|| anyhow::anyhow!("no round roster"))?
         .clone();
+    if launch.mode.class.is_vera_cooperative() {
+        // VERA Coop's next stage and role assignments were resolved from the
+        // external campaign on both peers; only the BC6 begin/options
+        // exchange remains before the next frozen start.
+        let difficulty = state
+            .frontend
+            .multiplayer_shell_runtime
+            .cooperative_difficulty();
+        state
+            .match_state
+            .session
+            .cooperative_round_assigned(difficulty)?;
+        return Ok(());
+    }
     let map = state
         .frontend
         .scenario_catalog

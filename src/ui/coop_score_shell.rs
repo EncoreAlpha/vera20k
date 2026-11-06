@@ -344,6 +344,18 @@ pub const COOP_SCORE_CONTROLS: [CoopScoreControlSpec; 38] = [
     control(DESCRIPTION, RectPx::new(7, 182, 407, 39), None, None, Left),
 ];
 
+/// Controls the stock BC6 hides only on the final mission but that VERA Coop
+/// also hides because its slots are authored Houses, not lobby choices.
+pub fn hidden_for_vera(id: u16) -> bool {
+    id == DIFFICULTY
+        || id == PREVIEW
+        || NAMES.contains(&id)
+        || FLAGS.contains(&id)
+        || COUNTRIES.contains(&id)
+        || COLORS.contains(&id)
+        || STARTS.contains(&id)
+}
+
 /// The controls `0x0046DE20` hides on the final mission (`can_continue`
 /// false): Continue, the slider, every combo, the description, the next
 /// mission texts, the preview and the map name.
@@ -519,6 +531,9 @@ pub struct CoopScoreModel {
     /// The next mission's shell map, for the preview `0x468`.
     pub map_index: Option<usize>,
     pub can_continue: bool,
+    /// VERA Coop's authored result page: the score rows stay, but the stock
+    /// country/colour/start combos and difficulty slider do not apply.
+    pub vera: bool,
 }
 
 /// The open dialog: its fixed texts, its interaction, and what the
@@ -631,5 +646,23 @@ mod tests {
         assert!(hidden_on_final_mission(COUNTRIES[1]));
         assert!(!hidden_on_final_mission(QUIT));
         assert!(!hidden_on_final_mission(ROW_CELLS[0][4]));
+    }
+
+    #[test]
+    fn vera_hides_the_stock_lobby_controls_but_keeps_result_actions() {
+        for id in [
+            DIFFICULTY,
+            PREVIEW,
+            NAMES[0],
+            FLAGS[1],
+            COUNTRIES[0],
+            COLORS[1],
+            STARTS[0],
+        ] {
+            assert!(hidden_for_vera(id), "control {id:#06X} should be hidden");
+        }
+        for id in [CONTINUE, QUIT, CHAT, CHAT_LOG, READY_ICONS[0], TIME] {
+            assert!(!hidden_for_vera(id), "control {id:#06X} should stay");
+        }
     }
 }
