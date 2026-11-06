@@ -11,6 +11,7 @@
 | 2 人 LAN 从大厅开局到结算、胜利后进入下一关 | 已实现，并用真实地图触发器和真实双进程验收 |
 | 结果页 ready/Continue | 房主自动 ready，客人 Continue 表示 ready，全员 ready 后只有房主能进入下一关 |
 | 地图剧情/共享 House | 不参加多人自动判负；只有角色主 House 的自动判负保留 |
+| 任务内战役语义 | 随机箱和 ShortGame 关闭；Special House 自动结盟/Secret Lab 随机分配不执行 |
 | VERA 外部战役 `NextScenario` | 胜利后两端本地解析、重算并加载下一关 |
 | `AltNextScenario`、`SkipMapSelect`、`EndOfGame` 完成页 | 未实现；`EndOfGame` 目前只阻止出现下一关 |
 | 失败重试 | 未实现；失败结果页只能退出 |
@@ -56,7 +57,7 @@
 - 真实胜利：`stage01` 的地图触发链以 action 67 结束，两端结果页行数都是 2、任务时间都是 `00:00:23`、`can_continue=true`；房主本地 ready，客人 Continue 后房主 Continue，两端进入 `stage02/all01umd.map`。下一关 native frame 60 两端 `state_hash` 相同，收尾干净；各出 `vera-result-real-win.png`、`vera-next-mission.png`。
 - 真实失败：两端 `can_continue=false`、时间 `00:00:13`，只走 Quit 并回合作大厅。
 - 真实触发器五变体：之前生成的最小失败/最小胜利/每角色失败/每角色胜利/自定义国家 owner 五张验收图，均两端同帧打开结果页；自定义国家 owner 的触发链被真实解析。详细触发链和结果表在 `evidence-0.1.21/` 的采集收据和日志里。
-- 定向测试：`app::match_runtime::session::cooperative_round` 10、`app::shell_network_setup::coop_map` 5、`ui::coop_score_shell` 4、`app::diagnostics::shell_capture` 89、core `sim::scenario_bootstrap` 70、core `sim::world::house_defeat` 20；`cargo build --profile fast --bin vera20k` 通过。
+- 定向测试：`app::match_runtime::session::cooperative_round` 10、`app::shell_network_setup::coop_map` 5、`ui::coop_score_shell` 4、`app::diagnostics::shell_capture` 89、core `sim::scenario_bootstrap` 70、core `sim::world::house_defeat` 21；`cargo build --profile fast --bin vera20k` 通过。
 
 #### 结算后修复：战役地图的空场景 House 不再自动判负
 
@@ -66,7 +67,17 @@
 
 修复：`Simulation::house_rung` 在 VERA Coop 下只让每名角色主 House（`outcome_viewpoints`）通过自动判负门；共享 House 和地图剧情 House 保持战役/触发器生命周期，不再在开局被标 defeated 或播报。角色主 House 的判负和继续任务行为不变。
 
-验证：新增 `sim::world::house_defeat` 回归 `vera_coop_does_not_auto_defeat_empty_scenario_houses`（20 项该模块测试通过）；真实双进程下一关截图不再出现六条被击败消息，下一关 native frame 60 两端 `state_hash` 仍一致。
+验证：新增 `sim::world::house_defeat` 回归 `vera_coop_does_not_auto_defeat_empty_scenario_houses`（21 项该模块测试通过）；真实双进程下一关截图不再出现六条被击败消息，下一关 native frame 60 两端 `state_hash` 仍一致。
+
+#### 战役语义修正：随机箱、ShortGame、Special House/Secret Lab
+
+VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不够，以下多人专属步骤也会改变战役：
+
+- `install_vera_cooperative_campaign_options` 在 VERA fresh 装载时关闭 `short_game` 和 `crates`：角色主 House 的判负按“所有对象都没了”计算，而不是只掉建筑；随机箱系统不再运行。
+- `finalize_scenario_post_map` 识别 VERA 的 trigger-only 战役语义，跳过 `Post_Map_Init` 的 Special House 全体结盟和 Secret Lab 随机生产；地图作者自己的 `[Houses] Allies=` 图仍由 VERA authority 安装。
+- 这两项不改变普通 LAN/遭遇战；普通模式仍按 GameMode 非零和对应 lobby 选项执行。VERA 大厅里的 ShortGame/Crates 复选框保留显示但禁用，避免出现“勾了却不生效”的误解。
+
+验证：新增 `vera_coop_post_map_skips_the_special_house_pass`（9 项 `sim::scenario_post_map` 测试通过）、`vera_coop_campaign_options_keep_role_houses_alive_with_units`（21 项 `sim::world::house_defeat` 测试通过）；真实双进程胜利仍两关同帧，下一关 native frame 60 两端 `state_hash` 一致。
 
 ### `0.1.21-dev` 遗留
 

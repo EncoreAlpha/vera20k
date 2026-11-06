@@ -67,10 +67,19 @@ impl Simulation {
         // Runtime rebuilds use this same sim-owned publication seam. Crate
         // placement below reads the newly published canonical grid.
         let navigation_published = self.rebuild_dynamic_navigation(input.rules);
+        // VERA Coop runs an authored campaign map under a nonzero network
+        // mode. Its outcome/trigger lifecycle is the campaign one, so the
+        // multiplayer-only Special-House and Secret-Lab passes must not run;
+        // the authored House alliance graph arrives with the VERA authority.
+        let campaign_outcome = self
+            .session
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.mission_outcome_from_triggers_only());
 
         #[cfg(any(test, feature = "test-support"))]
         let mut skirmish_order = [None; 4];
-        let crates = if let Some(descriptor) = input.skirmish_session {
+        let crates = if let Some(descriptor) = input.skirmish_session.filter(|_| !campaign_outcome)
+        {
             let session = descriptor.session();
             let player_count = crate::sim::crates::human_player_count(self);
             #[cfg(any(test, feature = "test-support"))]
@@ -136,7 +145,7 @@ impl Simulation {
         // Post_Map_Init's Special-House pass (lookup `0x006869AB..0x006869BC`,
         // alliances `0x00686A9E..0x00686AC1`), in the same GameMode>0 segment
         // as the AI credits and before the Secret Lab call (`0x00686AFE`) below.
-        if self.session.game_mode_nonzero() {
+        if self.session.game_mode_nonzero() && !campaign_outcome {
             #[cfg(any(test, feature = "test-support"))]
             {
                 skirmish_order[3] = Some(ScenarioPostMapStep::SpecialAllies);
@@ -148,7 +157,7 @@ impl Simulation {
         // Full_Init687BC8..687BF1 skips that pass in GameMode0 (campaign).
         // Generated/.SED maps have a separate684990 call, but the admitted
         // generated family is noncampaign. Restore never reruns this owner.
-        if self.session.game_mode_nonzero() {
+        if self.session.game_mode_nonzero() && !campaign_outcome {
             Self::assign_secret_lab_production(
                 &mut self.interner,
                 &mut self.scenario_rng,
@@ -978,6 +987,46 @@ mod tests {
             output.skirmish_order,
             [None, None, None, Some(ScenarioPostMapStep::SpecialAllies)],
             "the Special pass records itself after the launch alliances"
+        );
+    }
+
+    /// VERA Coop keeps the campaign's outcome lifecycle even though its LAN
+    /// game mode is nonzero: Post_Map_Init's Special-House alliance pass and
+    /// Secret Lab reward draws belong to the stock multiplayer family only.
+    #[test]
+    fn vera_coop_post_map_skips_the_special_house_pass() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+        use crate::skirmish_modes::MpModeClass;
+
+        let (rules, overlays) = special_ally_rules_and_overlays();
+        let mut sim = Simulation::with_seed(7);
+        sim.install_session_mode(ScenarioGameMode::Lan);
+        sim.session.install_network_timing(10);
+        sim.session
+            .install_multiplayer_house_identity(MpModeClass::VeraCooperative, Vec::new());
+        register_special_pass_houses(
+            &mut sim,
+            &rules,
+            &[
+                ("A", "Americans", false),
+                ("B", "Americans", false),
+                ("Special", "Special", false),
+            ],
+        );
+        let roster = HouseRoster::default();
+        let output =
+            sim.finalize_scenario_post_map(generic_post_map_input(&rules, &overlays, &roster));
+        let alliances = sim.house_alliances.as_map();
+        for other in ["A", "B"] {
+            assert!(
+                !crate::map::houses::is_allied_with(alliances, "Special", other),
+                "VERA Coop's campaign lifecycle must not ally Special with {other}"
+            );
+        }
+        assert_eq!(
+            output.skirmish_order,
+            [None, None, None, None],
+            "the multiplayer-only Special pass never runs for VERA Coop"
         );
     }
 

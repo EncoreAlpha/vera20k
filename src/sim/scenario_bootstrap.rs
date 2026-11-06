@@ -2817,6 +2817,9 @@ impl ScenarioBootstrapRng {
                 let mut simulation = self.into_simulation(descriptor);
                 simulation
                     .session
+                    .install_vera_cooperative_campaign_options();
+                simulation
+                    .session
                     .install_vera_cooperative_trigger_difficulty(difficulty);
                 log::info!("VERA Coop trigger difficulty row {difficulty}");
                 let mut start_header = crate::map::preview::ScenarioStartHeader::default();

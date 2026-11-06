@@ -772,6 +772,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         // C2's lockout (0x78F85E..0x78F907, 0x79132A..0x7913D1): Short Game
         // checked and disabled in a tournament or clan room.
         short_game_locked: host && profile_is_wol(state) && room.tournament_or_clan(),
+        campaign_options_locked: mode.class.is_vera_cooperative(),
         team_header: !clan_room,
         accept_enabled: accept_enabled(state),
         start_requested: protocol.start_requested

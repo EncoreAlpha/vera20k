@@ -33,6 +33,7 @@ VCE 走的是另一条路：
 - 每个角色对应地图中的一条主 House（所属方），没有遭遇战式的「按玩家位置分配出生点」。
 - 胜负只由地图触发器的结局动作决定；单方主 House 全灭不会自动结束任务。
 - 地图里的非角色 House（剧情方、共享方）按战役语义保留，不会因为开局没有单位就被多人自动判负或刷「被击败」消息；只有每名角色的主 House 走自动判负。
+- 任务内按战役语义关闭随机箱和 ShortGame，并跳过 Special House 自动全体结盟与 Secret Lab 随机分配；大厅里的 ShortGame/Crates 开关对 VERA 显示为禁用。
 - 当前版本在胜利且外部战役给出 `NextScenario` 时，结果页可 ready/Continue 进入下一关；不写 `coopsave.ini`、不保存跨关进度。失败、`EndOfGame` 或没有下一关时只提供退出。
 
 VCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然按原版规则运行；普通多人模式也不会因为 VCE 的地图格式而改变。
@@ -123,6 +124,7 @@ EndOfGame=yes
 - 每关最多允许 `PlayerCount` 名玩家；实际参战人数不能超过它。当前版本没有专门的空位 AI 接管，建议让 `PlayerCount` 与实际参战人数一致。
 - 共享 House（例如例子里的 `French House`）由 `campaign.ini` 的 `PlayerNControl=yes` 授权给指定角色。共享 House 的单位由被授权的角色控制（多个角色可以同时控制），但它不会在结果页单独占一行。
 - `PlayerControl=yes` 是旧写法：只有在没有写 `Player1Control` 时它才等价于「授予角色 1」；要让多个角色都控制同一条共享 House，请显式写 `Player1Control`、`Player2Control`……
+- 地图里直接标了 `PlayerControl=yes` 的原版主 House **不会**自动交给 VERA 的某个角色；若它是原版战役里玩家控制的额外 House，请在 `campaign.ini` 对应的 `[Scenario:...:House]` 段写 `PlayerNControl=yes`，否则它会保持 AI。
 
 原版遭遇战里，玩家选国家、游戏分配起点；VCE 不会按多人起点 waypoint 自动给角色分配基地。地图作者通常需要为每个角色预置基地和单位，或由触发动作生成；VCE 本身不会自动发基地车或建造厂。
 
@@ -486,6 +488,7 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 | 玩家数 | 结构支持最多 4 个角色；当前以 2 人 LAN 验收为主，3–4 人未完整验证 |
 | 结果页 | 胜利且有 `NextScenario` 时可 ready/Continue 进入下一关；失败重试和 `EndOfGame` 完成页未实现 |
 | 战役进度 | 不保存；不写 `coopsave.ini` |
+| 任务内多人选项 | VERA 按战役语义关闭随机箱和 ShortGame（大厅对应开关禁用）；Special House/Secret Lab 的多人专属步骤不执行 |
 | 跨关角色/资金/seed | 角色沿用上一关的分配；资金不继承；下一关复用上一关 seed（规划中改为新 seed） |
 | 任务内存档/读档 | 不支持 |
 | 任务中掉线 | 不接管 AI；不自动恢复 |

@@ -1379,6 +1379,28 @@ fn vera_coop_does_not_auto_defeat_empty_scenario_houses() {
 }
 
 #[test]
+fn vera_coop_campaign_options_keep_role_houses_alive_with_units() {
+    let (mut sim, houses, _shared, rules) = vera_coop_fixture();
+    sim.session.install_vera_cooperative_campaign_options();
+    assert!(!sim.session.game_options().short_game);
+    assert!(!sim.session.game_options().crates);
+
+    let role = houses[0];
+    sim.houses
+        .get_mut(&role)
+        .unwrap()
+        .tracking_mut()
+        .set_for_test(0, &[], (1, 0, 0), &[]);
+
+    sim.check_defeat(Some(&rules), None);
+
+    assert!(
+        !sim.houses[&role].is_defeated(),
+        "a role House with a surviving unit is not defeated by ShortGame"
+    );
+}
+
+#[test]
 fn vera_coop_house_loss_never_completes_the_match() {
     use crate::sim::scenario_session::ScenarioGameMode;
     use crate::sim::world::FrameEffects;

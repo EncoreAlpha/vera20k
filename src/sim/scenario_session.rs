@@ -1767,6 +1767,16 @@ impl ScenarioSession {
         self.vera_coop_trigger_difficulty = Some(difficulty.clamp(0, 2));
     }
 
+    /// VERA Coop starts an authored campaign map under a nonzero network game
+    /// mode. The map's campaign defeat and economy rules are not the stock
+    /// skirmish defaults: the role defeat gate must count all objects (not
+    /// `ShortGame` buildings only), and random lobby crates are a multiplayer
+    /// system the campaign never runs.
+    pub(crate) fn install_vera_cooperative_campaign_options(&mut self) {
+        self.game_options.short_game = false;
+        self.game_options.crates = false;
+    }
+
     /// VERA Coop's TriggerType difficulty row, when this scenario was started
     /// from a frozen co-op lobby. Separate from campaign difficulty because the
     /// two owners have different scales and consumers.

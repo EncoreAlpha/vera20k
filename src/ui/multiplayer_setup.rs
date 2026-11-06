@@ -434,6 +434,9 @@ pub(crate) struct SetupView {
     pub(crate) locked: bool,
     /// C2's Short Game is held on in a tournament or clan room.
     pub(crate) short_game_locked: bool,
+    /// VERA Coop runs an authored campaign: the stock ShortGame/Crates lobby
+    /// switches do not reach the mission, so keep them visible but disabled.
+    pub(crate) campaign_options_locked: bool,
     /// The team header `0x794`; hidden in a clan room.
     pub(crate) team_header: bool,
     pub(crate) accept_enabled: bool,
@@ -487,6 +490,7 @@ impl SetupView {
             PREVIOUS_ROWS => self.first_row > 0,
             NEXT_ROWS => self.first_row + self.dialog.rows_per_page() < self.row_count,
             ACCEPT => !self.host && self.accept_enabled,
+            0x54E | 0x54D if self.campaign_options_locked => false,
             0x54E if self.short_game_locked => false,
             id if CHECKBOXES.contains(&id) || ROOM_CHECKBOXES.contains(&id) => self.host,
             id => {
@@ -1241,6 +1245,7 @@ mod tests {
             host: true,
             locked: false,
             short_game_locked: false,
+            campaign_options_locked: false,
             team_header: true,
             accept_enabled: false,
             start_requested: false,
