@@ -8,12 +8,12 @@
 //! one column at the places retail's first band uses.
 
 use super::{
-    CHECK_FOR_UPDATES_HELP, CHECK_FOR_UPDATES_LABEL, CONTROLS_LABEL, COOP_EXPANSION_HELP,
-    COOP_EXPANSION_LABEL, CUSTOM_END_GAME_BANNER_HELP, CUSTOM_END_GAME_BANNER_LABEL,
-    CUSTOM_END_GAME_MOVIE_HELP, CUSTOM_END_GAME_MOVIE_LABEL, CUSTOM_END_GAME_SCORE_HELP,
-    CUSTOM_END_GAME_SCORE_LABEL, Category, DEVELOPER_OPTIONS_LABEL, DISPLAY_AUTO_LABEL,
-    DISPLAY_HELP, DISPLAY_LABEL, DisplayTarget, FPS_COUNTER_HELP, FPS_COUNTER_LABEL,
-    FULL_SCREEN_HELP, FULL_SCREEN_LABEL, HAS_CHECK_FOR_UPDATES, HEALTH_BARS_HELP,
+    CHECK_FOR_UPDATES_HELP, CHECK_FOR_UPDATES_LABEL, CONTROLS_LABEL, CUSTOM_END_GAME_BANNER_HELP,
+    CUSTOM_END_GAME_BANNER_LABEL, CUSTOM_END_GAME_MOVIE_HELP, CUSTOM_END_GAME_MOVIE_LABEL,
+    CUSTOM_END_GAME_SCORE_HELP, CUSTOM_END_GAME_SCORE_LABEL, Category, DEVELOPER_OPTIONS_LABEL,
+    DISPLAY_AUTO_LABEL, DISPLAY_HELP, DISPLAY_LABEL, DisplayTarget, FPS_COUNTER_HELP,
+    FPS_COUNTER_LABEL, FULL_SCREEN_HELP, FULL_SCREEN_LABEL, HAS_CHECK_FOR_UPDATES,
+    HD_MAP_PREVIEWS_HELP, HD_MAP_PREVIEWS_LABEL, HD_RADAR_HELP, HD_RADAR_LABEL, HEALTH_BARS_HELP,
     HEALTH_BARS_LABEL, HOUSE_COLOR_STRENGTH_HELP, HOUSE_COLOR_STRENGTH_LABEL, HealthBarMode,
     LOCK_CURSOR_HELP, LOCK_CURSOR_LABEL, LauncherButton, LauncherCheckboxId, LauncherComboId,
     LauncherCue, LauncherOptionsEvent, LauncherParentResult, LauncherTrackbarId,
@@ -21,9 +21,9 @@ use super::{
     OptionsDialogState, PhysicalControlFrame, RENDER_INTERPOLATION_HELP,
     RENDER_INTERPOLATION_LABEL, RIGHT_CLICK_ORDERS_HELP, RIGHT_CLICK_ORDERS_LABEL,
     SHIFT_QUEUE_HELP, SHIFT_QUEUE_LABEL, SIDEBAR_HELP, SIDEBAR_LABEL, SKIP_INTRO_HELP,
-    SKIP_INTRO_LABEL, Setting, SidebarSize, VERA_ICON_HELP, VERA_ICON_LABEL, WOL_TEST_SERVICE_HELP,
-    WOL_TEST_SERVICE_LABEL, YR_ORIGINAL_STYLE_HELP, YR_ORIGINAL_STYLE_LABEL, ZOOM_HELP, ZOOM_LABEL,
-    Zoom,
+    SKIP_INTRO_LABEL, SMOOTH_SIDEBAR_HELP, SMOOTH_SIDEBAR_LABEL, Setting, SidebarSize,
+    VERA_ICON_HELP, VERA_ICON_LABEL, WOL_TEST_SERVICE_HELP, WOL_TEST_SERVICE_LABEL,
+    YR_ORIGINAL_STYLE_HELP, YR_ORIGINAL_STYLE_LABEL, ZOOM_HELP, ZOOM_LABEL, Zoom,
 };
 use crate::ui::shell::descriptor::DialogId;
 use crate::ui::shell::geom::{
@@ -490,7 +490,6 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => &self.labels.tooltips,
             LauncherCheckboxId::TargetLines => &self.labels.target_lines,
             LauncherCheckboxId::ShowHidden => &self.labels.show_hidden,
-            LauncherCheckboxId::CoopExpansion => COOP_EXPANSION_LABEL,
             LauncherCheckboxId::FullScreen => FULL_SCREEN_LABEL,
             LauncherCheckboxId::OriginalShape => ORIGINAL_SHAPE_LABEL,
             LauncherCheckboxId::YrOriginalStyle => YR_ORIGINAL_STYLE_LABEL,
@@ -499,6 +498,9 @@ impl OptionsDialogState {
             LauncherCheckboxId::RightClickOrders => RIGHT_CLICK_ORDERS_LABEL,
             LauncherCheckboxId::LockCursor => LOCK_CURSOR_LABEL,
             LauncherCheckboxId::VeraIcon => VERA_ICON_LABEL,
+            LauncherCheckboxId::HdRadar => HD_RADAR_LABEL,
+            LauncherCheckboxId::SmoothSidebar => SMOOTH_SIDEBAR_LABEL,
+            LauncherCheckboxId::HdMapPreviews => HD_MAP_PREVIEWS_LABEL,
             LauncherCheckboxId::ShiftQueue => SHIFT_QUEUE_LABEL,
             LauncherCheckboxId::WolTestService => WOL_TEST_SERVICE_LABEL,
             LauncherCheckboxId::FpsCounter => FPS_COUNTER_LABEL,
@@ -549,7 +551,6 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => self.values.tooltips,
             LauncherCheckboxId::TargetLines => self.values.target_lines,
             LauncherCheckboxId::ShowHidden => self.values.show_hidden,
-            LauncherCheckboxId::CoopExpansion => self.values.coop_expansion,
             LauncherCheckboxId::FullScreen => self.values.full_screen,
             LauncherCheckboxId::OriginalShape => self.values.original_shape,
             LauncherCheckboxId::YrOriginalStyle => self.values.yr_original_style,
@@ -558,6 +559,9 @@ impl OptionsDialogState {
             LauncherCheckboxId::RightClickOrders => self.values.right_click_orders,
             LauncherCheckboxId::LockCursor => self.values.lock_cursor,
             LauncherCheckboxId::VeraIcon => self.values.vera_icon,
+            LauncherCheckboxId::HdRadar => self.values.hd_radar,
+            LauncherCheckboxId::SmoothSidebar => self.values.smooth_sidebar,
+            LauncherCheckboxId::HdMapPreviews => self.values.hd_map_previews,
             LauncherCheckboxId::ShiftQueue => self.values.shift_queue,
             LauncherCheckboxId::WolTestService => self.values.wol_test_service,
             LauncherCheckboxId::FpsCounter => self.values.fps_counter,
@@ -756,7 +760,6 @@ impl OptionsDialogState {
                     LauncherStatusHelp::Csf("STT:MainOptCBoxTargetLines")
                 }
                 LauncherCheckboxId::ShowHidden => LauncherStatusHelp::Csf("STT:MainOptCBoxHidden"),
-                LauncherCheckboxId::CoopExpansion => LauncherStatusHelp::Text(COOP_EXPANSION_HELP),
                 LauncherCheckboxId::FullScreen => LauncherStatusHelp::Text(FULL_SCREEN_HELP),
                 LauncherCheckboxId::OriginalShape => LauncherStatusHelp::Text(ORIGINAL_SHAPE_HELP),
                 LauncherCheckboxId::YrOriginalStyle => {
@@ -773,6 +776,9 @@ impl OptionsDialogState {
                 }
                 LauncherCheckboxId::LockCursor => LauncherStatusHelp::Text(LOCK_CURSOR_HELP),
                 LauncherCheckboxId::VeraIcon => LauncherStatusHelp::Text(VERA_ICON_HELP),
+                LauncherCheckboxId::HdRadar => LauncherStatusHelp::Text(HD_RADAR_HELP),
+                LauncherCheckboxId::SmoothSidebar => LauncherStatusHelp::Text(SMOOTH_SIDEBAR_HELP),
+                LauncherCheckboxId::HdMapPreviews => LauncherStatusHelp::Text(HD_MAP_PREVIEWS_HELP),
                 LauncherCheckboxId::ShiftQueue => LauncherStatusHelp::Text(SHIFT_QUEUE_HELP),
                 LauncherCheckboxId::WolTestService => {
                     LauncherStatusHelp::Text(WOL_TEST_SERVICE_HELP)
@@ -1788,13 +1794,9 @@ mod tests {
                 "{category:?}"
             );
         }
-        // The Developer page also exposes the experimental Coop switch.
+        // The Developer page holds FPS and Skip Startup Logo only.
         let layout = page(Category::Developer);
         for (id, event) in [
-            (
-                LauncherCheckboxId::CoopExpansion,
-                LauncherOptionsEvent::CoopExpansionChanged(true),
-            ),
             (
                 LauncherCheckboxId::FpsCounter,
                 LauncherOptionsEvent::FpsCounterChanged(true),

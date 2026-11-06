@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::app::AppState;
 use crate::app::frontend::main_menu_shell_render::Ra2tsDialogOwner;
 use crate::app::frontend::shell_transition::{MainMenuEntryPresentToken, ShellSlideKind};
-use crate::render::frame_readback::PendingBgra8Readback;
+use crate::render::frame_readback::PendingTextureReadback;
 use crate::ui::game_screen::GameScreen;
 use crate::ui::main_menu_dialogs::options::Category;
 use crate::ui::main_menu_shell::MainMenuMovieBase;
@@ -1334,15 +1334,19 @@ impl ShellCaptureRequest {
     /// BD's Accept; the live LAN and online runs play as players do.
     pub(crate) fn native_shell_ui(&self) -> bool {
         match self.checkpoint.movies_target() {
-            Some(movies::MoviesTarget::Wol(target)) => !matches!(
-                target,
-                movies::WolTarget::ModernLobby
-                    | movies::WolTarget::ModernCreate
-                    | movies::WolTarget::ModernRoomOptions
-                    | movies::WolTarget::ModernSpectators
-                    | movies::WolTarget::ModernOptions
-                    | movies::WolTarget::ModernUsername
-            ),
+            Some(movies::MoviesTarget::Wol(target)) => {
+                !target.online_login()
+                    && !matches!(
+                        target,
+                        movies::WolTarget::ModernLobby
+                            | movies::WolTarget::ModernCreate
+                            | movies::WolTarget::ModernPlayerCard
+                            | movies::WolTarget::ModernChangeCountry
+                            | movies::WolTarget::ModernRoomOptions
+                            | movies::WolTarget::ModernSpectators
+                            | movies::WolTarget::ModernOptions
+                    )
+            }
             Some(movies::MoviesTarget::WolWelcome {
                 provider: crate::app::shell_wol::WolProvider::Unavailable,
                 ..
@@ -1749,11 +1753,7 @@ where
         let host = online_host.unwrap_or_else(|| account.clone());
         for name in [&account, &host] {
             ensure!(
-                !name.is_empty()
-                    && name.len() <= 24
-                    && name
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte)),
+                crate::ui::wol_account::valid_name(name),
                 "online account names must contain 1-24 letters, digits, underscores or hyphens"
             );
         }
@@ -2383,7 +2383,7 @@ pub(crate) enum ShellCompletionHandoff {
 
 struct PendingSequenceReadback {
     identity: EntrySequenceFrameIdentity,
-    readback: PendingBgra8Readback,
+    readback: PendingTextureReadback,
     submission: wgpu::SubmissionIndex,
 }
 
@@ -2425,7 +2425,7 @@ impl EntrySequenceState {
     fn record(
         &mut self,
         identity: EntrySequenceFrameIdentity,
-        readback: PendingBgra8Readback,
+        readback: PendingTextureReadback,
         submission: wgpu::SubmissionIndex,
     ) -> Result<()> {
         self.validate_next(identity)?;
@@ -2927,7 +2927,7 @@ impl ShellCaptureSession {
     pub(crate) fn record_entry_sequence_submission(
         &mut self,
         identity: EntrySequenceFrameIdentity,
-        readback: PendingBgra8Readback,
+        readback: PendingTextureReadback,
         submission: wgpu::SubmissionIndex,
     ) -> Result<()> {
         self.entry_sequence

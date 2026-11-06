@@ -391,7 +391,7 @@ pub(crate) fn build_display_effect_instances(
         .collect::<Vec<_>>();
     let local_owner = input.local_owner;
     for &stable_id in sim.display_layers().ordered_ids() {
-        if let Some(light) = sim.building_spotlight(stable_id, input.rules) {
+        if let Some(light) = sim.building_spotlight(stable_id, local_owner, input.rules) {
             super::particles::build_spotlight_instance(
                 input,
                 stable_id,
@@ -515,17 +515,10 @@ pub(crate) fn build_display_effect_instances(
             }
             continue;
         }
-        // DrawIt423055..42305D resolves the ordinary source as AC + AnimType.Start,
-        // just as the building-slot caller. Special draw arms retain their
-        // existing frame selection until their own renderer is ported, and so
-        // does a HasBounce ground shadow ahead of them, which natively takes
-        // AC + Start in every arm (4233CD). Residual: no retail Tiled or RING1
-        // type sets Bouncer=, IsMeteor= or Start=.
-        let start = if super::anim_draw::ordinary_anim_type(type_name, config) {
-            config.map_or(0, |config| config.start)
-        } else {
-            0
-        };
+        // DrawIt423055..42305D resolves every arm's source, and the HasBounce
+        // ground shadow's (4233CD), as AC + AnimType.Start, just as the
+        // building-slot caller.
+        let start = config.map_or(0, |config| config.start);
         let Ok(frame) = u16::try_from(anim.runtime().current_frame.wrapping_add(start)) else {
             continue;
         };
@@ -562,8 +555,7 @@ pub(crate) fn build_display_effect_instances(
         // it is not a reason to choose the compatibility material.
         let instance_scheme = remap_color.is_some()
             && !anim.use_cell_drawer()
-            && entry.is_some_and(|entry| entry.source_palette != 0)
-            && super::anim_draw::ordinary_anim_type(type_name, config);
+            && entry.is_some_and(|entry| entry.source_palette != 0);
         let tint = if is_parachute || instance_scheme {
             [1.0; 3]
         } else {
@@ -585,16 +577,14 @@ pub(crate) fn build_display_effect_instances(
         // Ordinary DrawIt422CA0 -> 4AED70 carries Convert's selector into
         // the packed RGB565 blitter, rather than alpha-blending the source.
         // Original full draw controls: spatial_oracle/anim_translucency.
-        let (alpha, draw_state) = if (remap_color.is_none() || instance_scheme)
-            && super::anim_draw::ordinary_anim_type(type_name, config)
-        {
+        let (alpha, draw_state) = if remap_color.is_none() || instance_scheme {
             (
                 1.0,
                 crate::render::draw_state::DrawState::from_native_selector(0, (flags & 6) as u8),
             )
         } else {
-            // Separate native draw arms and remapped compatibility sources
-            // without native palette metadata retain their existing material.
+            // Remapped compatibility sources without native palette metadata
+            // retain their existing material.
             (anim_translucency_source_alpha(flags), Default::default())
         };
         let (origin_y, world_height) = (input.axis.origin_y, input.axis.world_height);
@@ -813,16 +803,20 @@ pub(super) fn anim_world_render_coords(
 }
 
 /// The Convert and scalar 0047F6A0 passes for one overlay body, in its branch
-/// order: ordinary cell Convert/common; resource (+0x2A9) and veins use global
-/// ordinary Convert, with resource brightness fixed at 1000. Walls (OverlayType+0x2A8,
-/// 0047F96A..0047F9C1) take the current house's ColorScheme Convert
-/// (A83D4C+0x16054 -> B054D4[]+0x30C) at the cell's +0x10A scalar. Every
-/// Convert reads A, so unexplored shroud selects palette row 0 (black).
+/// order: resource (+0x2A9) and overlay index 0x7E (`0x0047F9C6..0x0047FA5C`,
+/// the literal index, not IsVeins) use the global x_PAL Convert, with
+/// resource brightness fixed at 1000 and 0x7E at the cell's common scalar;
+/// every other overlay takes its cell's Convert at that scalar. Walls
+/// (OverlayType+0x2A8, 0047F96A..0047F9C1) take the current house's
+/// ColorScheme Convert (A83D4C+0x16054 -> B054D4[]+0x30C) at the cell's
+/// +0x10A scalar. Every Convert reads A, so unexplored shroud selects palette
+/// row 0 (black).
 ///
 /// RESIDUAL: that scheme's house remap of wall art is absent from this RGBA
 /// atlas; walls keep their unremapped colours. Trigger: every wall draw.
 /// Effect: remap-range wall pixels show source colours. Presentation only.
 fn ordinary_overlay_palette_light(
+    overlay_id: u8,
     flags: Option<&OverlayTypeFlags>,
     light_grid: &crate::map::lighting::CellLightGrid,
     cell: (u16, u16),
@@ -833,7 +827,7 @@ fn ordinary_overlay_palette_light(
         Some(f) if f.wall => {
             crate::app::presentation::lighting::body_palette_light(light_grid, cell, 0)
         }
-        Some(f) if f.is_veins => PaletteLight::plain(
+        _ if overlay_id == 0x7E => PaletteLight::plain(
             53,
             light_grid
                 .cell_light_at(cell)
@@ -1026,8 +1020,12 @@ fn build_cell_overlay_bodies(input: &CellOverlayInputs<'_>, bodies: &mut Vec<sup
             continue;
         };
         let tint: [f32; 3] = input.lighting.overlay_tint_at((entry.rx, entry.ry));
-        let palette_light =
-            ordinary_overlay_palette_light(overlay_flags, input.lighting, (entry.rx, entry.ry));
+        let palette_light = ordinary_overlay_palette_light(
+            live_overlay_id,
+            overlay_flags,
+            input.lighting,
+            (entry.rx, entry.ry),
+        );
         let mut instance = SpriteInstance {
             position: [
                 screen_x + TILE_WIDTH / 2.0 + spr.offset_x,
@@ -1857,7 +1855,7 @@ mod tests {
             wall: true,
             ..Default::default()
         };
-        let light = super::ordinary_overlay_palette_light(Some(&wall), &grid, (3, 4));
+        let light = super::ordinary_overlay_palette_light(0, Some(&wall), &grid, (3, 4));
         assert_eq!(
             (light.rows(), light.brightness()),
             (53, 1000),
@@ -1874,9 +1872,29 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            let light = super::ordinary_overlay_palette_light(Some(&other), &grid, (3, 4));
+            let light = super::ordinary_overlay_palette_light(0, Some(&other), &grid, (3, 4));
             assert_eq!(light.rgb565(stone, 100, 2), 0);
         }
+    }
+
+    /// 0047F9C6 tests the overlay's index, 0x7E, for the x_PAL arm. An IsVeins
+    /// overlay at another index takes its cell Convert like any other.
+    #[test]
+    fn x_pal_overlay_arm_keys_on_index_0x7e_not_is_veins() {
+        let mut grid = crate::map::lighting::CellLightGrid::new();
+        grid.insert_profiled_light((3, 4), [1.5, 0.5, 0.5], 0.75);
+        let veins = OverlayTypeFlags {
+            is_veins: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::ordinary_overlay_palette_light(0x7E, None, &grid, (3, 4)),
+            crate::render::palette_light::PaletteLight::plain(53, 750)
+        );
+        assert_eq!(
+            super::ordinary_overlay_palette_light(0x7D, Some(&veins), &grid, (3, 4)),
+            crate::render::palette_light::PaletteLight::cell(&grid, (3, 4), false)
+        );
     }
 
     /// 0047F6A0's IsRubble arm: only the cell holding a rubble type draws,

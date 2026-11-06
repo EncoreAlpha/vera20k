@@ -24,10 +24,12 @@ mod live_service;
 pub(crate) use live_service::lobby_base_url;
 pub(crate) mod lobby;
 mod login;
+pub(crate) mod login_info;
 pub(crate) mod my_info;
 pub(crate) mod options;
 pub(crate) mod page;
 pub(crate) mod persona;
+pub(crate) mod player_card;
 pub(crate) mod quick_match;
 mod service;
 mod test_service;
@@ -46,7 +48,7 @@ pub(crate) use live_service::{
 pub(crate) use live_service::{
     local_choices_agreed, online_cleanup_pending, online_exit_ready, online_match_id,
 };
-pub(crate) use login::{combo_popup, login_layout, open_login_art};
+pub(crate) use login::{account_form_layout, combo_popup, login_layout, open_login_art};
 pub(crate) use service::{
     NET_STATUS_LOST, WolApiStatus, WolHighScoreRecord, WolLadderRecord, WolLoginAccepted,
     WolProvider, WolServer, WolServerList, WolServiceEvent, WolServiceRequest, request,
@@ -67,6 +69,7 @@ pub(crate) fn poll(state: &mut AppState) -> Option<crate::util::time::Instant> {
         my_info::poll_scroll_repeat(state),
         buddy::poll(state),
         page::poll_scroll_repeat(state),
+        player_card::poll_scroll_repeat(state),
         lobby::poll(state),
         quick_match::poll(state),
         live_service::poll(state),

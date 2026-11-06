@@ -186,16 +186,19 @@ pub(crate) fn aircraft_extra_light(
 /// type's ExtraLight (`+0x1548`, `0x0043D824..0x0043D82D`). The gate branch
 /// (`gate_branch`, [`crate::sim::building_art::gate_open_body_frame`]) passes
 /// the cell's light alone (`0x0043D644..0x0043D654`). TerrainPalette
-/// overrides both scalar and Convert in 00705EC7..00705F52.
+/// overrides both scalar and Convert in 00705EC7..00705F52 with those of
+/// `coords_cell`, the cell of the building's GetCoords (vt+0x48,
+/// `0x00447AC0`: its foundation centre, `0x00705ED5..0x00705F1C`).
 pub(crate) fn building_palette_light(
     grid: &CellLightGrid,
     cell: (u16, u16),
+    coords_cell: (u16, u16),
     art: Option<&crate::rules::art_data::ArtEntry>,
     gate_branch: bool,
 ) -> crate::render::palette_light::PaletteLight {
     use crate::render::palette_light::PaletteLight;
     if art.is_some_and(|a| a.terrain_palette) {
-        return PaletteLight::cell(grid, cell, false);
+        return PaletteLight::cell(grid, coords_cell, false);
     }
     let top = grid.cell_light_at(cell).map_or(1000, |l| l.top_scalar);
     let extra = match art {
@@ -210,6 +213,8 @@ pub(crate) fn building_palette_light(
 /// draw to one row; an explicit cell drawer selects cell common; otherwise the
 /// global ANIM Convert selects top. AltPalette selects the first ColorScheme
 /// (one row), not the player's 53-row scheme.
+/// RESIDUAL (dormant): the IsVeins arm that precedes these (00423122..0042317E:
+/// the player's scheme at cell common) is not ported; no retail anim sets it.
 pub(crate) fn anim_palette_light(
     grid: &CellLightGrid,
     cell: (u16, u16),

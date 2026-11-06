@@ -694,6 +694,7 @@ impl ResolvedTerrainGrid {
                     final_sub_tile: stored_final_sub_tile,
                     is_wood_bridge_repair_tile,
                     level,
+                    legacy_ice_byte: raw.map_or(0, |cell| cell.legacy_ice_byte),
                     filled_clear: raw.is_none(),
                     tileset_index: metadata.tileset_index,
                     land_type: metadata.land_type,
@@ -1630,8 +1631,15 @@ fn merge_overlay_zone_type(current: Option<u8>, candidate: Option<u8>) -> Option
     }
 }
 
-pub(super) fn wheel_speed_at_or_below_one_percent(wheel: Option<u8>) -> bool {
-    wheel.is_some_and(|speed| speed <= 1)
+pub(super) fn wheel_speed_at_or_below_one_percent(
+    wheel: Option<crate::util::native_x87::NativeF32Bits>,
+) -> bool {
+    // RecalcZoneType483D57..483D69 accepts only Greater here: its AH41 test
+    // makes Less, Equal and Unordered impassable.
+    wheel.is_some_and(|speed| {
+        crate::rules::terrain_rules::compare_speed_to_one_percent(speed)
+            != crate::util::native_x87::MaskedX87Ordering::Greater
+    })
 }
 
 /// Reproduce the active map-load order: initialize every allocated Size-diamond
@@ -1696,6 +1704,9 @@ pub(super) fn materialize_map_load_cells(
                 tile_index: selector.draw_fill_tile_index(is_water, scenario_fill_ranged),
                 sub_tile: 0,
                 z: 0u8.wrapping_add(map.header.level as u8),
+                // CellClass::Constructor47BBF0 writes zero at47BCFE before
+                // authored Pack5 records overwrite allocated cells.
+                legacy_ice_byte: 0,
             });
             index_by_coord.insert((rx, ry), index);
         }

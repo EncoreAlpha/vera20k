@@ -80,6 +80,16 @@ pub(crate) const LOCK_CURSOR_HELP: &str =
 pub(crate) const VERA_ICON_LABEL: &str = "VERA Icon";
 pub(crate) const VERA_ICON_HELP: &str =
     "Show VERA's own icon instead of Red Alert 2's red star on the game window, taskbar and Dock.";
+pub(crate) const HD_RADAR_LABEL: &str = "HD Radar";
+pub(crate) const HD_RADAR_HELP: &str = "Draw the radar at the screen's full resolution when the sidebar is enlarged, so each map cell shows.";
+pub(crate) const SMOOTH_SIDEBAR_LABEL: &str = "Smooth Sidebar";
+pub(crate) const SMOOTH_SIDEBAR_HELP: &str = "Lightly smooth the sidebar's pictures and buttons with xBR when the sidebar is enlarged. Text stays sharp.";
+/// The Interface page's HD Map Previews (`app::map_picture`). The browser
+/// build cannot start the hidden run that draws a map's picture.
+pub(crate) const HAS_HD_MAP_PREVIEWS: bool =
+    !cfg!(all(target_arch = "wasm32", target_os = "unknown"));
+pub(crate) const HD_MAP_PREVIEWS_LABEL: &str = "HD Map Previews";
+pub(crate) const HD_MAP_PREVIEWS_HELP: &str = "Show a sharp picture of the whole map in Skirmish, LAN and online games, drawn the first time each map is shown. Untick for the map's own small preview.";
 pub(crate) const SHIFT_QUEUE_LABEL: &str = "Shift-Click Batch Queue";
 /// The two category pages retail's string table has no band name for.
 pub(crate) const CONTROLS_LABEL: &str = "Controls";
@@ -114,9 +124,6 @@ pub(crate) const HOUSE_COLOR_STRENGTH_LABEL: &str = "Team Color Strength";
 pub(crate) const HOUSE_COLOR_STRENGTH_HELP: &str = "How strongly team colours stand out, from 1 for the original bands to 10 for the boldest. The next battle uses it.";
 /// The Display list's first row: the window system's own choice.
 pub(crate) const DISPLAY_AUTO_LABEL: &str = "Auto";
-pub(crate) const COOP_EXPANSION_LABEL: &str = "Coop Expansion";
-pub(crate) const COOP_EXPANSION_HELP: &str =
-    "Show the experimental VMCE mode alongside the original Cooperative mode.";
 /// The Developer page's Check for Updates: the desktop updater
 /// (`app::updater`) checks once the dialog has slid out. The browser build
 /// has no updater.
@@ -529,7 +536,6 @@ pub(crate) enum LauncherCheckboxId {
     Tooltips,
     TargetLines,
     ShowHidden,
-    CoopExpansion,
     /// VERA's own box: the window fills the screen. It changes the window at
     /// once instead of waiting for the parent's accept.
     FullScreen,
@@ -566,6 +572,20 @@ pub(crate) enum LauncherCheckboxId {
     /// instead of Red Alert 2's red star (`app::window_icon`). It applies at
     /// once and is saved; the installed program's own icon stays the red star.
     VeraIcon,
+    /// VERA's own box: when the sidebar draws at a whole multiple of its
+    /// pixels, the radar draws at that multiple too (`render::radar::hd`).
+    /// Saved; a battle follows it at once.
+    HdRadar,
+    /// VERA's own box: when the sidebar draws at a whole multiple of its
+    /// pixels, its cameos and frame pieces draw from lightly smoothed xBR copies
+    /// at that multiple (`render::sidebar_smoothing`). Saved; a battle
+    /// follows it at once.
+    SmoothSidebar,
+    /// VERA's own box: the setup screens' map preview shows VERA's own
+    /// drawing of the whole map (`app::map_picture`) instead of the
+    /// map's `[PreviewPack]` picture. On by default; saved, and the next
+    /// preview follows it.
+    HdMapPreviews,
     /// VERA's developer box: the window's FPS readout. Like Full Screen it
     /// shows and changes live state at once, and is never saved: the readout
     /// starts hidden at every launch.
@@ -619,7 +639,6 @@ pub(crate) enum LauncherOptionsEvent {
     HealthBarModeSelected(HealthBarMode),
     /// The Display list's pick, applied to the window at once.
     DisplaySelected(DisplayTarget),
-    CoopExpansionChanged(bool),
     FullScreenChanged(bool),
     OriginalShapeChanged(bool),
     YrOriginalStyleChanged(bool),
@@ -630,6 +649,9 @@ pub(crate) enum LauncherOptionsEvent {
     RightClickOrdersChanged(bool),
     LockCursorChanged(bool),
     VeraIconChanged(bool),
+    HdRadarChanged(bool),
+    SmoothSidebarChanged(bool),
+    HdMapPreviewsChanged(bool),
     FpsCounterChanged(bool),
     SkipIntroChanged(bool),
     CustomEndGameBannerChanged(bool),
@@ -668,7 +690,6 @@ pub(crate) struct LauncherOptionsValues {
     pub(crate) tooltips: bool,
     pub(crate) target_lines: bool,
     pub(crate) show_hidden: bool,
-    pub(crate) coop_expansion: bool,
     /// The window's state when the page opened, then each toggle.
     pub(crate) full_screen: bool,
     pub(crate) original_shape: bool,
@@ -678,6 +699,9 @@ pub(crate) struct LauncherOptionsValues {
     pub(crate) right_click_orders: bool,
     pub(crate) lock_cursor: bool,
     pub(crate) vera_icon: bool,
+    pub(crate) hd_radar: bool,
+    pub(crate) smooth_sidebar: bool,
+    pub(crate) hd_map_previews: bool,
     pub(crate) shift_queue: bool,
     pub(crate) wol_test_service: bool,
     /// The FPS readout's live state when the page opened, then each toggle.
@@ -714,7 +738,6 @@ impl Default for LauncherOptionsValues {
             tooltips: true,
             target_lines: true,
             show_hidden: false,
-            coop_expansion: false,
             full_screen: false,
             original_shape: false,
             yr_original_style: false,
@@ -723,6 +746,9 @@ impl Default for LauncherOptionsValues {
             right_click_orders: false,
             lock_cursor: false,
             vera_icon: false,
+            hd_radar: false,
+            smooth_sidebar: false,
+            hd_map_previews: true,
             shift_queue: false,
             wol_test_service: false,
             fps_counter: false,
@@ -1085,7 +1111,6 @@ impl OptionsDialogState {
             LauncherCheckboxId::Tooltips => &mut self.values.tooltips,
             LauncherCheckboxId::TargetLines => &mut self.values.target_lines,
             LauncherCheckboxId::ShowHidden => &mut self.values.show_hidden,
-            LauncherCheckboxId::CoopExpansion => &mut self.values.coop_expansion,
             LauncherCheckboxId::FullScreen => &mut self.values.full_screen,
             LauncherCheckboxId::OriginalShape => &mut self.values.original_shape,
             LauncherCheckboxId::YrOriginalStyle => &mut self.values.yr_original_style,
@@ -1096,6 +1121,9 @@ impl OptionsDialogState {
             LauncherCheckboxId::RightClickOrders => &mut self.values.right_click_orders,
             LauncherCheckboxId::LockCursor => &mut self.values.lock_cursor,
             LauncherCheckboxId::VeraIcon => &mut self.values.vera_icon,
+            LauncherCheckboxId::HdRadar => &mut self.values.hd_radar,
+            LauncherCheckboxId::SmoothSidebar => &mut self.values.smooth_sidebar,
+            LauncherCheckboxId::HdMapPreviews => &mut self.values.hd_map_previews,
             LauncherCheckboxId::FpsCounter => &mut self.values.fps_counter,
             LauncherCheckboxId::SkipIntro => &mut self.values.skip_intro,
             LauncherCheckboxId::CustomEndGameBanner => &mut self.values.custom_end_game_banner,
@@ -1107,9 +1135,6 @@ impl OptionsDialogState {
         self.pending_events
             .push(LauncherOptionsEvent::Cue(LauncherCue::Checkbox));
         match id {
-            LauncherCheckboxId::CoopExpansion => self
-                .pending_events
-                .push(LauncherOptionsEvent::CoopExpansionChanged(checked)),
             LauncherCheckboxId::FullScreen => self
                 .pending_events
                 .push(LauncherOptionsEvent::FullScreenChanged(checked)),
@@ -1140,6 +1165,15 @@ impl OptionsDialogState {
             LauncherCheckboxId::VeraIcon => self
                 .pending_events
                 .push(LauncherOptionsEvent::VeraIconChanged(checked)),
+            LauncherCheckboxId::HdRadar => self
+                .pending_events
+                .push(LauncherOptionsEvent::HdRadarChanged(checked)),
+            LauncherCheckboxId::SmoothSidebar => self
+                .pending_events
+                .push(LauncherOptionsEvent::SmoothSidebarChanged(checked)),
+            LauncherCheckboxId::HdMapPreviews => self
+                .pending_events
+                .push(LauncherOptionsEvent::HdMapPreviewsChanged(checked)),
             LauncherCheckboxId::FpsCounter => self
                 .pending_events
                 .push(LauncherOptionsEvent::FpsCounterChanged(checked)),
@@ -1343,11 +1377,22 @@ impl Category {
                 Setting::Checkbox(Check::CustomEndGameScore),
                 Setting::Checkbox(Check::CustomEndGameMovie),
             ],
+            Self::Interface if !HAS_HD_MAP_PREVIEWS => &[
+                Setting::List(List::Sidebar),
+                Setting::List(List::HealthBars),
+                Setting::Checkbox(Check::Tooltips),
+                Setting::Checkbox(Check::VeraIcon),
+                Setting::Checkbox(Check::HdRadar),
+                Setting::Checkbox(Check::SmoothSidebar),
+            ],
             Self::Interface => &[
                 Setting::List(List::Sidebar),
                 Setting::List(List::HealthBars),
                 Setting::Checkbox(Check::Tooltips),
                 Setting::Checkbox(Check::VeraIcon),
+                Setting::Checkbox(Check::HdRadar),
+                Setting::Checkbox(Check::SmoothSidebar),
+                Setting::Checkbox(Check::HdMapPreviews),
             ],
             Self::Audio => &[
                 Setting::Slider(Slider::Score),
@@ -1364,7 +1409,6 @@ impl Category {
             // Internet for stand-in servers, so only `[VERA] WolTestService=`
             // turns it on.
             Self::Developer => &[
-                Setting::Checkbox(Check::CoopExpansion),
                 Setting::Checkbox(Check::FpsCounter),
                 Setting::Checkbox(Check::SkipIntro),
             ],
@@ -1379,7 +1423,13 @@ impl Category {
             Self::Gameplay => {
                 "Detail, difficulty, target lines, hidden objects, queueing and end-game screens."
             }
-            Self::Interface => "Sidebar size, health bars, tooltips and the VERA icon.",
+            Self::Interface => {
+                if HAS_HD_MAP_PREVIEWS {
+                    "Sidebar size and smoothing, HD radar and map previews, health bars, tooltips and the VERA icon."
+                } else {
+                    "Sidebar size and smoothing, HD radar, health bars, tooltips and the VERA icon."
+                }
+            }
             Self::Audio => "Music, sound and voice volume.",
             Self::Controls => {
                 "Scroll rate, right-click orders, mouse wheel zoom and the cursor lock."
@@ -1627,21 +1677,6 @@ mod tests {
         state.checkbox_mouse_down(LauncherCheckboxId::Tooltips, frame(80, 5, 220, 20));
         assert!(!state.values.tooltips);
         assert!(state.drain_output().events.is_empty());
-    }
-
-    #[test]
-    fn coop_expansion_checkbox_emits_the_selected_value() {
-        let mut state = state(true);
-        assert!(!state.values.coop_expansion);
-        state.checkbox_mouse_down(LauncherCheckboxId::CoopExpansion, frame(5, 5, 220, 20));
-        assert!(state.values.coop_expansion);
-        assert_eq!(
-            state.drain_output().events,
-            [
-                LauncherOptionsEvent::Cue(LauncherCue::Checkbox),
-                LauncherOptionsEvent::CoopExpansionChanged(true),
-            ]
-        );
     }
 
     #[test]
@@ -2048,8 +2083,10 @@ mod tests {
                     Check::RightClickOrders,
                     Check::LockCursor,
                     Check::VeraIcon,
+                    Check::HdRadar,
+                    Check::SmoothSidebar,
+                    Check::HdMapPreviews,
                     Check::ShiftQueue,
-                    Check::CoopExpansion,
                     Check::FpsCounter,
                     Check::SkipIntro,
                     Check::CustomEndGameBanner,

@@ -123,6 +123,9 @@ pub(crate) struct FrontendState {
     pub(crate) movie_list_selection: i32,
     /// Full-screen Play_Movie session (Sneak Peeks or a movie-list entry).
     pub(crate) fullscreen_movie: Option<crate::app::frontend::fullscreen_movie::FullscreenMovie>,
+    /// The "import game files" dialog on the startup-failure card: what step it
+    /// is on, and therefore which buttons the card shows.
+    pub(crate) asset_import: crate::ui::asset_import::AssetImport,
     /// Show_Credits session.
     pub(crate) credits_roll: Option<crate::app::frontend::credits_roll::CreditsRollSession>,
     /// Campaign selection `0x94` instance while its route shows.
@@ -247,6 +250,8 @@ pub(crate) struct FrontendState {
     pub(crate) random_map_retention: RandomMapGenerationRetention,
     pub(crate) skirmish_preview_texture:
         Option<crate::app::frontend::skirmish_shell_render::SkirmishPreviewTexture>,
+    /// VERA's enlarged map preview, while it shows.
+    pub(crate) preview_zoom: Option<crate::app::frontend::preview_zoom::PreviewZoom>,
     /// Minimap renderer — created at map load time.
     pub(crate) loading_screen_atlas:
         Option<crate::render::loading_screen_chrome::LoadingScreenAtlas>,
@@ -262,6 +267,10 @@ pub(crate) struct FrontendState {
     pub(crate) shell_preview_overlay_registry: Option<OverlayTypeRegistry>,
     /// The online map library's catalog and Choose Map's map download.
     pub(crate) map_library: crate::app::map_library::MapLibrary,
+    /// The online login page's lobby counts and news.
+    pub(crate) login_info: crate::app::shell_wol::login_info::LoginInfo,
+    /// VERA's own map pictures for the setup screens' previews.
+    pub(crate) map_pictures: crate::app::map_picture::MapPictures,
     /// The release check, its main-menu offer and the download (desktop only).
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub(crate) updater: crate::app::updater::Updater,

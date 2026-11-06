@@ -366,6 +366,7 @@ fn answer(state: &mut AppState, request: WolServiceRequest) {
             store_credential(&mut state.frontend.wol_test_credentials, nickname, password);
             return;
         }
+        WolServiceRequest::ForgetSignIn => return,
         WolServiceRequest::ForgetCredential { slot } => {
             state
                 .frontend
@@ -527,8 +528,11 @@ fn answer(state: &mut AppState, request: WolServiceRequest) {
                 .collect();
             WolServiceEvent::UserLocales(Ok(locales))
         }
-        // Every WOL:Locale00..37 the retail CSF holds.
-        WolServiceRequest::LocaleCount => WolServiceEvent::LocaleCount(38),
+        WolServiceRequest::LocaleCount => {
+            WolServiceEvent::LocaleCount(crate::ui::wol_persona::LOCALE_COUNT)
+        }
+        // VERA online's account requests: the stand-in lobby accepts each.
+        WolServiceRequest::Account(_) => WolServiceEvent::Account(Ok(())),
         // Nothing to cancel or deliver: nobody is online.
         WolServiceRequest::SetLocale(_)
         | WolServiceRequest::LeaveChannel
@@ -602,7 +606,7 @@ fn ladder_record(name: &str) -> Option<WolLadderRecord> {
     }
 }
 
-/// The high scores: Tanya's 1520 points (a three-star general's badge) at
+/// The high scores: Tanya's 1520 points (a five-star general's badge) at
 /// rank 7; Boris's 90 points (lieutenant) at rank 123 with every co-op
 /// campaign finished.
 fn high_score(name: &str) -> Option<WolHighScoreRecord> {

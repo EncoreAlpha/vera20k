@@ -308,8 +308,6 @@ fn load_with_assets(
     let theater = theater::load_theater(assets, &map.header.theater)
         .ok_or_else(|| format!("load theater {}", map.header.theater))?;
     rules.install_art_data(crate::rules::art_data::ArtRegistry::from_ini(&art_ini));
-    let infantry_sequences =
-        crate::rules::infantry_sequence::parse_infantry_sequence_registry(&art_ini);
     let overlay_registry = rules.overlay_registry().clone();
     let house_roster = crate::map::houses::parse_house_roster(
         &map.ini,
@@ -451,9 +449,7 @@ fn load_with_assets(
         theater.extension,
         crate::rules::terrain_asset_catalog::TerrainAssetLoadPhase::Fresh,
     );
-    let _alpha_image_bindings =
-        crate::rules::alpha_image_assets::bind(&rules, &overlay_registry, &assets);
-    rules.bind_animation_sequences(&infantry_sequences);
+    rules.bind_alpha_images(&overlay_registry, &assets);
     let overlay_shp_ids = crate::rules::effect_asset_catalog::resolved_overlay_shp_ids(
         &overlay_registry,
         &assets,

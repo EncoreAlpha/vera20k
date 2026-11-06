@@ -8,6 +8,7 @@
 //! - ui/ does NOT depend on: assets/, render/, audio/, net/
 
 pub mod campaign_score_shell;
+pub(crate) mod asset_import;
 pub mod campaign_shell;
 pub(crate) mod chat_translation;
 pub(crate) mod coop_lobby;
@@ -33,6 +34,7 @@ pub mod tooltips;
 pub(crate) mod wol_buddy;
 pub(crate) mod wol_chat;
 pub(crate) mod wol_lobby;
+pub(crate) mod wol_account;
 pub mod wol_login;
 pub(crate) mod wol_my_info;
 pub(crate) mod wol_options;

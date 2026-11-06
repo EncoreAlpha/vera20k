@@ -75,9 +75,16 @@ use crate::sim::scenario_session::ScenarioSession;
 use crate::sim::team_script_vm::TeamScriptVm;
 use crate::sim::world::ObjectSubstrate;
 
+#[path = "scout_houses.rs"]
+mod scout_houses;
+
 #[cfg(test)]
 #[path = "scout_tests.rs"]
 mod scout_tests;
+
+#[cfg(test)]
+#[path = "scout_houses_tests.rs"]
+mod scout_houses_tests;
 
 #[cfg(test)]
 #[path = "result_tests.rs"]
@@ -154,6 +161,8 @@ pub(super) const fn action_is_ported(action_id: i32) -> bool {
             | 27
             | 30
             | 31
+            | 32
+            | 33
             | 34
             | 37
             | 38
@@ -164,6 +173,7 @@ pub(super) const fn action_is_ported(action_id: i32) -> bool {
             | 43
             | 46
             | 47
+            | 48
             | 49
             | 50
             | 51
@@ -292,6 +302,7 @@ impl Simulation {
     ) {
         let current_frame = self.session.binary_frame() as i32;
         match action.action_id {
+            48 => self.team_action_scout_houses(team_id, rules, registry, frame_effects),
             0 => self.team_action_attack_quarry(
                 team_id,
                 action.argument,
@@ -829,6 +840,39 @@ impl Simulation {
                     team.advance_pending = true;
                 }
             }
+            // Case 32 (`0x006E9A74..0x006E9A9F`), named Ion Storm Start but
+            // the Lightning Storm in YR, like trigger action 44: unless
+            // IsActive `0x0053A100`, Start `0x00539EB0` with the argument as
+            // duration, LightningDeferment (Rules `+0x1794`), the zero cell
+            // `[0x00B0E948]` and no house. Then Team+80=1 either way.
+            32 => {
+                if !crate::sim::superweapon::lightning_storm::raging(self) {
+                    crate::sim::superweapon::lightning_storm::start(
+                        self,
+                        rules,
+                        action.argument,
+                        rules.general.lightning_deferment,
+                        (0, 0),
+                        None,
+                    );
+                }
+                if let Some(team) = self.team_script_vm.teams.get_mut(&team_id) {
+                    team.advance_pending = true;
+                }
+            }
+            // Case 33 (`0x006E9AAE..0x006E9AC0`), like trigger action 45: a
+            // raging storm gets Stop `0x0053A090`'s end request. Then
+            // Team+80=1 either way.
+            33 => {
+                if crate::sim::superweapon::lightning_storm::raging(self) {
+                    crate::sim::superweapon::lightning_storm::request_end(
+                        &mut self.lightning_storm,
+                    );
+                }
+                if let Some(team) = self.team_script_vm.teams.get_mut(&team_id) {
+                    team.advance_pending = true;
+                }
+            }
             43 => Self::team_action_wait_until_loaded(
                 &self.interner,
                 &self.substrate,
@@ -996,7 +1040,7 @@ impl Simulation {
     ) {
         if first {
             let index = argument & 0xffff;
-            let type_name = rules.anim_type_name_by_index(index).map(str::to_owned);
+            let type_name = rules.anim_type_runtime_key_by_index(index);
             if let Some(type_name) = type_name {
                 let type_id = self.interner.intern(&type_name);
                 let members: Vec<u64> = self

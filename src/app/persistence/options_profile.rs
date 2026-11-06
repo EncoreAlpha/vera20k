@@ -126,9 +126,6 @@ pub(crate) struct RetailOptionsProfile {
     /// 2's. Only those surfaces read it; see
     /// [`LauncherCheckboxId::YrOriginalStyle`](crate::ui::main_menu_dialogs::options::LauncherCheckboxId::YrOriginalStyle).
     pub(crate) yr_original_style: bool,
-    /// `[VERA] CoopExpansion=`: include VERA's cooperative mode alongside
-    /// the original cooperative mode in the launcher. Off by default.
-    pub(crate) coop_expansion: bool,
     /// `[VERA] SkipIntro=`: start straight at the main menu, without the logo
     /// movie, the splash and the first-run intro that `Init_Game` plays before
     /// it. Off by default, so new profiles start like gamemd. A profile from
@@ -151,6 +148,19 @@ pub(crate) struct RetailOptionsProfile {
     /// instead of Red Alert 2's red star. Off by default; the installed
     /// program's own icon stays the red star either way.
     pub(crate) vera_icon: bool,
+    /// `[VERA] HdRadar=`: when the sidebar draws at a whole multiple of its
+    /// pixels, the radar draws at that multiple too (`render::radar::hd`).
+    /// Off by default; presentation only.
+    pub(crate) hd_radar: bool,
+    /// `[VERA] SmoothSidebar=`: when the sidebar draws at a whole multiple of
+    /// its pixels, its cameos and frame pieces draw from lightly smoothed xBR
+    /// copies at that multiple (`render::sidebar_smoothing`). Off by default;
+    /// presentation only.
+    pub(crate) smooth_sidebar: bool,
+    /// `[VERA] HdMapPreviews=`: the setup screens' map preview shows VERA's
+    /// own drawing of the whole map (`app::map_picture`) in place of
+    /// the map's `[PreviewPack]` picture. On by default; presentation only.
+    pub(crate) hd_map_previews: bool,
     /// `[VERA] WindowMaximized=`: whether the window was last left maximised.
     /// [`Self::window_placement`] keeps the size it returns to.
     pub(crate) window_maximized: bool,
@@ -223,6 +233,15 @@ pub(crate) struct RetailOptionsProfile {
     /// updater offered it; empty, the default, offers every newer release.
     /// Only the updater changes it ([`Self::commit_skipped_update`]).
     pub(crate) skipped_update: String,
+    /// `[VERA] OnlineName=`: the name of the last successful online sign-in,
+    /// as a guest or an account; empty, the default, until one succeeds.
+    /// Only that sign-in changes it ([`Self::commit_online_name`]).
+    pub(crate) online_name: String,
+    /// `[VERA] OnlineLocale=`: the country (`WOL:Locale%02d`) the player chose
+    /// on their player card, which every online sign-in sends; 0, the
+    /// default, sends none. Only that card changes it
+    /// ([`Self::commit_online_locale`]).
+    pub(crate) online_locale: i32,
     /// `[VERA] Display=`: the screen the game opens on, by the window system's
     /// own name (`\\.\DISPLAY1`). Absent or empty means the system's choice,
     /// which is how every earlier build behaved. A name no longer attached
@@ -300,13 +319,15 @@ impl Default for RetailOptionsProfile {
             original_shape: false,
             sidebar: crate::ui::main_menu_dialogs::options::SidebarSize::Normal,
             yr_original_style: false,
-            coop_expansion: false,
             skip_intro: false,
             render_interpolation: false,
             mouse_wheel_zoom: false,
             right_click_orders: false,
             lock_cursor: false,
             vera_icon: false,
+            hd_radar: false,
+            smooth_sidebar: false,
+            hd_map_previews: true,
             window_maximized: false,
             house_color_strength: crate::rules::house_colors::STRENGTH_RETAIL,
             shift_queue: false,
@@ -321,6 +342,8 @@ impl Default for RetailOptionsProfile {
             translate_chat: None,
             language: crate::i18n::DEFAULT_LANGUAGE.to_owned(),
             skipped_update: String::new(),
+            online_name: String::new(),
+            online_locale: 0,
             display: crate::ui::main_menu_dialogs::options::DisplayTarget::Auto,
             window_placement: None,
         }
@@ -339,7 +362,7 @@ pub(crate) struct FormattedProfileSections {
     pub(crate) audio: [(&'static str, String); 7],
     pub(crate) network: [(&'static str, String); 4],
     /// VERA's own section, written after the native ones.
-    pub(crate) vera: [(&'static str, String); 28],
+    pub(crate) vera: [(&'static str, String); 30],
 }
 
 impl RetailOptionsLoad {
@@ -535,7 +558,6 @@ impl RetailOptionsProfile {
                 vera.read_int("Sidebar", self.sidebar.ini_value()),
             );
             self.yr_original_style = vera.read_bool("YROriginalStyle", self.yr_original_style);
-            self.coop_expansion = vera.read_bool("CoopExpansion", self.coop_expansion);
             // `SkipStartupLogo=` named this switch while it skipped only the
             // logo; the writer drops it.
             let legacy_skip = vera.read_bool("SkipStartupLogo", self.skip_intro);
@@ -546,6 +568,9 @@ impl RetailOptionsProfile {
             self.right_click_orders = vera.read_bool("RightClickOrders", self.right_click_orders);
             self.lock_cursor = vera.read_bool("LockCursor", self.lock_cursor);
             self.vera_icon = vera.read_bool("VeraIcon", self.vera_icon);
+            self.hd_radar = vera.read_bool("HdRadar", self.hd_radar);
+            self.smooth_sidebar = vera.read_bool("SmoothSidebar", self.smooth_sidebar);
+            self.hd_map_previews = vera.read_bool("HdMapPreviews", self.hd_map_previews);
             self.window_maximized = vera.read_bool("WindowMaximized", self.window_maximized);
             // A non-numeric value answers 0, which the clamp lifts to the
             // retail strength rather than to a negative boost.
@@ -580,6 +605,15 @@ impl RetailOptionsProfile {
             }
             if let Some(value) = vera.read_name("SkipUpdate", 16) {
                 self.skipped_update = value.to_owned();
+            }
+            if let Some(value) =
+                vera.read_name("OnlineName", crate::ui::wol_account::NAME_LIMIT + 1)
+            {
+                self.online_name = value.to_owned();
+            }
+            let locale = vera.read_int("OnlineLocale", self.online_locale);
+            if (0..crate::ui::wol_persona::LOCALE_COUNT).contains(&locale) {
+                self.online_locale = locale;
             }
             if let Some(value) = vera.read_name("Display", DISPLAY_CAPACITY) {
                 self.display =
@@ -681,10 +715,6 @@ impl RetailOptionsProfile {
                     "YROriginalStyle",
                     format_bool(self.yr_original_style).to_string(),
                 ),
-                (
-                    "CoopExpansion",
-                    format_bool(self.coop_expansion).to_string(),
-                ),
                 ("SkipIntro", format_bool(self.skip_intro).to_string()),
                 ("ShiftQueue", format_bool(self.shift_queue).to_string()),
                 ("ShiftQueueCount", self.shift_queue_count.to_string()),
@@ -737,6 +767,15 @@ impl RetailOptionsProfile {
                 ("LockCursor", format_bool(self.lock_cursor).to_string()),
                 ("VeraIcon", format_bool(self.vera_icon).to_string()),
                 ("HealthBars", self.health_bars.ini_value().to_string()),
+                ("HdRadar", format_bool(self.hd_radar).to_string()),
+                (
+                    "SmoothSidebar",
+                    format_bool(self.smooth_sidebar).to_string(),
+                ),
+                (
+                    "HdMapPreviews",
+                    format_bool(self.hd_map_previews).to_string(),
+                ),
             ],
         }
     }
@@ -808,6 +847,29 @@ impl RetailOptionsProfile {
             VERA_SECTION,
             &[("SkipUpdate", self.skipped_update.as_str())],
         )
+    }
+
+    /// The online sign-in's writer: `[VERA] OnlineName=` alone.
+    pub(crate) fn commit_online_name(&self, settings_dir: &Path) -> io::Result<()> {
+        profile_file::update(settings_dir, |input| self.transform_online_name(input))
+    }
+
+    fn transform_online_name(&self, input: &[u8]) -> Vec<u8> {
+        set_ini_values(
+            input,
+            VERA_SECTION,
+            &[("OnlineName", self.online_name.as_str())],
+        )
+    }
+
+    /// The player card's writer: `[VERA] OnlineLocale=` alone.
+    pub(crate) fn commit_online_locale(&self, settings_dir: &Path) -> io::Result<()> {
+        profile_file::update(settings_dir, |input| self.transform_online_locale(input))
+    }
+
+    fn transform_online_locale(&self, input: &[u8]) -> Vec<u8> {
+        let locale = self.online_locale.to_string();
+        set_ini_values(input, VERA_SECTION, &[("OnlineLocale", locale.as_str())])
     }
 
     fn transform_chat_translation(&self, input: &[u8]) -> Vec<u8> {
@@ -1443,14 +1505,13 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
 
         let load = load_snapshot(
             &RetailStartupOptions::default(),
-            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nCoopExpansion=yes\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\nSoloSkirmish=yes\n",
+            b"[VERA]\nFullScreen=yes\nZoom=2\nOriginalShape=yes\nSidebar=150\nShiftQueue=yes\nShiftQueueCount=8\nWolTestService=yes\nSoloSkirmish=yes\n",
         );
         assert!(load.retained_profile.full_screen);
         // The first release saved the whole factor.
         assert_eq!(load.retained_profile.zoom, Zoom::Percent(200));
         assert!(load.retained_profile.original_shape);
         assert_eq!(load.retained_profile.sidebar, SidebarSize::Large);
-        assert!(load.retained_profile.coop_expansion);
         assert!(!load.retained_profile.yr_original_style);
         assert!(!load.retained_profile.skip_intro);
         assert!(load.retained_profile.shift_queue);
@@ -1460,7 +1521,6 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         // A value this build doesn't know reads as Auto.
         let unknown = load_snapshot(&RetailStartupOptions::default(), b"[VERA]\nZoom=9\n");
         assert_eq!(unknown.retained_profile.zoom, Zoom::Auto);
-        assert!(!unknown.retained_profile.coop_expansion);
 
         let profile = RetailOptionsProfile {
             full_screen: true,
@@ -1468,7 +1528,6 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
             original_shape: true,
             sidebar: SidebarSize::ExtraLarge,
             yr_original_style: true,
-            coop_expansion: true,
             skip_intro: true,
             shift_queue: true,
             shift_queue_count: 7,
@@ -1481,7 +1540,7 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
                 .unwrap();
         assert!(
             output.contains(
-                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nCoopExpansion=yes\r\nSkipIntro=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
+                "[VERA]\r\nFullScreen=yes\r\nZoom=150\r\nOriginalShape=yes\r\nSidebar=200\r\nYROriginalStyle=yes\r\nSkipIntro=yes\r\nShiftQueue=yes\r\nShiftQueueCount=7\r\nWolTestService=yes\r\nSoloSkirmish=yes\r\n"
             ),
             "{output}"
         );
@@ -1490,7 +1549,6 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         assert_eq!(reread.retained_profile.zoom, Zoom::Percent(150));
         assert!(reread.retained_profile.original_shape);
         assert_eq!(reread.retained_profile.sidebar, SidebarSize::ExtraLarge);
-        assert!(reread.retained_profile.coop_expansion);
         assert!(reread.retained_profile.yr_original_style);
         assert!(reread.retained_profile.skip_intro);
         assert!(reread.retained_profile.shift_queue);
@@ -1560,18 +1618,24 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
         let unset = RetailOptionsProfile::default().transform_settings(b"");
         let unset = load_snapshot(&startup, &unset).retained_profile;
         assert_eq!(unset.window_placement, None);
-        // The lock starts off, a window starts unmaximised and its icon is the
-        // red star; all three round-trip.
+        // The lock starts off, a window starts unmaximised, its icon is the
+        // red star, the radar is native and the sidebar sharp, and map
+        // previews are VERA's own; all six round-trip.
         assert!(!unset.lock_cursor && !unset.window_maximized && !unset.vera_icon);
+        assert!(!unset.hd_radar && !unset.smooth_sidebar && unset.hd_map_previews);
         let changed = RetailOptionsProfile {
             lock_cursor: true,
             window_maximized: true,
             vera_icon: true,
+            hd_radar: true,
+            smooth_sidebar: true,
+            hd_map_previews: false,
             ..RetailOptionsProfile::default()
         }
         .transform_settings(b"");
         let changed = load_snapshot(&startup, &changed).retained_profile;
         assert!(changed.lock_cursor && changed.window_maximized && changed.vera_icon);
+        assert!(changed.hd_radar && changed.smooth_sidebar && !changed.hd_map_previews);
     }
 
     #[test]
@@ -1640,6 +1704,51 @@ ScoreVolume=0.3\nIsScoreShuffle=yes\nSoundLatency=4\nInGameMusic=no\n[VERA]\nZoo
                 .skipped_update,
             "0.2.4"
         );
+    }
+
+    #[test]
+    fn online_name_round_trips_and_survives_the_quit_writer() {
+        let startup = RetailStartupOptions::default();
+        let input = b"[VERA]\nTranslateChat=off\n";
+        let mut profile = load_snapshot(&startup, input).retained_profile;
+        assert_eq!(profile.online_name, "");
+        profile.online_name = "Boris_2".to_owned();
+        let written = profile.transform_online_name(input);
+        assert!(String::from_utf8_lossy(&written).contains("TranslateChat=off"));
+        // Quit writes the profile loaded at startup, which predates the sign-in.
+        let quit = load_snapshot(&startup, input)
+            .retained_profile
+            .transform_settings(&written);
+        assert_eq!(
+            load_snapshot(&startup, &quit).retained_profile.online_name,
+            "Boris_2"
+        );
+    }
+
+    #[test]
+    fn online_locale_round_trips_survives_the_quit_writer_and_drops_unknown_ones() {
+        let startup = RetailStartupOptions::default();
+        let input = b"[VERA]\nOnlineName=Boris_2\n";
+        let mut profile = load_snapshot(&startup, input).retained_profile;
+        assert_eq!(profile.online_locale, 0);
+        profile.online_locale = 15;
+        let written = profile.transform_online_locale(input);
+        assert!(String::from_utf8_lossy(&written).contains("OnlineName=Boris_2"));
+        let quit = load_snapshot(&startup, input)
+            .retained_profile
+            .transform_settings(&written);
+        assert_eq!(
+            load_snapshot(&startup, &quit)
+                .retained_profile
+                .online_locale,
+            15
+        );
+        // WOL:Locale37 is the last the retail CSF names.
+        for (value, kept) in [("37", 37), ("38", 0), ("-1", 0)] {
+            let input = format!("[VERA]\nOnlineLocale={value}\n");
+            let profile = load_snapshot(&startup, input.as_bytes()).retained_profile;
+            assert_eq!(profile.online_locale, kept, "{value}");
+        }
     }
 
     #[test]

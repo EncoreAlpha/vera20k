@@ -1723,7 +1723,7 @@ fn project_pre_fill_start_assignment(
 /// the startup crates, AI credits and alliances that VERA's
 /// `finalize_scenario_post_map` runs later. The reveal reads none of them,
 /// and a noncampaign CellPUT already discovered every object for the current
-/// house (`discover_cell_put_object`), so no effect is known.
+/// house (`discover_by_player`), so no effect is known.
 pub fn apply_launch_shroud_option(
     sim: &mut Simulation,
     context: crate::sim::world::UninitContext<'_>,
@@ -3596,6 +3596,11 @@ mod tests {
         source.push_str(&format!(
             "[VehicleTypes]\n0={type_id}\n[{type_id}]\nTechLevel=1\n"
         ));
+        #[cfg(feature = "ares")]
+        source.push_str(
+            "[BuildingTypes]\n0=QUALIFIER_FACTORY\n\
+             [QUALIFIER_FACTORY]\nStrength=100\nFactory=UnitType\nOwner=Americans,Alliance\n",
+        );
         for row in gate["rows"].as_array().unwrap() {
             let mut ini = IniFile::from_str(&source);
             ini.merge(&IniFile::from_str(gate["owner_layer"].as_str().unwrap()));
@@ -3632,6 +3637,19 @@ mod tests {
             let country = sim.interner.intern(actual_country);
             sim.houses
                 .register(HouseState::new(owner, -1, Some(country), false, 0, 10));
+            #[cfg(feature = "ares")]
+            {
+                // The Ares CanBuild suffix also requires an online factory;
+                // leave that gate open while comparing the Country qualifiers.
+                let factory = sim
+                    .spawn_object("QUALIFIER_FACTORY", "QualifierHouse", 10, 10, 0, &rules)
+                    .unwrap();
+                sim.substrate
+                    .entities
+                    .get_mut(factory)
+                    .unwrap()
+                    .finish_building_construction_for_test();
+            }
             assert_eq!(
                 crate::sim::production::can_build(&sim, &rules, owner, object, false, false)
                     == crate::sim::production::CanBuild::Yes,
@@ -6093,6 +6111,7 @@ mod tests {
         map_b.header.fill = "Water".to_string();
         map_b.header.level = 9;
         map_b.cells.push(MapCell {
+            legacy_ice_byte: 0,
             rx: 36,
             ry: 36,
             tile_index: 777,

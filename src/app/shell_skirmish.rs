@@ -453,8 +453,8 @@ impl App {
         };
         let layout = Self::skirmish_choose_map_layout(state);
         let network_setup = state.frontend.shell_route.network_setup();
-        let vmce_enabled = network_setup
-            && state.persistence.options_profile.coop_expansion
+        let vmce_enabled = cfg!(feature = "vmce")
+            && network_setup
             && state.match_state.session.host();
         state.frontend.skirmish_shell_state.choose_map_modal = Some(
             crate::ui::skirmish_shell::ChooseMapModalState::open_with_vmce(
@@ -725,6 +725,9 @@ impl App {
             return false;
         }
         let layout = Self::skirmish_choose_map_layout(state);
+        if crate::app::frontend::preview_zoom::press_on_box(state, layout.preview) {
+            return true;
+        }
         let (x, y) = state.match_state.input.cursor_px();
         let frontend = &mut state.frontend;
         let modal = frontend
@@ -1157,7 +1160,7 @@ impl App {
             .frontend
             .multiplayer_shell_runtime
             .random_map_options_for_setup();
-        let available = Self::saved_seed_dir(state)
+        let available = Self::random_map_dir(state)
             .is_some_and(|dir| crate::map::rmg::saved_seeds::saved_seeds_available(&dir));
         state.frontend.skirmish_shell_state.random_map_setup_modal =
             Some(crate::ui::skirmish_shell::RandomMapSetupModalState::open(
@@ -1207,21 +1210,28 @@ impl App {
         if state.frontend.skirmish_shell_state.trackbar_hold.is_some() {
             return;
         }
-        let text = crate::ui::skirmish_shell::hovered_shell_control(
+        let target = crate::ui::skirmish_shell::hovered_shell_control(
             layout,
             &state.frontend.skirmish_shell_state,
             state.frontend.scenario_catalog.shell_maps(),
             x,
             y,
-        )
-        .and_then(|target| {
-            crate::ui::skirmish_shell::status_help_key_for_hover_with_catalog(
-                target,
-                Some(&state.frontend.skirmish_shell_state.country_catalog),
-            )
-        })
-        .map(|key| Self::localized_status_help_text(state, key))
-        .unwrap_or_default();
+        );
+        let text = target
+            .and_then(|target| {
+                crate::ui::skirmish_shell::status_help_key_for_hover_with_catalog(
+                    target,
+                    Some(&state.frontend.skirmish_shell_state.country_catalog),
+                )
+            })
+            .map(|key| Self::localized_status_help_text(state, key))
+            .unwrap_or_default();
+        let text =
+            if target == Some(crate::ui::skirmish_shell::SkirmishHoverTarget::MapPreview0x468) {
+                crate::app::frontend::preview_zoom::box_help(state, text)
+            } else {
+                text
+            };
 
         // `0x102`'s proc runs the common handler first (`0x006AE40A`): every
         // move writes the help, which repaints the status line.
@@ -1251,9 +1261,14 @@ impl App {
             }
         }
 
-        crate::ui::skirmish_shell::status_help_key_for_choose_map_hover(target)
+        let text = crate::ui::skirmish_shell::status_help_key_for_choose_map_hover(target)
             .map(|key| Self::localized_status_help_text(state, key))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if target == crate::ui::skirmish_shell::ChooseMapHoverTarget::Preview0x468 {
+            crate::app::frontend::preview_zoom::box_help(state, text)
+        } else {
+            text
+        }
     }
 
     /// A child's mouse move writes its help; over the background the last
@@ -1462,6 +1477,9 @@ impl App {
                 y,
             );
             Self::drain_skirmish_shell_ui_sounds(state);
+            return;
+        }
+        if crate::app::frontend::preview_zoom::press_on_box(state, layout.map_preview) {
             return;
         }
         // Load Setup stays disabled until the selected map has a saved setup.

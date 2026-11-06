@@ -47,7 +47,13 @@ pub(crate) fn render_coop_score(
         (model.can_continue, model.map_index, model.vera)
     };
     match map_index.filter(|_| can_continue) {
-        Some(index) => ensure_map_preview_texture(state, index),
+        Some(index) => ensure_map_preview_texture(
+            state,
+            index,
+            layout
+                .control_rect(PREVIEW)
+                .unwrap_or(crate::ui::skirmish_shell::RectPx::new(0, 0, 0, 0)),
+        ),
         None => state.frontend.skirmish_preview_texture = None,
     }
     let shown =

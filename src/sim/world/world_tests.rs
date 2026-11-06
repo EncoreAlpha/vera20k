@@ -548,9 +548,6 @@ fn animation_boundary_fixture() -> (Simulation, RuleSet) {
     let mut rules =
         RuleSet::from_ini_with_fixed_art_for_test(&ini, &art).expect("animation fixture rules");
     rules.install_art_data(ArtRegistry::from_ini(&art));
-    rules.bind_animation_sequences(
-        &crate::rules::infantry_sequence::parse_infantry_sequence_registry(&art),
-    );
     let id = sim
         .spawn_object("E1", "Americans", 4, 4, 0, &rules)
         .expect("living infantry");
@@ -904,6 +901,66 @@ Rate=120
     );
 }
 
+/// Hover's wake (`HoverLocomotionClass::Process`, `0x00514A85..0x00514AC3`)
+/// starts at the Foot's whole Location (`+0x9C`), Z included: the Anim's
+/// Unlimbo (`0x005F4EC0`) keeps it through `AnimTypeClass` vt+0x6C
+/// (`0x0041CF80`) and `SetLocation` (`0x005F6940`). A hovering hull's wake
+/// starts at the hull's height, not on the water below it.
+#[test]
+fn a_hover_wake_starts_at_the_hulls_height() {
+    use crate::sim::movement::hover::HoverRuntime;
+    use crate::util::native_x87::NativeF64Bits;
+    let ini = IniFile::from_str(
+        "[General]\nWake=WAKE1\n\
+         [InfantryTypes]\n[VehicleTypes]\n0=HOVR\n[AircraftTypes]\n[BuildingTypes]\n\
+         [HOVR]\nStrength=300\nArmor=heavy\nSpeed=6\nMovementZone=Amphibious\n\
+         SpeedType=Hover\nLocomotor={4A582742-9839-11d1-B709-00A024DDAFD1}\n",
+    );
+    let art = IniFile::from_str("[WAKE1]\nLayer=ground\nYSortAdjust=-288\nRate=120\n");
+    let mut rules =
+        RuleSet::from_ini_with_fixed_art_for_test(&ini, &art).expect("hover rules should parse");
+    rules.install_art_data(ArtRegistry::from_ini(&art));
+    rules.bind_anim_frame_count_for_test("WAKE1", 15);
+    let mut sim = Simulation::new();
+    let id = sim
+        .spawn_object("HOVR", "Americans", 0, 0, 64, &rules)
+        .expect("spawn hover");
+    // The gate reads the `CellClass+0xEC` mirror; stamp Water on the fixture.
+    let mut terrain = water_terrain(2, 1);
+    for cell in terrain.cells_mut_for_test() {
+        cell.land_type = crate::rules::terrain_rules::LandType::Water.as_index();
+    }
+    sim.resolved_terrain = Some(terrain);
+    let hover = sim.substrate.entities.get_mut(id).expect("hover");
+    let mut locomotor = LocomotorState::for_test_kind(LocomotorKind::Hover);
+    *locomotor.hover_runtime_mut().expect("Hover payload") =
+        HoverRuntime::moving_for_test(Some(DriveCoord::cell(1, 0, 0)), NativeF64Bits::ONE);
+    hover.locomotor = Some(locomotor);
+    // Afloat about HoverHeight's equilibrium above the level-0 water.
+    hover.position.set_exact_z_leptons_for_test(Some(90));
+    let hull = crate::sim::movement::ground_pose::object_location(
+        sim.substrate.entities.get(id).expect("hover"),
+        sim.resolved_terrain.as_ref(),
+    );
+    assert_eq!(hull.z, 90);
+
+    sim.spawn_wakes_for_frame(&rules);
+
+    let wakes: Vec<_> = sim
+        .logic_order()
+        .iter()
+        .filter_map(|id| sim.anim(*id))
+        .filter(|anim| sim.interner.resolve(anim.type_id()) == "WAKE1")
+        .map(|anim| anim.world_coord())
+        .collect();
+    assert_eq!(wakes.len(), 1, "one wake for the moving hover");
+    assert_eq!(
+        (wakes[0].x, wakes[0].y, wakes[0].z),
+        (hull.x, hull.y, hull.z),
+        "the wake starts at the hull, not on the water"
+    );
+}
+
 #[test]
 fn advance_tick_finishes_dying_infantry_from_rules_catalog() {
     let ini = IniFile::from_str(
@@ -920,9 +977,6 @@ fn advance_tick_finishes_dying_infantry_from_rules_catalog() {
     let mut rules =
         RuleSet::from_ini_with_fixed_art_for_test(&ini, &art_ini).expect("dying infantry rules");
     rules.install_art_data(ArtRegistry::from_ini(&art_ini));
-    rules.bind_animation_sequences(
-        &crate::rules::infantry_sequence::parse_infantry_sequence_registry(&art_ini),
-    );
     let mut sim = Simulation::new();
     sim.hash_state_every(std::num::NonZeroU64::MIN);
     let id = sim
@@ -2692,13 +2746,14 @@ fn move_command(entity_id: u64, (target_rx, target_ry): (u16, u16)) -> Command {
 /// bridgehead cells.
 const OPEN_SPEED_COSTS: crate::rules::terrain_rules::SpeedCostProfile =
     crate::rules::terrain_rules::SpeedCostProfile {
-        foot: Some(100),
-        track: Some(100),
-        wheel: Some(100),
-        float: Some(100),
-        amphibious: Some(100),
-        float_beach: Some(100),
-        hover: Some(100),
+        foot: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        track: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        wheel: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        float: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        amphibious: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        float_beach: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        hover: Some(crate::util::native_x87::NativeF32Bits::ONE),
+        winged: Some(crate::util::native_x87::NativeF32Bits::ONE),
     };
 
 /// A water terrain grid for ship tests: every cell Water land with the Water
@@ -3179,7 +3234,8 @@ fn structural_bridge_for_fallout(
         cell.bridge_deck_level = ground_level + 4;
         if water_below {
             let costs = SpeedCostProfile {
-                float: Some(100),
+                float: Some(crate::util::native_x87::NativeF32Bits::ONE),
+                winged: Some(crate::util::native_x87::NativeF32Bits::ONE),
                 ..Default::default()
             };
             cell.land_type = LandType::Water.as_index();
@@ -3249,9 +3305,6 @@ fn walking_combat_test_rules() -> RuleSet {
          FireUp=164,6,6\nFireProne=212,6,6\nDie1=56,15,0\n",
     );
     rules.install_art_data(crate::rules::art_data::ArtRegistry::from_ini(&art));
-    rules.bind_animation_sequences(
-        &crate::rules::infantry_sequence::parse_infantry_sequence_registry(&art),
-    );
     rules
 }
 
@@ -7431,13 +7484,14 @@ fn parked_friendly_on_the_route_is_scattered_out_of_the_way() {
         use crate::map::resolved_terrain::zone_class;
         use crate::rules::terrain_rules::{LandType, SpeedCostProfile};
         let rock = SpeedCostProfile {
-            foot: Some(0),
-            track: Some(0),
-            wheel: Some(0),
-            float: Some(0),
-            amphibious: Some(0),
-            float_beach: Some(0),
-            hover: Some(0),
+            foot: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            track: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            wheel: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            float: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            amphibious: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            float_beach: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            hover: Some(crate::util::native_x87::NativeF32Bits::POSITIVE_ZERO),
+            winged: Some(crate::util::native_x87::NativeF32Bits::ONE),
         };
         let terrain = sim.resolved_terrain.as_mut().expect("stacking terrain");
         for ry in (0..24).filter(|&ry| ry != PARKED_AT.1) {

@@ -77,11 +77,6 @@ impl crate::app::persistence::options::launcher::LauncherPreviewOperations for A
         self.persistence.options_profile.yr_original_style = yr_original_style;
         let _ = App::ensure_skirmish_shell_chrome(self);
     }
-    fn store_coop_expansion(&mut self, enabled: bool) {
-        // Launcher mode projection reads the retained profile; Options' accept
-        // persists the choice through the normal profile transaction.
-        self.persistence.options_profile.coop_expansion = enabled;
-    }
     fn store_skip_intro(&mut self, skip: bool) {
         // Read once at the next launch; Options' accept writes it out.
         self.persistence.options_profile.skip_intro = skip;
@@ -138,6 +133,18 @@ impl crate::app::persistence::options::launcher::LauncherPreviewOperations for A
     }
     fn store_right_click_orders(&mut self, enabled: bool) {
         self.persistence.options_profile.right_click_orders = enabled;
+    }
+    fn store_hd_radar(&mut self, enabled: bool) {
+        // A battle's next frame sizes the sidebar and radar from it.
+        self.persistence.options_profile.hd_radar = enabled;
+    }
+    fn store_smooth_sidebar(&mut self, enabled: bool) {
+        // A battle's next frame sizes the sidebar and scales its art from it.
+        self.persistence.options_profile.smooth_sidebar = enabled;
+    }
+    fn store_hd_map_previews(&mut self, enabled: bool) {
+        // The next setup screen picks its preview from it.
+        self.persistence.options_profile.hd_map_previews = enabled;
     }
     fn store_mouse_wheel_zoom(&mut self, enabled: bool) {
         self.persistence.options_profile.mouse_wheel_zoom = enabled;
@@ -417,10 +424,12 @@ vera20k.exe:\n{config}"
 holding ra2md.mix and ra2.mix with the rest of the game, then start VERA20K again."
                 ),
             };
-            let game_files = game_files.map_or_else(
-                || "No game installation configured".to_owned(),
-                |path| path.display().to_string(),
-            );
+            // An unconfigured launch resolves the installation to the
+            // executable's own directory, which on Android is `/system/bin`
+            // (app_process). Naming that path sends the player looking for game
+            // files that were never there, so say what is actually true: no
+            // installation is configured.
+            let game_files = game_installation_label(game_files.as_deref());
             (
                 title,
                 format!(
@@ -441,6 +450,32 @@ Game files: {game_files}\nLog: {log}"
     text.push_str("\n\nDetails: ");
     text.push_str(details);
     (title, text)
+}
+
+/// What the card and the import dialog name as the game installation.
+///
+/// An unconfigured launch resolves the installation to the executable's own
+/// directory, which on Android is `/system/bin` (app_process). Naming that path
+/// sends the player looking for game files that were never there, so on Android
+/// the fallback reads as "no installation configured". The desktop builds keep
+/// printing whatever path they resolved.
+///
+/// One function for both screens: the import dialog sits on the same card and
+/// must never name a path the card behind it has stopped naming.
+fn game_installation_label(game_files: Option<&std::path::Path>) -> String {
+    let executable_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    game_files.map_or_else(
+        || "No game installation configured".to_owned(),
+        |path| {
+            if cfg!(target_os = "android") && executable_dir.as_deref() == Some(path) {
+                "No game installation configured".to_owned()
+            } else {
+                path.display().to_string()
+            }
+        },
+    )
 }
 
 /// Reduce a startup error to text the status card can draw.
@@ -1036,32 +1071,10 @@ impl App {
         // `prepare_multiplayer_settings` just refreshed above. The retained Rust
         // controls follow that same order, so a durable record changed since the
         // last visit reaches the page instead of the page keeping its old face.
-        state.frontend.multiplayer_shell_runtime.hydrate_shell(
+        state.frontend.multiplayer_shell_runtime.open_skirmish_page(
             &mut state.frontend.skirmish_shell_state,
-            state.frontend.scenario_catalog.shell_maps(),
+            &state.frontend.scenario_catalog,
             &state.frontend.skirmish_modes,
-        );
-        // VERA: a saved index on an Online row (the list grew since it was
-        // saved) names no file here. It moves to the first local map; with none,
-        // it goes past the end, which Start reports as no selected map.
-        let shell = &mut state.frontend.skirmish_shell_state;
-        let catalog = &state.frontend.scenario_catalog;
-        if catalog
-            .records()
-            .get(shell.selected_map_idx)
-            .is_some_and(|record| record.is_online())
-        {
-            shell.selected_map_idx = catalog
-                .first_local_index()
-                .unwrap_or(catalog.records().len());
-        }
-        crate::ui::skirmish_shell::repair_teams_for_selected_mode(
-            &mut state.frontend.skirmish_shell_state,
-            &state.frontend.skirmish_modes,
-        );
-        crate::ui::skirmish_shell::initialize_rows_for_selected_map(
-            &mut state.frontend.skirmish_shell_state,
-            state.frontend.scenario_catalog.shell_maps(),
         );
         // The skirmish dialog (0x102) slides its controls in on first paint like
         // every shell dialog; the per-frame slide trigger starts that wave once
@@ -1103,21 +1116,32 @@ impl App {
             .game_config
             .as_ref()
             .map(|config| config.paths.ra2_dir.clone());
-        let (title, text) = shell_error_card(
-            CardHost::CURRENT,
-            &state.frontend.startup_files,
-            state.process_assets.manager().is_some(),
-            game_files.as_deref(),
-            crate::util::logging::log_file(),
-            &display_error(&error),
-        );
+        let (title, text) =
+            if crate::ui::asset_import::AVAILABLE && state.frontend.asset_import.is_open() {
+                // Same label as the card behind it: the dialog must not name a
+                // fallback path the card has just stopped naming.
+                let game_files_text = game_installation_label(game_files.as_deref());
+                (
+                    state.frontend.asset_import.title(),
+                    state.frontend.asset_import.body(&game_files_text, ""),
+                )
+            } else {
+                shell_error_card(
+                    CardHost::CURRENT,
+                    &state.frontend.startup_files,
+                    state.process_assets.manager().is_some(),
+                    game_files.as_deref(),
+                    crate::util::logging::log_file(),
+                    &display_error(&error),
+                )
+            };
         crate::app::frontend::status_screen::render(
             state,
             encoder,
             view,
             title,
             &text,
-            crate::app::frontend::status_screen::Buttons::QUIT,
+            crate::app::frontend::status_screen::shell_error_buttons(state),
         );
         Ok(())
     }

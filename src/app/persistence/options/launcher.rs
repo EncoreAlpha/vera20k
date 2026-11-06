@@ -34,12 +34,14 @@ pub(crate) fn launcher_values_from_profile(
         full_screen: false,
         original_shape: profile.original_shape,
         yr_original_style: profile.yr_original_style,
-        coop_expansion: profile.coop_expansion,
         render_interpolation: profile.render_interpolation,
         mouse_wheel_zoom: profile.mouse_wheel_zoom,
         right_click_orders: profile.right_click_orders,
         lock_cursor: profile.lock_cursor,
         vera_icon: profile.vera_icon,
+        hd_radar: profile.hd_radar,
+        smooth_sidebar: profile.smooth_sidebar,
+        hd_map_previews: profile.hd_map_previews,
         shift_queue: profile.shift_queue,
         wol_test_service: profile.wol_test_service,
         fps_counter: false,
@@ -104,13 +106,18 @@ pub(crate) trait LauncherPreviewOperations: AudioVolumeOperations {
     fn set_full_screen(&mut self, full_screen: bool);
     fn store_original_shape(&mut self, original_shape: bool);
     fn store_yr_original_style(&mut self, yr_original_style: bool);
-    fn store_coop_expansion(&mut self, enabled: bool);
     fn store_render_interpolation(&mut self, enabled: bool);
     fn store_mouse_wheel_zoom(&mut self, enabled: bool);
     fn store_right_click_orders(&mut self, enabled: bool);
     fn store_lock_cursor(&mut self, locked: bool);
     /// Show VERA's artwork or the red star on the window, taskbar and Dock.
     fn store_vera_icon(&mut self, vera_icon: bool);
+    /// Draw the radar at the sidebar's window scale (`[VERA] HdRadar=`).
+    fn store_hd_radar(&mut self, enabled: bool);
+    /// Draw the sidebar's art from lightly smoothed xBR copies (`[VERA] SmoothSidebar=`).
+    fn store_smooth_sidebar(&mut self, enabled: bool);
+    /// Show VERA's own map pictures in the setup screens (`[VERA] HdMapPreviews=`).
+    fn store_hd_map_previews(&mut self, enabled: bool);
     fn store_shift_queue(&mut self, shift_queue: bool);
     fn store_wol_test_service(&mut self, wol_test_service: bool);
     fn set_fps_counter(&mut self, shown: bool);
@@ -147,9 +154,6 @@ pub(crate) fn dispatch_launcher_preview_event(
         LauncherOptionsEvent::YrOriginalStyleChanged(yr_original_style) => {
             operations.store_yr_original_style(yr_original_style)
         }
-        LauncherOptionsEvent::CoopExpansionChanged(enabled) => {
-            operations.store_coop_expansion(enabled);
-        }
         LauncherOptionsEvent::RenderInterpolationChanged(enabled) => {
             operations.store_render_interpolation(enabled);
         }
@@ -161,6 +165,13 @@ pub(crate) fn dispatch_launcher_preview_event(
         }
         LauncherOptionsEvent::LockCursorChanged(locked) => operations.store_lock_cursor(locked),
         LauncherOptionsEvent::VeraIconChanged(vera_icon) => operations.store_vera_icon(vera_icon),
+        LauncherOptionsEvent::HdRadarChanged(enabled) => operations.store_hd_radar(enabled),
+        LauncherOptionsEvent::SmoothSidebarChanged(enabled) => {
+            operations.store_smooth_sidebar(enabled);
+        }
+        LauncherOptionsEvent::HdMapPreviewsChanged(enabled) => {
+            operations.store_hd_map_previews(enabled);
+        }
         LauncherOptionsEvent::ShiftQueueChanged(shift_queue) => {
             operations.store_shift_queue(shift_queue);
         }
@@ -373,7 +384,6 @@ mod tests {
             unit_action_lines: false,
             show_hidden: true,
             yr_original_style: true,
-            coop_expansion: true,
             skip_intro: true,
             render_interpolation: false,
             mouse_wheel_zoom: true,
@@ -385,7 +395,6 @@ mod tests {
         assert!(!booleans.target_lines);
         assert!(booleans.show_hidden);
         assert!(booleans.yr_original_style);
-        assert!(booleans.coop_expansion);
         assert!(booleans.skip_intro);
         assert!(!booleans.render_interpolation);
         assert!(booleans.mouse_wheel_zoom);

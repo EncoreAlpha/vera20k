@@ -56,6 +56,9 @@ pub(super) struct DrawPassData<'a> {
     pub sidebar_unavailable: &'a [SpriteInstance],
     pub sidebar_flash: &'a [SpriteInstance],
     pub sidebar_gclock: &'a [SpriteInstance],
+    /// `SidebarInstances::smooth_chrome` and `smooth_command_bar`.
+    pub smooth_chrome: bool,
+    pub smooth_command_bar: bool,
 }
 
 /// Draw the sidebar into its own surface, as gamemd draws `g_SidebarSurface`
@@ -73,6 +76,7 @@ fn draw_sidebar_surface(
     encoder: &mut wgpu::CommandEncoder,
     data: &DrawPassData<'_>,
 ) {
+    encode_radar_pictures(state, encoder);
     let side_index = crate::app::presentation::sidebar_render::current_sidebar_side(state);
     let presentation = &state.match_state.match_presentation;
     let chrome = presentation
@@ -80,6 +84,16 @@ fn draw_sidebar_surface(
         .as_ref()
         .and_then(|set| set.resolve_side(side_index))
         .map(|resolved| resolved.atlas);
+    // Instances moved to the smooth sidebar's chrome copy draw from it.
+    let chrome_texture = |smooth: bool| {
+        chrome.and_then(|atlas| {
+            if smooth {
+                atlas.smooth_texture()
+            } else {
+                Some(&atlas.texture)
+            }
+        })
+    };
     let renderer = &mut state.renderer;
     let Some(surface) = renderer.sidebar_surface.as_ref() else {
         return;
@@ -91,12 +105,12 @@ fn draw_sidebar_surface(
     let mut draw = |tex: Option<&BatchTexture>, key: &'static str| {
         draw_pooled_with_camera(&mut pass, batch, camera, pool, tex, key);
     };
-    draw(chrome.map(|atlas| &atlas.texture), "sidebar_chrome");
+    draw(chrome_texture(data.smooth_chrome), "sidebar_chrome");
     draw(
         presentation
             .sidebar_cameo_atlas
             .as_ref()
-            .map(|atlas| &atlas.texture),
+            .map(|atlas| atlas.sidebar_texture()),
         "sidebar_cameo",
     );
     // StripDraw6A9AF8 outlines the hovered slot before its masks.
@@ -229,9 +243,29 @@ fn draw_sidebar_surface(
         batch,
         surface.camera(SidebarPart::Bar),
         pool,
-        chrome.map(|atlas| &atlas.texture),
+        chrome_texture(data.smooth_command_bar),
         "command_bar",
     );
+}
+
+/// The radar's pictures for this frame: the minimap's composition
+/// (`RadarClass::Update @ 0x00656EC0`), then the housing's paints
+/// (`RadarClass::Draw @ 0x00653100`), whose retained online draw samples it.
+/// Every frame encodes them, sidebar drawn or not, so neither waits a frame.
+fn encode_radar_pictures(state: &mut AppState, encoder: &mut wgpu::CommandEncoder) {
+    let renderer = &state.renderer;
+    let presentation = &mut state.match_state.match_presentation;
+    if let Some(minimap) = presentation.minimap.as_mut() {
+        minimap.encode_composition(&renderer.gpu.device, encoder);
+    }
+    if let Some(radar) = presentation.radar_anim.as_mut() {
+        radar.encode_paints(
+            &renderer.gpu.device,
+            &renderer.gpu.queue,
+            &renderer.batch_renderer,
+            encoder,
+        );
+    }
 }
 
 /// Create the main render pass and dispatch all draw calls in the correct order.
@@ -251,6 +285,13 @@ pub(super) fn dispatch_draw_passes(
     view: &wgpu::TextureView,
     data: &DrawPassData<'_>,
 ) {
+    // The posed voxel images the world draws sample.
+    state.renderer.vxl_pose_frame_cache.borrow_mut().encode(
+        &state.renderer.gpu.device,
+        &state.renderer.gpu.queue,
+        &state.renderer.batch_renderer,
+        encoder,
+    );
     // The sidebar's surface is complete before the frame begins; the
     // screen-fixed block copies it in.
     draw_sidebar_surface(state, encoder, data);
@@ -1324,6 +1365,7 @@ fn composite_world_with_drag_rect(
 }
 
 /// Native path/rally pixels belong to the world surface, before wheel zoom.
+/// Their dashed stores keep or skip each pixel by the live A on the GPU.
 pub(super) fn draw_pooled_surface_lines<'a>(
     pass: &mut wgpu::RenderPass<'a>,
     batch: &'a BatchRenderer,
@@ -1332,7 +1374,7 @@ pub(super) fn draw_pooled_surface_lines<'a>(
     key: &'static str,
 ) {
     if let (Some(t), Some((buf, count))) = (tex, pool.get(key)) {
-        batch.draw_with_buffer_passthrough(pass, t, buf, count);
+        batch.draw_surface_stores(pass, t, buf, count);
     }
 }
 

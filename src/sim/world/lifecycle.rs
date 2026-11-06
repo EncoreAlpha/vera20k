@@ -64,11 +64,11 @@ impl BuildingLight {
 }
 
 /// Two type facts the removal paths read, copied onto the object:
-/// - `ObjectClass::Limbo` (`0x005F4D30`) dirties the tactical rect of the
-///   object's extent when the type's `+0xAC` pointer is set
-///   ([`LifecycleOutput::DirtyTacticalRect`]). VERA keeps the fact false
-///   unless a caller has positive evidence and never infers it from category
-///   or render representation; no production path sets it.
+/// - `ObjectClass::Limbo` (`0x005F4D30`) dirties the AlphaImage-sized rect
+///   around GetCoords when the type's AlphaImage (`+0xAC`) loaded
+///   ([`LifecycleOutput::DirtyTacticalRect`]). No production path sets the
+///   fact: that rect only clears the object's glow, and the tactical A plane
+///   redraws whenever its glow list changes (`alpha_shape`).
 /// - `Occupier=`, which `FootClass::PointerExpired` (`0x004D9960`) tests to
 ///   keep a capturing infantryman's NavCom on an expiring target.
 ///   Construction stamps it ([`Self::stamp_occupier`]).
@@ -1690,6 +1690,7 @@ impl Simulation {
         // Residual (invisible): native marks at 0x00440C34, before
         // 0x00440D07..0x00440D2D above; only House AI reads the marks.
         self.mark_building_base_reservation_with_arg(stable_id, false, context);
+        self.light_building_at_unlimbo(stable_id, context);
         self.discover_building_owner_after_unlimbo(stable_id, context);
         self.construct_spotlight(stable_id, context.rules());
         // Unlimbo44119C clears this object's retained primary before
@@ -1718,6 +1719,8 @@ impl Simulation {
         } else {
             false
         };
+        // Unlimbo's AlphaShapeClass block follows the Logic registration.
+        self.construct_alpha_shape(stable_id, context.rules());
         // Building4415D8: successful normal Unlimbo after opening/base-plan.
         // The early dead/failed paths do not reach this call.
         let rules = context.rules();
@@ -1767,6 +1770,37 @@ impl Simulation {
             && let Some(entity) = substrate.entities.get_mut(stable_id)
         {
             entity.ai_sell_repair.make_repairable();
+        }
+    }
+
+    /// `BuildingClass::Unlimbo 0x00440D25..0x00440D6C`: only a campaign
+    /// building the player has discovered (`+0x41B`), or whose Unlimbo cell's
+    /// ground is not open to the player (`Cell+0x12C & 0x10`), is lit here
+    /// ([`Self::light_building`]). Any other takes DiscoveredBy(PlayerPtr)
+    /// (`0x00440D61`, [`Self::discover_by_player`]) and is lit when it
+    /// opens. That call mostly repeats CellPUT's, which tests the
+    /// height-projected cell's mapped bit instead; where CellPUT missed the
+    /// building, a human-owned one opens and lights here.
+    fn light_building_at_unlimbo(&mut self, id: u64, context: UninitContext<'_>) {
+        let Some(entity) = self
+            .substrate
+            .entities
+            .get(id)
+            .filter(|entity| entity.category() == EntityCategory::Structure)
+        else {
+            return;
+        };
+        let (rx, ry) = (entity.position.rx(), entity.position.ry());
+        let lit = !self.session.game_mode_nonzero()
+            && (entity.discovery.discovered_by_current_house()
+                || !self
+                    .session
+                    .current_house()
+                    .is_some_and(|player| self.fog.is_ground_open(player, rx, ry)));
+        if lit {
+            self.light_building(id, context.rules());
+        } else {
+            self.discover_by_player(id, None, context);
         }
     }
 
@@ -2126,15 +2160,17 @@ impl Simulation {
         true
     }
 
-    /// CellAddContent47E953..47E9DC's discovery gate. In active YR the
-    /// IsFogged5865E0 body always returns false. Any noncampaign CellPUT
+    /// DiscoveredBy(PlayerPtr) for every represented player map: CellPUT's
+    /// (CellAddContent47E953..47E9DC, `cell_put` holds its Cell) and Building
+    /// Unlimbo's when it does not light (`0x00440D61`, `None`). In active YR
+    /// the IsFogged5865E0 body always returns false. Any noncampaign CellPUT
     /// therefore calls DiscoveredBy(PlayerPtr); campaigns do so only when
     /// the height-projected Cell coordinate is unshrouded. Reuse the existing
     ///586360 and Fog authority instead of a presentation visibility cache.
-    pub(crate) fn discover_cell_put_object(
+    pub(crate) fn discover_by_player(
         &mut self,
         id: u64,
-        cell: (u16, u16),
+        cell_put: Option<(u16, u16)>,
         context: UninitContext<'_>,
     ) {
         if self.session.game_mode().is_network() {
@@ -2159,14 +2195,16 @@ impl Simulation {
                     .network_discovery_view_bit(viewer)
                     .expect("represented human")
             });
-            // Cell47E9DC has one shared gameplay receiver. Its represented
+            // Each call has one shared gameplay receiver. Its represented
             // maps are admitted atomically; choose a foreign new viewer when
             // present so the native Tag4/House1F4 side effects are not lost.
             self.discover_techno_in_views(id, viewer, context, mask);
             return;
         }
         for viewer in self.represented_player_maps() {
-            if !self.session.game_mode_nonzero() {
+            if let Some(cell) = cell_put
+                && !self.session.game_mode_nonzero()
+            {
                 let Some(terrain) = context.terrain().or(self.resolved_terrain.as_ref()) else {
                     return;
                 };
@@ -2309,7 +2347,7 @@ impl Simulation {
                 self.substrate
                     .occupancy
                     .add(rx, ry, stable_id, layer, None, insertion);
-                self.discover_cell_put_object(stable_id, (rx, ry), context);
+                self.discover_by_player(stable_id, Some((rx, ry)), context);
             }
             #[cfg(any(test, feature = "test-support"))]
             self.trace_lifecycle_for_test(LifecycleTestEvent::RawOccupationListLinked);
@@ -5678,6 +5716,10 @@ impl Simulation {
         // VERA-only: a batched target scan holds its pick across the turns
         // before its scanner's as a TarCom does (`techno_ai::scan_batch`).
         self.release_batched_scan_pick(expired_id);
+        // `AlphaShapeClass::PointerExpired @ 0x00420E70` listens whatever the
+        // control and touches no other listener's state, so its place among
+        // the listeners changes nothing.
+        self.alpha_shapes.pointer_expired(expired_id);
         // `DispatchPointerExpiredCleanup @ 0x007258D0` calls
         // `BombListClass::PointerGotInvalid @ 0x00439150` after its listener
         // loop (0x00725961) whatever the control, so a cloaking planter loses
@@ -6335,7 +6377,12 @@ impl Simulation {
         }
         // ObjectClass::UnInit's first statement (`0x005F65F3`) defuses a
         // carried bomb silently: sold, crushed, erased.
-        Self::bomb_defuse(&mut self.substrate, &mut self.bombs, stable_id);
+        Self::bomb_defuse(
+            &mut self.substrate,
+            &mut self.bombs,
+            &mut self.sound_events,
+            stable_id,
+        );
         self.notify_pointer_expired(stable_id, context);
 
         match kind {
@@ -6777,7 +6824,12 @@ impl Simulation {
             entity.lifecycle.object_alive = false;
         }
         // The ObjectClass destructor's defensive Defuse (`0x005F3BA6`).
-        Self::bomb_defuse(&mut self.substrate, &mut self.bombs, stable_id);
+        Self::bomb_defuse(
+            &mut self.substrate,
+            &mut self.bombs,
+            &mut self.sound_events,
+            stable_id,
+        );
         self.team_script_vm.object_deleted(stable_id);
         Self::release_house_base_tracking(&self.substrate, &mut self.houses, stable_id);
         // Selected original Foot destructor4D3632..4D366E clears only its

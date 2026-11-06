@@ -10,24 +10,23 @@ arriving bodies. Every JSON string and property name must be well-formed Unicode
 Escaped unpaired surrogates are rejected, not replaced, before any event or
 persistent state is created.
 
-`POST /v1/sessions` accepts exactly `{nickname,protocol:4,ladder_key?}` and returns
+`POST /v1/sessions` accepts exactly
+`{nickname,protocol:4,password?,remember?,sign_in_token?}` and returns
 `{player_id,nickname,token,expires_at}`, plus `motd` while an operator welcome is set:
 text the game prints in the chat lobby in place of its own welcome, one line per `\n`.
 Each entry receives a fresh random player
 UUID and bearer token. `expires_at` is a Unix timestamp in seconds. An active name
 returns 409 `name_unavailable`; entering its name never replaces that session.
-A name on the ranked ladder signs in only with its `ladder_key` and otherwise returns
-403 `name_claimed` ([Ranked games](#ranked-games)).
+An account's name signs in only with its password or a remembered sign-in, and a name
+without an account enters as a guest ([Accounts](#accounts)).
 Guest locale, buddies and relay admission counters belong to this player identity
 and are removed with its session on logout or expiry. Idle lobby visits expire
 after 120 seconds without a request or stream ack; admitted v4 players retain their session during
 a network outage while another unfinished player of their match is online, and
 otherwise through 10 minutes of silence, until explicit finish/leave or the
 match/session lifetime.
-A later entry gets a new identity and empty preferences. No password account is
-created or consulted. Existing stored accounts and their current v3 sessions remain
-intact until their ordinary cleanup; active legacy sessions reserve their names too.
-`POST /v1/accounts` and password-bearing sign-in requests return 426 `upgrade_required`.
+A later entry gets a new identity and empty preferences. The old
+`POST /v1/accounts` returns 426 `upgrade_required`.
 Failed requests return `{error:{code,message}}`; messages must not echo credentials.
 Clients show a 426 `message` (plain text, at most 160 characters) to the player with
 the releases link, so it should name the version players need; older clients show a
@@ -177,7 +176,7 @@ Event kinds and payloads:
 | `chat` | `{from:<Member>,text,private,action,sent_at,ansi?,quick_match?}` |
 | `game_started` | `{match_id,revision,version,rules_digest,seed,users:[{player_id,name,flags,source_index}],relay:<RelayGrant>}` |
 | `start_confirmed` | `{match_id}` |
-| `timing_confirmed` | `{match_id,pings:[integer],relay:<RelayGrant>,ranked?,ladder_key?}` |
+| `timing_confirmed` | `{match_id,pings:[integer],relay:<RelayGrant>,ranked?}` |
 | `relay_renewed` | `{match_id,relay:<RelayGrant>}` |
 | `map_available` | `{digest,byte_length,resource?}` |
 | `start_rejected` | `{message}` |
@@ -185,7 +184,7 @@ Event kinds and payloads:
 | `buddies` | `{names:[name]}` |
 | `located` | `{channel:<Channel or null>}` |
 | `kicked` | `{channel:<Channel>,user:<Member>,by:<Member>}` |
-| `ladder` | `{season,records:[{name,points,rank,wins,losses,disconnects}]}` |
+| `ladder` | `{season,records:[{name,points,rank,wins,losses,disconnects}],high_scores:[{name,points,rank}]}` |
 | `balance` | `{teams:[{name,team}]}` |
 | `error` | `{code,message}` |
 
@@ -196,13 +195,12 @@ RelayGrant is `{address,ticket,packet_key,payload_key,source_index,ordering_cert
 of the user's relay in the match. The service chooses it at start and every later grant for that match names it;
 ticket is the signed relay protocol ticket encoded base64url without padding and
 packet_key is 32 bytes encoded the same way. Credentials are unique to each user
-and each new match. `payload_key` is a random 32-byte match payload-encryption key
-shared by the participants and encoded the same way. It is delivered only over
-authenticated HTTPS, stored only in private match state, and never placed in a
-relay ticket or disclosed to the relay. It remains unchanged through bootstrap,
-timing confirmation and renewal. The HTTPS lobby is a trusted key distributor:
-a compromised lobby could disclose or replace payload keys; relay-blind payload
-encryption does not protect against that compromise. `source_index` is the immutable canonical user index, 0–29.
+and each new match. `payload_key` is a random 32-byte match key encoded the same way.
+It remains unchanged through bootstrap, timing confirmation and renewal. Current
+clients accept it and do not use it: gameplay batches and DATA travel in plain
+text under the per-hop MAC, and the relay can read them
+(`services/relay/bandwidth-compaction/spec.md` §3). The field stays in the grant
+so the lobby needs no change; removing it is a follow-up. `source_index` is the immutable canonical user index, 0–29.
 `ordering_certificate` is 66 base64url-encoded bytes: `VO1C`, room UUID16,
 source mask LEu32, fixed FPS LEu16, expiry LEu64, then HMAC-SHA256 over the
 first34 bytes with domain `VERA20k relay ordering certificate v1\0`. A lobby
@@ -412,12 +410,21 @@ A game whose online match reached play adds `network_quality` to that match's
 `finish`: its own record of how the match ran, which it also logs as
 `Network quality:`. It is
 `{played_seconds,catch_up:{episodes,seconds,max_backlog_frames,skipped_draws},`
-`network:{gaps,repair_pulls,command_round_trip_ms,max_jitter_reserve_ms,underruns},`
+`network:{gaps,repair_pulls,command_round_trip_ms,max_jitter_reserve_ms,underruns,`
+`underrun_wait_ms,max_underrun_wait_ms,link},`
 `performance:{tick_ms_p50,tick_ms_p99,fps_p50,fps_p5,unfocused_seconds},`
 `pacing:{slowdowns,slowed_by,slowed_seconds},outcome:{desync_frame,reconnects}}`.
 Times are seconds, or milliseconds where the name says so; `command_round_trip_ms`
 is `{mean,max,samples}` or null, `tick_ms_p50`, `tick_ms_p99`, `fps_p50`, `fps_p5` and
 `desync_frame` may be null, and `slowed_by` lists the House each relay slowdown named.
+`underruns` counts the waits for a frame due but not yet received; `underrun_wait_ms`
+sums how late each waited-for frame arrived after its deadline and
+`max_underrun_wait_ms` is the longest, leaving out waits that end in a reconnect or
+catch-up. `link` is the relay hop as the game's relay client measured it,
+`{rtt_ms_p50,max_up_loss_permille,up_lossy_seconds,up_congested_seconds,rto_timeouts,`
+`gaps_repaired_by_push,max_arrival_jitter_ms}` (`rtt_ms_p50` may be null), or null
+without one (`services/relay/adaptive-transport/spec.md` §10.1). Older games send none
+of these three, so a service reads the report with or without them.
 A start cancelled before play and a match an external launcher formed send none. The
 service may keep reports for its operator without the player's name or address; one it
 cannot read is dropped and the match still finishes. A service that refuses the field
@@ -463,9 +470,10 @@ sets the welcome that sign-in responses carry as `motd`: non-blank text of at mo
 2048 UTF-8 bytes. `{text:null}` clears it. Both return `{welcome}`, the text or `null`.
 
 Released clients sign in with `User-Agent: VERA20k/<MAJOR.MINOR.PATCH> multiplayer-client`.
-A client that names a version older than 0.2.6 is refused at sign-in with 426
-`upgrade_required`, since clients before it cannot play through the relays' turn
-transport (#3845); one that names no version is not.
+A client that names a version older than 0.2.7 is refused at sign-in with 426
+`upgrade_required`, since clients before it cannot play through the relays'
+adaptive transport (UPLINK, `services/relay/README.md`); one that names no
+version is not.
 A session whose version is older than `version` in
 `https://downloads.vera20k.org/latest.json`, which the lobby reads at most every
 10 minutes, receives one such chat line per newer release, naming both versions,
@@ -529,25 +537,75 @@ the mode admits. A guest colour the host holds becomes Random; each Random is th
 ignores the guest's `choices`; the guest's game accepts the options by itself, and the
 host's starts once it has.
 
+## Accounts
+
+A player enters as a guest by name alone, or signs in to an account with its name and
+password. Every request below is a `POST` with a JSON body; a refusal's
+`{error:{code,message}}` message is plain text the game shows as it is.
+
+- `/v1/accounts/register` `{name,email,password}` returns 202 and mails a 6-digit code.
+  It refuses with 400 `invalid_name`, `invalid_email` or `invalid_password`, 409
+  `name_unavailable` or `email_in_use`, or 429. Names follow the session rule;
+  passwords are 8–64 printable ASCII characters; emails are at most 254 characters of
+  the `x@y.z` shape, one account each.
+- `/v1/accounts/verify` `{name,code}` returns 200 and creates the account: 400
+  `invalid_code` (5 tries), 410 `code_expired` (30 minutes, or the tries used up).
+- `/v1/accounts/forgot` `{name}` returns 202 whether or not the name has an account,
+  and mails a code to the account's email when it has one. It refuses a malformed
+  name (400) and too many requests (429).
+- `/v1/accounts/reset` `{name,code,password}` returns 200, sets the password, signs out
+  every remembered computer and mails the owner. It refuses as verify does, and with
+  `invalid_password`.
+- `/v1/accounts/forget` `{name,sign_in_token}` returns 200 and drops that remembered
+  sign-in.
+- `/v1/accounts/delete` `{name,password}` returns 200, deletes the account with its
+  email, remembered sign-ins and ranked games, signs out its player and mails the owner;
+  anyone may then take the name. A wrong password counts as at `/v1/sessions` (403
+  `wrong_password`, the lock), and a name without an account returns 404 `no_account`.
+
+At `/v1/sessions` an account's name needs its `password` or a `sign_in_token`, never
+both: with neither it returns 403 `name_claimed`, with a wrong one 403 `wrong_password`,
+and 10 wrong passwords in an hour return 429 `account_locked` for 15 minutes and mail
+the owner. 30 wrong passwords from one network in an hour return 429 `rate_limited`.
+An account's sign-in has `account:true` in the response, and `remember:true` with the
+right password adds a `sign_in_token` (32 bytes, base64url without padding). A password
+or `sign_in_token` for a name without an account returns 404 `no_account`; otherwise
+that name enters as a guest. A lobby without accounts set up refuses a password with
+503 `accounts_unavailable`.
+
+VERA20k's online login page has its buttons beside an info pane, and each button opens
+a popup. Login asks for the name and password, with Remember password, and Play as Guest
+for the name alone, with no password or remembered sign-in; Enter on the page opens Login.
+Create Account asks for the name, email and password, then the mailed code, and signs in.
+Forgot Password asks for the name and mails its code, then asks for it and a new
+password, and signs in. Delete Account asks for the name and its password, then says the
+account is deleted and forgets a remembered sign-in of it. The pane shows the players
+online, or while nobody is, the last 24 hours' games (`GET /v1/stats`), vera20k.org's five
+newest news posts in the game's language (`GET https://vera20k.org/news.json?lang=en` or
+`zh-CN`: `{posts:[{date,title,summary}]}`) and the online rules; it reads both each time
+the page opens. A remembered
+sign-in lives in `Account.json` beside `VERA.INI` as `{name, sign_in_token}` per lobby,
+readable only by its owner; Login's popup then opens on the name with a masked password.
+Unticking Remember password forgets it here and at the lobby, and so does a password
+sign-in of that name or a remembered sign-in of another account. A `wrong_password` or
+`no_account` answer to it forgets it too. Signing in under another name leaves it.
+
 ## Ranked games
 
 While the operator runs a season, the lobby ranks a 1v1 Quick Match pairing played by its
-two players alone, and a game room's match in a mode that lets players ally, with every
-player on one of two teams of the same size (at least two each) whose chances are within
-80/20. Ranked matches have no AI, and every player's game can hold a ladder key.
+two players alone, and a game room's match of at least three players on sides of the same
+size: teams, in a mode that lets players ally, or each player alone, in a mode that does
+not. Three or more teams also need in-game allying off. The game must keep the sides
+apart: players on two sides may not pick the same start, which makes them share a House,
+nor, in a mode without alliances, the same team. A Cooperative mode (`mode.class`) never
+ranks. Every side's chance against every other is within 80/20. Ranked matches have no AI,
+and every player is signed in to an account.
 
 A host who unticks Ranked game at Create Game sends `ranked:false` on `create`, and that
 room's games never rank; its odds line says why. A ticked box sends nothing, as a lobby
 from before the choice refuses the field.
 
-A game that can hold one sends `ladder_key` at sign-in: the name's key, or `null` when it
-holds none for that name. A game that omits the field plays unranked. As a ranked match
-begins play, the lobby claims each of its names not yet on the ladder, and sends that
-player's game its key once, as `ladder_key` in `timing_confirmed`: 32 bytes, base64url
-without padding. VERA20k keeps it in `LadderKeys.json` beside `VERA.INI`, one key per
-lobby and lowercased name, readable only by its owner. A name whose key is lost signs in again once
-the operator releases it. One network claims at most 3 names a day; past that, the match
-plays unranked. `ranked:true` in `timing_confirmed` marks a ranked match.
+A guest's match plays unranked. `ranked:true` in `timing_confirmed` marks a ranked match.
 
 A `finish` after play adds the game's own `result`: `won`, `lost`, `quit` (the player
 left) or `disconnected` (the game lost its connection). A player who leaves after the game
@@ -556,14 +614,36 @@ decided, `winners` names the players still in it whose Houses won. A lobby from 
 team ladders refuses `winners`; the game then finishes again without it.
 
 `ladder` with up to 64 names answers with the running season's records of those that
-played a rated game in it (`season` is `null` and `records` empty when no season runs).
-The game shows them as each player's rank and badge: one lookup fills both its ladder
-and high-score tables.
+played a rated game in it (`season` is `null` and `records` empty when no season runs),
+and the `high_scores` of those that ever played one. Every ranked game, Quick Match, team
+game or free-for-all, moves one rating per player, shown as OS: μ − σ, as Beyond All Reason
+shows skill, about 16.7 for a new player. A record's `points` is its player's OS rounded,
+and `rank` their place among the season's players by OS. A high score's `points` are its
+player's badge points, the ranked games of every season times the OS, over ten, rounded
+and at most 2000, and `rank` their place by them. One lookup fills both of the game's
+tables: its ladder table from `records`, and its high-score table, whose points pick each
+player's badge (Private below 32 up to Five-Star General from 1501; the game's Commander in
+Chief badge, from 2001, never shows), from `high_scores`. Badges therefore grow with play
+and skill and outlast seasons. A lobby from before them sends no
+`high_scores`, and the game then shows no badges. After a rated game each of its players
+hears their new OS from `VERA20k`, such as `Ranked game won: your OS is now 19.57 (+2.90).`
 
-While a season runs, the host's options for a game room whose players are all on two
-teams give an odds line, which the room hears from the `VERA20k` notice sender each time
-it changes: `Team A 54%, Team B 46%. Ranked.`, or `Unranked:` and why. Quick Match
-rooms get none. In a game room the host's chat line `/balance` is a command, not chat.
+`GET /v1/players/<name>` answers the player profile vera20k.org shows:
+`{name,os,season,rank,wins,losses,disconnects,games}`, `rank` being `null` when the player
+is unranked in the running season, and `games` their 20 newest rated games, each
+`{ended,sides,size,won,os,change}`. A name without an account answers 404.
+`GET /v1/leaderboard` answers the leaderboard vera20k.org shows, renewed once a minute:
+`{season,updated_at,total,players}`, `season` being `null` when no season runs, `total` the
+players ranked in it and `players` the best 1,000 of them by OS, then wins, each
+`{name,os,rank,wins,losses,badge_points}`, its badge points picking the badge shown by the
+name.
+
+While a season runs, the host's options for a game room whose players are all on teams,
+or in a mode without alliances, give an odds line, which the room hears from the `VERA20k`
+notice sender each time it changes: each side's chance to win, such as
+`Team A 54%, Team B 46%. Ranked.` (a free-for-all names its players), or `Unranked:` and
+why. Quick Match and Cooperative rooms get none. In a game room the host's chat line
+`/balance` is a command, not chat.
 The room hears the two teams with the most even odds on the team ratings, keeping as
 many players on their teams as it can, and the host's game gets a `balance` event with
 every playing human's `team` (0 to 3 for A to D). The host's game moves each named player

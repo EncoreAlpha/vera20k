@@ -20,6 +20,7 @@
 //! - render/ does NOT depend on: app/, audio/, net/
 
 pub(crate) mod aircraft_shadow;
+pub mod area_scale;
 pub(crate) mod atlas_growth;
 #[cfg(test)]
 mod atlas_refresh_retail_tests;
@@ -73,6 +74,7 @@ pub mod shroud_buffer;
 mod shroud_gpu_tests;
 pub mod sidebar_cameo_atlas;
 pub mod sidebar_chrome;
+pub mod sidebar_smoothing;
 #[cfg(feature = "phobos")]
 pub mod sw_sidebar_art;
 pub mod sidebar_text;
@@ -96,12 +98,14 @@ pub mod unit_pose_cache;
 pub(crate) mod unit_shadow;
 pub mod upscale_pass;
 pub mod voxel_image_cache;
+pub(crate) mod voxel_gpu;
 #[cfg(test)]
 mod voxel_parity_tests;
 pub mod vxl_normals;
 pub mod vxl_raster;
 pub mod wave_geometry;
 pub(crate) mod webgl;
+pub mod xbr;
 
 #[cfg(test)]
 mod sidebar_gpu_tests;
