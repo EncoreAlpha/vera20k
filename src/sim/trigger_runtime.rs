@@ -5132,6 +5132,28 @@ impl Simulation {
                                             &mut self.trigger_runtime,
                                             live,
                                         );
+                                        // Acceptance trace for authored
+                                        // enable chains (e.g. a per-role
+                                        // trigger arming a shared outcome).
+                                        let target_id =
+                                            self.trigger_runtime.definitions.trigger_types[target]
+                                                .id
+                                                .clone();
+                                        let source_id = context
+                                            .live_index
+                                            .and_then(|source| self.trigger_runtime.trigger(source))
+                                            .map(|trigger| {
+                                                self.trigger_runtime.definitions.trigger_types
+                                                    [trigger.type_index]
+                                                    .id
+                                                    .clone()
+                                            });
+                                        log::info!(
+                                            "Trigger enable action: source {:?} enabled {:?} on native frame {}",
+                                            source_id,
+                                            target_id,
+                                            self.session.binary_frame(),
+                                        );
                                     }
                                 }
                                 ACTION_DISABLE_TRIGGER => {
@@ -5549,6 +5571,23 @@ impl Simulation {
                     ACTION_END_SCENARIO => PlayerOutcomeRequest::EndScenario,
                     _ => unreachable!("matched native outcome action"),
                 };
+                // Outcome actions are the trace boundary for the real-trigger
+                // acceptance capture: record which authored TriggerType fired
+                // and on which native frame. Logging only, never hashed.
+                let trigger_id = context
+                    .live_index
+                    .and_then(|live| self.trigger_runtime.trigger(live))
+                    .map(|trigger| {
+                        self.trigger_runtime.definitions.trigger_types[trigger.type_index]
+                            .id
+                            .clone()
+                    });
+                log::info!(
+                    "Trigger outcome action {} from trigger {:?} on native frame {}",
+                    action.kind,
+                    trigger_id,
+                    self.session.binary_frame(),
+                );
                 return self.request_player_outcome(request, rules, frame_effects);
             }
             _ => return false,

@@ -439,6 +439,9 @@ enum VeraOutcomePhase {
 /// shared world at the same native frame, not at a per-process readiness edge.
 const VERA_OUTCOME_MISSION_SHOT_FRAME: u32 = 1_100;
 const VERA_OUTCOME_INJECT_FRAME: u32 = 1_400;
+/// Render-frame budget for a real map trigger chain. Authored delays can be
+/// minutes of native time (the test map's chain is 20 s + 4 s / 30 s + 12 s).
+const VERA_OUTCOME_REAL_TIMEOUT_FRAMES: u32 = 4_000;
 /// Render frames the continued mission must stay alive after a House loss.
 const VERA_OUTCOME_CONTINUED_FRAMES: u32 = 150;
 
@@ -1914,6 +1917,27 @@ impl LiveLanCapture {
 
         let outcome = self.vera_outcome.context("VERA outcome diagnostic")?;
         let kind = outcome.as_str();
+        // Real-trigger runs never inject: arm a receipt as soon as the mission
+        // is live, then let `finish_vera_outcome` observe the map's own chain.
+        if outcome == VeraCoopOutcome::Real {
+            // The receipt/exit validators consume the regular 300-frame
+            // checksum/hash prefix, so arm once that prefix exists rather than
+            // on an arbitrary early frame.
+            if self.vera_outcome_phase == VeraOutcomePhase::Prefix
+                && committed >= self.required_frames()
+                && !self.simulation_hashes.is_empty()
+                && state.frontend.screen == GameScreen::InGame
+            {
+                self.final_receipt = Some(self.vera_receipt(state)?);
+                self.vera_outcome_phase = VeraOutcomePhase::Observe;
+                self.vera_outcome_render_frames = 0;
+                self.event(
+                    committed,
+                    "VERA outcome: real-trigger mode armed; waiting for the map's own outcome action",
+                );
+            }
+            return Ok(());
+        }
         match self.vera_outcome_phase {
             VeraOutcomePhase::Prefix => {
                 if committed >= VERA_OUTCOME_MISSION_SHOT_FRAME {
@@ -1978,6 +2002,9 @@ impl LiveLanCapture {
                             }
                             self.vera_outcome_houses = Some(json!(marked));
                         }
+                        VeraCoopOutcome::Real => {
+                            unreachable!("real-trigger mode never injects an outcome")
+                        }
                     }
                     self.vera_outcome_injected_frame = Some(committed);
                     self.vera_outcome_phase = VeraOutcomePhase::Observe;
@@ -1989,6 +2016,9 @@ impl LiveLanCapture {
                             VeraCoopOutcome::Lose => "VERA outcome: team defeat injected",
                             VeraCoopOutcome::HouseLoss => {
                                 "VERA outcome: every player House marked defeated"
+                            }
+                            VeraCoopOutcome::Real => {
+                                "VERA outcome: real-trigger mode has no injected outcome"
                             }
                         },
                     );
@@ -2048,6 +2078,61 @@ impl LiveLanCapture {
                         ensure!(
                             render_frame < 900,
                             "VERA Coop result dialog did not open after the injected outcome"
+                        );
+                    }
+                }
+                VeraCoopOutcome::Real => {
+                    if let Some(page) = state.frontend.coop_score_page.as_ref() {
+                        let victory = page.victory;
+                        let rows = page.model.rows.len();
+                        let can_continue = page.model.can_continue;
+                        ensure!(rows > 0, "VERA Coop real outcome page has no role rows");
+                        ensure!(
+                            !can_continue,
+                            "VERA Coop's first result dialog must not offer Continue"
+                        );
+                        let native_frame = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.session().binary_frame());
+                        let state_hash = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.state_hash());
+                        self.vera_outcome_evidence = Some(json!({
+                            "kind": kind,
+                            "injected_frame": json!(null),
+                            "dialog": {
+                                "victory": victory,
+                                "rows": rows,
+                                "can_continue": can_continue,
+                                "render_frame": render_frame,
+                            },
+                            "native_frame": native_frame,
+                            "state_hash": state_hash,
+                        }));
+                        self.request_screenshot(format!(
+                            "vera-result-real-{}",
+                            if victory { "win" } else { "lose" }
+                        ));
+                        if let (Some(receipt), Some(evidence)) = (
+                            self.final_receipt.as_mut(),
+                            self.vera_outcome_evidence.as_ref(),
+                        ) {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.event(
+                            render_frame,
+                            "VERA outcome: map's real trigger chain opened the cooperative result dialog",
+                        );
+                        self.vera_outcome_dialog_frame = Some(render_frame);
+                        self.vera_outcome_phase = VeraOutcomePhase::Quit;
+                    } else {
+                        ensure!(
+                            render_frame < VERA_OUTCOME_REAL_TIMEOUT_FRAMES,
+                            "VERA Coop real trigger outcome did not open the result dialog: render_frame={render_frame}"
                         );
                     }
                 }

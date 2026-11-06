@@ -1302,6 +1302,9 @@ pub(crate) enum VeraCoopOutcome {
     /// Mark every role's primary House defeated and expect the mission to keep
     /// running.
     HouseLoss,
+    /// Do not inject anything: wait for the map's own trigger chain to open the
+    /// cooperative result page, then record the verdict and trigger evidence.
+    Real,
 }
 
 impl VeraCoopOutcome {
@@ -1310,6 +1313,7 @@ impl VeraCoopOutcome {
             Self::Win => "win",
             Self::Lose => "lose",
             Self::HouseLoss => "houses",
+            Self::Real => "real",
         }
     }
 }
@@ -1547,7 +1551,8 @@ where
                     "win" => VeraCoopOutcome::Win,
                     "lose" => VeraCoopOutcome::Lose,
                     "houses" => VeraCoopOutcome::HouseLoss,
-                    _ => bail!("--vera-outcome requires win, lose or houses"),
+                    "real" => VeraCoopOutcome::Real,
+                    _ => bail!("--vera-outcome requires win, lose, houses or real"),
                 };
                 set_once(&mut vera_outcome, outcome, "--vera-outcome")?;
             }
@@ -3651,6 +3656,30 @@ mod tests {
             "127.0.0.1:31010",
         ]));
         assert!(parse_launch_args(host_without_map).is_err());
+    }
+
+    #[test]
+    fn vera_outcome_real_keeps_the_live_coop_host_target() {
+        let output = new_output_path("vera-outcome-real");
+        let mut host = valid_args(&output);
+        host[1] = "lan-live-vera-coop-host".into();
+        host.extend(args(&[
+            "--lan-bind",
+            "127.0.0.1:31100",
+            "--lan-peer",
+            "127.0.0.1:31110",
+            "--lan-map",
+            "Lindrak.map",
+            "--vera-outcome",
+            "real",
+        ]));
+        let AppLaunchMode::ShellCapture(request) = parse_launch_args(host).unwrap() else {
+            panic!("capture");
+        };
+        assert_eq!(
+            request.live_lan.unwrap().vera_outcome,
+            Some(VeraCoopOutcome::Real)
+        );
     }
 
     #[test]

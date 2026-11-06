@@ -821,7 +821,7 @@ pub struct ScenarioSession {
     /// (0 = Easy, 1 = Normal, 2 = Hard). Process-shared start input; only
     /// VeraCoop installs it, so stock sessions keep the field absent and their
     /// exact hash stream.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     vera_coop_trigger_difficulty: Option<i32>,
     /// Scenario+35A0: SetDefaults6839C7 clears the raw stage word. MapSelect
     /// 5AE1FA/5AE0B8 writes the selected index; Scenario save/load retains it.

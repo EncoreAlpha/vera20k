@@ -29,10 +29,34 @@
 
 尚未验证/遗留：
 
-- 用户将用地编改造的验收图（stage01 副本）尚未到位；自定义国家的真实地图装载、真实触发器 → 团队结局、等真实结局采集，都要等验收图后做。
+- 用户要求代改的验收图已生成并跑通（见下）；自定义国家的真实地图装载、真实触发器 → 团队结局、等真实结局采集均已验证。
 - 0.1.20 的旧运行证据保留不重跑；本版起新证据另建目录。
 - 审计中 F3/F4/F5/F6 按用户决定记录为作者责任/不支持/待议，不阻塞；完整决策表见 `decisions.md` 与 `audit-register.md`。
 - 结算 ready/Continue、下一关、失败重试、暂停/离场等仍按 0.1.21–0.1.23 计划推进。
+
+#### 真实触发器验收（2026-11-06，scratch）
+
+用户要求代改验收图后，以 `stage01` 测试副本为源生成 5 个变体（原图与 stage01 基准不动，全部在 `.scratch/vera-coop-live/acceptance/maps/`，不入库）：
+
+- `all01umd-coop-fail-p1.map`（最小版）：20 s 摧毁全部美方建筑 → 地图原有失败链 `01000849`（失去建造厂）启用 `01000851`（4 s 延时）→ 动作 68。
+- `all01umd-coop-win-p1.map`（最小版）：30 s 由 Americans 触发链启用地图原有胜利触发 `01000855`（12 s 延时）→ 动作 67。
+- `all01umd-coop-fail-p2.map`（完整每角色版）：20 s 摧毁全部 Alliance 建筑 → 新增 Alliance 所属的“失去建造厂”触发 `01000922` 启用新增 `01000924`（4 s）→ 动作 68。
+- `all01umd-coop-win-p2.map`（完整每角色版）：30 s 由 Alliance 所属触发 `01000930` 启用 `01000855` → 动作 67。
+- `all01umd-coop-custom-owner-win.map`（自定义国家端到端）：地图 `[Countries]` 新增 `CoopUSA1/CoopUSA2`、`[Houses]` 新增两条对应所属方；owner=`CoopUSA2` 的触发靠“失去建造厂”事件（无基地，立即满足）启用 30 s 延时，再启用 `01000855` → 动作 67。它验证地图国家合并后自定义国家 owner 能被真实解析。
+
+采集目标新增 `--vera-outcome real`：不注入任何 outcome，等地图自己的触发链打开合作结果页；证据记录 `kind=real`、`injected_frame=null`、结果页 `victory/rows/can_continue/native_frame/state_hash` 和 PNG，并新增 `Trigger enable action` / `Trigger outcome action` 日志作为触发链 trace。脚本在 `.scratch/vera-coop-live/build_acceptance_maps.py` 与 `run-acceptance.ps1`（仅 scratch）。
+
+本地双进程结果（证据在 `.scratch/vera-coop-live/run1/evidence-0.1.21/`）：
+
+| 变体 | 两端结果 | 行/can_continue | native frame | 两端 state_hash | 触发链 trace |
+|---|---|---|---|---|---|
+| real-fail-p1 | victory=false | 2 / false | 364 | 相同 | 01000849 @304 启用 01000851 → 68 @364 |
+| real-win-p1 | victory=true | 2 / false | 630 | 相同 | 01000910 @450 启用 01000855 → 67 @630 |
+| real-fail-p2 | victory=false | 2 / false | 364 | 相同 | 01000922 @304 启用 01000924 → 68 @364 |
+| real-win-p2 | victory=true | 2 / false | 630 | 相同 | 01000930 @450 启用 01000855 → 67 @630 |
+| real-custom-owner-win | victory=true | 2 / false | 630 | 相同 | 自定义国家 01000940 @0 启用 01000942 → 450 启用 01000855 → 67 @630 |
+
+五个变体均两端同帧进结果页、各出一张 `vera-result-real-<win|lose>.png`，Quit 后正常退出；这补上了 0.1.20 遗留的“真实地图触发器 → 团队结局”运行时证据，也验证了地图自定义国家 owner 的真实解析。验收图为 scratch 产物，不提交；结算页 ready/Continue 与下一关仍是后续片。
 
 ### `0.1.20-dev`（已提交）
 
