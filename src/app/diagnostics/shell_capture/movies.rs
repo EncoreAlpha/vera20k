@@ -281,6 +281,14 @@ impl MoviesCapture {
         }
     }
 
+    /// Checkpoint screenshots a nested live route requested.
+    pub(super) fn take_screenshot_requests(&mut self) -> Vec<String> {
+        self.lan
+            .as_mut()
+            .map(lan::LanCapture::take_screenshot_requests)
+            .unwrap_or_default()
+    }
+
     pub(super) fn timeout(&self) -> Duration {
         if let Some(lan) = &self.lan {
             return lan.timeout();

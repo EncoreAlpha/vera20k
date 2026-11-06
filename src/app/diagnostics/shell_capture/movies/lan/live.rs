@@ -38,7 +38,7 @@ fn setup_control_at_row(
     }
     anyhow::bail!("setup page navigation did not reach the participant")
 }
-use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport};
+use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport, VeraCoopOutcome};
 use crate::net::udp::UdpBindConfig;
 use crate::ui::multiplayer_setup::{SetupAction, SetupColumn};
 use std::collections::{BTreeMap, BTreeSet};
@@ -405,7 +405,42 @@ pub(super) struct LiveLanCapture {
     pair_linger_wall: Option<Instant>,
     /// The peer-House control probe, recorded once after GO.
     vera_probe: Option<Value>,
+    /// `--vera-outcome`: the mission outcome to inject after the prefix.
+    vera_outcome: Option<VeraCoopOutcome>,
+    vera_outcome_phase: VeraOutcomePhase,
+    vera_outcome_evidence: Option<Value>,
+    vera_outcome_injected_frame: Option<u32>,
+    vera_outcome_dialog_frame: Option<u32>,
+    /// Render frames observed since the injection (the shared sim may be done).
+    vera_outcome_render_frames: u32,
+    /// House names the houses-mode injection marked defeated.
+    vera_outcome_houses: Option<Value>,
+    /// Receipt built while an outcome run's world and roster were resident.
+    final_receipt: Option<Value>,
+    /// Checkpoint screenshot labels this capture wants written.
+    screenshot_requests: Vec<String>,
 }
+
+/// The VERA outcome diagnostic's own small state machine. Every step reads the
+/// shared committed frame, so both peers inject at the same native frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VeraOutcomePhase {
+    /// Wait for the mission prefix, then ask for its screenshot.
+    Prefix,
+    /// The prefix screenshot is queued; inject at the fixed frame.
+    Inject,
+    /// Win/lose: wait for BC6. Houses: wait out the continued-mission window.
+    Observe,
+    /// The BC6 page is up; quit after a short hold.
+    Quit,
+}
+
+/// Both peers use the same absolute frame so the injected outcome enters the
+/// shared world at the same native frame, not at a per-process readiness edge.
+const VERA_OUTCOME_MISSION_SHOT_FRAME: u32 = 1_100;
+const VERA_OUTCOME_INJECT_FRAME: u32 = 1_400;
+/// Render frames the continued mission must stay alive after a House loss.
+const VERA_OUTCOME_CONTINUED_FRAMES: u32 = 150;
 
 impl LiveLanCapture {
     pub(super) fn new(target: LanTarget, config: LiveLanConfig) -> Self {
@@ -462,6 +497,7 @@ impl LiveLanCapture {
             .as_ref()
             .and_then(|config| config.setup_crash)
             .map(setup_crash::SetupCrashCapture::new);
+        let vera_outcome = config.as_ref().and_then(|config| config.vera_outcome);
         Self {
             target,
             config,
@@ -492,6 +528,15 @@ impl LiveLanCapture {
             pair_linger_at: None,
             pair_linger_wall: None,
             vera_probe: None,
+            vera_outcome,
+            vera_outcome_phase: VeraOutcomePhase::Prefix,
+            vera_outcome_evidence: None,
+            vera_outcome_injected_frame: None,
+            vera_outcome_dialog_frame: None,
+            vera_outcome_render_frames: 0,
+            vera_outcome_houses: None,
+            final_receipt: None,
+            screenshot_requests: Vec::new(),
             guest_watched: false,
             sides: 0,
             cooperative: target.live_cooperative().then(|| {
@@ -1489,8 +1534,24 @@ impl LiveLanCapture {
             }
             return Ok(());
         }
+        // After the injection the mission owner retires the world; the result
+        // tail runs on render frames so it does not depend on another sim tick.
+        if self.vera_outcome.is_some()
+            && matches!(
+                self.vera_outcome_phase,
+                VeraOutcomePhase::Observe | VeraOutcomePhase::Quit
+            )
+        {
+            #[cfg(feature = "dev-overlays")]
+            {
+                self.finish_vera_outcome(state)?;
+                return Ok(());
+            }
+            #[cfg(not(feature = "dev-overlays"))]
+            anyhow::bail!("--vera-outcome requires a dev-overlays build");
+        }
         ensure!(
-            state.frontend.screen == GameScreen::InGame,
+            state.frontend.screen == GameScreen::InGame || self.vera_outcome.is_some(),
             "live LAN match left gameplay before completion"
         );
         if self.battle.is_none() && self.mass.is_none() && self.latency.is_none() {
@@ -1519,6 +1580,7 @@ impl LiveLanCapture {
             LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
         ) && self.actor.is_some()
             && self.pair_linger_at.is_none()
+            && self.vera_outcome.is_none()
             && committed >= self.required_frames() + 600
         {
             anyhow::bail!(
@@ -1588,11 +1650,7 @@ impl LiveLanCapture {
             self.simulation_hashes =
                 recorded_simulation_hashes(state, Some(u64::from(required_frames)))?;
         }
-        let live = state
-            .match_state
-            .live_network
-            .as_ref()
-            .context("real live transport")?;
+        let live = state.match_state.live_network.as_ref();
         // A LAN battle ends at its own committed observation prefix. The peer
         // can write that same prefix and exit before our next render; waiting
         // for its final advertisement races that ordinary transport teardown.
@@ -1606,15 +1664,25 @@ impl LiveLanCapture {
                 self.target,
                 LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
             );
-        ensure!(
-            lan_battle_prefix || vera_pair_lingering || live.peers().len() + 1 == active_players,
-            "live diagnostic peer disappeared"
-        );
-        let wait = format!("{:?}", live.wait_info());
-        if self.last_wait.as_deref() != Some(&wait) {
-            self.route
-                .push(json!({"render_frame":frame,"native_frame":committed,"wait":wait}));
-            self.last_wait = Some(wait);
+        // A VERA outcome run keeps observing after the result dialog has taken
+        // the LIVE transport into the co-op round owner, so the ordinary
+        // transport checks apply only while it is still present.
+        if let Some(live) = live {
+            ensure!(
+                lan_battle_prefix
+                    || vera_pair_lingering
+                    || self.vera_outcome.is_some()
+                    || live.peers().len() + 1 == active_players,
+                "live diagnostic peer disappeared"
+            );
+            let wait = format!("{:?}", live.wait_info());
+            if self.last_wait.as_deref() != Some(&wait) {
+                self.route
+                    .push(json!({"render_frame":frame,"native_frame":committed,"wait":wait}));
+                self.last_wait = Some(wait);
+            }
+        } else {
+            ensure!(self.vera_outcome.is_some(), "real live transport");
         }
         if let Some(latency) = self.latency.as_mut() {
             if latency.step(state, required_frames)? {
@@ -1704,6 +1772,17 @@ impl LiveLanCapture {
             self.stopped = true;
             self.actions
                 .push(json!({"native_frame":committed,"input":"Stop","actor":actor}));
+        }
+        // The outcome run reuses the prefix inputs above and then injects its
+        // mission result; it never takes the ordinary completion branch.
+        if self.vera_outcome.is_some() {
+            #[cfg(feature = "dev-overlays")]
+            {
+                self.step_vera_outcome(state, committed)?;
+                return Ok(());
+            }
+            #[cfg(not(feature = "dev-overlays"))]
+            anyhow::bail!("--vera-outcome requires a dev-overlays build");
         }
         let live = state
             .match_state
@@ -1808,6 +1887,236 @@ impl LiveLanCapture {
             "peer_gone": peer_gone,
         }));
         true
+    }
+
+    /// Whether this capture injects a VERA mission outcome.
+    pub(super) fn vera_outcome_enabled(&self) -> bool {
+        self.vera_outcome.is_some()
+    }
+
+    /// Checkpoint screenshot labels requested since the last drain.
+    pub(super) fn take_screenshot_requests(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.screenshot_requests)
+    }
+
+    fn request_screenshot(&mut self, label: impl Into<String>) {
+        self.screenshot_requests.push(label.into());
+    }
+
+    /// The VERA outcome diagnostic: keep the mission prefix evidence, inject
+    /// one outcome through the same production owner a map action reaches,
+    /// then observe the result dialog (or the continued mission). Both peers
+    /// inject at the same absolute committed frame, so the shared world sees
+    /// one deterministic mutation.
+    #[cfg(feature = "dev-overlays")]
+    fn step_vera_outcome(&mut self, state: &mut AppState, committed: u32) -> Result<()> {
+        use crate::sim::house_state::HouseOutcomeKind;
+
+        let outcome = self.vera_outcome.context("VERA outcome diagnostic")?;
+        let kind = outcome.as_str();
+        match self.vera_outcome_phase {
+            VeraOutcomePhase::Prefix => {
+                if committed >= VERA_OUTCOME_MISSION_SHOT_FRAME {
+                    ensure!(
+                        self.checksums.len() >= self.required_frames() as usize
+                            && self.stopped
+                            && self.simple_inputs_applied()
+                            && self.observed_movement
+                            && self.stop_observation.position().is_some(),
+                        "VERA outcome prefix was incomplete before its screenshot: frame={committed}, checksums={}/{}, stopped={}, inputs={}, moved={}, stop_settled={}",
+                        self.checksums.len(),
+                        self.required_frames(),
+                        self.stopped,
+                        self.simple_inputs_applied(),
+                        self.observed_movement,
+                        self.stop_observation.position().is_some()
+                    );
+                    self.request_screenshot("vera-mission");
+                    // Build the receipt while the world and its roster are still
+                    // resident; the outcome run retires the match before exiting.
+                    self.final_receipt = Some(self.vera_receipt(state)?);
+                    self.vera_outcome_phase = VeraOutcomePhase::Inject;
+                    self.event(
+                        committed,
+                        "VERA outcome: prefix complete; mission screenshot queued",
+                    );
+                }
+            }
+            VeraOutcomePhase::Inject => {
+                if committed >= VERA_OUTCOME_INJECT_FRAME {
+                    let runtime = state
+                        .match_state
+                        .sim_runtime
+                        .as_mut()
+                        .context("live simulation")?;
+                    // Direct field projections keep the rules borrow disjoint
+                    // from the mutable simulation borrow.
+                    let rules = &runtime.resources.rules;
+                    match outcome {
+                        VeraCoopOutcome::Win => {
+                            runtime.simulation.dev_trigger_current_house_outcome(
+                                &rules,
+                                HouseOutcomeKind::Victory,
+                            );
+                        }
+                        VeraCoopOutcome::Lose => {
+                            runtime.simulation.dev_trigger_current_house_outcome(
+                                &rules,
+                                HouseOutcomeKind::Defeat,
+                            );
+                        }
+                        VeraCoopOutcome::HouseLoss => {
+                            let owners = runtime.simulation.player_outcome_viewpoints();
+                            let marked: Vec<String> = owners
+                                .iter()
+                                .map(|owner| {
+                                    runtime.simulation.interner().resolve(*owner).to_owned()
+                                })
+                                .collect();
+                            for owner in owners {
+                                runtime.simulation.dev_force_house_defeat(owner, &rules);
+                            }
+                            self.vera_outcome_houses = Some(json!(marked));
+                        }
+                    }
+                    self.vera_outcome_injected_frame = Some(committed);
+                    self.vera_outcome_phase = VeraOutcomePhase::Observe;
+                    self.vera_outcome_render_frames = 0;
+                    self.event(
+                        committed,
+                        match outcome {
+                            VeraCoopOutcome::Win => "VERA outcome: team victory injected",
+                            VeraCoopOutcome::Lose => "VERA outcome: team defeat injected",
+                            VeraCoopOutcome::HouseLoss => {
+                                "VERA outcome: every player House marked defeated"
+                            }
+                        },
+                    );
+                }
+            }
+            VeraOutcomePhase::Observe | VeraOutcomePhase::Quit => {}
+        }
+        Ok(())
+    }
+
+    /// After the injection the app retires the mission on its own; this tail
+    /// only observes the result dialog (or the continued mission) in render
+    /// frames, so it keeps running while the shared simulation is paused.
+    #[cfg(feature = "dev-overlays")]
+    fn finish_vera_outcome(&mut self, state: &mut AppState) -> Result<()> {
+        self.vera_outcome_render_frames = self.vera_outcome_render_frames.saturating_add(1);
+        let outcome = self.vera_outcome.context("VERA outcome diagnostic")?;
+        let kind = outcome.as_str();
+        let render_frame = self.vera_outcome_render_frames;
+        match self.vera_outcome_phase {
+            VeraOutcomePhase::Observe => match outcome {
+                VeraCoopOutcome::Win | VeraCoopOutcome::Lose => {
+                    if let Some(page) = state.frontend.coop_score_page.as_ref() {
+                        let victory = page.victory;
+                        ensure!(
+                            victory == (outcome == VeraCoopOutcome::Win),
+                            "VERA Coop result dialog reported the wrong verdict"
+                        );
+                        ensure!(
+                            !page.model.can_continue,
+                            "VERA Coop's first result dialog must not offer Continue"
+                        );
+                        self.vera_outcome_evidence = Some(json!({
+                            "kind": kind,
+                            "injected_frame": self.vera_outcome_injected_frame,
+                            "dialog": {
+                                "victory": victory,
+                                "rows": page.model.rows.len(),
+                                "can_continue": page.model.can_continue,
+                                "render_frame": render_frame,
+                            },
+                        }));
+                        self.request_screenshot(format!("vera-result-{kind}"));
+                        if let (Some(receipt), Some(evidence)) = (
+                            self.final_receipt.as_mut(),
+                            self.vera_outcome_evidence.as_ref(),
+                        ) {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.event(
+                            render_frame,
+                            "VERA outcome: cooperative result dialog opened",
+                        );
+                        self.vera_outcome_dialog_frame = Some(render_frame);
+                        self.vera_outcome_phase = VeraOutcomePhase::Quit;
+                    } else {
+                        ensure!(
+                            render_frame < 900,
+                            "VERA Coop result dialog did not open after the injected outcome"
+                        );
+                    }
+                }
+                VeraCoopOutcome::HouseLoss => {
+                    ensure!(
+                        state.frontend.screen == GameScreen::InGame
+                            && state.frontend.coop_score_page.is_none()
+                            && state.match_state.scenario_exit.is_none(),
+                        "VERA Coop ended after every player House was marked defeated"
+                    );
+                    if render_frame >= VERA_OUTCOME_CONTINUED_FRAMES {
+                        let continued_native_frame = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.session().binary_frame());
+                        self.vera_outcome_evidence = Some(json!({
+                            "kind": kind,
+                            "injected_frame": self.vera_outcome_injected_frame,
+                            "continued_render_frames": render_frame,
+                            "continued_native_frame": continued_native_frame,
+                            "marked_houses": self.vera_outcome_houses,
+                            "mission_running": true,
+                        }));
+                        self.request_screenshot("vera-continued");
+                        if let (Some(receipt), Some(evidence)) = (
+                            self.final_receipt.as_mut(),
+                            self.vera_outcome_evidence.as_ref(),
+                        ) {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.event(
+                            render_frame,
+                            "VERA outcome: mission kept running after every player House was marked defeated",
+                        );
+                        self.phase = Phase::Finished;
+                    }
+                }
+            },
+            VeraOutcomePhase::Quit => {
+                let opened = self
+                    .vera_outcome_dialog_frame
+                    .context("VERA result dialog frame")?;
+                if render_frame >= opened.saturating_add(4) {
+                    crate::app::cooperative_round::apply_action(
+                        state,
+                        crate::ui::coop_score_shell::CoopScoreAction::Quit,
+                    );
+                    if let Some(evidence) = self.vera_outcome_evidence.as_mut()
+                        && let Some(object) = evidence.as_object_mut()
+                    {
+                        object.insert("quit_render_frame".to_owned(), json!(render_frame));
+                    }
+                    if let (Some(receipt), Some(evidence)) = (
+                        self.final_receipt.as_mut(),
+                        self.vera_outcome_evidence.as_ref(),
+                    ) {
+                        receipt["vera_outcome"] = evidence.clone();
+                    }
+                    self.event(
+                        render_frame,
+                        "VERA outcome: Quit sent from the cooperative result dialog",
+                    );
+                    self.phase = Phase::Finished;
+                }
+            }
+            VeraOutcomePhase::Prefix | VeraOutcomePhase::Inject => {}
+        }
+        Ok(())
     }
 
     fn issue_move(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
@@ -2000,6 +2309,30 @@ impl LiveLanCapture {
             .map(|failure| format!("online latency measurement incomplete in {failure}"))
     }
 
+    fn vera_receipt(&self, state: &AppState) -> Result<Value> {
+        ensure!(
+            self.coop_setup_initial.is_some()
+                && self.coop_setup_final.is_some()
+                && self.startup.is_some(),
+            "live VERA Coop capture did not reach the running mission: coop_initial={}, coop_final={}, startup={}",
+            self.coop_setup_initial.is_some(),
+            self.coop_setup_final.is_some(),
+            self.startup.is_some()
+        );
+        let mut receipt = self.observed_receipt(state)?;
+        receipt["scope"] = json!(
+            "VERA Coop LAN: production host map/config commit and LAN options, both real Ready rows, mode+14 start admission, frozen role/House grants, then 300 native frames with local Move/Stop and a peer-House control probe; bounded runtime validation, not whole-match/native parity"
+        );
+        receipt["coop_setup"] = json!({
+            "initial": self.coop_setup_initial,
+            "after_guest_ready": self.coop_setup_final,
+            "start_clicked": self.coop_setup_started_frame.is_some(),
+            "start_clicked_frame": self.coop_setup_started_frame,
+        });
+        receipt["vera_coop"] = vera_coop_runtime_receipt(state, self.vera_probe.as_ref())?;
+        Ok(receipt)
+    }
+
     pub(super) fn receipt(&self, state: &AppState) -> Result<Value> {
         if let Some(crash) = &self.setup_crash {
             return crash.receipt();
@@ -2008,30 +2341,12 @@ impl LiveLanCapture {
             self.target,
             LanTarget::LiveVeraCoopHost | LanTarget::LiveVeraCoopGuest
         ) {
-            ensure!(
-                self.ready()
-                    && self.coop_setup_initial.is_some()
-                    && self.coop_setup_final.is_some()
-                    && self.startup.is_some(),
-                "live VERA Coop capture did not reach the running mission: phase={:?}, ready={}, coop_initial={}, coop_final={}, startup={}",
-                self.phase,
-                self.ready(),
-                self.coop_setup_initial.is_some(),
-                self.coop_setup_final.is_some(),
-                self.startup.is_some()
-            );
-            let mut receipt = self.observed_receipt(state)?;
-            receipt["scope"] = json!(
-                "VERA Coop LAN: production host map/config commit and LAN options, both real Ready rows, mode+14 start admission, frozen role/House grants, then 300 native frames with local Move/Stop and a peer-House control probe; bounded runtime validation, not whole-match/native parity"
-            );
-            receipt["coop_setup"] = json!({
-                "initial": self.coop_setup_initial,
-                "after_guest_ready": self.coop_setup_final,
-                "start_clicked": self.coop_setup_started_frame.is_some(),
-                "start_clicked_frame": self.coop_setup_started_frame,
-            });
-            receipt["vera_coop"] = vera_coop_runtime_receipt(state, self.vera_probe.as_ref())?;
-            return Ok(receipt);
+            // An outcome run retires the match before the process finishes, so
+            // its receipt was built while the world and roster were resident.
+            if let Some(receipt) = &self.final_receipt {
+                return Ok(receipt.clone());
+            }
+            return self.vera_receipt(state);
         }
         if let Some(run) = &self.cooperative {
             if let Some(online) = &self.rounds {

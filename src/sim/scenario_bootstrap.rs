@@ -3380,6 +3380,12 @@ pub fn install_vera_cooperative_house_authority(
     }
     sim.session
         .install_network_house_grants(source_houses, grants, local_source);
+    // The admitted mode class selects the mission-outcome semantics: the
+    // cooperative result route, trigger-owned outcomes, and no automatic
+    // multiplayer completion for VERA's authored missions. VERA's room admits
+    // no observer Houses yet, so the observer list is empty.
+    sim.session
+        .install_multiplayer_house_identity(launch.mode.class, Vec::new());
     Ok(())
 }
 

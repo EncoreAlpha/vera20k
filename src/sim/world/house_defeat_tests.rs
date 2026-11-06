@@ -1310,3 +1310,126 @@ fn the_civilian_house_is_asked_of_its_house_type() {
         );
     }
 }
+
+/// VERA Coop fixtures: two role primary Houses plus a shared House both
+/// sources control. The grant table names one primary House per source.
+fn vera_coop_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
+    use crate::sim::scenario_session::ScenarioGameMode;
+    use crate::skirmish_modes::MpModeClass;
+
+    let rules = rules(2);
+    let (mut sim, houses) = sim_with_houses(&[0, 1]);
+    sim.session.set_game_mode(ScenarioGameMode::Lan);
+    sim.session.install_network_timing(10);
+    let shared = sim.interner.intern("shared");
+    let shared_country = sim.interner.intern("Country2");
+    sim.houses.register(HouseState::new(
+        shared,
+        2,
+        Some(shared_country),
+        false,
+        0,
+        10,
+    ));
+    sim.session.install_network_house_grants_for_test(
+        vec![0, 1],
+        vec![vec![0, 2], vec![1, 2]],
+        Some(0),
+    );
+    sim.session.set_current_house_for_test(Some(houses[0]));
+    sim.session
+        .install_multiplayer_house_identity(MpModeClass::VeraCooperative, Vec::new());
+    for owner in houses.iter().chain(std::iter::once(&shared)) {
+        sim.houses
+            .get_mut(owner)
+            .unwrap()
+            .set_is_human_for_test(true);
+    }
+    (sim, houses, shared, rules)
+}
+
+#[test]
+fn vera_coop_house_loss_never_completes_the_match() {
+    use crate::sim::scenario_session::ScenarioGameMode;
+    use crate::sim::world::FrameEffects;
+    use crate::skirmish_modes::MpModeClass;
+
+    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    for owner in houses.iter().chain(std::iter::once(&shared)) {
+        sim.houses.get_mut(owner).unwrap().mark_defeated();
+    }
+    sim.complete_multiplayer_after_defeat(&rules, FrameEffects::empty());
+    assert!(
+        sim.multiplayer_decision().is_none(),
+        "VERA Coop's outcome comes from the mission, not House elimination"
+    );
+    assert!(sim.network_match_winners().is_none());
+    assert!(
+        houses.iter().all(|owner| !sim.houses[owner].has_lost()),
+        "eliminating every player House must not flag a defeat"
+    );
+
+    // An ordinary network match with the same defeats still resolves.
+    let (mut stock, stock_houses) = sim_with_houses(&[0, 1]);
+    stock.session.set_game_mode(ScenarioGameMode::Lan);
+    stock.session.install_network_timing(10);
+    stock
+        .session
+        .set_current_house_for_test(Some(stock_houses[0]));
+    stock
+        .session
+        .install_multiplayer_house_identity(MpModeClass::Battle, Vec::new());
+    for owner in &stock_houses {
+        stock
+            .houses
+            .get_mut(owner)
+            .unwrap()
+            .set_is_human_for_test(true);
+        stock.houses.get_mut(owner).unwrap().mark_defeated();
+    }
+    assert!(
+        stock.multiplayer_decision().is_some(),
+        "the ordinary multiplayer completion scan is unchanged"
+    );
+}
+
+#[test]
+fn vera_coop_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
+    use crate::sim::world::FrameEffects;
+
+    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    assert_eq!(
+        sim.player_outcome_viewpoints(),
+        houses,
+        "the shared House is not a player viewpoint"
+    );
+    let victory = PlayerOutcomeRequest::Flag {
+        kind: HouseOutcomeKind::Victory,
+        skip_timer: true,
+    };
+    assert!(sim.request_player_outcome(victory, &rules, FrameEffects::empty()));
+    for owner in &houses {
+        assert!(
+            sim.houses[owner].has_won(),
+            "a winning mission action flags every role primary House"
+        );
+    }
+    assert!(
+        !sim.houses[&shared].has_won() && !sim.houses[&shared].has_lost(),
+        "the shared House takes no player outcome"
+    );
+
+    // Action 1/2 style requests also resolve the whole team; the country
+    // parameter is not compared.
+    let (mut sim, houses, shared, rules) = vera_coop_fixture();
+    let defeat = PlayerOutcomeRequest::Country {
+        country_index: 0,
+        win_on_match: false,
+    };
+    assert!(sim.request_player_outcome(defeat, &rules, FrameEffects::empty()));
+    for owner in &houses {
+        assert!(sim.houses[owner].has_lost());
+        assert!(!sim.houses[owner].has_won());
+    }
+    assert!(!sim.houses[&shared].has_lost());
+}

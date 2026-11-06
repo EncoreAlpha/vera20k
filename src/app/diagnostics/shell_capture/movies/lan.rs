@@ -623,6 +623,15 @@ impl LanCapture {
         }
     }
     pub(super) fn timeout(&self) -> Duration {
+        if self
+            .live
+            .as_ref()
+            .is_some_and(live::LiveLanCapture::vera_outcome_enabled)
+        {
+            // The outcome runs add result-dialog teardown and Quit after the
+            // ordinary prefix; every product deadline keeps its own owner.
+            return Duration::from_secs(600);
+        }
         if self.target.online()
             || self.target.desync_failure()
             || matches!(self.target, LanTarget::LiveHost | LanTarget::LiveGuest)
@@ -4498,6 +4507,14 @@ impl LanCapture {
             && self.phase == LanPhase::Loading
             && state.frontend.screen == GameScreen::InGame
     }
+    /// Checkpoint screenshots the live route requested since the last drain.
+    pub(super) fn take_screenshot_requests(&mut self) -> Vec<String> {
+        self.live
+            .as_mut()
+            .map(live::LiveLanCapture::take_screenshot_requests)
+            .unwrap_or_default()
+    }
+
     pub(super) fn ready(&self, state: &AppState) -> Result<bool> {
         if let Some(live) = &self.live {
             return Ok(live.ready());

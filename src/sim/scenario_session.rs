@@ -1360,6 +1360,14 @@ impl ScenarioSession {
         !self.network_house_grants.is_empty()
     }
 
+    /// Each VERA Coop network source's primary House index, in source order.
+    /// The shared Houses a source additionally controls are not separate
+    /// players; mission viewpoints read this table. Empty without the grant
+    /// table.
+    pub(crate) fn cooperative_source_houses(&self) -> &[u8] {
+        &self.shared_house_sources
+    }
+
     pub(crate) fn network_house_grants_valid(&self, house_count: usize) -> bool {
         if self.network_house_grants.is_empty() {
             return true;

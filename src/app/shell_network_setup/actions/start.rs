@@ -816,6 +816,7 @@ mod tests {
         let rules = crate::rules::ruleset::RuleSet::empty_for_test();
 
         let mut launch = fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::VeraCooperative;
         launch.humans[0].raw_slot_index = Some(0);
         let mut guest = launch.humans[0].clone();
         guest.name = "Guest".into();
@@ -882,6 +883,11 @@ mod tests {
         );
         assert!(sim.session().network_source_controls_house(1, beta_index));
         assert!(sim.houses()[&neutral].is_human());
+        assert_eq!(
+            sim.session().multiplayer_mode_class(),
+            Some(crate::skirmish_modes::MpModeClass::VeraCooperative),
+            "the authored start installs the admitted mode class for the mission outcome"
+        );
     }
 
     fn fixture() -> SkirmishLaunchSession {

@@ -362,8 +362,34 @@ impl Simulation {
     /// PlayerPtr in each process. VERA represents all admitted human
     /// viewpoints in one lockstep world, through the same House flags and
     /// shared +298 timer; nonhuman House behavior is not broadened.
-    fn outcome_viewpoints(&self) -> Vec<InternedId> {
+    ///
+    /// The mission's player viewpoints: each VERA Coop role's primary House,
+    /// every human House in a stock network match, or the current House
+    /// offline. Diagnostics and result rows read this owner.
+    pub fn player_outcome_viewpoints(&self) -> Vec<InternedId> {
+        self.outcome_viewpoints()
+    }
+
+    /// VERA Coop's grant table names one primary House per network source. A
+    /// shared House another source also controls is not a separate player, so
+    /// the team's viewpoints are the source primaries, not every House marked
+    /// human.
+    pub(crate) fn outcome_viewpoints(&self) -> Vec<InternedId> {
         if self.session.game_mode().is_network() {
+            if self.session.has_network_house_grants() {
+                let mut viewpoints: Vec<InternedId> = Vec::new();
+                for &index in self.session.cooperative_source_houses() {
+                    let Some(owner) = self.houses.order().get(usize::from(index)).copied() else {
+                        continue;
+                    };
+                    if !viewpoints.contains(&owner) {
+                        viewpoints.push(owner);
+                    }
+                }
+                if !viewpoints.is_empty() {
+                    return viewpoints;
+                }
+            }
             self.houses
                 .order()
                 .iter()
@@ -549,6 +575,16 @@ impl Simulation {
     /// survivors and a human remain, else each outcome viewpoint and whether
     /// it wins.
     fn multiplayer_decision(&self) -> Option<Vec<(InternedId, bool)>> {
+        // VERA Coop's outcome comes from the authored mission's own outcome
+        // actions and the host leaving; eliminating every player House keeps
+        // the mission running, so the completion scan never resolves one.
+        if self
+            .session
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.mission_outcome_from_triggers_only())
+        {
+            return None;
+        }
         let alive: Vec<_> = self
             .houses
             .order()
@@ -727,14 +763,25 @@ impl Simulation {
     /// and TeamAI Script7/23 at6E98C9/6E98E5. All target PlayerPtr, not
     /// the caller's House. Country compares +90 with its HouseType ordinal;
     /// Flag preserves the caller's skip-timer argument (scripts pass false).
-    /// In a VERA network world the same decision runs for each represented
-    /// human viewpoint; current-only effects and app routing stay separate.
+    /// In a VERA network world the cooperative team shares one outcome, so the
+    /// same decision flags every role primary House; current-only effects and
+    /// app routing stay separate.
     pub(crate) fn request_player_outcome(
         &mut self,
         request: PlayerOutcomeRequest,
         rules: &RuleSet,
         effects: FrameEffects<'_>,
     ) -> bool {
+        // VERA Coop's authored missions decide the whole team. Original
+        // Cooperative and every other mode keep the per-PlayerPtr decision
+        // below, including its country comparison.
+        if self
+            .session
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.mission_outcome_from_triggers_only())
+        {
+            return self.request_cooperative_team_outcome(request, rules, effects);
+        }
         let mut handled = false;
         for owner in self.outcome_viewpoints() {
             let (kind, skip_timer) = match request {
@@ -785,6 +832,60 @@ impl Simulation {
         handled
     }
 
+    /// VERA Coop's team outcome: one result for every role primary House.
+    /// Authored campaign actions name PlayerPtr's country, which a cooperative
+    /// team cannot split, so action 1/67 win the whole team and 2/68 lose it;
+    /// the country parameter is not compared. Action 69 keeps whatever result
+    /// an earlier action set, exactly like the single-player arm.
+    fn request_cooperative_team_outcome(
+        &mut self,
+        request: PlayerOutcomeRequest,
+        rules: &RuleSet,
+        effects: FrameEffects<'_>,
+    ) -> bool {
+        let viewpoints = self.outcome_viewpoints();
+        if viewpoints.is_empty() {
+            return false;
+        }
+        let (kind, skip_timer) = match request {
+            PlayerOutcomeRequest::Country { win_on_match, .. } => (
+                if win_on_match {
+                    HouseOutcomeKind::Victory
+                } else {
+                    HouseOutcomeKind::Defeat
+                },
+                false,
+            ),
+            PlayerOutcomeRequest::Flag { kind, skip_timer } => (kind, skip_timer),
+            PlayerOutcomeRequest::EndScenario => {
+                if viewpoints
+                    .iter()
+                    .any(|owner| self.houses[owner].has_won() || self.houses[owner].has_lost())
+                {
+                    let frame = self.session.binary_frame() as i32;
+                    for owner in viewpoints {
+                        if let Some(house) = self.houses.get_mut(&owner) {
+                            house.resume_result_timer(frame);
+                        }
+                    }
+                    return true;
+                }
+                (HouseOutcomeKind::Victory, false)
+            }
+        };
+        for owner in viewpoints {
+            match kind {
+                HouseOutcomeKind::Victory => {
+                    self.flag_house_to_win(owner, rules, skip_timer, effects);
+                }
+                HouseOutcomeKind::Defeat => {
+                    self.flag_house_to_lose(owner, rules, skip_timer, effects);
+                }
+            }
+        }
+        true
+    }
+
     /// Diagnostic producer for a map's TAction 67/68 on the current
     /// House, through the same [`Self::request_player_outcome`] owner. Only
     /// the dev chord's capture routes reach it; shipping builds omit it.
@@ -802,6 +903,19 @@ impl Simulation {
             rules,
             FrameEffects::empty(),
         )
+    }
+
+    /// Diagnostic producer for a VERA Coop player House's defeat edge: marks
+    /// the House defeated and runs the same multiplayer completion scan a
+    /// destroyed House reaches. Only diagnostic capture routes call it;
+    /// shipping builds omit it. VERA's scan is a no-op by design, so the
+    /// mission must keep running.
+    #[cfg(feature = "dev-overlays")]
+    pub fn dev_force_house_defeat(&mut self, owner: InternedId, rules: &RuleSet) {
+        if let Some(house) = self.houses.get_mut(&owner) {
+            house.mark_defeated();
+        }
+        self.complete_multiplayer_after_defeat(rules, FrameEffects::empty());
     }
 
     /// Session `+0x300` (`0x00A8B538`), written when the current house is

@@ -32,8 +32,10 @@ use crate::app::{App, AppState, GameScreen};
 use crate::ui::coop_score_shell::{CoopScoreAction, CoopScoreModel, CoopScorePage};
 use crate::ui::lan_shell::LanChatLine;
 
-/// A network Cooperative match: the router calls the mode's `+0xA0`
-/// before GameExit (`0x0055D0C5..0x0055D0E2`, GameMode 3 or 4).
+/// A network cooperative match: the router calls the mode's `+0xA0`
+/// before GameExit (`0x0055D0C5..0x0055D0E2`, GameMode 3 or 4). VERA's
+/// authored coop mode shares the route even though its progress record is
+/// not the retail Cooperative one.
 pub(crate) fn applies(state: &AppState) -> bool {
     state.match_state.session_mode().is_network()
         && state
@@ -41,7 +43,7 @@ pub(crate) fn applies(state: &AppState) -> bool {
             .sim_runtime
             .as_ref()
             .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
-            == Some(crate::skirmish_modes::MpModeClass::Cooperative)
+            .is_some_and(|class| class.shares_cooperative_result())
 }
 
 /// Cooperative `+0xA0` (`0x005C3710`) at the terminal edge, with the
@@ -61,6 +63,16 @@ pub(crate) fn mission_ended(state: &mut AppState, elapsed_ticks: i32) {
     else {
         return;
     };
+    // VERA Coop has no Cooperative progress record: it neither writes
+    // coopsave.ini nor picks the record's next stage. Its campaign progression
+    // is the external campaign's own and belongs to the next slices.
+    if sim
+        .session()
+        .multiplayer_mode_class()
+        .is_some_and(|class| class.is_vera_cooperative())
+    {
+        return;
+    }
     let won = sim.cooperative_humans_won();
     let rows: Vec<CooperativeMissionRow> = sim
         .cooperative_score_rows()
@@ -151,14 +163,30 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
 /// one it returns false and the shell follows (`+0xA4` shows nothing).
 /// The dialog's rows are this mission's live statistics (`0x0046DA70`),
 /// read while the world is still resident.
+///
+/// VERA Coop has no retail progress record yet, so it opens the same dialog
+/// with `Continue` disabled: the rows, verdict and time come from the live
+/// simulation, and Quit returns to the shell. Ready/Continue and the next
+/// stage belong to the later slices.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
-    let Some(can_continue) = state
-        .frontend
-        .multiplayer_shell_runtime
-        .cooperative_can_continue()
-    else {
-        App::leave_mission_result_screen(state);
-        return;
+    let vera = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
+        .is_some_and(|class| class.is_vera_cooperative());
+    let can_continue = if vera {
+        false
+    } else {
+        let Some(can_continue) = state
+            .frontend
+            .multiplayer_shell_runtime
+            .cooperative_can_continue()
+        else {
+            App::leave_mission_result_screen(state);
+            return;
+        };
+        can_continue
     };
     // GameExit stopped Scenario+0x614; +0x61C holds the mission's ticks.
     let elapsed = state
@@ -170,8 +198,9 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         return;
     };
     // GameExit__Victory's tail saves the carry-over record (0x004C6180)
-    // before Start_Scenario; the defeat path saves none.
-    let saved = victory
+    // before Start_Scenario; the defeat path saves none. VERA's carry-over
+    // belongs to its own campaign progression.
+    let saved = (!vera && victory)
         .then(|| {
             state
                 .match_state
@@ -180,14 +209,18 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
                 .map(|runtime| runtime.simulation.save_campaign_carry_over())
         })
         .flatten();
-    let next_map = state
-        .frontend
-        .scenario_catalog
-        .records()
-        .get(state.frontend.multiplayer_shell_runtime.scenario_index())
-        .map(|record| record.file_name.clone());
+    let next_map = if vera {
+        None
+    } else {
+        state
+            .frontend
+            .scenario_catalog
+            .records()
+            .get(state.frontend.multiplayer_shell_runtime.scenario_index())
+            .map(|record| record.file_name.clone())
+    };
     let rows = model.rows.len();
-    let campaign_end = victory
+    let campaign_end = (!vera && victory)
         .then(|| build_campaign_end(state, model.side))
         .flatten();
     // BC6 keeps the match's route; the shared teardown then finds no match
@@ -313,14 +346,26 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         .and_then(|index| catalog.shell_maps().get(index))
         .map(|map| map.display_name.clone())
         .unwrap_or_default();
-    let mode_key = state
+    // VERA Coop's external campaign has no CSF entry for its mode row; that
+    // row's own text is its display name (the same fallback the setup shell
+    // uses), not a missing label. Stock modes keep their CSF lookup.
+    let mode_label = state
         .match_state
         .session
         .network_setup()
         .and_then(|launch| {
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
         })
-        .map_or_else(|| "GUI:None".to_owned(), |mode| mode.ui_name_key.clone());
+        .map_or_else(
+            || resolve_csf(state, "GUI:None").into_owned(),
+            |mode| {
+                if mode.class.is_vera_cooperative() {
+                    mode.ui_name_key.clone()
+                } else {
+                    resolve_csf(state, &mode.ui_name_key).into_owned()
+                }
+            },
+        );
     let description = runtime
         .cooperative_setup_view()
         .description
@@ -336,7 +381,7 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         rows,
         time,
         next_mission: map_name.clone(),
-        mode_label: resolve_csf(state, &mode_key).into_owned(),
+        mode_label,
         map_label: map_name,
         description,
         side,

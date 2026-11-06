@@ -1,8 +1,36 @@
 # VERA 合作战役开发记录
 
-这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.19-dev`（已提交：双进程 LAN 基座与首帧）；上一版本 `0.1.18-dev`。
+这是 VERA 合作战役 fork 的开发记录，不是发布品牌或正式发布说明。开发版本号：`0.1.20-dev`（已提交：任务结束的团队胜负与最小结算）；上一版本 `0.1.19-dev`。
 
 ## 当前状态
+
+### `0.1.20-dev`（已提交）
+
+本版本完成任务结束的团队胜负与最小结算闭环。合作共享胜负从“模式类等于 Cooperative”改为模式能力（`shares_cooperative_result` / `mission_outcome_from_triggers_only`）：VERA Coop 的任务胜负只来自地图触发器的 outcome 动作（1/67 胜、2/68 负；`Country` 动作的国家参数不对团队结果做过滤）或房主强制结束。主 House 全灭不再触发自动多人结算：每个角色主 House 被标为 defeated，但比赛继续。结局路由复用 `CooperativeResult`：两端各自进入 BC6 合作结果页，每名角色主 House 一行，共用 House 不另起行；首版结果页只提供“退出”，两端本地返回合作大厅。
+
+实现要点：
+
+- `Simulation::outcome_viewpoints` 在 VERA 的共享授权世界里返回每个网络 source 的主 House；结果行、胜负标记与强制结束共用这份判定，共用 House 不参与结果。普通联机仍按真人 House 选择，离线仍按当前 House。
+- `multiplayer_decision` 在 VERA Coop 返回 `None`；`complete_multiplayer_after_defeat` 只标记 House 并继续任务。
+- `request_player_outcome` 在 VERA Coop 改走团队结果：胜/负对全部角色主 House 生效，动作 69 保留先前结果；原 Cooperative 的逐 PlayerPtr 判定（含国家比较）不变。
+- BC6 页在 VERA 下固定 `can_continue=false`，不写 `coopsave.ini`、不选下一关、不生成战役完成页；Quit 走现有协作回合退出。结果页的模式标签用 VERA 模式行自身文本（不再显示 `MISSING:'VERA COOP'`）。
+- 装载器在 `install_vera_cooperative_house_authority` 里安装已准入的 mode class，使运行中的会话带上结局语义。
+- 采集目标新增 `--vera-outcome win|lose|houses`：在固定的同一 committed frame 通过生产 outcome 所有者注入（胜=动作 67、负=动作 68、houses=把每个角色主 House 判负）；并新增 PNG 检查点（任务全景、结果页、houses 继续任务后），截图写在 bundle 旁 `-shots` 目录并登记在 `capture.json.screenshots`，不进入 sim/hash。
+
+验证（本地双进程，2026-11-06；scratch 证据在 `.scratch/vera-coop-live/run1/evidence-0.1.20/`，不入库）：
+
+- win / lose：两端都进入 BC6，`victory` 分别为 true/false，行数 2、`can_continue=false`，注入帧同为 native frame 1400，Quit 后各自回到大厅；两端 300/300 帧校验和与 20 个固定帧 `state_hash` 完全一致。
+- houses：两端把 `Americans House`、`Alliance House` 标为 defeated 后没有结算页、没有退出，任务继续（截图时到 native frame 1507/1511，雷达与侧栏仍在）；`marked_houses` 与两端一致。
+- 三组各产出 4 张 PNG（host/guest × `vera-mission` + `vera-result-<win|lose>` / `vera-continued`）。
+- 定向测试：core `sim::world::house_defeat` 19、`sim::score` 15、`skirmish_modes` 11、`sim::scenario_bootstrap` 70；app `app::shell_network_setup` 23、`app::diagnostics::shell_capture` 88（均带 `VERA20K_REQUIRE_RETAIL_INI=1`）。`cargo build --profile fast --bin vera20k` 通过。
+
+尚未验证/遗留：
+
+- BC6 的 ready/Continue 槽位、下一关、失败重试归 `0.1.21/0.1.22`；本版只有 Quit。
+- VERA 结果页的“前一个任务”行与描述区仍为空，等接战役身份后补。
+- 团队胜负的运行时证据用生产注入器触发，未在真实地图触发器上跑通；触发器动作到 outcome 的路由由既有单元测试覆盖。
+- `0.1.19` 留下的“对方 House 的命令被拒”运行时断言仍未补。
+- 任务内存档/读档、单人掉线接管、房主强制结束、暂停/离场等边界规则不在本片。
 
 ### `0.1.19-dev`（已提交）
 
@@ -44,7 +72,7 @@
 分片与 DONE 标准（每片一个 `0.1.x-dev` 增量提交）：
 
 1. **`0.1.19-dev` 双进程实测基座 + 首帧修复（双进程基座已完成）**：扩 `lan-live-vera-coop-*` 诊断目标到 Start/GO/跑帧，并准备 2 人测试战役；修实测暴露的呈现侧与共享判定问题。DONE：两端进入同一关、同帧校验和与固定帧 `state_hash` 一致、各自能选中/移动自己 House 的单位、对方 House 的点击被拒、无 panic。移动与点击已达成；“对方 House 的命令被拒”运行时断言待补。
-2. **`0.1.20-dev` 任务结束（团队胜负）**：把合作共享胜负从“模式类等于 Cooperative”泛化为模式能力；VERA Coop 抑制“主 House 全灭 = 任务失败”的自动结束，胜负只来自地图触发器与房主强制结束；结束路由复用 `CooperativeResult`。DONE：win 触发器两端口同时胜利；全灭主 House 后任务继续；lose 触发器两端失败；不出现 0x108。
+2. **`0.1.20-dev` 任务结束（团队胜负，已完成）**：把合作共享胜负从“模式类等于 Cooperative”泛化为模式能力；VERA Coop 抑制“主 House 全灭 = 任务失败”的自动结束，胜负只来自地图触发器与房主强制结束；结束路由复用 `CooperativeResult`。DONE：win 触发器两端口同时胜利；全灭主 House 后任务继续；lose 触发器两端失败；不出现 0x108。
 3. **`0.1.21-dev` 结算界面与确认**：复用 `CooperativeRound`（ready 槽位与行数已参数化）；每个玩家主 House 一行，房主自动准备、客人准备，全准备后房主 Continue；VERA Coop 不写 `coopsave.ini`。DONE：两端行与时间一致；只有房主 Continue 能开下一关；Quit 全员回合作大厅；单人掉线走现有机制。
 4. **`0.1.22-dev` 下一关与战役完成**：战役身份（目录 + 摘要）带入比赛期；任务结束时按当前 Entry 从外部 campaign.ini 解析 `NextScenario`（`SkipMapSelect=yes` 且全局变量 1 时取 `AltNextScenario`），各端本地重算并核对摘要后走与首关相同的冻结开始时序；角色保留，按角色继承资金（`CarryOverMoney`/`CarryOverCap`，扩展现有 `CampaignCarryOver`）；全局变量与战役计时器沿用现有继承；`EndOfGame=yes` 则全员确认后回大厅；失败由房主选择重试本关或回大厅。DONE：第 1 关胜利后再进第 2 关且角色/资金一致；EndOfGame 回大厅；失败重试同图；摘要不一致时两端拒绝继续并提示。
 5. **`0.1.23-dev` 边界规则**：任意玩家可暂停、只有暂停者或房主可恢复、二者都掉线自动恢复；房主强制结束回大厅；任务中离场（不接管 AI、不许中途加入、最后一人离开结束房间）；难度仅房主可改且全队统一；游戏速度房主可调。DONE：状态机定向测试 + 双进程各跑一遍暂停/恢复/离场。

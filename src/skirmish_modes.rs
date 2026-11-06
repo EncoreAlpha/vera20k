@@ -44,6 +44,21 @@ impl MpModeClass {
         matches!(self, Self::VeraCooperative)
     }
 
+    /// Modes whose mission end routes through the cooperative result path
+    /// (GameExit's mode vt+8 arm and BC6, not the skirmish score dialog
+    /// `0x108`). Original Cooperative (`0x005C4EE0`) and VERA's authored coop
+    /// mode share the route even though their outcome sources differ.
+    pub const fn shares_cooperative_result(self) -> bool {
+        matches!(self, Self::Cooperative | Self::VeraCooperative)
+    }
+
+    /// VERA Coop's mission outcome comes from the map's own outcome actions
+    /// (and the host leaving), never from the multiplayer completion scan.
+    /// Eliminating every player House does not end the mission.
+    pub const fn mission_outcome_from_triggers_only(self) -> bool {
+        matches!(self, Self::VeraCooperative)
+    }
+
     /// Vtable `+0x4` and `+0x8`, which the sidebar Diplomacy button asks
     /// before choosing the mission briefing over Diplomacy in LAN/WOL
     /// (`0x00653918..0x00653938`). Only Cooperative (vtable `0x007EE27C`)
@@ -373,6 +388,18 @@ pub fn mode_by_id(modes: &[SkirmishGameMode], id: i32) -> Option<&SkirmishGameMo
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn cooperative_result_and_trigger_owned_outcomes_are_mode_capabilities() {
+        use super::MpModeClass;
+
+        assert!(MpModeClass::Cooperative.shares_cooperative_result());
+        assert!(MpModeClass::VeraCooperative.shares_cooperative_result());
+        assert!(!MpModeClass::Battle.shares_cooperative_result());
+        assert!(MpModeClass::VeraCooperative.mission_outcome_from_triggers_only());
+        assert!(!MpModeClass::Cooperative.mission_outcome_from_triggers_only());
+        assert!(!MpModeClass::Battle.mission_outcome_from_triggers_only());
+    }
 
     #[test]
     fn network_start_validation_keeps_mode_effects_and_failure_order() {

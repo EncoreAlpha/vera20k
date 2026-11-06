@@ -91,13 +91,28 @@ fn score_contenders(houses: &Houses, session: &ScenarioSession) -> Vec<InternedI
 }
 
 impl Simulation {
-    /// `0x0046DA70`/`0x0049B7E0`: one row per House that is not
-    /// `MultiplayPassive` and is human (`+0x1EC`, `0x0050B730` in GameMode
-    /// != 0), in `Houses[]` order.
+    /// `0x0046DA70`/`0x0049B7E0`: one row per human House, in `Houses[]` order.
+    /// VERA Coop's grant table names one primary House per network source, and
+    /// a shared House another source also controls is not a separate player,
+    /// so its rows follow the same role viewpoints the mission outcome uses.
     pub fn cooperative_score_rows(&self) -> Vec<CooperativeScoreRow> {
-        self.houses
-            .in_order()
-            .filter(|house| !house.multiplay_passive() && house.is_human())
+        let owners = if self
+            .session()
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.is_vera_cooperative())
+        {
+            self.outcome_viewpoints()
+        } else {
+            self.houses
+                .in_order()
+                .filter(|house| !house.multiplay_passive() && house.is_human())
+                .map(|house| house.name())
+                .collect()
+        };
+        owners
+            .into_iter()
+            .filter_map(|owner| self.houses.get(&owner))
+            .filter(|house| !house.multiplay_passive())
             .map(|house| {
                 let stats = house.stats();
                 CooperativeScoreRow {
@@ -176,9 +191,11 @@ impl Simulation {
             return false;
         }
         // GameExit's co-op arm (mode vt+8, `0x00685851..0x0068586A`) draws
-        // the empty backdrop instead of the score dialog, so Cooperative
-        // makes none of its draws.
-        if session.multiplayer_mode_class() == Some(crate::skirmish_modes::MpModeClass::Cooperative)
+        // the empty backdrop instead of the score dialog, so Cooperative and
+        // VERA Coop make none of its draws.
+        if session
+            .multiplayer_mode_class()
+            .is_some_and(|class| class.shares_cooperative_result())
         {
             return false;
         }
@@ -855,5 +872,90 @@ mod tests {
             .unwrap()
             .set_is_defeated_for_test(true);
         assert!(!sim.cooperative_humans_won(), "the enemy is not human");
+    }
+
+    #[test]
+    fn vera_coop_terminal_frame_makes_no_score_draw() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut sim = Simulation::with_seed(0x5C4E_F001);
+        sim.session.set_game_mode(ScenarioGameMode::Lan);
+        sim.session.install_multiplayer_house_identity(
+            crate::skirmish_modes::MpModeClass::VeraCooperative,
+            Vec::new(),
+        );
+        insert_house(
+            &mut sim,
+            HouseFixture {
+                name: "Alpha",
+                defeated: false,
+                passive: false,
+                score: 100,
+                units_killed: 0,
+                buildings_killed: 0,
+                units_lost: 0,
+                buildings_lost: 0,
+                built: 0,
+            },
+        );
+        let before = sim.clone_scenario_rng().state();
+        assert!(!Simulation::finalize_terminal_score_snapshot(
+            &sim.session,
+            &mut sim.scenario_rng,
+            &mut sim.terminal_score_snapshot,
+            &sim.houses
+        ));
+        assert!(sim.terminal_score_snapshot().is_none());
+        assert_eq!(sim.clone_scenario_rng().state(), before);
+    }
+
+    #[test]
+    fn vera_coop_rows_take_role_primaries_not_the_shared_house() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut sim = Simulation::with_seed(0x5C4E_F002);
+        sim.session.set_game_mode(ScenarioGameMode::Lan);
+        let mut insert = |name: &str, score: i32| {
+            insert_house(
+                &mut sim,
+                HouseFixture {
+                    name,
+                    defeated: false,
+                    passive: false,
+                    score,
+                    units_killed: 0,
+                    buildings_killed: 0,
+                    units_lost: 0,
+                    buildings_lost: 0,
+                    built: 0,
+                },
+            )
+        };
+        let host = insert("Host", 10);
+        let guest = insert("Guest", 20);
+        let shared = insert("Shared", 30);
+        sim.session.install_multiplayer_house_identity(
+            crate::skirmish_modes::MpModeClass::VeraCooperative,
+            Vec::new(),
+        );
+        sim.session.install_network_house_grants_for_test(
+            vec![0, 1],
+            vec![vec![0, 2], vec![1, 2]],
+            Some(0),
+        );
+        for owner in [host, guest, shared] {
+            sim.houses
+                .get_mut(&owner)
+                .unwrap()
+                .set_is_human_for_test(true);
+        }
+        let rows = sim.cooperative_score_rows();
+        let owners: Vec<_> = rows.iter().map(|row| row.owner).collect();
+        assert_eq!(
+            owners,
+            vec![host, guest],
+            "the shared House is not a player row"
+        );
+        let _ = shared;
     }
 }

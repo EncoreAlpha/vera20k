@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
+use image::ImageEncoder;
 use serde::Serialize;
 
 use crate::app::AppState;
@@ -1287,9 +1288,44 @@ pub(crate) struct LiveLanConfig {
     pub profile_check: bool,
     /// Written before an external LAN proxy/process fault; contains no secrets.
     pub failure_prefix_output: Option<PathBuf>,
+    /// VERA Coop only: inject one mission outcome through the production owner
+    /// after the 300-frame prefix and observe the result dialog.
+    pub vera_outcome: Option<VeraCoopOutcome>,
+}
+
+/// A VERA Coop mission outcome the diagnostic injects once, through the same
+/// production owner a map's outcome action reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VeraCoopOutcome {
+    Win,
+    Lose,
+    /// Mark every role's primary House defeated and expect the mission to keep
+    /// running.
+    HouseLoss,
+}
+
+impl VeraCoopOutcome {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Win => "win",
+            Self::Lose => "lose",
+            Self::HouseLoss => "houses",
+        }
+    }
 }
 
 impl ShellCaptureRequest {
+    /// Mid-run PNG checkpoints live beside the immutable bundle: a route can
+    /// request them after its bundle directory exists, and they never write
+    /// into the bundle's own directory.
+    fn screenshot_dir(&self) -> PathBuf {
+        let name = self
+            .output_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "capture".to_owned());
+        self.output_dir.with_file_name(format!("{name}-shots"))
+    }
     /// Only explicit native diagnostics retain the original WOL surface and
     /// BD's Accept; the live LAN and online runs play as players do.
     pub(crate) fn native_shell_ui(&self) -> bool {
@@ -1397,6 +1433,7 @@ where
     let mut lan_peer = None;
     let mut lan_map = None;
     let mut lan_setup_crash = None;
+    let mut vera_outcome = None;
     let mut online_account = None;
     let mut online_host = None;
     let mut online_map = None;
@@ -1504,6 +1541,15 @@ where
                     _ => bail!("--lan-setup-crash requires host, guest or map-host"),
                 };
                 set_once(&mut lan_setup_crash, victim, "--lan-setup-crash")?;
+            }
+            "--vera-outcome" => {
+                let outcome = match next_utf8(&mut args, "value after --vera-outcome")?.as_str() {
+                    "win" => VeraCoopOutcome::Win,
+                    "lose" => VeraCoopOutcome::Lose,
+                    "houses" => VeraCoopOutcome::HouseLoss,
+                    _ => bail!("--vera-outcome requires win, lose or houses"),
+                };
+                set_once(&mut vera_outcome, outcome, "--vera-outcome")?;
             }
             "--online-account" => set_once(
                 &mut online_account,
@@ -2049,6 +2095,24 @@ where
                 "VERA Coop host capture requires --lan-map"
             );
         }
+        if let Some(outcome) = vera_outcome {
+            ensure!(
+                matches!(
+                    checkpoint,
+                    ShellCaptureCheckpoint::Lan(
+                        movies::LanTarget::LiveVeraCoopHost | movies::LanTarget::LiveVeraCoopGuest
+                    )
+                ),
+                "--vera-outcome requires a VERA Coop live host or guest checkpoint"
+            );
+            #[cfg(not(feature = "dev-overlays"))]
+            {
+                let _ = outcome;
+                bail!("--vera-outcome requires a dev-overlays build");
+            }
+            #[cfg(feature = "dev-overlays")]
+            let _ = outcome;
+        }
         ensure!(
             lan_setup_crash.is_none()
                 || matches!(
@@ -2090,6 +2154,7 @@ where
             setup_crash: lan_setup_crash,
             profile_check,
             failure_prefix_output,
+            vera_outcome,
         })
     } else {
         ensure!(
@@ -2385,6 +2450,10 @@ pub(crate) struct ShellCaptureSession {
     score: Option<score::ScoreCapture>,
     campaign_score: Option<score::CampaignScoreCapture>,
     outcome: Option<std::result::Result<(), String>>,
+    /// Route-requested checkpoint PNGs, recorded in the final manifest.
+    screenshots: Vec<serde_json::Value>,
+    screenshot_requests: std::collections::VecDeque<String>,
+    screenshot_in_progress: Option<String>,
 }
 
 impl ShellCaptureSession {
@@ -2513,6 +2582,9 @@ impl ShellCaptureSession {
             score,
             campaign_score,
             outcome: None,
+            screenshots: Vec::new(),
+            screenshot_requests: std::collections::VecDeque::new(),
+            screenshot_in_progress: None,
         }
     }
 
@@ -2715,6 +2787,21 @@ impl ShellCaptureSession {
         {
             return Ok(false);
         }
+        // A pending checkpoint shot owns the next readback; the terminal bundle
+        // waits until the shot has been written.
+        if self.screenshot_in_progress.is_some() {
+            return Ok(false);
+        }
+        if let Some(capture) = self.movies.as_mut() {
+            for label in capture.take_screenshot_requests() {
+                self.screenshot_requests.push_back(label);
+            }
+        }
+        if let Some(label) = self.screenshot_requests.pop_front() {
+            self.screenshot_in_progress = Some(label);
+            self.readback_started = true;
+            return Ok(true);
+        }
 
         ensure!(
             !self.readback_started,
@@ -2884,6 +2971,44 @@ impl ShellCaptureSession {
         surface_format: wgpu::TextureFormat,
         pixels: &[u8],
     ) -> Result<()> {
+        // A route-requested checkpoint writes a PNG beside the bundle and keeps
+        // the capture running; only the terminal readback owns output_dir.
+        if let Some(label) = self.screenshot_in_progress.take() {
+            let expected_len = usize::try_from(
+                u64::from(self.request.width) * u64::from(self.request.height) * u64::from(4_u8),
+            )
+            .context("checkpoint shot byte length does not fit usize")?;
+            ensure!(
+                pixels.len() == expected_len,
+                "checkpoint shot BGRA8 frame length mismatch: expected {expected_len}, got {}",
+                pixels.len()
+            );
+            let mut rgba = Vec::with_capacity(pixels.len());
+            for bgra in pixels.chunks_exact(4) {
+                rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
+            }
+            let mut png = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut png).write_image(
+                &rgba,
+                self.request.width,
+                self.request.height,
+                image::ExtendedColorType::Rgba8,
+            )?;
+            let index = self.screenshots.len() + 1;
+            let file = format!("shot-{index:02}-{label}.png");
+            let dir = self.request.screenshot_dir();
+            fs::create_dir_all(&dir).with_context(|| {
+                format!("create checkpoint screenshot directory {}", dir.display())
+            })?;
+            write_new_file(&dir.join(&file), &png)?;
+            self.screenshots.push(serde_json::json!({
+                "name": label,
+                "file": file,
+                "byte_length": png.len() as u64,
+            }));
+            self.readback_started = false;
+            return Ok(());
+        }
         if self
             .campaign_score
             .as_ref()
@@ -2977,44 +3102,60 @@ impl ShellCaptureSession {
             "capture state changed before bundle write"
         );
 
-        let mut manifest_bytes = match (
+        let manifest: Result<serde_json::Value> = match (
             &self.skirmish,
             &self.movies,
             &self.score,
             &self.campaign_score,
         ) {
-            (Some(capture), _, _, _) => serde_json::to_vec_pretty(&capture.manifest(
+            (Some(capture), _, _, _) => serde_json::to_value(capture.manifest(
                 &self.request,
                 surface_format,
                 pixels,
                 self.frames_seen,
-            )),
-            (None, Some(capture), _, _) => serde_json::to_vec_pretty(&capture.manifest(
+            ))
+            .context("serialize skirmish manifest"),
+            (None, Some(capture), _, _) => capture
+                .manifest(
+                    &self.request,
+                    surface_format,
+                    pixels,
+                    self.frames_seen,
+                    state,
+                )
+                .and_then(|manifest| {
+                    serde_json::to_value(manifest).context("serialize movies manifest")
+                }),
+            (None, None, Some(capture), _) => serde_json::to_value(capture.manifest(
                 &self.request,
                 surface_format,
                 pixels,
                 self.frames_seen,
-                state,
-            )?),
-            (None, None, Some(capture), _) => serde_json::to_vec_pretty(&capture.manifest(
+            ))
+            .context("serialize score manifest"),
+            (None, None, None, Some(capture)) => serde_json::to_value(capture.manifest(
                 &self.request,
                 surface_format,
                 pixels,
                 self.frames_seen,
-            )),
-            (None, None, None, Some(capture)) => serde_json::to_vec_pretty(&capture.manifest(
-                &self.request,
-                surface_format,
-                pixels,
-                self.frames_seen,
-            )),
-            (None, None, None, None) => serde_json::to_vec_pretty(&capture_manifest(
+            ))
+            .context("serialize campaign score manifest"),
+            (None, None, None, None) => serde_json::to_value(capture_manifest(
                 &self.request,
                 surface_format,
                 pixels.len() as u64,
-            )),
+            ))
+            .context("serialize manifest"),
+        };
+        let mut manifest = manifest?;
+        if let Some(object) = manifest.as_object_mut() {
+            object.insert(
+                "screenshots".to_owned(),
+                serde_json::Value::Array(self.screenshots.clone()),
+            );
         }
-        .context("serialize shell-capture manifest")?;
+        let mut manifest_bytes =
+            serde_json::to_vec_pretty(&manifest).context("serialize shell-capture manifest")?;
         manifest_bytes.push(b'\n');
         fs::create_dir(self.request.output_dir()).with_context(|| {
             format!(
@@ -3457,6 +3598,7 @@ mod tests {
                 setup_crash: None,
                 profile_check: false,
                 failure_prefix_output: None,
+                vera_outcome: None,
             })
         );
         values[1] = "lan-live-guest".into();
