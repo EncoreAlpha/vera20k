@@ -61,7 +61,7 @@ VCE 的战役放在 VERA20k 的设置目录下：
 - `campaign.ini` 必须位于 `Maps/VeraCoop/<战役名>/` 这一层子目录中，一个子目录代表一个可被发现的战役。
 - 地图文件可以放在 `Maps/VeraCoop/` 下的任意子目录；`campaign.ini` 中的路径以 `Maps/VeraCoop/` 为根。
 - 地图必须是松散文件（`.map`），不能是 `.mix` 内的地图，也不能是随机地图生成器产生的临时地图。
-- 同一个地图只能属于一个有效战役。如果一个地图同时被两个战役列出，VCE 会拒绝选择它。
+- 同一个地图只能属于一个有效战役。如果一张地图同时被两个战役列出，VCE 会拒绝选择它。
 
 ### 最小 campaign.ini
 
@@ -96,7 +96,7 @@ EndOfGame=yes
 
 ### 启动一局
 
-1. 房主和所有玩家放好同一份 `Maps/VeraCoop/` 内容。目录名、`campaign.ini` 内容和地图字节必须一致；VCE 会核对文件身份。
+1. 房主和所有玩家放好同一份 `Maps/VeraCoop/` 内容。目录名、`campaign.ini` 内容，以及**当前所选地图**的字节必须一致；`ScenarioN` 里列出的其他地图只需在两端都存在（本局不会读取它们）。
 2. 进入 LAN 房间，把游戏模式选为 **VERA Coop**。游戏会从外部战役目录中列出可用的合作地图。
 3. 房主选择地图；客人的地图状态必须是可用（Ready），否则无法开始。
 4. 每名玩家确认角色、准备；房主开始。
@@ -119,15 +119,16 @@ EndOfGame=yes
 每个参战角色对应一张地图主 House。角色不是「随便选一个国家」：主 House、它的国家、颜色、基地和初始资金都由地图和 `campaign.ini` 决定。
 
 - 你的主 House 由 `Player1..PlayerN` 决定。
-- 每关最多允许 `PlayerCount` 名玩家；实际参战人数不能超过它。当前版本没有专门的空位 AI 接管，建议让 `PlayerCount` 与实际参战人数一致；未使用的角色 House 仍有地图 AI 行为，但不要依赖它。
-- 共享 House（例如例子里的 `French House`）由 `campaign.ini` 的 `PlayerNControl=yes` 授权给指定角色。共享 House 的单位由多个玩家共同控制，但它不会在结果页单独占一行。
+- 每关最多允许 `PlayerCount` 名玩家；实际参战人数不能超过它。当前版本没有专门的空位 AI 接管，建议让 `PlayerCount` 与实际参战人数一致。
+- 共享 House（例如例子里的 `French House`）由 `campaign.ini` 的 `PlayerNControl=yes` 授权给指定角色。共享 House 的单位由被授权的角色控制（多个角色可以同时控制），但它不会在结果页单独占一行。
 - `PlayerControl=yes` 是旧写法：只有在没有写 `Player1Control` 时它才等价于「授予角色 1」；要让多个角色都控制同一条共享 House，请显式写 `Player1Control`、`Player2Control`……
 
-原版遭遇战里，玩家选国家、游戏分配起点；VCE 没有这套流程。地图作者必须为每个角色预置基地和单位，VCE 不会自动发基地车或建造厂。
+原版遭遇战里，玩家选国家、游戏分配起点；VCE 不会按多人起点 waypoint 自动给角色分配基地。地图作者通常需要为每个角色预置基地和单位，或由触发动作生成；VCE 本身不会自动发基地车或建造厂。
 
 ### 任务中的规则
 
 - 你和队友运行同一个确定性世界。任何一端的操作都会以共享命令的形式进入同一帧。
+- 当前开发版尚未安装角色间的初始同盟：你的主 House 和其他玩家不是盟友，不会共享视野，也可能互相攻击。地图 `[Houses]` 的 `Allies=` 目前不会改变这一点；这是已知缺口。
 - 单方主 House 被打光**不会**自动判负。这个 House 会被标记为失败，但任务继续，直到地图的结局触发器动作（房主强制结束尚未实现）。
 - 结局只来自地图触发器的结局动作。原版单机地图默认的 PlayerPtr 判定不适用于 VCE。
 - 过场镜头、EVA、文字提示和输入锁默认对所有玩家生效。VCE 不做「只给某个角色看」的过滤。
@@ -146,8 +147,8 @@ LAN 大厅里的难度滑条对 VCE 可见，并且由房主统一控制：
 
 任务结束后，双方进入 BC6 合作结果页：
 
-- 每个角色主 House 占一行；共享 House 不另起一行。
-- 结果页显示胜负、行列和难度文本。
+- 每名角色主 House 一行，列出击杀、损失、建造和分数；同时显示任务时间。
+- 当前 VERA 结果页没有单独的胜利/失败标题，也不显示难度选择控件；模式标签显示 `VERA Coop`。
 - 当前开发版只提供「退出」：不提供 Continue，不进入下一关，不写战役进度。退出后回到合作大厅。
 
 结算页的 ready/Continue、下一关和失败重试仍在开发中，见「当前限制」。
@@ -157,7 +158,7 @@ LAN 大厅里的难度滑条对 VCE 可见，并且由房主统一控制：
 - WOL、CnCNet 或其他在线联机；当前只支持 LAN。
 - 任务内存档/读档；退出任务不会保存进度。
 - 任务中掉线后的 AI 接管；掉线玩家的 House 不会自动交给 AI。
-- 任务中途加入；新玩家只能在下一关或重新开局时加入（下一关本身也还没有实现）。
+- 任务中途加入；当前只能在重新开局时加入，任务内重连和下一关本身都还没有实现。
 - 房主迁移；房主退出后房间不会换主。
 - 跨关进度、失败重试和角色资金继承。
 
@@ -168,7 +169,7 @@ LAN 大厅里的难度滑条对 VCE 可见，并且由房主统一控制：
 ### 在开始之前
 
 - 地图作者不需要写脚本或编译代码，只需要按本页约定写地图 INI 和 `campaign.ini`。
-- 不要把原版遭遇战的出生点分配逻辑套过来。VCE 不使用多人起点 waypoint；角色 House 的基地由你预置。
+- 不要把原版遭遇战的出生点分配逻辑套过来。VCE 不会按多人起点 waypoint 分配角色基地；角色 House 的基地由你预置，或由触发动作生成。
 - 不要依赖地图 `[Basic] Player`、`Player1..Player4` 来决定角色。VCE 会用 `campaign.ini` 覆盖这些键；以 `campaign.ini` 为准。
 - 同一张地图上的角色 House 必须属于不同的 Country；这是 VCE 能找到每个角色触发器的前提，详见下文。
 
@@ -184,26 +185,24 @@ LAN 大厅里的难度滑条对 VCE 可见，并且由房主统一控制：
 
 [Americans House]
 Country=Americans
-Allies=Americans House,Alliance House,French House
 Credits=500
 PercentBuilt=100
 
 [Alliance House]
 Country=Alliance
-Allies=Americans House,Alliance House,French House
 Credits=500
 PercentBuilt=100
 
 [French House]
 Country=French
-Allies=Americans House,Alliance House,French House
 Credits=0
 ```
 
 要点：
 
 - `Player1`/`Player2` 指向的 House 必须出现在 `[Houses]` 注册表里。
-- 所有角色 House 互相写进 `Allies=`。VCE 不会自动把队友设为盟友；不写 `Allies=` 就没有共享视野和雷达，也容易误伤。
+- 地图原有格式可以写 `Allies=`，但当前开发版**不会**把它安装成角色间的同盟；即使写了它，角色开局也不是盟友，不会共享视野。不要依赖它。角色间初始同盟的安装仍是未完成项，见「当前限制」。
+- 所有角色 House 应使用不同的 `Country`。VCE 不会自动把队友设为盟友；当前也没有对网络场景应用地图的 `Allies=` 图。
 - `Credits=` 决定每个角色开局资金。VCE 当前不做跨关资金继承。
 - 角色 House 的 `Country` 必须互不相同。原因见下一节。
 
@@ -228,7 +227,7 @@ ROLE2_FAIL=Alliance,<none>,Role2 lost yard,0,1,1,1,0
 
 ### 地图自定义国家
 
-VCE 支持地图自己注册国家（仅 VERA Coop 装载时生效；普通战役和遭遇战不会合并地图国家表）。这让你可以在不改 `rulesmd.ini` 的情况下给角色分配独立国家，例如「美国A / 美国B」。
+VCE 支持地图自己注册国家（只在 Vera Coop 装载路径合并；VERA20k 的普通战役和遭遇战路径尚未应用这一合并，仍按原有读法）。这让你可以在不改 `rulesmd.ini` 的情况下给角色分配独立国家，例如「美国A / 美国B」。
 
 在地图 INI 中新增 `[Countries]` 条目，并追加国家段：
 
@@ -267,12 +266,10 @@ Color=DarkBlue
 
 [CoopAmerica House]
 Country=CoopAmerica
-Allies=CoopAmerica House,CoopAlliance House
 Credits=500
 
 [CoopAlliance House]
 Country=CoopAlliance
-Allies=CoopAmerica House,CoopAlliance House
 Credits=500
 ```
 
@@ -296,7 +293,7 @@ VCE 不校验「每个角色都有对应条件」；如果 owner 写错或国家
 - `<Easy>/<Medium>/<Hard>`：非零表示该难度列启用；VCE 用大厅难度行选择哪一列。
 - `<Transfer>`：非零表示单位被俘获时转移触发器；它与 VCE 的合作语义无关。
 
-所属方启动的触发器按地图 `[Houses]` 的注册顺序轮询；共享 House 的授权不会改变触发器的 owner，也不会把触发器复制给其他角色。需要每个角色各有一份条件时，请显式复制触发器和事件。
+触发器按内部 House 顺序依次检查；不要依赖这一顺序设计逐帧时序。共享 House 的授权不会改变触发器的 owner，也不会把触发器复制给其他角色。需要每个角色各有一份条件时，请显式复制触发器和事件。
 
 #### 结局动作
 
@@ -308,7 +305,7 @@ VCE 的团队胜负只认以下动作：
 | `2` | 失败者是某国 | 全队失败；国家参数在 VCE 团队结算中被忽略 |
 | `67` | 宣告胜利 | 全队立即胜利（跳过结果计时） |
 | `68` | 宣告失败 | 全队立即失败（跳过结果计时） |
-| `69` | 结束任务 | 保留先前结果/计时状态；一般不需要在合作图里使用 |
+| `69` | 结束任务 | 有先前结果时恢复结果计时；没有先前结果时按胜利处理。一般不需要在合作图里使用 |
 
 合作图建议只写 `67`/`68`。`1`/`2` 的原版国家参数在 VCE 下不做过滤，容易让作者误以为「只判某个角色」。
 
@@ -402,8 +399,8 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 ### 从单机地图改造的检查清单
 
 1. 复制单机地图，保留原始文件。
-2. 在 `[Houses]` 中确认每个角色 House 都存在，并给每个角色 House 设置不同的 `Country` 和正确的 `Allies=`。
-3. 为每个角色预置基地/单位；不要依赖遭遇战起点分配。
+2. 在 `[Houses]` 中确认每个角色 House 都存在，并给每个角色 House 设置不同的 `Country`；当前版本不要依赖 `Allies=`，角色同盟尚未安装。
+3. 为每个角色预置基地/单位，或安排触发动作在开局生成；不要依赖遭遇战起点分配或 waypoint 自动生成。
 4. 写 `campaign.ini`，把 `Player1..PlayerN` 指向这些 House；需要共享 House 时加控制段。
 5. 把原版单机的胜负触发改成「每角色一份条件 + 67/68」；删除依赖 PlayerPtr 的假设。
 6. 把原版给「玩家」的增援/小队按角色复制；TeamType 的 `House=` 用角色国家。
@@ -442,7 +439,7 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 
 说明：
 
-- 空值、重复段、重复键、未知键都会被拒绝；战役文件上限 64 KiB。
+- `[Scenario:...]` 段的未知键、超出 `PlayerCount` 的 `PlayerN`，以及重复段/重复键都会被拒绝；必须填值的键不能留空。`campaign.ini` 上限为 64 KiB。
 - `PlayerNControl=yes` 只授予控制权，不会把共享 House 变成独立角色；共享 House 不占结果行。
 - 所有 `ScenarioN` 列出的地图必须在本地存在，即使本局只玩第一关。
 
@@ -452,10 +449,12 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 |---|---|---|
 | `[Countries]` | `N=<国家ID>` | 地图新增国家；已有国家保持规则索引，新值按出现顺序追加 |
 | `[<国家ID>]` | `Name=`、`UIName=`、`Side=`、`Color=` | 新国家的显示名、侧和颜色；`Side` 必须已在规则 `[Sides]` 中注册 |
-| `[Colors]` | `Name=H,S,V` | 地图新增或覆盖颜色方案，供国家 `Color=` 引用 |
+| `[Colors]` | `Name=三个数值` | 地图新增或覆盖颜色方案（按原版 `[Colors]` 的数值格式），供国家 `Color=` 引用 |
 | `[Houses]` | `N=<House 名称>` | 地图所属方注册表；角色和共享 House 都必须在这里 |
 | `[<House 名称>]` | `Country=` | 所属方的国家；角色 House 必须使用不同国家 |
-| `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Allies=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/盟友列表/颜色；沿用原版读法 |
+| `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/颜色；沿用原版读法 |
+
+`[Houses]` 里的 `Allies=` 字段仍会被读取，但当前网络场景不会把它安装成角色间的同盟；见「当前限制」。
 
 ### 触发器格式
 
@@ -483,6 +482,7 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 | 房主迁移 | 不支持 |
 | 暂停规则 | 未完成合作暂停状态机；不要依赖暂停行为 |
 | 角色跨关重选/资金继承 | 未实现（规划中） |
+| 角色间初始同盟/共享视野 | 未实现；地图 `[Houses]` 的 `Allies=` 当前不会安装到网络场景 |
 | 空位角色 AI 接管 | 未实现 |
 | `<Player @ X>` 选择器 | 不支持；请用国家 selector |
 | AllowWin（动作 15） | 网络合作下不可用；请用 67/68 |
@@ -494,14 +494,15 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 ### 故障排查
 
 - **地图不出现在 VERA Coop 列表里**：检查 `campaign.ini` 是否在 `Maps/VeraCoop/<战役>/` 下，`Entry` 是否在 `Scenario1..N` 中，地图是否真实存在且是松散 `.map`。日志里以 `ignoring invalid VERA Coop campaign` 开头的行会给出原因。
-- **客人一直不能 Ready / 地图状态为 0**：客人缺少同一份 `campaign.ini` 或地图，或者地图字节与房主不一致。VCE 不传输文件，请手动复制同一份内容。
-- **提示 `campaign is missing [Scenario:...]`**：`[Scenario:<地图路径>]` 段的写法与 `ScenarioN` 中的路径不一致。路径使用 `/`，并且大小写要匹配。
+- **客人一直不能 Ready / 地图不可用**：客人缺少同一份 `campaign.ini` 或所选地图，或者所选地图字节与房主不一致。VCE 不传输文件，请手动复制同一份内容。
+- **提示 `campaign is missing [Scenario:...]`**：`[Scenario:<地图路径>]` 段的写法与 `ScenarioN` 中的路径不一致。路径用 `/` 或 `\` 都可以，比较时忽略 ASCII 大小写；但磁盘上要确实存在对应文件。
 - **角色 House 找不到**：`campaign.ini` 的 `PlayerN` 名字必须与地图 `[Houses]` 注册表中的名称一致。
 - **第二个角色的触发器永远不生效**：两个角色 House 的 `Country=` 相同。给每个角色分配独立国家。
 - **自定义国家 owner 不触发**：检查 `[Countries]` 条目是否真的在该地图 INI 中、国家段是否存在、`campaign.ini` 是否把角色 House 指向了该国家；VCE 不会替作者校验覆盖情况。
+- **看不到队友、可以攻击队友**：当前开发版没有安装角色间的初始同盟；这不是地图写错，`Allies=` 也不会改变它。见「当前限制」。
 - **任务打光一个角色也不结束**：这是预期行为。VCE 不用「主 House 全灭」自动判负，请写 67/68 触发器。
 - **双灭后任务一直继续**：VCE 没有双灭兜底；请按「双灭和兜底」一节自己写条件。
-- **地图只在大厅可见，进游戏后没有基地**：VCE 不发放 MCV 或建造厂；请在角色 House 下预置基地。
+- **进游戏后角色没有基地**：VCE 不会发放 MCV 或建造厂；请在该角色 House 下预置基地，或由触发动作生成。
 
 ### 版本与存档兼容性
 
