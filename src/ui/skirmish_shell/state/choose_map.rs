@@ -844,6 +844,7 @@ mod tests {
     use super::*;
     use crate::skirmish_modes::stock_skirmish_modes;
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_row_is_opt_in_without_removing_registry_mode() {
         let modes = stock_skirmish_modes();

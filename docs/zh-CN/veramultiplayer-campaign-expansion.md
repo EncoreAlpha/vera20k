@@ -46,6 +46,17 @@ VMCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然
 1. VMCE 不需要 Syringe、Phobos.dll 或 Ares.dll。不要把 VMCE 当成 Phobos 扩展去配置加载器。
 2. 所有参战玩家必须能读取同一套原版资源。VMCE 只交换战役和地图的**身份**，不传输文件。
 
+### 编译开关
+
+VMCE 是可选的编译期能力，和 Ares、Phobos、VeraX 一样不在默认构建里：
+
+```bash
+cargo build --profile fast --features vmce --bin vera20k
+cargo build --release --no-default-features --features vmce --bin vera20k
+```
+
+不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
+
 ### 战役目录
 
 VMCE 的战役放在 VERA20k 的设置目录下。**每个直接子目录是一个系列战役**，`campaign.ini`、地图和（可选的）系列 CSF 都放在该子目录内：
@@ -535,4 +546,4 @@ VMCE 仍处于开发阶段。不同开发版本之间的任务内存档、网络
 
 VERA20k 与 VMCE 是非官方的社区项目，与 Electronic Arts Inc. 没有隶属关系，也未获其认可。「Command & Conquer」「Command & Conquer: Red Alert 2」「Command & Conquer: Yuri's Revenge」是 Electronic Arts Inc. 的商标。使用本项目需要你自备合法的原版游戏文件；本项目不附带或分发原版资源。
 
-VMCE 的行为建立在对原版引擎、FA2SP 地图编辑器和社区文档的研究之上；感谢原版 YR、FA2SP、Ares、Phobos 以及所有公开地图/触发论文档的作者。本文的排版与语气参考了 Phobos 文档的写作方式，但 VMCE 与 Phobos 项目没有隶属关系。
+VMCE 的行为建立在对原版引擎、FA2SP 地图编辑器和社区文档的研究之上；感谢原版 YR、FA2SP、Ares、Phobos 以及所有公开地图/触发论文档的作者。

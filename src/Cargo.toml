@@ -45,6 +45,9 @@ phobos = []
 npatch = []
 # VERA20K's own first-party extension capability.
 verax = []
+# VERA Multiplayer Campaign Expansion, a compile-time capability like Ares and
+# Phobos: the mode row and VMCE discovery are absent unless this is enabled.
+vmce = []
 # VERA20K's opt-in bug-fix extension adopting the NPExt changelog corrections;
 # builds without it keep every native path.
 npbug = []

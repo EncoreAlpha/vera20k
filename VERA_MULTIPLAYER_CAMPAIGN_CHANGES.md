@@ -84,12 +84,13 @@ VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不
 把内部标识从含糊的 `VeraCampaign`/`Campaign` 改为 `Vmce`/`vmce_*`/`VMCE_*`，并把战役目录从“根下散落地图 + 子目录只放 `campaign.ini`”改成“每个系列一个子目录”：
 
 - 类型/模块：`MpModeClass::Vmce`、`VmceHouseAssignments`、`VmceMapConfig`、`VmceNextStage`、`VmceSeriesIdentity`；模块 `vmce_map`、`vmce_config`。旧的 `VeraCoop`/`VeraCampaign`/`coop_map`/`coop_config` 标识不再保留。
+- 新增 Cargo feature `vmce`，默认关闭，和 `ares`/`phobos`/`verax` 一样由编译期决定；不带该 feature 的构建不注册 `Multiplayer Campaign` 模式行，也不扫描 `Maps/VMCE`。
 - 模式行文案保持 **Multiplayer Campaign**；产品名仍是 VERA Multiplayer Campaign Expansion。
 - 目录硬切换为 `settings/Maps/VMCE/<系列>/`：`campaign.ini`、地图和系列 CSF 都在系列目录内，`Entry`/`ScenarioN`/`NextScenario` 相对该系列目录。旧 `Maps/VeraCampaign` 和过渡版 `Maps/Vmce` 不再读取。
 - `[Campaign] Name=<CSF 标签>` 可选；显示名优先用系列目录的 `ra2md.csf`，其次基础游戏 CSF，最后回退系列目录名。示例 `Name=Name:AD03` → 林德拉克计划。
 - 旧日志/诊断里的 “VERA Coop” 文案改为 VMCE 命名；不改变任务规则、结果页、触发器语义或普通 LAN 行为。
 
-验证：`app::shell_network_setup` 26 项、`app::shell_network_setup::vmce_map` 7 项、`app::diagnostics::shell_capture` 89 项、core `skirmish_modes` 11 项、`sim::scenario_post_map` 9 项、`sim::world::house_defeat` 21 项、`sim::scenario_bootstrap` 70 项、`ui::multiplayer_setup` 9 项通过；`cargo build --profile fast --bin vera20k` 通过。真实双进程胜利验收走 `settings/Maps/VMCE/testcampaign/`，系列显示名从该系列 `ra2md.csf` 的 `Name:AD03` 解析为「林德拉克计划」，下一关为 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash` 一致；失败验收两端 `can_continue=false`。
+验证：`app::shell_network_setup` 26 项、`app::shell_network_setup::vmce_map` 7 项、`app::diagnostics::shell_capture` 89 项、core `skirmish_modes` 11 项、`sim::scenario_post_map` 9 项、`sim::world::house_defeat` 21 项、`sim::scenario_bootstrap` 70 项、`ui::multiplayer_setup` 9 项通过；`cargo build --profile fast --bin vera20k --no-default-features` 和 `--features vmce` 都通过。真实双进程胜利验收走 `settings/Maps/VMCE/testcampaign/`，系列显示名从该系列 `ra2md.csf` 的 `Name:AD03` 解析为「林德拉克计划」，下一关为 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash` 一致；失败验收两端 `can_continue=false`。
 
 ### `0.1.21-dev` 遗留
 

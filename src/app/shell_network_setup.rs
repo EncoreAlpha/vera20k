@@ -723,6 +723,7 @@ impl App {
         // startup catalog scan does not include. Discover those records first,
         // or the restored setup reports "no eligible map" and no room opens.
         // Discovery is inert without a Vmce settings folder.
+        #[cfg(feature = "vmce")]
         refresh_vmce_entries(state);
         // VERA's compact online flow opens a mode that offers AI opponents.
         // Native diagnostic visits retain their saved mode selection.

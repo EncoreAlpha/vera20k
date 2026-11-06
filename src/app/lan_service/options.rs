@@ -1282,6 +1282,7 @@ mod tests {
         assert_eq!(guest.network_setup_capacity(), Some(30));
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_role_roster_round_trips_in_extended_host_options() {
         use crate::skirmish_launch::LaunchHumanRole;
@@ -1355,6 +1356,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_role_roster_lagging_the_local_roster_defers_instead_of_dropping() {
         use crate::skirmish_launch::LaunchHumanRole;
@@ -1823,6 +1825,7 @@ mod tests {
         assert!(old_snapshot.vmce_series.is_none());
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn received_coop_identity_prevalidation_leaves_admitted_session_unchanged() {
         use crate::skirmish_launch::LaunchHumanRole;

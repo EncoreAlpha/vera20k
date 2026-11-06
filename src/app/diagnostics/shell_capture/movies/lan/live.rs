@@ -1132,6 +1132,7 @@ impl LiveLanCapture {
                         // when its VMCE mode row is selected; the
                         // diagnostic commits the discovered Entry map directly
                         // through the normal Use Map transaction.
+                        #[cfg(feature = "vmce")]
                         crate::app::shell_network_setup::refresh_vmce_entries(state);
                     }
                     self.prepare_host_setup(

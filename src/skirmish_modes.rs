@@ -334,6 +334,7 @@ pub fn skirmish_modes_from_selected_ini(
             archive: source.to_owned(),
         })
     } else {
+        #[cfg(feature = "vmce")]
         insert_vmce_mode(&mut modes);
         Ok(modes)
     }
@@ -355,12 +356,15 @@ pub fn stock_skirmish_modes() -> Vec<SkirmishGameMode> {
             "[MultiplayerDialogSettings]\n{settings}"
         )))
     });
+    #[cfg(feature = "vmce")]
     insert_vmce_mode(&mut modes);
     modes
 }
 
+#[cfg(feature = "vmce")]
 const VMCE_MODE_ID: i32 = 0x7FFF_0000;
 
+#[cfg(feature = "vmce")]
 fn insert_vmce_mode(modes: &mut Vec<SkirmishGameMode>) {
     let mut id = VMCE_MODE_ID;
     while mode_by_id(modes, id).is_some() {
@@ -478,6 +482,14 @@ mod tests {
         assert_eq!(team.map_filter, "teamgame");
     }
 
+    #[cfg(not(feature = "vmce"))]
+    #[test]
+    fn vmce_mode_is_absent_without_the_feature() {
+        let modes = stock_skirmish_modes();
+        assert!(modes.iter().all(|mode| mode.class != MpModeClass::Vmce));
+    }
+
+    #[cfg(feature = "vmce")]
     #[test]
     fn stock_mode_list_exposes_vmce_without_replacing_original_cooperative() {
         let modes = stock_skirmish_modes();

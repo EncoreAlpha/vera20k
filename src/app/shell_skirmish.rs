@@ -435,6 +435,7 @@ impl App {
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, selected_mode_id)
                 .is_some_and(|mode| mode.class.is_vmce());
         let current_record_index = if vmce_mode {
+            #[cfg(feature = "vmce")]
             crate::app::shell_network_setup::refresh_vmce_entries(state);
             state
                 .frontend

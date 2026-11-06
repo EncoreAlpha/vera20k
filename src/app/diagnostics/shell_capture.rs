@@ -3655,6 +3655,7 @@ mod tests {
         assert!(parse_launch_args(host_without_map).is_err());
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_outcome_real_keeps_the_live_coop_host_target() {
         let output = new_output_path("vera-outcome-real");

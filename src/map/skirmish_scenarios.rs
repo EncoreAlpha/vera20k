@@ -412,6 +412,7 @@ mod tests {
         assert!(filter_records_for_mode(&records, &mode(9), false).is_empty());
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_lists_only_campaign_entries() {
         let modes = crate::skirmish_modes::stock_skirmish_modes();
@@ -434,6 +435,7 @@ mod tests {
         assert_eq!(filter_records_for_mode(&records, vera, false), vec![2]);
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_series_entries_are_private_to_the_vmce_filter() {
         let ini = IniFile::from_str("[Basic]\nName=Campaign Entry\n");

@@ -59,6 +59,9 @@ phobos = ["vera20k-core/phobos"]
 npatch = ["vera20k-core/npatch"]
 # VERA20K's own first-party extension capability; VeraX-gated chains read it.
 verax = ["vera20k-core/verax"]
+# VERA Multiplayer Campaign Expansion (VMCE), a compile-time capability like
+# Ares/Phobos: neither default nor shipping builds enable it.
+vmce = ["vera20k-core/vmce"]
 # Optional NPBUG bug-fix extension; neither default nor shipping builds enable
 # it.
 npbug = ["vera20k-core/npbug"]
