@@ -1,6 +1,6 @@
-# VERA 合作战役开发记录
+# VERA Multiplayer Campaign Expansion 开发记录
 
-本文件记录 VERA Coop Expansion（VCE）的开发里程碑、设计决定、验收证据和遗留事项，不是发布说明，也不是玩家手册。玩家安装、写图和配置方法以 [`docs/zh-CN/veracoop-expansion.md`](docs/zh-CN/veracoop-expansion.md) 为准。
+本文件记录 VERA Multiplayer Campaign Expansion（VMCE）的开发里程碑、设计决定、验收证据和遗留事项，不是发布说明，也不是玩家手册。玩家安装、写图和配置方法以 [`docs/zh-CN/veramultiplayer-campaign-expansion.md`](docs/zh-CN/veramultiplayer-campaign-expansion.md) 为准。
 
 当前开发版本：`0.1.21-dev`。0.1.21 的主要实现提交为 `5d0437cc9`（未推送）。
 
@@ -35,13 +35,13 @@
 
 已实现：
 
-- `RuleSet::merge_map_countries` 只在 VERA Coop 装载时调用：地图 `[Countries]` 追加到本次场景的 HouseType 注册表，已有国家保持原索引，新国家按地图顺序追加；对应 `[Colors]` 合并并重建颜色渐变。这样作者可以用“不同国家 + 各自 House”给每个角色写触发 owner，而不依赖 `<Player @ X>`。
+- `RuleSet::merge_map_countries` 只在 VERA Campaign 装载时调用：地图 `[Countries]` 追加到本次场景的 HouseType 注册表，已有国家保持原索引，新国家按地图顺序追加；对应 `[Colors]` 合并并重建颜色渐变。这样作者可以用“不同国家 + 各自 House”给每个角色写触发 owner，而不依赖 `<Player @ X>`。
 - 地图 `[Countries]` 合并后，角色主 House、共享 House、触发 owner 和自定义国家都能使用地图新增国家；原 Cooperative 和普通遭遇战的规则注册表与哈希不变。
 - `VeraCoopHouseAssignments` 增加冻结的 `difficulty`（0=Easy、1=Normal、2=Hard）：大厅难度由房主选择并在开局冻结，装载器安装 `ScenarioSession::vera_coop_trigger_difficulty`，触发器难度不再恒为 Normal。普通存档没有该行，stock 会话的哈希流不变。
 - `install_vera_cooperative_house_authority` 在安装命令授权和人类标记后，安装地图 `[Houses] Allies=` 的盟友图。网络遭遇战只在 GameMode 0 读地图盟友，VERA 没有 launch teams，此前角色主 House 会默认互不结盟；现在按地图原有规则结盟。
 - 审计中确认暂不做的项目：`<Player @ X>` 改为作者写自定义国家；同 Country 多角色不折叠，由作者用不同国家规避；51 黑幕、139 雷达归作者；AllowWin(15) 不作合作胜利门；事件 33 不支持，列入待议。
 
-验证：审计修复当时跑过 `rules::ruleset`、`map::houses`、`sim::scenario_session`、`sim::trigger_runtime` 和装载准入相关定向测试；五个真实触发器变体均出现 `VERA Coop authored alliances installed for ... Houses` 日志。此前的审计证据和逐项结论仍保留在 scratch。
+验证：审计修复当时跑过 `rules::ruleset`、`map::houses`、`sim::scenario_session`、`sim::trigger_runtime` 和装载准入相关定向测试；五个真实触发器变体均出现 `VERA Campaign authored alliances installed for ... Houses` 日志。此前的审计证据和逐项结论仍保留在 scratch。
 
 ### 结算 ready/Continue 与下一关
 
@@ -65,7 +65,7 @@
 
 原因：原生 `HouseClass::Update` 的自动判负门（`0x004F8E86`）只在非战役模式运行；单人战役的 GameMode 0 直接跳过，所以地图里没有单位的剧情 House 不会被判负。VERA 用 LAN 非零 GameMode 跑战役地图，旧逻辑把所有“没有单位、不是 `MultiplayPassive`”的场景 House 都判负，并发出 `TXT_PLAYER_DEFEATED`。
 
-修复：`Simulation::house_rung` 在 VERA Coop 下只让每名角色主 House（`outcome_viewpoints`）通过自动判负门；共享 House 和地图剧情 House 保持战役/触发器生命周期，不再在开局被标 defeated 或播报。角色主 House 的判负和继续任务行为不变。
+修复：`Simulation::house_rung` 在 VERA Campaign 下只让每名角色主 House（`outcome_viewpoints`）通过自动判负门；共享 House 和地图剧情 House 保持战役/触发器生命周期，不再在开局被标 defeated 或播报。角色主 House 的判负和继续任务行为不变。
 
 验证：新增 `sim::world::house_defeat` 回归 `vera_coop_does_not_auto_defeat_empty_scenario_houses`（21 项该模块测试通过）；真实双进程下一关截图不再出现六条被击败消息，下一关 native frame 60 两端 `state_hash` 仍一致。
 
@@ -124,7 +124,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 
 - 只支持 LAN；WOL/CnCNet 不支持。
 - 玩家需自行安装相同地图和 `settings/Maps/VeraCoop/<campaign>/campaign.ini`；LAN 只核对摘要，不传地图或配置。
-- 配置格式、字段、64 KiB 上限、地图必须为 loose `.map`、角色 House 必须互不相同等规则以 VCE 说明书为准。
+- 配置格式、字段、64 KiB 上限、地图必须为 loose `.map`、角色 House 必须互不相同等规则以 VMCE 说明书为准。
 - 地图 `[Countries]` 合并、`[Colors]` 合并和 `[Houses] Allies=` 安装只在 VERA 装载路径生效；地图 `[Sides]` 不合并。
 - 结果页复用原生 BC6 对话框：行数由角色主 House 数决定，但原生布局只有两行，超过两行的分数/ready 显示需要后续补。
 - `coopsave.ini` 不写；当前关卡推进只来自外部 `campaign.ini` 的 `NextScenario` 和内存状态，不保存持久跨关进度。
@@ -158,7 +158,7 @@ WOL/CnCNet 开局与身份同步、任务内存档/读档、AI 断线接管、�
 - 恢复 VERA 房间时 campaign Entry 不在目录；建房间前先发现 Entry。
 - 恢复 LAN 存档时两个座位都继承 role 0；VERA 座位默认 Random，角色只在大厅显式选择。
 - 装载画面组装对 VERA 误用 stock-offline 访问器导致 panic；改为使用冻结的 network launch 名单。
-- 装载器 fresh prefix 选择处 panic；新增 VERA Coop fresh prefix 族，按 campaign 顺序建 authored House roster，populate 只安装冻结授权。
+- 装载器 fresh prefix 选择处 panic；新增 VERA Campaign fresh prefix 族，按 campaign 顺序建 authored House roster，populate 只安装冻结授权。
 - 测试地图开场锁定输入；诊断目标等解锁后下发 Move 并记录延迟。
 - 双进程收尾竞态；先完成的一端保持传输等另一端落定。
 
@@ -196,7 +196,7 @@ VERA 额外 House 支持普通单元格点击下达移动命令：本地点击�
 | `0.1.11-dev` | 外部合作配置草稿与地图/配置身份校验；loose 地图从旁读取，MIX 地图从游戏目录或 `settings_dir/Maps` 查找；旧的每关 `.coop.ini` sidecar 和 `[Basic] PlayerX` 方案后来被 `campaign.ini` 取代，仅作历史 |
 | `0.1.10-dev` | 外部配置白名单解析：`[Basic] Player1..4` 和地图 `[Houses]` 中已有的 House 控制键；仅 map 层解析，未接房间或开局 |
 | `0.1.9-dev` | 合作大厅显示角色颜色，增加战役简报、难度和游戏速度控件；检查 800×600 画面 |
-| `0.1.8-dev` | VERA Options 增加 Coop Expansion 开关；开启后房主可选 VERA Coop，默认关闭 |
+| `0.1.8-dev` | VERA Options 增加多人战役开关；开启后房主可选 VERA Campaign，默认关闭 |
 | `0.1.7-dev` | 合作大厅复用原版侧栏布局，使预览、地图信息和按钮与底图对齐 |
 | `0.1.6-dev` | 大厅玩家/角色选择边框对齐，空的观察者占位不再显示 |
 | `0.1.5-dev` | 合作大厅独立布局：按窗口调整，角色选择对应地图所属方，按钮放在地图预览右侧 |

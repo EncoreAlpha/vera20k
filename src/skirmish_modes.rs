@@ -369,8 +369,8 @@ fn insert_vera_cooperative_mode(modes: &mut Vec<SkirmishGameMode>) {
     modes.push(SkirmishGameMode {
         class: MpModeClass::VeraCooperative,
         id,
-        ui_name_key: "VERA Coop".to_owned(),
-        tooltip_key: "VERA Coop".to_owned(),
+        ui_name_key: "VERA Campaign".to_owned(),
+        tooltip_key: "VERA Campaign".to_owned(),
         override_file: String::new(),
         map_filter: "standard".to_owned(),
         random_maps_allowed: false,
@@ -485,7 +485,7 @@ mod tests {
             .iter()
             .find(|mode| mode.class == MpModeClass::VeraCooperative)
             .expect("independent VERA Coop row");
-        assert_eq!(vera.ui_name_key, "VERA Coop");
+        assert_eq!(vera.ui_name_key, "VERA Campaign");
         assert_eq!(vera.map_filter, "standard");
         assert!(!vera.random_maps_allowed);
 

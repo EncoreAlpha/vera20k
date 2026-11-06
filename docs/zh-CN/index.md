@@ -45,7 +45,7 @@ lang: zh-CN
 
 ## 游戏模式
 
-- [VERA Coop Expansion 说明书](veracoop-expansion.md)
+- [VERA Multiplayer Campaign Expansion 说明书](veramultiplayer-campaign-expansion.md)
 
 ## 扩展与原作者
 
