@@ -20,12 +20,14 @@
 - 装载器只在 `vera_coop_startup.is_some()` 时合并，随后才解析 House roster、建 House、实例化 Tag；原 Cooperative/遭遇战规则注册表与哈希不变。
 - `VeraCoopHouseAssignments` 新增冻结的 `difficulty`（0=Easy、1=Normal、2=Hard，serde 默认 Normal）；大厅 DIFFICULTY 滑条本来就对 VeraCoop 可见且全队同步，开局面按冻结值写入 assignment，装载器在 VeraCoop 前缀里安装 `ScenarioSession::vera_coop_trigger_difficulty`，`trigger_difficulty()` 优先使用它，不再恒为 Normal。难度是冻结输入、不是地图派生，两处装载器重算比对只重算地图/角色/种子身份，保留冻结难度行。
 - 该难度行只在 VeraCoop 安装；普通存档没有该字段，`fold_identity` 的 None 分支不写任何字节，stock 会话的 hash 流保持原样。
+- `install_vera_cooperative_house_authority` 在安装命令授权和人类标记后，把地图 `[Houses] Allies=` 的盟友图安装到模拟。网络遭遇战只在 GameMode 0 读地图盟友，而 VeraCoop 没有 launch teams，此前角色主 House 默认互不结盟；现在按地图原有规则结盟。
 
 验证（2026-11-06）：
 
 - 定向测试：core `rules::ruleset::tests` 155（含地图国家合并/表现字段）、`map::houses::tests` 13（自定义国家 House 可被触发 owner 寻址）、`sim::scenario_session` 17（难度行共享/往返/stock 哈希不变）、`sim::trigger_runtime::tests` 84（含大厅难度行选 Easy 触发位）；app `vera_coop` 20（含难度为 0 的冻结装载准入回归）。全部通过。
 - `cargo build --profile fast --bin vera20k` 通过；现有 `run-pair.ps1` 双进程 LAN 冒烟（stage01，无 outcome 注入）在修复两处冻结身份比对后，两端跑进任务并“shut down cleanly”，日志出现 `VERA Coop trigger difficulty row 0`（房主默认 Easy）。
 - 验证中发现并修复：冻结难度行加入 assignment 后，装载器两处“重算 assignment 再与冻结值比较”会把默认 Normal(1) 与冻结 Easy(0) 判为身份变化；现在重算只比较地图/角色/种子，难度行保留冻结值。
+- 联盟修复后重跑 5 个真实触发器验收变体：两端仍同帧（失败 364 / 胜利 630）、state hash 一致，日志出现 `VERA Coop authored alliances installed for 12 Houses`。
 
 尚未验证/遗留：
 

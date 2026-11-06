@@ -3394,6 +3394,19 @@ pub fn install_vera_cooperative_house_authority(
     // no observer Houses yet, so the observer list is empty.
     sim.session
         .install_multiplayer_house_identity(launch.mode.class, Vec::new());
+    // Authored VERA Coop Houses follow the map's own `[Houses] Allies=` graph.
+    // Network skirmish drives diplomacy from launch teams and never reads the
+    // map graph; a cooperative campaign map has no launch teams, so install
+    // the authored graph on the same constructed roster before map objects
+    // populate (campaign GameMode 0 reads it at this point too).
+    sim.install_house_alliances(
+        crate::sim::house_diplomacy::HouseAllianceAdmission::Admitted(house_roster.alliance_map()),
+        rules,
+    );
+    log::info!(
+        "VERA Coop authored alliances installed for {} Houses",
+        house_roster.houses.len()
+    );
     Ok(())
 }
 

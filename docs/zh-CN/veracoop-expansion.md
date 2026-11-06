@@ -128,7 +128,7 @@ EndOfGame=yes
 ### 任务中的规则
 
 - 你和队友运行同一个确定性世界。任何一端的操作都会以共享命令的形式进入同一帧。
-- 当前开发版尚未安装角色间的初始同盟：你的主 House 和其他玩家不是盟友，不会共享视野，也可能互相攻击。地图 `[Houses]` 的 `Allies=` 目前不会改变这一点；这是已知缺口。
+- 角色间的初始同盟和视野由地图 `[Houses]` 的 `Allies=` 决定；VCE 在装载时会安装这张外交图。要让队友共享视野、互不攻击，请把角色 House 互相写进 `Allies=`。
 - 单方主 House 被打光**不会**自动判负。这个 House 会被标记为失败，但任务继续，直到地图的结局触发器动作（房主强制结束尚未实现）。
 - 结局只来自地图触发器的结局动作。原版单机地图默认的 PlayerPtr 判定不适用于 VCE。
 - 过场镜头、EVA、文字提示和输入锁默认对所有玩家生效。VCE 不做「只给某个角色看」的过滤。
@@ -185,24 +185,28 @@ LAN 大厅里的难度滑条对 VCE 可见，并且由房主统一控制：
 
 [Americans House]
 Country=Americans
+Allies=Americans House,Alliance House,French House
 Credits=500
 PercentBuilt=100
 
 [Alliance House]
 Country=Alliance
+Allies=Americans House,Alliance House,French House
 Credits=500
 PercentBuilt=100
 
 [French House]
 Country=French
+Allies=Americans House,Alliance House,French House
 Credits=0
 ```
 
 要点：
 
 - `Player1`/`Player2` 指向的 House 必须出现在 `[Houses]` 注册表里。
-- 地图原有格式可以写 `Allies=`，但当前开发版**不会**把它安装成角色间的同盟；即使写了它，角色开局也不是盟友，不会共享视野。不要依赖它。角色间初始同盟的安装仍是未完成项，见「当前限制」。
-- 所有角色 House 应使用不同的 `Country`。VCE 不会自动把队友设为盟友；当前也没有对网络场景应用地图的 `Allies=` 图。
+- 所有角色 House 互相写进 `Allies=`。VCE 在装载时按地图 `[Houses]` 的 `Allies=` 安装外交图；不写就不会共享视野和雷达，也容易误伤。
+- 共享 House 也要按需要写进盟友列表；VCE 不会自动把共享 House 与其他角色结盟。
+- 所有角色 House 应使用不同的 `Country`。如果两个角色共用同一个 Country，按国家写的触发器只会命中第一条 House。
 - `Credits=` 决定每个角色开局资金。VCE 当前不做跨关资金继承。
 - 角色 House 的 `Country` 必须互不相同。原因见下一节。
 
@@ -266,10 +270,12 @@ Color=DarkBlue
 
 [CoopAmerica House]
 Country=CoopAmerica
+Allies=CoopAmerica House,CoopAlliance House
 Credits=500
 
 [CoopAlliance House]
 Country=CoopAlliance
+Allies=CoopAmerica House,CoopAlliance House
 Credits=500
 ```
 
@@ -399,7 +405,7 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 ### 从单机地图改造的检查清单
 
 1. 复制单机地图，保留原始文件。
-2. 在 `[Houses]` 中确认每个角色 House 都存在，并给每个角色 House 设置不同的 `Country`；当前版本不要依赖 `Allies=`，角色同盟尚未安装。
+2. 在 `[Houses]` 中确认每个角色 House 都存在，并给每个角色 House 设置不同的 `Country` 和正确的 `Allies=`。
 3. 为每个角色预置基地/单位，或安排触发动作在开局生成；不要依赖遭遇战起点分配或 waypoint 自动生成。
 4. 写 `campaign.ini`，把 `Player1..PlayerN` 指向这些 House；需要共享 House 时加控制段。
 5. 把原版单机的胜负触发改成「每角色一份条件 + 67/68」；删除依赖 PlayerPtr 的假设。
@@ -452,9 +458,9 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 | `[Colors]` | `Name=三个数值` | 地图新增或覆盖颜色方案（按原版 `[Colors]` 的数值格式），供国家 `Color=` 引用 |
 | `[Houses]` | `N=<House 名称>` | 地图所属方注册表；角色和共享 House 都必须在这里 |
 | `[<House 名称>]` | `Country=` | 所属方的国家；角色 House 必须使用不同国家 |
-| `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/颜色；沿用原版读法 |
+| `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Allies=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/盟友列表/颜色；沿用原版读法 |
 
-`[Houses]` 里的 `Allies=` 字段仍会被读取，但当前网络场景不会把它安装成角色间的同盟；见「当前限制」。
+`[Houses]` 里的 `Allies=` 会在 VERA Coop 装载时安装成外交图；网络遭遇战本身不读它，但 VERA Coop 没有 launch teams，因此以地图写的盟友关系为准。
 
 ### 触发器格式
 
@@ -482,7 +488,6 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 | 房主迁移 | 不支持 |
 | 暂停规则 | 未完成合作暂停状态机；不要依赖暂停行为 |
 | 角色跨关重选/资金继承 | 未实现（规划中） |
-| 角色间初始同盟/共享视野 | 未实现；地图 `[Houses]` 的 `Allies=` 当前不会安装到网络场景 |
 | 空位角色 AI 接管 | 未实现 |
 | `<Player @ X>` 选择器 | 不支持；请用国家 selector |
 | AllowWin（动作 15） | 网络合作下不可用；请用 67/68 |
@@ -499,7 +504,6 @@ VCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 A
 - **角色 House 找不到**：`campaign.ini` 的 `PlayerN` 名字必须与地图 `[Houses]` 注册表中的名称一致。
 - **第二个角色的触发器永远不生效**：两个角色 House 的 `Country=` 相同。给每个角色分配独立国家。
 - **自定义国家 owner 不触发**：检查 `[Countries]` 条目是否真的在该地图 INI 中、国家段是否存在、`campaign.ini` 是否把角色 House 指向了该国家；VCE 不会替作者校验覆盖情况。
-- **看不到队友、可以攻击队友**：当前开发版没有安装角色间的初始同盟；这不是地图写错，`Allies=` 也不会改变它。见「当前限制」。
 - **任务打光一个角色也不结束**：这是预期行为。VCE 不用「主 House 全灭」自动判负，请写 67/68 触发器。
 - **双灭后任务一直继续**：VCE 没有双灭兜底；请按「双灭和兜底」一节自己写条件。
 - **进游戏后角色没有基地**：VCE 不会发放 MCV 或建造厂；请在该角色 House 下预置基地，或由触发动作生成。

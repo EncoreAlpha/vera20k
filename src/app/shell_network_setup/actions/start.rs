@@ -692,7 +692,7 @@ mod tests {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let authored = crate::rules::ini_parser::IniFile::from_str(
-            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n2=Neutral\n[Alpha]\n[Beta]\n[Neutral]\n",
+            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n2=Neutral\n[Alpha]\nAllies=Alpha,Beta,Neutral\n[Beta]\nAllies=Alpha,Beta,Neutral\n[Neutral]\nAllies=Alpha,Beta,Neutral\n",
         );
         let external = crate::rules::ini_parser::IniFile::from_str(
             "[Neutral]\nPlayerControl=yes\nPlayer2Control=yes\n",
@@ -744,6 +744,15 @@ mod tests {
         let alpha = sim.interner().get("Alpha").unwrap();
         let beta = sim.interner().get("Beta").unwrap();
         let neutral = sim.interner().get("Neutral").unwrap();
+        assert!(
+            crate::map::houses::is_allied_with(sim.house_alliances().as_map(), "Alpha", "Beta"),
+            "VERA Coop installs the map's authored House allies"
+        );
+        assert!(crate::map::houses::is_allied_with(
+            sim.house_alliances().as_map(),
+            "Beta",
+            "Neutral"
+        ));
         let alpha_index = sim.houses().index_of(alpha).unwrap();
         let beta_index = sim.houses().index_of(beta).unwrap();
         let neutral_index = sim.houses().index_of(neutral).unwrap();
@@ -781,6 +790,14 @@ mod tests {
                 .session()
                 .network_source_controls_house(0, beta_index)
         );
+        assert!(
+            crate::map::houses::is_allied_with(
+                restored.house_alliances().as_map(),
+                "Alpha",
+                "Beta"
+            ),
+            "the authored alliance graph survives snapshot restore"
+        );
 
         let mut guest_launch = launch.clone();
         guest_launch.local_player_index = 1;
@@ -807,7 +824,7 @@ mod tests {
         use crate::sim::scenario_session::ScenarioGameMode;
 
         let authored = crate::rules::ini_parser::IniFile::from_str(
-            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n2=Neutral\n[Alpha]\n[Beta]\n[Neutral]\n",
+            "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n2=Neutral\n[Alpha]\nAllies=Alpha,Beta,Neutral\n[Beta]\nAllies=Alpha,Beta,Neutral\n[Neutral]\nAllies=Alpha,Beta,Neutral\n",
         );
         let external = crate::rules::ini_parser::IniFile::from_str(
             "[Neutral]\nPlayerControl=yes\nPlayer2Control=yes\n",
@@ -875,6 +892,15 @@ mod tests {
         let alpha = sim.interner().get("Alpha").unwrap();
         let beta = sim.interner().get("Beta").unwrap();
         let neutral = sim.interner().get("Neutral").unwrap();
+        assert!(
+            crate::map::houses::is_allied_with(sim.house_alliances().as_map(), "Alpha", "Beta"),
+            "VERA Coop installs the map's authored House allies"
+        );
+        assert!(crate::map::houses::is_allied_with(
+            sim.house_alliances().as_map(),
+            "Beta",
+            "Neutral"
+        ));
         let alpha_index = sim.houses().index_of(alpha).unwrap();
         let beta_index = sim.houses().index_of(beta).unwrap();
         let neutral_index = sim.houses().index_of(neutral).unwrap();
