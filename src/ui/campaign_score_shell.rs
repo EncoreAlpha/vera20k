@@ -495,6 +495,10 @@ pub struct CampaignScoreLayout {
     pub continue_button: RectPx,
     pub warning_monitor: RectPx,
     pub controls: Vec<CampaignScoreControlRect>,
+    /// VMCE settlement rows (up to four participants) below the par/time
+    /// values, above the status line. Stock pages leave this empty.
+    #[cfg(feature = "vmce")]
+    pub vmce_rows: Vec<RectPx>,
 }
 
 /// Root window width the campaign score page was authored for.
@@ -584,6 +588,13 @@ impl CampaignScoreLayout {
             continue_button,
             warning_monitor: page.warning_monitor,
             controls,
+            #[cfg(feature = "vmce")]
+            vmce_rows: (0..4)
+                .map(|row| {
+                    let rect = child_window(85, 300 + row as i32 * 13, 257, 10);
+                    RectPx::new(rect.x, rect.y - text_shift, rect.w, rect.h)
+                })
+                .collect(),
         }
     }
 
@@ -629,6 +640,10 @@ impl CampaignScoreLayout {
         self.lower_strip = scale.scale_rect(self.lower_strip);
         for control in &mut self.controls {
             control.rect = scale.scale_rect(control.rect);
+        }
+        #[cfg(feature = "vmce")]
+        for rect in &mut self.vmce_rows {
+            *rect = scale.scale_rect(*rect);
         }
         self
     }
@@ -1406,5 +1421,34 @@ mod tests {
             ]
         );
         assert_eq!(cells[5], (0x0782, "Guest", [40, 50, 60]));
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_settlement_lays_out_four_result_rows_inside_the_dialog() {
+        let layout = CampaignScoreLayout::compute_layout(800, 600);
+        assert_eq!(layout.vmce_rows.len(), 4, "VMCE shows up to four players");
+        for (index, rect) in layout.vmce_rows.iter().enumerate() {
+            assert_eq!(rect.x, layout.vmce_rows[0].x, "rows share one column");
+            if index > 0 {
+                assert!(
+                    rect.y > layout.vmce_rows[index - 1].y,
+                    "rows are ordered top to bottom"
+                );
+            }
+            assert!(
+                rect.y + rect.h <= layout.status_help.y,
+                "each row stays above the native status line"
+            );
+            assert!(
+                rect.x >= layout.background.x
+                    && rect.x + rect.w <= layout.background.x + layout.background.w,
+                "rows stay inside the dialog background"
+            );
+        }
+        // The responsive path scales the same four rows with the page.
+        let responsive = CampaignScoreLayout::compute_responsive_layout(1024, 768);
+        assert_eq!(responsive.vmce_rows.len(), 4);
+        assert!(responsive.vmce_rows[0].w > layout.vmce_rows[0].w);
     }
 }

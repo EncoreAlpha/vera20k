@@ -113,11 +113,15 @@ pub(crate) fn render_campaign_score_page(
         .map(|key| resolve_csf(state, key).into_owned())
         .unwrap_or_default();
     let status = if status.is_empty() {
-        vmce_victory_status(state).unwrap_or_default()
+        vmce_result_status(state).unwrap_or_default()
     } else {
         status
     };
     let pressed = active.then(|| controller.pressed()).flatten();
+    // VMCE's settlement page lists its up-to-four participants; stock
+    // campaign pages have no VMCE round and therefore no rows.
+    #[cfg(feature = "vmce")]
+    let vmce_rows = crate::app::vmce_result::result_rows(state);
 
     let mut labels: Vec<PaintLabel<'static>> = Vec::new();
     let campaign_page = state
@@ -159,6 +163,21 @@ pub(crate) fn render_campaign_score_page(
                 rgb: rgb_f32(cell.rgb),
                 path_a_reveal: None,
             });
+        }
+        #[cfg(feature = "vmce")]
+        if let Some(rows) = vmce_rows.as_ref() {
+            for (index, row) in rows.iter().enumerate() {
+                let Some(rect) = layout.vmce_rows.get(index).copied() else {
+                    break;
+                };
+                labels.push(PaintLabel {
+                    text: row.clone().into(),
+                    rect,
+                    align: ShellAlign::NONE,
+                    rgb: SHELL_TEXT_RGB_ENABLED,
+                    path_a_reveal: None,
+                });
+            }
         }
     }
 
@@ -309,11 +328,14 @@ pub(crate) fn render_campaign_score_page(
 }
 
 /// The low two bits of Win32 STATIC style select left, centre or right.
-/// VMCE's victory page uses the native status static for the all-Continue
-/// handoff: the host sees how many guests are ready, a guest sees Ready or
-/// Waiting for the host. The ordinary campaign page keeps its tooltip-only
-/// status text.
-fn vmce_victory_status(state: &AppState) -> Option<String> {
+/// VMCE's settlement page uses the native status static for the all-Continue
+/// handoff while a next stage is being agreed: the host sees how many guests
+/// are ready, a guest sees Ready or Waiting for the host. A defeat or the
+/// last mission has no ready gate and keeps the status line empty.
+fn vmce_result_status(state: &AppState) -> Option<String> {
+    if !state.match_state.session.cooperative_round_can_continue() {
+        return None;
+    }
     let (ready, total, local_ready) = state
         .match_state
         .session

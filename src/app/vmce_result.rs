@@ -102,6 +102,48 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
     true
 }
 
+/// The up-to-four participant rows VMCE's settlement page shows: each
+/// connected human's name and, while a next stage is still being agreed, its
+/// ready state. Stock modes have no VMCE round and show no rows.
+pub(crate) fn result_rows(state: &AppState) -> Option<Vec<String>> {
+    let round = state.match_state.session.cooperative_round()?;
+    if !round.vera() {
+        return None;
+    }
+    let launch = state.match_state.session.network_setup()?;
+    let connected = state.match_state.session.network_connected_source_indices();
+    let waiting_for_guests = state.match_state.session.cooperative_round_can_continue();
+    let ready_label = crate::app::frontend::shell_pass::resolve_csf(state, "TXT_READY");
+    let waiting_label = crate::app::frontend::shell_pass::resolve_csf(state, "TXT_WAITING");
+    let mut rows = Vec::new();
+    for (index, human) in launch.humans.iter().enumerate() {
+        if human.is_observer() || !connected.contains(&index) {
+            continue;
+        }
+        let mut row = human.name.clone();
+        if waiting_for_guests {
+            let ready = state
+                .match_state
+                .session
+                .cooperative_round_slot_ready(index);
+            let label = if ready { &ready_label } else { &waiting_label };
+            row.push_str("  ");
+            if label.is_empty()
+                || label.as_ref() == (if ready { "TXT_READY" } else { "TXT_WAITING" })
+            {
+                row.push_str(if ready { "Ready" } else { "Waiting" });
+            } else {
+                row.push_str(label.trim());
+            }
+        }
+        rows.push(row);
+        if rows.len() == 4 {
+            break;
+        }
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+
 fn resolve_next_stage(state: &AppState) -> Option<VmceNextStage> {
     state
         .match_state
