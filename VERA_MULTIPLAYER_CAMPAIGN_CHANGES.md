@@ -92,7 +92,7 @@ VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不
 
 验证：`app::shell_network_setup` 26 项、`app::shell_network_setup::vmce_map` 7 项、`app::diagnostics::shell_capture` 89 项、core `skirmish_modes` 11 项、`sim::scenario_post_map` 9 项、`sim::world::house_defeat` 21 项、`sim::scenario_bootstrap` 70 项、`ui::multiplayer_setup` 9 项通过；`cargo build --profile fast --bin vera20k --no-default-features` 和 `--features vmce` 都通过。真实双进程胜利验收走 `settings/Maps/VMCE/testcampaign/`，系列显示名从该系列 `ra2md.csf` 的 `Name:AD03` 解析为「林德拉克计划」，下一关为 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash` 一致；失败验收两端 `can_continue=false`。
 
-0.1.21 收尾验收：真实双进程胜利进入原生 `0x103`（dialog 259），两端 `can_continue=true`、用时 00:00:23；客人 Continue 记录 ready 后，房主 Continue 进入 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash=401089763868765532`。失败进入 BC6，两端 `can_continue=false`，当前关卡名显示在“前一个任务”行。`ui::coop_score_shell` 4 项、`sim_tick` 计分模型 1 项、`sim::world::world_commands` 定向测试通过。
+0.1.21 收尾验收：真实双进程胜利进入原生 `0x103`（dialog 259），两端 `can_continue=true`、用时 00:00:23；客人 Continue 记录 ready 后，房主 Continue 进入 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash=10977164468816104864`。失败进入 BC6，两端 `can_continue=false`，当前关卡名显示在“前一个任务”行。`ui::coop_score_shell` 4 项、`sim_tick` 计分模型 1 项、`sim::world::world_commands` 定向测试通过。 Round ready 事件在 0x103 页面打开前到达的竞态也已在 `service_event` 中修复并复测。
 
 ### `0.1.21-dev` 收尾
 

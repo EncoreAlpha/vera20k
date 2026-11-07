@@ -817,14 +817,12 @@ pub(crate) fn service_event(
     state: &mut AppState,
     event: CooperativeRoundEvent,
 ) -> anyhow::Result<()> {
-    let has_victory_page = state.frontend.campaign_score_page.is_some()
-        && state
-            .match_state
-            .session
-            .cooperative_round()
-            .is_some_and(|round| round.vera());
+    // A peer's ready/begin packet can arrive while the result page is still
+    // opening, especially on the slower 0x103 path. The round phase owns
+    // those packets; the page is presentation only.
     anyhow::ensure!(
-        state.frontend.coop_score_page.is_some() || has_victory_page,
+        state.frontend.coop_score_page.is_some()
+            || state.match_state.session.cooperative_round().is_some(),
         "no co-op result dialog"
     );
     let difficulty = state
