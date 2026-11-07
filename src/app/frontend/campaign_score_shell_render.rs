@@ -113,7 +113,11 @@ pub(crate) fn render_campaign_score_page(
         .map(|key| resolve_csf(state, key).into_owned())
         .unwrap_or_default();
     let status = if status.is_empty() {
-        vmce_result_status(state).unwrap_or_default()
+        #[cfg(feature = "vmce")]
+        let fallback = vmce_result_status(state).unwrap_or_default();
+        #[cfg(not(feature = "vmce"))]
+        let fallback = String::new();
+        fallback
     } else {
         status
     };
@@ -332,6 +336,7 @@ pub(crate) fn render_campaign_score_page(
 /// handoff while a next stage is being agreed: the host sees how many guests
 /// are ready, a guest sees Ready or Waiting for the host. A defeat or the
 /// last mission has no ready gate and keeps the status line empty.
+#[cfg(feature = "vmce")]
 fn vmce_result_status(state: &AppState) -> Option<String> {
     if !state.match_state.session.cooperative_round_can_continue() {
         return None;

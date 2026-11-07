@@ -384,6 +384,7 @@ fn build_campaign_score_screen_model(
 /// VMCE's won mission uses the same campaign score `0x103` values, but its
 /// difficulty is the campaign round's cooperative difficulty rather than the
 /// single-player OptionsClass difficulty.
+#[cfg(feature = "vmce")]
 pub(crate) fn build_vmce_victory_score_model(
     state: &AppState,
     elapsed_score_ticks: i32,
