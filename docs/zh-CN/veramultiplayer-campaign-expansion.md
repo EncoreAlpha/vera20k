@@ -55,7 +55,7 @@ cargo build --profile fast --features vmce --bin vera20k
 cargo build --release --no-default-features --features vmce --bin vera20k
 ```
 
-不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
+不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`；VMCE 专属的会话状态、LAN 轮次/选项字段与大厅辅助逻辑同样按开关裁剪，非 VMCE 构建不包含它们。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
 
 ### 战役目录
 
