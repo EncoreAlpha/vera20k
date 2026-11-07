@@ -2930,6 +2930,7 @@ fn load_map_first_step(
         signed_new_ini_format,
     )?;
     let full_init_entry_mode = startup.session_mode();
+    #[cfg(feature = "vmce")]
     let mut vmce_startup = None;
     let (materialization, match_seed, match_launch_descriptor, scenario_prefix_plan, campaign) =
         match fresh_scenario_context.into_parts() {
@@ -2960,6 +2961,7 @@ fn load_map_first_step(
                     Some(startup),
                 )
             }
+            #[cfg(feature = "vmce")]
             FreshScenarioParts::Vmce {
                 physical_source,
                 signed_new_ini_format: admitted_format,
@@ -3187,6 +3189,7 @@ fn load_map_first_step(
                             // map `[Countries]` registry before Houses and
                             // triggers are built; stock modes keep the rules
                             // registry untouched.
+                            #[cfg(feature = "vmce")]
                             if vmce_startup.is_some() {
                                 rules.merge_map_countries(&map_data.ini);
                             }
@@ -3240,22 +3243,38 @@ fn load_map_first_step(
                                         &rules,
                                     )?,
                                 )
-                            } else if vmce_startup.is_some() {
-                                // VMCE authored LAN start: campaign-ordered
-                                // Houses over the effective map, no campaign
-                                // startup or stock start assignment. The frozen
-                                // lobby difficulty row gates TriggerType
-                                // difficulty flags for this start.
-                                let difficulty = vmce_startup
-                                    .as_ref()
-                                    .and_then(|startup| startup.vmce_houses())
-                                    .map_or(1, |assignments| assignments.difficulty);
-                                FreshScenarioPrefix::Vmce {
-                                    native_rules_receipt,
-                                    rules: &rules,
-                                    map_data: &map_data,
-                                    house_roster: &house_roster,
-                                    difficulty,
+                            } else if {
+                                #[cfg(feature = "vmce")]
+                                {
+                                    vmce_startup.is_some()
+                                }
+                                #[cfg(not(feature = "vmce"))]
+                                {
+                                    false
+                                }
+                            } {
+                                #[cfg(feature = "vmce")]
+                                {
+                                    // VMCE authored LAN start: campaign-ordered
+                                    // Houses over the effective map, no campaign
+                                    // startup or stock start assignment. The frozen
+                                    // lobby difficulty row gates TriggerType
+                                    // difficulty flags for this start.
+                                    let difficulty = vmce_startup
+                                        .as_ref()
+                                        .and_then(|startup| startup.vmce_houses())
+                                        .map_or(1, |assignments| assignments.difficulty);
+                                    FreshScenarioPrefix::Vmce {
+                                        native_rules_receipt,
+                                        rules: &rules,
+                                        map_data: &map_data,
+                                        house_roster: &house_roster,
+                                        difficulty,
+                                    }
+                                }
+                                #[cfg(not(feature = "vmce"))]
+                                {
+                                    unreachable!("VMCE load without the feature")
                                 }
                             } else {
                                 let campaign = campaign
@@ -3333,6 +3352,7 @@ fn load_map_first_step(
                                     Some(bound.projection())
                                 }
                                 FreshScenarioPrefix::Campaign { .. } => None,
+                                #[cfg(feature = "vmce")]
                                 FreshScenarioPrefix::Vmce { .. } => None,
                             },
                         ),
@@ -3566,6 +3586,7 @@ fn load_map_first_step(
                                                 theater_ext,
                                                 &map_data.header.theater,
                                             );
+                                            #[cfg(feature = "vmce")]
                                             let campaign_map_ini = map_data.ini.clone();
                                             let output = crate::sim::runtime::finalize_and_populate_staged_authored_scenario(
                 &mut staged_simulation,
@@ -3587,7 +3608,9 @@ fn load_map_first_step(
                 |sim, ruleset| {
                     if let Some(launch) = match_launch_descriptor.as_ref() {
                         initialize_skirmish_launch_houses(sim, &house_roster, ruleset, launch);
-                    } else if let Some(startup) = vmce_startup.as_ref() {
+                    }
+                    #[cfg(feature = "vmce")]
+                    if let Some(startup) = vmce_startup.as_ref() {
                         let assignments = startup
                             .vmce_houses()
                             .expect("admitted VMCE startup assignments");

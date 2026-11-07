@@ -423,6 +423,7 @@ pub enum FreshScenarioPrefix<'a> {
     /// the effective map, but a network Scenario session with no campaign
     /// startup. The loading callback installs the frozen sender-to-House
     /// command authority on the Houses built here.
+    #[cfg(feature = "vmce")]
     Vmce {
         native_rules_receipt: crate::rules::process_owner::NativeScenarioRulesReceipt,
         rules: &'a RuleSet,
@@ -2796,6 +2797,7 @@ impl ScenarioBootstrapRng {
                     )?;
                 Ok((simulation, None))
             }
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefix::Vmce {
                 native_rules_receipt,
                 rules,

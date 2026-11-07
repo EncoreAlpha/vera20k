@@ -35,6 +35,7 @@ impl FreshMapMaterialization {
 pub(crate) enum FreshScenarioFamily {
     StockOffline,
     Campaign,
+    #[cfg(feature = "vmce")]
     Vmce,
 }
 
@@ -60,6 +61,7 @@ enum FreshScenarioPrefixReceipt {
     Campaign {
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
     },
+    #[cfg(feature = "vmce")]
     Vmce {
         startup: std::sync::Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     },
@@ -98,6 +100,7 @@ pub(crate) enum FreshScenarioParts {
         signed_new_ini_format: i32,
         startup: crate::app::match_bootstrap::PreparedCampaignStartup,
     },
+    #[cfg(feature = "vmce")]
     Vmce {
         physical_source: LoadedMapSource,
         signed_new_ini_format: i32,
@@ -151,6 +154,7 @@ impl FreshScenarioLoadContextDescriptor {
                 },
             });
         }
+        #[cfg(feature = "vmce")]
         if let LoadingStartup::Network(prepared) = startup
             && prepared.launch_session().mode.class.is_vmce()
         {
@@ -238,6 +242,7 @@ impl FreshScenarioLoadContextDescriptor {
         };
         let mut launch = MatchLaunchDescriptor::from_resolved(session.clone())
             .map_err(|err| anyhow::anyhow!("fresh stock-offline launch is unresolved: {err}"))?;
+        #[cfg(feature = "vmce")]
         if let LoadingStartup::Network(prepared) = startup {
             match (session.mode.class.is_vmce(), prepared.vmce_houses()) {
                 (true, Some(frozen)) => {
@@ -405,6 +410,7 @@ impl FreshScenarioLoadContextDescriptor {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline { .. } => FreshScenarioFamily::StockOffline,
             FreshScenarioPrefixReceipt::Campaign { .. } => FreshScenarioFamily::Campaign,
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefixReceipt::Vmce { .. } => FreshScenarioFamily::Vmce,
         }
     }
@@ -415,6 +421,7 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer launch descriptor")
             }
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefixReceipt::Vmce { .. } => {
                 panic!("VMCE authored campaign has no stock-offline launch descriptor")
             }
@@ -430,6 +437,7 @@ impl FreshScenarioLoadContextDescriptor {
         match &self.prefix {
             FreshScenarioPrefixReceipt::StockOffline { launch, .. } => Some(launch.session()),
             FreshScenarioPrefixReceipt::Campaign { .. } => None,
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefixReceipt::Vmce { startup } => Some(startup.launch_session()),
         }
     }
@@ -454,6 +462,7 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioPrefixReceipt::Campaign { .. } => {
                 panic!("campaign has no multiplayer start projection")
             }
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefixReceipt::Vmce { .. } => {
                 panic!("VMCE authored campaign has no stock-offline start projection")
             }
@@ -490,6 +499,7 @@ impl FreshScenarioLoadContextDescriptor {
             }
             anyhow::bail!("campaign receipt cannot enter a multiplayer load");
         }
+        #[cfg(feature = "vmce")]
         if let FreshScenarioPrefixReceipt::Vmce { startup: admitted } = &self.prefix {
             if let LoadingStartup::Network(startup) = startup {
                 if startup.as_ref() != admitted.as_ref() {
@@ -560,6 +570,7 @@ impl FreshScenarioLoadContextDescriptor {
                 signed_new_ini_format: self.signed_new_ini_format,
                 startup,
             },
+            #[cfg(feature = "vmce")]
             FreshScenarioPrefixReceipt::Vmce { startup } => FreshScenarioParts::Vmce {
                 physical_source: self.physical_source,
                 signed_new_ini_format: self.signed_new_ini_format,
@@ -575,6 +586,7 @@ impl FreshScenarioLoadContextDescriptor {
             FreshScenarioParts::Campaign { .. } => {
                 panic!("campaign is not a stock-offline fixture")
             }
+            #[cfg(feature = "vmce")]
             FreshScenarioParts::Vmce { .. } => {
                 panic!("VMCE authored campaign is not a stock-offline fixture")
             }
