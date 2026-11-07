@@ -9559,6 +9559,7 @@ impl RuleSet {
     /// (`0x005118CF..0x00511928`) and `Side` resolves through the existing
     /// `[Sides]` registry. No consumers outside the Vmce loader call
     /// this, so stock scenarios keep their exact rules registry.
+    #[cfg(feature = "vmce")]
     pub fn merge_map_countries(&mut self, map_ini: &IniFile) {
         // A map can also append or override `[Colors]` entries; resolve them
         // before reading country `Color=` names, then rebuild the ramps that
@@ -12128,6 +12129,7 @@ CellSpread=0
         assert_eq!(rules.side_name(SideIdx(0)), Some("North"));
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn map_countries_append_after_rules_and_read_map_presentation() {
         let mut rules = RuleSet::from_ini(&IniFile::from_str(

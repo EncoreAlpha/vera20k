@@ -43,6 +43,7 @@ pub enum SkirmishScenarioSource {
     /// downloads the map into VERA's own Maps folder before using it.
     Online(String),
     /// VERA: an entry map from a validated external VMCE campaign.
+    #[cfg(feature = "vmce")]
     VmceSeries(String),
     Synthetic,
 }
@@ -254,10 +255,12 @@ pub fn is_valid_map(
 }
 
 pub fn record_matches_mode(record: &SkirmishScenarioRecord, mode: &SkirmishGameMode) -> bool {
+    #[cfg(feature = "vmce")]
     if mode.class.is_vmce() {
         return record.kind == SkirmishScenarioKind::ConcreteMap
             && matches!(&record.source, SkirmishScenarioSource::VmceSeries(_));
     }
+    #[cfg(feature = "vmce")]
     if matches!(&record.source, SkirmishScenarioSource::VmceSeries(_)) {
         return false;
     }

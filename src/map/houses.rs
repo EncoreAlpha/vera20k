@@ -409,6 +409,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn map_country_registry_merge_makes_custom_house_owner_addressable() {
         let map = IniFile::from_str(

@@ -431,31 +431,41 @@ impl App {
         };
         #[cfg(not(feature = "verax"))]
         let current_record_index = current_record_index;
+        #[cfg(feature = "vmce")]
         let vmce_mode =
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, selected_mode_id)
                 .is_some_and(|mode| mode.class.is_vmce());
-        let current_record_index = if vmce_mode {
+        let current_record_index = {
             #[cfg(feature = "vmce")]
-            crate::app::shell_network_setup::refresh_vmce_entries(state);
-            state
-                .frontend
-                .scenario_catalog
-                .records()
-                .iter()
-                .position(|record| {
-                    matches!(
-                        &record.source,
-                        crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(_)
-                    )
-                })
-        } else {
-            current_record_index
+            {
+                if vmce_mode {
+                    crate::app::shell_network_setup::refresh_vmce_entries(state);
+                    state
+                        .frontend
+                        .scenario_catalog
+                        .records()
+                        .iter()
+                        .position(|record| {
+                            matches!(
+                                &record.source,
+                                crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(
+                                    _
+                                )
+                            )
+                        })
+                } else {
+                    current_record_index
+                }
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                current_record_index
+            }
         };
         let layout = Self::skirmish_choose_map_layout(state);
         let network_setup = state.frontend.shell_route.network_setup();
-        let vmce_enabled = cfg!(feature = "vmce")
-            && network_setup
-            && state.match_state.session.host();
+        let vmce_enabled =
+            cfg!(feature = "vmce") && network_setup && state.match_state.session.host();
         state.frontend.skirmish_shell_state.choose_map_modal = Some(
             crate::ui::skirmish_shell::ChooseMapModalState::open_with_vmce(
                 if network_setup {
