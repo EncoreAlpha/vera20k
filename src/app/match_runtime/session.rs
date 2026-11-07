@@ -1539,8 +1539,10 @@ impl MatchSession {
         }
         #[cfg(not(feature = "vmce"))]
         {
-            let _ = config;
-            anyhow::bail!("VMCE is not built in")
+            match config {
+                Some(_) => anyhow::bail!("VMCE is not built in"),
+                None => Ok(()),
+            }
         }
     }
 
@@ -3579,7 +3581,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_limits_map_seats_and_keeps_observers_separate() {
         use super::NetworkVacancy;
@@ -4133,7 +4135,7 @@ mod tests {
         }
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_freeze_carries_only_assignments_matching_the_synced_launch() {
         use super::NetworkReturnContext;
@@ -4253,7 +4255,7 @@ mod tests {
         assert!(retry.network_setup().is_some());
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn wol_vmce_keeps_lobby_without_config_while_lan_requires_it() {
         use super::NetworkReturnContext;
@@ -5065,7 +5067,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_role_owner_allows_random_but_rejects_duplicate_map_roles() {
         use crate::skirmish_launch::LaunchHumanRole;

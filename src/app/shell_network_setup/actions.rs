@@ -515,6 +515,7 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
         (false, false) => crate::app::lan_service::admitted_host_name(state)
             .map(|host| crate::app::shell_lan::LanRematch::Guest { host }),
     };
+    #[cfg(feature = "vmce")]
     let vmce_houses =
         (|| -> anyhow::Result<Option<crate::skirmish_launch::VmceHouseAssignments>> {
             let launch = state
@@ -568,6 +569,7 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                 .cooperative_difficulty();
             Ok(Some(assignments))
         })();
+    #[cfg(feature = "vmce")]
     let vmce_houses = match vmce_houses {
         Ok(assignments) => assignments,
         Err(error) => {
@@ -582,11 +584,14 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
             return;
         }
     };
-    match state
+    #[cfg(feature = "vmce")]
+    let frozen = state
         .match_state
         .session
-        .freeze_network_start_with_vmce(agreed_seed, vmce_houses)
-    {
+        .freeze_network_start_with_vmce(agreed_seed, vmce_houses);
+    #[cfg(not(feature = "vmce"))]
+    let frozen = state.match_state.session.freeze_network_start(agreed_seed);
+    match frozen {
         Ok(startup) => {
             if state.match_state.session_mode()
                 == crate::app::match_runtime::session::SessionMode::Wol
@@ -661,6 +666,7 @@ pub(crate) fn commit_map_selection(
         .ok_or_else(|| anyhow::anyhow!("unknown chosen map"))?;
     let file = map.file_name.clone();
     let metadata = super::local_map_metadata(state, &file)?;
+    #[cfg(feature = "vmce")]
     let vmce_map_config = if mode.class.is_vmce() {
         match state.match_state.session_mode() {
             crate::app::match_runtime::session::SessionMode::Lan => {
@@ -674,6 +680,9 @@ pub(crate) fn commit_map_selection(
     } else {
         None
     };
+    #[cfg(not(feature = "vmce"))]
+    let vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig> = None;
+    #[cfg(feature = "vmce")]
     if let Some(config) = vmce_map_config.as_ref() {
         config.validate_binding(&file, &metadata.source_sha256)?;
     }
@@ -700,8 +709,11 @@ pub(crate) fn commit_map_selection(
             .session
             .network_map_metadata()
             .is_none_or(|current| current.display_name != metadata.display_name);
+    #[cfg(feature = "vmce")]
     let vmce_config_changed =
         state.match_state.session.network_vmce_map_config() != vmce_map_config.as_ref();
+    #[cfg(not(feature = "vmce"))]
+    let vmce_config_changed = false;
     // Use Map can reselect an already-uploaded source. Ask the same map
     // identity owner as received HostSetup before replacing its selection;
     // unchanged physical/effective bytes retain their image and marker bounds.
@@ -717,14 +729,18 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .network_map_requires_verification(&selected, &metadata)?;
+    #[cfg(feature = "vmce")]
     let vmce_lan_material_changed = mode.class.is_vmce()
         && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
         && (changed || map_changed || vmce_config_changed);
+    #[cfg(not(feature = "vmce"))]
+    let vmce_lan_material_changed = false;
     let removed = state.match_state.session.select_network_map(
         selected.mode,
         file.clone(),
         map.player_capacity,
     )?;
+    #[cfg(feature = "vmce")]
     if role_assignments_reset && mode.class.is_vmce() {
         let count = state
             .match_state
@@ -744,10 +760,12 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .accept_network_map_metadata(metadata, None, true)?;
+    #[cfg(feature = "vmce")]
     state
         .match_state
         .session
         .accept_network_vmce_map_config(vmce_map_config)?;
+    #[cfg(feature = "vmce")]
     if vmce_lan_material_changed {
         if map_changed {
             state.match_state.session.invalidate_network_agreement()?;
@@ -772,6 +790,7 @@ pub(crate) fn commit_map_selection(
     state.frontend.skirmish_preview_texture = None;
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.invalidate_received_preview(map_changed);
+        #[cfg(feature = "vmce")]
         if vmce_lan_material_changed {
             protocol.start_requested = false;
         }

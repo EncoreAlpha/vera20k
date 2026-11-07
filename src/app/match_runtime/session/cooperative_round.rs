@@ -714,15 +714,14 @@ impl MatchSession {
             // row: it is a start input, not a map-derived field.
             match vera_next.as_ref() {
                 Some(next) => {
-                    let mut houses =
-                        crate::app::match_bootstrap::resolve_vmce_houses_with_config(
-                            &next.map_ini,
-                            &next.map_file,
-                            &next.config.source_sha256,
-                            &next.config,
-                            launch,
-                            seed,
-                        )?;
+                    let mut houses = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                        &next.map_ini,
+                        &next.map_file,
+                        &next.config.source_sha256,
+                        &next.config,
+                        launch,
+                        seed,
+                    )?;
                     if let Some(difficulty) = previous_vera_houses
                         .as_ref()
                         .map(|houses| houses.difficulty)
@@ -1133,7 +1132,7 @@ mod tests {
         }
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_round_identities_must_agree_before_the_next_stage_loads() {
         let next = next_stage("mission02.map");
@@ -1191,7 +1190,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_solo_host_continue_starts_without_waiting_for_a_guest_ack() {
         let (mut session, _) = frozen_vera_solo();
@@ -1213,7 +1212,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_defeat_and_last_mission_continue_leaves_for_the_lobby() {
         let (mut host, _) = frozen_vera(0);
@@ -1233,7 +1232,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_host_continue_is_idempotent_until_the_guests_ack() {
         let (mut host, _) = frozen_vera(0);
@@ -1275,7 +1274,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_round_rejects_a_peer_with_a_different_next_stage_availability() {
         let (mut guest, _) = frozen_vera(1);
@@ -1320,7 +1319,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_host_is_auto_ready_and_its_continue_waits_for_guests() {
         let (mut session, _) = frozen_vera(0);
@@ -1361,7 +1360,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_guest_continue_only_readies_its_slot() {
         let (mut session, _) = frozen_vera(1);
@@ -1390,7 +1389,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vera_round_freezes_the_resolved_next_stage_into_the_next_start() {
         let (mut session, _) = frozen_vera(0);

@@ -411,6 +411,7 @@ fn mode_start(
         .network_setup()
         .expect("validated setup")
         .clone();
+    #[cfg(feature = "vmce")]
     if mode.class.is_vmce() {
         let Some(file) = launch.selected_map_file.as_deref() else {
             message(state, "VMCE requires a selected map.", &[]);
@@ -537,6 +538,7 @@ fn mode_start(
 /// Resolve the synchronized lobby roles against the selected map's authored
 /// Basic Player roster. Random roles consume the remaining configured Houses
 /// in a seed-stable order shared by every participant.
+#[cfg(feature = "vmce")]
 fn resolve_vmce_houses(
     ini: &crate::rules::ini_parser::IniFile,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
@@ -550,7 +552,7 @@ fn resolve_vmce_houses(
 mod tests {
     use super::*;
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_start_resolves_distinct_configured_map_houses() {
         let valid = crate::rules::ini_parser::IniFile::from_str(
@@ -634,7 +636,7 @@ mod tests {
         assert!(resolve_vmce_houses(&two_players, &too_many, 123).is_err());
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_sidecar_changes_the_resolved_house_and_is_bound_to_map_bytes() {
         let map = crate::rules::ini_parser::IniFile::from_str(
@@ -682,7 +684,7 @@ mod tests {
         );
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_bootstrap_installs_deterministic_shared_house_command_grants() {
         use crate::sim::scenario_session::ScenarioGameMode;
@@ -815,7 +817,7 @@ mod tests {
         assert_eq!(sim.state_hash(), guest_sim.state_hash());
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_house_authority_installs_on_an_authored_roster_built_by_the_prefix() {
         use crate::sim::scenario_session::ScenarioGameMode;

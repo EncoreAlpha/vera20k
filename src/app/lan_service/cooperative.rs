@@ -13,12 +13,12 @@ use super::*;
 use crate::app::match_runtime::session::{
     CooperativeRoundEvent, CooperativeRoundOptions, NetworkAiOptions, NetworkLoadingRequest,
 };
+#[cfg(feature = "vmce")]
+use crate::net::lan_messages::cooperative::VmceStageRecord;
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
     OPTIONS_KIND,
 };
-#[cfg(feature = "vmce")]
-use crate::net::lan_messages::cooperative::VmceStageRecord;
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
     SkirmishLocalSlot,
@@ -188,17 +188,16 @@ pub(super) fn is_round_record(payload: &[u8]) -> bool {
         let Ok(message) = LanMessage::decode(payload) else {
             return false;
         };
-        return message.kind() == LanMessageKind::Unknown(OPTIONS_KIND)
-            || {
-                #[cfg(feature = "vmce")]
-                {
-                    VmceStageRecord::decode(&message).is_some()
-                }
-                #[cfg(not(feature = "vmce"))]
-                {
-                    false
-                }
-            };
+        return message.kind() == LanMessageKind::Unknown(OPTIONS_KIND) || {
+            #[cfg(feature = "vmce")]
+            {
+                VmceStageRecord::decode(&message).is_some()
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                false
+            }
+        };
     }
     false
 }
