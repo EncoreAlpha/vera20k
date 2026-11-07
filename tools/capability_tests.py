@@ -125,7 +125,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "explicit role-to-House binding, next-stage agreement and the VMCE "
         "result page. The mode row and discovery are absent without the "
         "feature.",
-        focus=("vmce_",),
+        focus=("vmce_", "vera_", "coop_"),
     ),
     Capability(
         "debug-tools",
