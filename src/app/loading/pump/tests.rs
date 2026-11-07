@@ -1350,7 +1350,7 @@ fn vmce_authored_admission_preserves_network_receipt_with_frozen_mapping() {
     launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
     launch.selected_map_file = Some("flat.map".to_owned());
     launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
-    let mut map_text = include_str!("../../../../tests/maps/flat.map").to_owned();
+    let mut map_text = crate::test_fixture::text("tests/maps/flat.map").to_owned();
     let basic_end = map_text.find("[Basic]").expect("Basic section") + "[Basic]".len();
     map_text.insert_str(basic_end, "\nPlayer1=Alpha");
     map_text.push_str(
