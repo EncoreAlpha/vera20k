@@ -108,9 +108,11 @@ pub enum LanTarget {
     LiveCoopFinalGuest,
     /// Real two-process VMCE setup: host publishes its map/config,
     /// receives guest Ready and stops before GO.
+    #[cfg(feature = "vmce")]
     LiveVmceHost,
     /// Real two-process VMCE setup: guest receives host options, verifies
     /// the map/config, Accepts and stops before GO.
+    #[cfg(feature = "vmce")]
     LiveVmceGuest,
     BattleHost,
     BattleGuest,
@@ -224,6 +226,7 @@ pub enum LanTarget {
     CoopGuest,
     /// The independent VMCE lobby with a controlled second room
     /// participant, rendered through the production LAN setup view.
+    #[cfg(feature = "vmce")]
     VmceHost,
     /// The Cooperative match won (its AI Houses flagged to die, a
     /// controlled outcome): `+0xA0` advanced the record and BC6 opened.
@@ -236,117 +239,128 @@ pub enum LanTarget {
     CoopRetry,
 }
 
-pub(crate) const LAN_CHECKPOINTS: &[(&str, LanTarget)] = &[
-    ("online-live-host", LanTarget::OnlineHost),
-    ("online-live-guest", LanTarget::OnlineGuest),
-    ("online-live-timeout-host", LanTarget::OnlineTimeoutHost),
-    ("online-live-quit-host", LanTarget::OnlineQuitHost),
-    ("online-live-failure-guest", LanTarget::OnlineFailureGuest),
-    ("online-live-coop-host", LanTarget::OnlineCoopHost),
-    ("online-live-coop-guest", LanTarget::OnlineCoopGuest),
-    ("lan-live-host", LanTarget::LiveHost),
-    ("lan-live-guest", LanTarget::LiveGuest),
-    ("lan-live-timeout-host", LanTarget::LiveTimeoutHost),
-    ("lan-live-quit-host", LanTarget::LiveQuitHost),
-    ("lan-live-failure-guest", LanTarget::LiveFailureGuest),
-    ("lan-live-desync-host", LanTarget::LiveDesyncHost),
-    ("lan-live-desync-guest", LanTarget::LiveDesyncGuest),
-    ("lan-live-coop-host", LanTarget::LiveCoopHost),
-    ("lan-live-coop-saved-host", LanTarget::LiveCoopSavedHost),
-    ("lan-live-coop-guest", LanTarget::LiveCoopGuest),
-    ("lan-live-coop-final-host", LanTarget::LiveCoopFinalHost),
-    ("lan-live-coop-final-guest", LanTarget::LiveCoopFinalGuest),
-    ("lan-live-vera-campaign-host", LanTarget::LiveVmceHost),
-    ("lan-live-vera-campaign-guest", LanTarget::LiveVmceGuest),
-    ("lan-battle-host", LanTarget::BattleHost),
-    ("lan-battle-guest", LanTarget::BattleGuest),
-    ("lan-0xbb-steady", LanTarget::Lobby),
-    ("lan-0xbb-chat", LanTarget::Chat),
-    ("lan-0xbb-discovery", LanTarget::Discovery),
-    ("lan-0xbb-join-denied", LanTarget::JoinDenied),
-    ("lan-0xbb-join-denied-return", LanTarget::JoinDeniedReturn),
-    ("lan-0xbb-join-timeout-return", LanTarget::JoinTimeoutReturn),
-    ("lan-0xbb-back", LanTarget::Back),
-    ("lan-0xbc-steady", LanTarget::Host),
-    ("lan-0xbc-participant-left", LanTarget::ParticipantLeft),
-    ("lan-0xbc-settings", LanTarget::HostSettings),
-    ("lan-0xbc-solo-start", LanTarget::SoloStart),
-    ("lan-0x6b-steady", LanTarget::ChooseMap),
-    ("lan-0x6b-cancel", LanTarget::ChooseMapCancel),
-    ("lan-0x6b-coop-campaigns", LanTarget::CoopChooser),
-    ("lan-0xbc-coop-soviet", LanTarget::CoopHost),
-    ("lan-0xbc-coop-join", LanTarget::CoopJoin),
-    ("lan-coop-host-loading-first", LanTarget::CoopHostGo),
-    ("lan-0xbd-coop-campaign", LanTarget::CoopGuest),
-    ("lan-vera-campaign-room", LanTarget::VmceHost),
-    ("lan-0xbc6-coop-result", LanTarget::CoopResult),
-    ("lan-coop-next-loading", LanTarget::CoopNext),
-    ("lan-coop-defeat-retry", LanTarget::CoopRetry),
-    ("lan-0xbc-back", LanTarget::HostBack),
-    ("lan-0xbc-missing-map", LanTarget::HostMissingMap),
-    ("lan-0xbc-readiness", LanTarget::HostReadiness),
-    ("lan-host-loading-first", LanTarget::HostGo),
-    ("lan-0xbd-unconfigured", LanTarget::GuestUnconfigured),
-    ("lan-0xbd-steady", LanTarget::Guest),
-    ("lan-0xbd-accepted", LanTarget::Accepted),
-    ("lan-0xbd-start-prompt", LanTarget::StartPrompt),
-    (
-        "lan-0xbd-start-prompt-accepted",
-        LanTarget::StartPromptAccepted,
-    ),
-    ("lan-0xbd-host-change", LanTarget::HostChange),
-    ("lan-0xbd-color-change", LanTarget::ColorChange),
-    ("lan-0xbd-kick", LanTarget::Kick),
-    ("lan-0xbd-host-left", LanTarget::HostLeft),
-    ("lan-0xbd-no-map", LanTarget::NoMap),
-    ("lan-0xbd-transfer-eligible", LanTarget::TransferEligible),
-    ("lan-map-transfer-progress", LanTarget::TransferProgress),
-    ("lan-map-transfer-failure", LanTarget::TransferFailure),
-    (
-        "lan-map-transfer-failure-return",
-        LanTarget::TransferFailureReturn,
-    ),
-    ("lan-guest-loading-first", LanTarget::GuestGo),
-    ("lan-transfer-loading-first", LanTarget::TransferGo),
-    ("lan-host-abort-return", LanTarget::HostAbortReturn),
-    ("lan-host-diplomacy", LanTarget::HostDiplomacy),
-    ("lan-ingame-peer-left", LanTarget::HostPeerLeft),
-    ("lan-ingame-connection-wait", LanTarget::ConnectionWait),
-    (
-        "lan-ingame-connection-leave-return",
-        LanTarget::ConnectionLeave,
-    ),
-    (
-        "lan-ingame-connection-timeout",
-        LanTarget::ConnectionTimeout,
-    ),
-    ("lan-ingame-kick-vote", LanTarget::KickVote),
-    ("lan-ingame-connection-resume", LanTarget::ConnectionResume),
-    ("lan-ingame-outvoted", LanTarget::Outvoted),
-    ("lan-score", LanTarget::Score),
-    ("lan-ingame-chat", LanTarget::IngameChat),
-    ("lan-ingame-ally", LanTarget::IngameAlly),
-    ("lan-ingame-taunt", LanTarget::IngameTaunt),
-    ("lan-host-random-map", LanTarget::HostRandomMap),
-    ("lan-guest-random-map", LanTarget::GuestRandomMap),
-    (
-        "lan-0xbd-random-map-preview",
-        LanTarget::GuestRandomMapPreview,
-    ),
-    ("lan-host-observe", LanTarget::HostObserve),
-    ("lan-host-observe-offered", LanTarget::HostObserveOffered),
-    (
-        "lan-loading-timeout-return",
-        LanTarget::LoadingTimeoutReturn,
-    ),
-    ("lan-0xbc-host-observer", LanTarget::HostObserver),
-    ("lan-observer-loading-first", LanTarget::HostObserverGo),
-    ("lan-guest-abort-return", LanTarget::GuestAbortReturn),
-    (
-        "lan-remote-loading-progress",
-        LanTarget::RemoteLoadingProgress,
-    ),
-];
+pub(crate) fn lan_checkpoints() -> Vec<(&'static str, LanTarget)> {
+    let mut checkpoints = vec![
+        ("online-live-host", LanTarget::OnlineHost),
+        ("online-live-guest", LanTarget::OnlineGuest),
+        ("online-live-timeout-host", LanTarget::OnlineTimeoutHost),
+        ("online-live-quit-host", LanTarget::OnlineQuitHost),
+        ("online-live-failure-guest", LanTarget::OnlineFailureGuest),
+        ("online-live-coop-host", LanTarget::OnlineCoopHost),
+        ("online-live-coop-guest", LanTarget::OnlineCoopGuest),
+        ("lan-live-host", LanTarget::LiveHost),
+        ("lan-live-guest", LanTarget::LiveGuest),
+        ("lan-live-timeout-host", LanTarget::LiveTimeoutHost),
+        ("lan-live-quit-host", LanTarget::LiveQuitHost),
+        ("lan-live-failure-guest", LanTarget::LiveFailureGuest),
+        ("lan-live-desync-host", LanTarget::LiveDesyncHost),
+        ("lan-live-desync-guest", LanTarget::LiveDesyncGuest),
+        ("lan-live-coop-host", LanTarget::LiveCoopHost),
+        ("lan-live-coop-saved-host", LanTarget::LiveCoopSavedHost),
+        ("lan-live-coop-guest", LanTarget::LiveCoopGuest),
+        ("lan-live-coop-final-host", LanTarget::LiveCoopFinalHost),
+        ("lan-live-coop-final-guest", LanTarget::LiveCoopFinalGuest),
+    ];
+    #[cfg(feature = "vmce")]
+    checkpoints.extend([
+        ("lan-live-vera-campaign-host", LanTarget::LiveVmceHost),
+        ("lan-live-vera-campaign-guest", LanTarget::LiveVmceGuest),
+    ]);
+    checkpoints.extend([
+        ("lan-battle-host", LanTarget::BattleHost),
+        ("lan-battle-guest", LanTarget::BattleGuest),
+        ("lan-0xbb-steady", LanTarget::Lobby),
+        ("lan-0xbb-chat", LanTarget::Chat),
+        ("lan-0xbb-discovery", LanTarget::Discovery),
+        ("lan-0xbb-join-denied", LanTarget::JoinDenied),
+        ("lan-0xbb-join-denied-return", LanTarget::JoinDeniedReturn),
+        ("lan-0xbb-join-timeout-return", LanTarget::JoinTimeoutReturn),
+        ("lan-0xbb-back", LanTarget::Back),
+        ("lan-0xbc-steady", LanTarget::Host),
+        ("lan-0xbc-participant-left", LanTarget::ParticipantLeft),
+        ("lan-0xbc-settings", LanTarget::HostSettings),
+        ("lan-0xbc-solo-start", LanTarget::SoloStart),
+        ("lan-0x6b-steady", LanTarget::ChooseMap),
+        ("lan-0x6b-cancel", LanTarget::ChooseMapCancel),
+        ("lan-0x6b-coop-campaigns", LanTarget::CoopChooser),
+        ("lan-0xbc-coop-soviet", LanTarget::CoopHost),
+        ("lan-0xbc-coop-join", LanTarget::CoopJoin),
+        ("lan-coop-host-loading-first", LanTarget::CoopHostGo),
+        ("lan-0xbd-coop-campaign", LanTarget::CoopGuest),
+    ]);
+    #[cfg(feature = "vmce")]
+    checkpoints.push(("lan-vera-campaign-room", LanTarget::VmceHost));
+    checkpoints.extend([
+        ("lan-0xbc6-coop-result", LanTarget::CoopResult),
+        ("lan-coop-next-loading", LanTarget::CoopNext),
+        ("lan-coop-defeat-retry", LanTarget::CoopRetry),
+        ("lan-0xbc-back", LanTarget::HostBack),
+        ("lan-0xbc-missing-map", LanTarget::HostMissingMap),
+        ("lan-0xbc-readiness", LanTarget::HostReadiness),
+        ("lan-host-loading-first", LanTarget::HostGo),
+        ("lan-0xbd-unconfigured", LanTarget::GuestUnconfigured),
+        ("lan-0xbd-steady", LanTarget::Guest),
+        ("lan-0xbd-accepted", LanTarget::Accepted),
+        ("lan-0xbd-start-prompt", LanTarget::StartPrompt),
+        (
+            "lan-0xbd-start-prompt-accepted",
+            LanTarget::StartPromptAccepted,
+        ),
+        ("lan-0xbd-host-change", LanTarget::HostChange),
+        ("lan-0xbd-color-change", LanTarget::ColorChange),
+        ("lan-0xbd-kick", LanTarget::Kick),
+        ("lan-0xbd-host-left", LanTarget::HostLeft),
+        ("lan-0xbd-no-map", LanTarget::NoMap),
+        ("lan-0xbd-transfer-eligible", LanTarget::TransferEligible),
+        ("lan-map-transfer-progress", LanTarget::TransferProgress),
+        ("lan-map-transfer-failure", LanTarget::TransferFailure),
+        (
+            "lan-map-transfer-failure-return",
+            LanTarget::TransferFailureReturn,
+        ),
+        ("lan-guest-loading-first", LanTarget::GuestGo),
+        ("lan-transfer-loading-first", LanTarget::TransferGo),
+        ("lan-host-abort-return", LanTarget::HostAbortReturn),
+        ("lan-host-diplomacy", LanTarget::HostDiplomacy),
+        ("lan-ingame-peer-left", LanTarget::HostPeerLeft),
+        ("lan-ingame-connection-wait", LanTarget::ConnectionWait),
+        (
+            "lan-ingame-connection-leave-return",
+            LanTarget::ConnectionLeave,
+        ),
+        (
+            "lan-ingame-connection-timeout",
+            LanTarget::ConnectionTimeout,
+        ),
+        ("lan-ingame-kick-vote", LanTarget::KickVote),
+        ("lan-ingame-connection-resume", LanTarget::ConnectionResume),
+        ("lan-ingame-outvoted", LanTarget::Outvoted),
+        ("lan-score", LanTarget::Score),
+        ("lan-ingame-chat", LanTarget::IngameChat),
+        ("lan-ingame-ally", LanTarget::IngameAlly),
+        ("lan-ingame-taunt", LanTarget::IngameTaunt),
+        ("lan-host-random-map", LanTarget::HostRandomMap),
+        ("lan-guest-random-map", LanTarget::GuestRandomMap),
+        (
+            "lan-0xbd-random-map-preview",
+            LanTarget::GuestRandomMapPreview,
+        ),
+        ("lan-host-observe", LanTarget::HostObserve),
+        ("lan-host-observe-offered", LanTarget::HostObserveOffered),
+        (
+            "lan-loading-timeout-return",
+            LanTarget::LoadingTimeoutReturn,
+        ),
+        ("lan-0xbc-host-observer", LanTarget::HostObserver),
+        ("lan-observer-loading-first", LanTarget::HostObserverGo),
+        ("lan-guest-abort-return", LanTarget::GuestAbortReturn),
+        (
+            "lan-remote-loading-progress",
+            LanTarget::RemoteLoadingProgress,
+        ),
+    ]);
+    checkpoints
+}
 impl LanTarget {
     pub(crate) fn online(self) -> bool {
         matches!(
@@ -397,11 +411,32 @@ impl LanTarget {
                 | Self::LiveCoopGuest
                 | Self::LiveCoopFinalHost
                 | Self::LiveCoopFinalGuest
-                | Self::LiveVmceHost
-                | Self::LiveVmceGuest
                 | Self::BattleHost
                 | Self::BattleGuest
-        )
+        ) || self.is_live_vmce()
+    }
+    /// The live two-process VMCE host or guest target; never true in a stock
+    /// build.
+    pub(crate) fn is_live_vmce(self) -> bool {
+        #[cfg(feature = "vmce")]
+        {
+            matches!(self, Self::LiveVmceHost | Self::LiveVmceGuest)
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            false
+        }
+    }
+    /// The live two-process VMCE host target; never true in a stock build.
+    pub(crate) fn is_live_vmce_host(self) -> bool {
+        #[cfg(feature = "vmce")]
+        {
+            self == Self::LiveVmceHost
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            false
+        }
     }
     pub(crate) fn live_cooperative(self) -> bool {
         matches!(
@@ -1861,6 +1896,7 @@ impl LanCapture {
                         setup_button(state, crate::ui::multiplayer_setup::CHOOSE_MAP)?;
                         self.phase = LanPhase::Chooser;
                     }
+                    #[cfg(feature = "vmce")]
                     LanTarget::VmceHost if !self.cooperative_committed => {
                         self.offline_selection = Some(offline_selection(state));
                         let file = commit_vmce_fixture_map(state)?;
@@ -1875,6 +1911,7 @@ impl LanCapture {
                         );
                         self.phase = LanPhase::Host;
                     }
+                    #[cfg(feature = "vmce")]
                     LanTarget::VmceHost => {
                         setup::service_event(
                             state,
@@ -4621,6 +4658,7 @@ fn cooperative_mode(state: &AppState) -> Result<&crate::skirmish_modes::Skirmish
 /// Choose the host fixture's already-catalogued map and route it through the
 /// production Use Map owner. This target captures the resulting room, so it
 /// does not need an additional chooser-row click.
+#[cfg(feature = "vmce")]
 fn commit_vmce_fixture_map(state: &mut AppState) -> Result<String> {
     // Presentation-only fixture: expose the unmodified first Allied campaign
     // map in the temporary capture catalog. Two seats allow the existing host

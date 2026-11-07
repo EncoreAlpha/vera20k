@@ -633,9 +633,8 @@ impl LiveLanCapture {
                 | LanTarget::LiveCoopHost
                 | LanTarget::LiveCoopSavedHost
                 | LanTarget::LiveCoopFinalHost
-                | LanTarget::LiveVmceHost
                 | LanTarget::BattleHost
-        )
+        ) || self.target.is_live_vmce_host()
     }
 
     fn required_frames(&self) -> u32 {
@@ -1039,10 +1038,7 @@ impl LiveLanCapture {
                 // Live captures install the real owner before normal Network
                 // input opens the shell; it retains sockets through gameplay.
                 let isolated_ra2 = LanCapture::isolated_root(state)?;
-                if matches!(
-                    self.target,
-                    LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-                ) {
+                if self.target.is_live_vmce() {
                     let isolated_settings = LanCapture::isolated_settings_root(state)?;
                     ensure!(
                         isolated_ra2 != isolated_settings,
@@ -1160,12 +1156,12 @@ impl LiveLanCapture {
                     self.rounds = Some(rounds);
                     result?
                 } else if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) {
+                    #[cfg(feature = "vmce")]
                     if self.target == LanTarget::LiveVmceHost {
                         // The production chooser runs this same discovery owner
                         // when its VMCE mode row is selected; the
                         // diagnostic commits the discovered Entry map directly
                         // through the normal Use Map transaction.
-                        #[cfg(feature = "vmce")]
                         crate::app::shell_network_setup::refresh_vmce_entries(state);
                     }
                     self.prepare_host_setup(
@@ -1182,7 +1178,7 @@ impl LiveLanCapture {
                 if prepared {
                     self.event(
                         frame,
-                        if self.target == LanTarget::LiveVmceHost {
+                        if self.target.is_live_vmce_host() {
                             "host selected the VMCE map through production setup owner"
                         } else {
                             "host selected the map and open human rows through normal setup"
@@ -1623,10 +1619,8 @@ impl LiveLanCapture {
             .context("live simulation")?
             .simulation;
         let committed = simulation.session().binary_frame();
-        if matches!(
-            self.target,
-            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-        ) && self.actor.is_some()
+        if self.target.is_live_vmce()
+            && self.actor.is_some()
             && self.pair_linger_at.is_none()
             && !self.vera_outcome_pending()
             && committed >= self.required_frames() + 600
@@ -1707,11 +1701,7 @@ impl LiveLanCapture {
             self.battle.is_some() && !self.target.online() && committed >= required_frames;
         // A VMCE peer holds its transport after its own completion so the
         // slower peer can settle; the peer's ordinary exit is expected here.
-        let vera_pair_lingering = self.pair_linger_at.is_some()
-            && matches!(
-                self.target,
-                LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-            );
+        let vera_pair_lingering = self.pair_linger_at.is_some() && self.target.is_live_vmce();
         // A VERA outcome run keeps observing after the result dialog has taken
         // the LIVE transport into the co-op round owner, so the ordinary
         // transport checks apply only while it is still present.
@@ -1894,10 +1884,7 @@ impl LiveLanCapture {
                         "shared 300-frame prefix complete; host awaits real peer disappearance"
                     },
                 );
-            } else if matches!(
-                self.target,
-                LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-            ) && !self.pair_linger_done(committed, &peer_frames)
+            } else if self.target.is_live_vmce() && !self.pair_linger_done(committed, &peer_frames)
             {
                 // Hold this process on the frame loop until the peer is past
                 // its own completion margin; exiting first makes the slower
@@ -2720,10 +2707,7 @@ impl LiveLanCapture {
         if let Some(crash) = &self.setup_crash {
             return crash.receipt();
         }
-        if matches!(
-            self.target,
-            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-        ) {
+        if self.target.is_live_vmce() {
             // An outcome run retires the match before the process finishes, so
             // its receipt was built while the world and roster were resident.
             if let Some(receipt) = &self.final_receipt {

@@ -12,7 +12,7 @@ mod abort_return;
 mod campaign_restart;
 pub(super) use campaign_restart::RestartTarget;
 mod lan;
-pub(crate) use lan::{LAN_CHECKPOINTS, LanTarget};
+pub(crate) use lan::{LanTarget, lan_checkpoints};
 mod wol;
 pub(crate) use wol::{WOL_CHECKPOINTS, WolTarget};
 mod opening;

@@ -368,7 +368,7 @@ pub enum ShellCaptureCheckpoint {
 
 impl ShellCaptureCheckpoint {
     fn parse(value: &str) -> Result<Self> {
-        if let Some((_, target)) = movies::LAN_CHECKPOINTS
+        if let Some((_, target)) = movies::lan_checkpoints()
             .iter()
             .find(|(name, _)| *name == value)
         {
@@ -943,7 +943,7 @@ impl ShellCaptureCheckpoint {
                     .0
             }
             Self::Lan(target) => {
-                movies::LAN_CHECKPOINTS
+                movies::lan_checkpoints()
                     .iter()
                     .find(|(_, candidate)| *candidate == target)
                     .expect("LAN checkpoint")
@@ -2110,14 +2110,14 @@ where
             ensure!(
                 matches!(
                     checkpoint,
-                    ShellCaptureCheckpoint::Lan(
-                        movies::LanTarget::LiveHost | movies::LanTarget::LiveVmceHost
-                    )
+                    ShellCaptureCheckpoint::Lan(target)
+                        if target == movies::LanTarget::LiveHost || target.is_live_vmce_host()
                 ),
                 "--lan-map requires a live LAN host checkpoint"
             );
             crate::map::source::validate_network_map_name(file)?;
         }
+        #[cfg(feature = "vmce")]
         if matches!(
             checkpoint,
             ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVmceHost)
@@ -4468,7 +4468,7 @@ mod tests {
 
     #[test]
     fn lan_checkpoints_route_through_production_network() {
-        for &(name, target) in movies::LAN_CHECKPOINTS {
+        for (name, target) in movies::lan_checkpoints() {
             let checkpoint = ShellCaptureCheckpoint::parse(name).expect("LAN checkpoint");
             assert_eq!(checkpoint.as_str(), name);
             assert_eq!(
