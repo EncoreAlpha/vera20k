@@ -1313,6 +1313,7 @@ fn the_civilian_house_is_asked_of_its_house_type() {
 
 /// VMCE fixtures: two role primary Houses plus a shared House both
 /// sources control. The grant table names one primary House per source.
+#[cfg(feature = "vmce")]
 fn vmce_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
     use crate::sim::scenario_session::ScenarioGameMode;
     use crate::skirmish_modes::MpModeClass;

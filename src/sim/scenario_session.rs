@@ -804,6 +804,7 @@ pub struct ScenarioSession {
     shared_house_sources: Vec<u8>,
     /// VMCE only: each synchronized sender's primary House followed by
     /// the additional Houses its campaign role may command.
+    #[cfg(feature = "vmce")]
     #[serde(default)]
     network_house_grants: Vec<Vec<u8>>,
     /// This process's own sender while players share Houses; `None`
@@ -1339,6 +1340,7 @@ impl ScenarioSession {
         self.local_shared_house_source = local_source;
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn install_network_house_grants(
         &mut self,
         source_houses: Vec<u8>,
@@ -1351,7 +1353,7 @@ impl ScenarioSession {
         self.local_shared_house_source = local_source;
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(feature = "vmce", any(test, feature = "test-support")))]
     pub fn install_network_house_grants_for_test(
         &mut self,
         source_houses: Vec<u8>,
@@ -1364,7 +1366,14 @@ impl ScenarioSession {
     /// Whether this Scenario carries the VMCE source-to-House authority
     /// table. The table is installed only by the Campaign authored bootstrap.
     pub fn has_network_house_grants(&self) -> bool {
-        !self.network_house_grants.is_empty()
+        #[cfg(feature = "vmce")]
+        {
+            !self.network_house_grants.is_empty()
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            false
+        }
     }
 
     /// Each VMCE network source's primary House index, in source order.
@@ -1376,42 +1385,66 @@ impl ScenarioSession {
     }
 
     pub(crate) fn network_house_grants_valid(&self, house_count: usize) -> bool {
-        if self.network_house_grants.is_empty() {
-            return true;
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = house_count;
+            true
         }
-        self.shared_house_sources.len() == self.network_house_grants.len()
-            && self
-                .shared_house_sources
-                .iter()
-                .zip(&self.network_house_grants)
-                .all(|(&primary, grants)| {
-                    usize::from(primary) < house_count
-                        && grants.windows(2).all(|pair| pair[0] < pair[1])
-                        && grants.iter().all(|&house| usize::from(house) < house_count)
-                        && (grants.is_empty() || grants.contains(&primary))
+        #[cfg(feature = "vmce")]
+        {
+            if self.network_house_grants.is_empty() {
+                return true;
+            }
+            self.shared_house_sources.len() == self.network_house_grants.len()
+                && self
+                    .shared_house_sources
+                    .iter()
+                    .zip(&self.network_house_grants)
+                    .all(|(&primary, grants)| {
+                        usize::from(primary) < house_count
+                            && grants.windows(2).all(|pair| pair[0] < pair[1])
+                            && grants.iter().all(|&house| usize::from(house) < house_count)
+                            && (grants.is_empty() || grants.contains(&primary))
+                    })
+                && self.local_shared_house_source.is_none_or(|source| {
+                    usize::try_from(source)
+                        .ok()
+                        .and_then(|source| self.network_house_grants.get(source))
+                        .is_some_and(|grants| !grants.is_empty())
                 })
-            && self.local_shared_house_source.is_none_or(|source| {
-                usize::try_from(source)
-                    .ok()
-                    .and_then(|source| self.network_house_grants.get(source))
-                    .is_some_and(|grants| !grants.is_empty())
-            })
+        }
     }
 
     /// Whether an authenticated synchronized sender may issue orders to a
     /// House index under the VMCE authored campaign configuration.
     pub fn network_source_controls_house(&self, source: i8, house: usize) -> bool {
-        let (Ok(source), Ok(house)) = (usize::try_from(source), u8::try_from(house)) else {
-            return false;
-        };
-        self.network_house_grants
-            .get(source)
-            .is_some_and(|grants| grants.contains(&house))
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (source, house);
+            false
+        }
+        #[cfg(feature = "vmce")]
+        {
+            let (Ok(source), Ok(house)) = (usize::try_from(source), u8::try_from(house)) else {
+                return false;
+            };
+            self.network_house_grants
+                .get(source)
+                .is_some_and(|grants| grants.contains(&house))
+        }
     }
 
     pub(crate) fn local_source_controls_house(&self, house: usize) -> bool {
-        self.local_shared_house_source
-            .is_some_and(|source| self.network_source_controls_house(source, house))
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = house;
+            false
+        }
+        #[cfg(feature = "vmce")]
+        {
+            self.local_shared_house_source
+                .is_some_and(|source| self.network_source_controls_house(source, house))
+        }
     }
 
     /// VERA shared control: whether any players share a House, so that
@@ -1425,6 +1458,7 @@ impl ScenarioSession {
     /// unless players share Houses.
     pub fn network_source_house(&self, source: i8) -> Option<usize> {
         let source = usize::try_from(source).ok()?;
+        #[cfg(feature = "vmce")]
         if !self.network_house_grants.is_empty()
             && self
                 .network_house_grants
@@ -1860,6 +1894,7 @@ impl ScenarioSession {
             b"network-command-timing-v1".hash(hasher);
             timing.hash(hasher);
         }
+        #[cfg(feature = "vmce")]
         if !s.network_house_grants.is_empty() {
             b"vera-campaign-house-grants-v1".hash(hasher);
             s.shared_house_sources.hash(hasher);
@@ -2116,6 +2151,7 @@ impl ScenarioSession {
             network_max_ahead_frames: None,
             network_command_timing: None,
             shared_house_sources: Vec::new(),
+            #[cfg(feature = "vmce")]
             network_house_grants: Vec::new(),
             local_shared_house_source: None,
             start_header: crate::map::preview::ScenarioStartHeader::default(),

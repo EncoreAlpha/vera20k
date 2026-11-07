@@ -1439,6 +1439,7 @@ mod tests {
     /// VMCE consumes VoiceComment draws for every granted human House on
     /// every peer. Current-house ownership and selection independently gate
     /// local playback; an ungranted AI House consumes no draw.
+    #[cfg(feature = "vmce")]
     #[test]
     fn coop_idle_voice_comment_keeps_main_rng_aligned_for_remote_granted_house() {
         use crate::rules::sound_ini::SoundRegistry;
