@@ -2313,12 +2313,22 @@ impl LiveLanCapture {
                 {
                     return Ok(());
                 }
-                if native_victory_page {
-                    ensure!(
-                        crate::app::vmce_result::continue_pressed(state),
-                        "the VMCE result page did not own Continue"
-                    );
-                } else {
+                #[cfg(feature = "vmce")]
+                let native_page_handled = {
+                    if native_victory_page {
+                        ensure!(
+                            crate::app::vmce_result::continue_pressed(state),
+                            "the VMCE result page did not own Continue"
+                        );
+                    }
+                    native_victory_page
+                };
+                #[cfg(not(feature = "vmce"))]
+                let native_page_handled = {
+                    let _ = native_victory_page;
+                    false
+                };
+                if !native_page_handled {
                     crate::app::cooperative_round::apply_action(
                         state,
                         crate::ui::coop_score_shell::CoopScoreAction::Continue,

@@ -123,6 +123,7 @@ pub(crate) mod telemetry_server;
 pub(crate) mod types;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub(crate) mod updater;
+#[cfg(feature = "vmce")]
 pub(crate) mod vmce_result;
 pub(crate) mod web_link;
 mod window_icon;

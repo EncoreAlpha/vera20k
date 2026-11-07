@@ -925,6 +925,7 @@ impl App {
             CampaignScoreDialog::Victory => {
                 // VMCE's own settlement page owns its Continue; stock modes
                 // keep the retail campaign-score path below.
+                #[cfg(feature = "vmce")]
                 if crate::app::vmce_result::continue_pressed(state) {
                     return;
                 }
