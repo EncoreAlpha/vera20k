@@ -314,7 +314,12 @@ pub(crate) fn view(state: &AppState) -> DiplomacyView {
                 crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
             })
             .map(|mode| {
-                crate::app::frontend::shell_pass::resolve_csf(state, &mode.ui_name_key).into_owned()
+                if mode.class.is_vmce() {
+                    mode.ui_name_key.clone()
+                } else {
+                    crate::app::frontend::shell_pass::resolve_csf(state, &mode.ui_name_key)
+                        .into_owned()
+                }
             });
     }
     // 0x006580E0..0x0065810C: TauntsOn shows in LAN/WOL with LANTaunts /

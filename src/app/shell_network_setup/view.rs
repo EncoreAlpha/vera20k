@@ -805,14 +805,18 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             .multiplayer_setup
             .as_ref()
             .is_some_and(|ui| ui.map_offer.is_some()),
-        mode_label: label(
-            state,
-            if launch.selected_map_file.is_none() {
-                "GUI:None"
-            } else {
-                &mode.ui_name_key
-            },
-        ),
+        mode_label: if mode.class.is_vmce() {
+            mode.ui_name_key.clone()
+        } else {
+            label(
+                state,
+                if launch.selected_map_file.is_none() {
+                    "GUI:None"
+                } else {
+                    &mode.ui_name_key
+                },
+            )
+        },
         map_label: super::map_display_name(state)
             .map_or_else(|| label(state, "GUI:None"), str::to_owned),
         selected_map_index: map_index,

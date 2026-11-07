@@ -488,7 +488,13 @@ pub(crate) fn skirmish_right_panel_label_strings(state: &AppState) -> (String, S
         .skirmish_modes
         .iter()
         .find(|mode| mode.id == shell.selected_mode_id)
-        .map(|mode| localized_label(state, &mode.ui_name_key, &mode.ui_name_key))
+        .map(|mode| {
+            if mode.class.is_vmce() {
+                mode.ui_name_key.clone()
+            } else {
+                localized_label(state, &mode.ui_name_key, &mode.ui_name_key)
+            }
+        })
         .unwrap_or_else(|| localized_label(state, "GUI:Battle", "Battle"));
     let map_label = skirmish_selected_map_name(state)
         .unwrap_or("None")
@@ -1229,7 +1235,11 @@ pub(super) fn push_choose_map_modal_text_draws(
             let Some(mode) = mode_by_id(&state.frontend.skirmish_modes, *mode_id) else {
                 continue;
             };
-            localized_label(state, &mode.ui_name_key, &mode.ui_name_key)
+            if mode.class.is_vmce() {
+                mode.ui_name_key.clone()
+            } else {
+                localized_label(state, &mode.ui_name_key, &mode.ui_name_key)
+            }
         };
         let row = geometry.row(visible);
         push_text_draw(
