@@ -923,10 +923,9 @@ impl App {
         }
         match dialog {
             CampaignScoreDialog::Victory => {
-                // VMCE's won mission owns its all-ready handoff on this
-                // native page; a guest stays here after marking ready and
-                // only the host's Continue starts the next stage.
-                if crate::app::cooperative_round::vmce_victory_continue(state) {
+                // VMCE's own settlement page owns its Continue; stock modes
+                // keep the retail campaign-score path below.
+                if crate::app::vmce_result::continue_pressed(state) {
                     return;
                 }
                 // `0x423` ends the global VocHandle before the result returns.

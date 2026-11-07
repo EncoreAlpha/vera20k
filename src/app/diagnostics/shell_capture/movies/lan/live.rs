@@ -2315,8 +2315,8 @@ impl LiveLanCapture {
                 }
                 if native_victory_page {
                     ensure!(
-                        crate::app::cooperative_round::vmce_victory_continue(state),
-                        "the native 0x103 victory page did not own Continue"
+                        crate::app::vmce_result::continue_pressed(state),
+                        "the VMCE result page did not own Continue"
                     );
                 } else {
                     crate::app::cooperative_round::apply_action(

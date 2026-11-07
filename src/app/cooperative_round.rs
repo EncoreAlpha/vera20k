@@ -158,154 +158,38 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
     [value(launch.local_slot()), partner]
 }
 
-/// The current stage's catalog display name, falling back to its file name.
-/// Authored campaign maps often leave `[Basic] Name` empty or placeholder.
-fn current_stage_display_name(state: &AppState) -> String {
-    state
-        .frontend
-        .scenario_catalog
-        .records()
-        .get(state.frontend.multiplayer_shell_runtime.scenario_index())
-        .map(|record| {
-            if record.display_name.is_empty() {
-                record.file_name.clone()
-            } else {
-                record.display_name.clone()
-            }
-        })
-        .unwrap_or_default()
-}
-
-/// VMCE's won mission uses the retail campaign score dialog `0x103` in its
-/// native layout. The victory page has no ready rows, so the external
-/// campaign round entered with `enter_vmce_round` owns the all-Continue
-/// handoff: a guest's Continue is its ready action, and the host starts the
-/// next stage once every guest is ready. The campaign's last mission has no
-/// next stage and skips the round entirely.
-fn open_vmce_victory_result(state: &mut AppState) {
-    let elapsed = state
-        .match_state
-        .scenario_elapsed_clock
-        .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let vera_next = state
-        .match_state
-        .session
-        .network_vmce_map_config()
-        .cloned()
-        .and_then(
-            |current| match crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(
-                state, &current,
-            ) {
-                Ok(next) => next,
-                Err(error) => {
-                    log::warn!("VMCE next campaign stage is unavailable: {error:#}");
-                    None
-                }
-            },
-        );
-    let Some(sim) = state
-        .match_state
-        .sim_runtime
-        .as_ref()
-        .map(|runtime| &runtime.simulation)
-    else {
-        App::leave_mission_result_screen(state);
-        return;
-    };
-    let rows = sim.cooperative_score_rows().len();
-    let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    let can_continue = vera_next.is_some();
-    crate::app::lan_service::cooperative::hold_transport(state);
-    App::retire_finished_scenario(state);
-    if can_continue {
-        let entered = state
-            .match_state
-            .session
-            .enter_vmce_round(vera_next, true, rows);
-        if let Err(error) = entered {
-            log::error!("Could not open the VMCE victory result: {error:#}");
-            return_to_shell(state);
-            return;
-        }
-        let runtime = &state.frontend.multiplayer_shell_runtime;
-        let admit = |slot: &mut crate::skirmish_launch::SkirmishLocalSlot| {
-            let requested = if slot.country_random {
-                -2
-            } else {
-                i32::from(slot.country.raw_index())
-            };
-            if runtime.cooperative_admits(requested) {
-                return;
-            }
-            match runtime.cooperative_default_country() {
-                Some(country) => {
-                    slot.country = country;
-                    slot.country_random = false;
-                }
-                None => slot.country_random = true,
-            }
-        };
-        if let Err(error) = state
-            .match_state
-            .session
-            .admit_cooperative_round_countries(admit)
-        {
-            log::warn!("VMCE victory round countries: {error:#}");
-        }
-    }
-    state.frontend.score_page = None;
-    state.frontend.score_art = None;
-    state.frontend.coop_score_page = None;
-    App::open_campaign_score_page(state, model, String::new(), String::new());
-}
-
 /// GameExit's co-op arm after the outcome (`0x00685851` skips the score
 /// dialog): `+0xA8` runs BC6 when the progress record is active; without
 /// one it returns false and the shell follows (`+0xA4` shows nothing).
 /// The dialog's rows are this mission's live statistics (`0x0046DA70`),
 /// read while the world is still resident.
 ///
-/// VMCE's defeat opens BC6 with the current stage name; a won VMCE mission
-/// takes `open_vmce_victory_result` instead.
+/// VMCE's own settlement page (victory, defeat and the last mission) is
+/// opened by [`crate::app::vmce_result`]; this function keeps the stock
+/// Cooperative mode's BC6 path.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
-    let vera = state
+    #[cfg(feature = "vmce")]
+    if state
         .match_state
         .sim_runtime
         .as_ref()
         .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
-        .is_some_and(|class| class.is_vmce());
-    if vera && victory {
-        open_vmce_victory_result(state);
+        .is_some_and(|class| class.is_vmce())
+    {
+        if victory {
+            crate::app::vmce_result::open_victory(state);
+        } else {
+            crate::app::vmce_result::open_defeat(state);
+        }
         return;
     }
-    let vera_next = if vera && victory {
-        let current = state.match_state.session.network_vmce_map_config().cloned();
-        current.and_then(|current| {
-            match crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(
-                state, &current,
-            ) {
-                Ok(next) => next,
-                Err(error) => {
-                    log::warn!("VMCE next campaign stage is unavailable: {error:#}");
-                    None
-                }
-            }
-        })
-    } else {
-        None
-    };
-    let can_continue = if vera {
-        vera_next.is_some()
-    } else {
-        let Some(can_continue) = state
-            .frontend
-            .multiplayer_shell_runtime
-            .cooperative_can_continue()
-        else {
-            App::leave_mission_result_screen(state);
-            return;
-        };
-        can_continue
+    let Some(can_continue) = state
+        .frontend
+        .multiplayer_shell_runtime
+        .cooperative_can_continue()
+    else {
+        App::leave_mission_result_screen(state);
+        return;
     };
     // GameExit stopped Scenario+0x614; +0x61C holds the mission's ticks.
     let elapsed = state
@@ -316,19 +200,9 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         App::leave_mission_result_screen(state);
         return;
     };
-    if vera {
-        model.vera = true;
-        model.map_index = None;
-        // A defeat has no next stage. The current stage name is the only
-        // identity the BC6 description keeps.
-        model.description.clear();
-        model.map_label = current_stage_display_name(state);
-        model.previous_mission = model.map_label.clone();
-    }
     // GameExit__Victory's tail saves the carry-over record (0x004C6180)
-    // before Start_Scenario; the defeat path saves none. VERA's carry-over
-    // belongs to its own campaign progression.
-    let saved = (!vera && victory)
+    // before Start_Scenario; the defeat path saves none.
+    let saved = victory
         .then(|| {
             state
                 .match_state
@@ -337,36 +211,26 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
                 .map(|runtime| runtime.simulation.save_campaign_carry_over())
         })
         .flatten();
-    let next_map = if vera {
-        vera_next.as_ref().map(|next| next.map_file.clone())
-    } else {
-        state
-            .frontend
-            .scenario_catalog
-            .records()
-            .get(state.frontend.multiplayer_shell_runtime.scenario_index())
-            .map(|record| record.file_name.clone())
-    };
+    let next_map = state
+        .frontend
+        .scenario_catalog
+        .records()
+        .get(state.frontend.multiplayer_shell_runtime.scenario_index())
+        .map(|record| record.file_name.clone());
     let rows = model.rows.len();
-    let campaign_end = (!vera && victory)
+    let campaign_end = victory
         .then(|| build_campaign_end(state, model.side))
         .flatten();
     // BC6 keeps the match's route; the shared teardown then finds no match
     // transport to return.
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    let entered = if vera {
-        state
-            .match_state
-            .session
-            .enter_vmce_round(vera_next, can_continue, rows)
-    } else {
+    if let Err(error) =
         state
             .match_state
             .session
             .enter_cooperative_round(next_map, can_continue, rows)
-    };
-    if let Err(error) = entered {
+    {
         log::error!("Could not open the co-op result dialog: {error:#}");
         return_to_shell(state);
         return;
@@ -397,6 +261,7 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     {
         log::warn!("co-op round countries: {error:#}");
     }
+    model.vera = false;
     // 0x0072D300 (Scenario+0x34B8's palette) and 0x0060CF00's SCRBK.
     state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
         crate::render::main_menu_shell_chrome::build_campaign_score_art(
@@ -775,43 +640,6 @@ fn continue_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep
         .continue_cooperative_round(difficulty)
 }
 
-/// VMCE's won mission owns its all-ready handoff on the native campaign score
-/// page `0x103`: a guest's Continue is its ready action, while the host's
-/// Continue starts the next stage only after every guest is ready. Returns
-/// true when the 0x103 page owns this Continue (including a no-op) and false
-/// for the ordinary campaign page.
-pub(crate) fn vmce_victory_continue(state: &mut AppState) -> bool {
-    let Some(round) = state.match_state.session.cooperative_round() else {
-        // The campaign's last mission has no next-stage round; its native
-        // 0x103 Continue returns to the shell/lobby directly.
-        if state.frontend.campaign_score_page.is_some()
-            && state.match_state.session_mode().is_network()
-        {
-            state.frontend.campaign_score_page = None;
-            return_to_shell(state);
-            return true;
-        }
-        return false;
-    };
-    if !round.vera() || state.frontend.campaign_score_page.is_none() {
-        return false;
-    }
-    if !state
-        .match_state
-        .session
-        .cooperative_round_continue_enabled()
-    {
-        state.platform.window.request_redraw();
-        return true;
-    }
-    match continue_pressed(state) {
-        Ok(step) => run_step(state, step),
-        Err(error) => log::warn!("VMCE victory Continue refused: {error:#}"),
-    }
-    state.platform.window.request_redraw();
-    true
-}
-
 /// One decoded BC6 packet from a peer.
 pub(crate) fn service_event(
     state: &mut AppState,
@@ -838,7 +666,7 @@ pub(crate) fn service_event(
     Ok(())
 }
 
-fn run_step(state: &mut AppState, step: CooperativeRoundStep) {
+pub(crate) fn run_step(state: &mut AppState, step: CooperativeRoundStep) {
     match step {
         CooperativeRoundStep::None => {}
         CooperativeRoundStep::Assign => {
@@ -1038,7 +866,7 @@ fn finish(state: &mut AppState) {
 
 /// Main_Game's return after GameExit: the session toggles persist, then
 /// the mode's shell (LAN: a new BB).
-fn return_to_shell(state: &mut AppState) {
+pub(crate) fn return_to_shell(state: &mut AppState) {
     crate::app::lan_service::cooperative::release_transport(state);
     leave_result(state);
 }
