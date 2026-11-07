@@ -103,8 +103,10 @@ pub struct PreparedNetworkStartup {
     carry_over: Option<CampaignCarryOver>,
     /// Independently resolved on every peer from the admitted map, roles and
     /// shared start seed; consumed by the VMCE House bootstrap owner.
+    #[cfg(feature = "vmce")]
     vmce_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     /// The exact host-authoritative coop overlay used to resolve those Houses.
+    #[cfg(feature = "vmce")]
     vmce_map_config: Option<NetworkVmceMapConfig>,
 }
 
@@ -281,26 +283,53 @@ impl PreparedNetworkStartup {
             native_id_prefix,
             wol_start,
             carry_over: None,
+            #[cfg(feature = "vmce")]
             vmce_houses: None,
+            #[cfg(feature = "vmce")]
             vmce_map_config: None,
         }
     }
 
     pub(crate) fn with_vmce_houses(
-        mut self,
+        self,
         assignments: crate::skirmish_launch::VmceHouseAssignments,
     ) -> Self {
-        self.vmce_houses = Some(assignments);
-        self
+        #[cfg(feature = "vmce")]
+        {
+            let mut this = self;
+            this.vmce_houses = Some(assignments);
+            this
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = assignments;
+            self
+        }
     }
 
-    pub(crate) fn with_vmce_map_config(mut self, config: NetworkVmceMapConfig) -> Self {
-        self.vmce_map_config = Some(config);
-        self
+    pub(crate) fn with_vmce_map_config(self, config: NetworkVmceMapConfig) -> Self {
+        #[cfg(feature = "vmce")]
+        {
+            let mut this = self;
+            this.vmce_map_config = Some(config);
+            this
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = config;
+            self
+        }
     }
 
     pub(crate) fn vmce_map_config(&self) -> Option<&NetworkVmceMapConfig> {
-        self.vmce_map_config.as_ref()
+        #[cfg(feature = "vmce")]
+        {
+            self.vmce_map_config.as_ref()
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            None
+        }
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {
@@ -353,7 +382,14 @@ impl PreparedNetworkStartup {
     }
 
     pub(crate) fn vmce_houses(&self) -> Option<&crate::skirmish_launch::VmceHouseAssignments> {
-        self.vmce_houses.as_ref()
+        #[cfg(feature = "vmce")]
+        {
+            self.vmce_houses.as_ref()
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            None
+        }
     }
     pub(crate) fn mode(&self) -> crate::app::match_runtime::session::SessionMode {
         self.mode
