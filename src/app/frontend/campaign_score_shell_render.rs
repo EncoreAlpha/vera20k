@@ -112,6 +112,11 @@ pub(crate) fn render_campaign_score_page(
         .and_then(|control| control.tooltip_key)
         .map(|key| resolve_csf(state, key).into_owned())
         .unwrap_or_default();
+    let status = if status.is_empty() {
+        vmce_victory_status(state).unwrap_or_default()
+    } else {
+        status
+    };
     let pressed = active.then(|| controller.pressed()).flatten();
 
     let mut labels: Vec<PaintLabel<'static>> = Vec::new();
@@ -304,6 +309,31 @@ pub(crate) fn render_campaign_score_page(
 }
 
 /// The low two bits of Win32 STATIC style select left, centre or right.
+/// VMCE's victory page uses the native status static for the all-Continue
+/// handoff: the host sees how many guests are ready, a guest sees Ready or
+/// Waiting for the host. The ordinary campaign page keeps its tooltip-only
+/// status text.
+fn vmce_victory_status(state: &AppState) -> Option<String> {
+    let (ready, total, local_ready) = state
+        .match_state
+        .session
+        .cooperative_round_ready_progress()?;
+    if total == 0 {
+        return None;
+    }
+    let key = if local_ready {
+        "TXT_WAITING"
+    } else {
+        "TXT_READY"
+    };
+    let label = resolve_csf(state, key);
+    if label == key || label.trim().is_empty() {
+        Some(format!("{ready}/{total}"))
+    } else {
+        Some(format!("{} {ready}/{total}", label.trim()))
+    }
+}
+
 fn static_align(dialog: CampaignScoreDialog, id: u16) -> ShellAlign {
     match dialog.control(id).map(|control| control.native_style & 0x3) {
         Some(1) => ShellAlign::H_CENTER,

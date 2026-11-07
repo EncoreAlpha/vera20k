@@ -180,6 +180,27 @@ pub(crate) fn render_coop_score(
             ));
         }
     }
+    // VMCE's defeat page fills the native "Previous Mission" row with the
+    // stage just played. Stock Cooperative leaves the model value empty and
+    // keeps the static-only template.
+    if model.vera
+        && !model.previous_mission.is_empty()
+        && let (Some(label), Some(time)) = (
+            layout.control_rect(PREVIOUS_MISSION),
+            layout.control_rect(TIME),
+        )
+    {
+        let x = label.x + label.w + 4;
+        let width = time.x.saturating_sub(8).saturating_sub(x);
+        if width > 0 {
+            texts.push(text(
+                &model.previous_mission,
+                RectPx::new(x, label.y, width, label.h),
+                ShellAlign::NONE,
+                SHELL_LABEL_TEXT_RGB,
+            ));
+        }
+    }
     // The tail's cells: name, then "%d" for each count, in the row colour.
     for (row, cells) in model.rows.iter().zip(ROW_CELLS) {
         let values = [

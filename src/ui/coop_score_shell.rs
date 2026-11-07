@@ -525,6 +525,9 @@ pub struct CoopScoreModel {
     pub next_mission: String,
     pub mode_label: String,
     pub map_label: String,
+    /// VMCE's defeat page names the stage just played beside the native
+    /// `GUI:PreviousMission` static. Stock Cooperative leaves it empty.
+    pub previous_mission: String,
     pub description: String,
     /// Scenario `+0x34B8`, which picks the score palette (`0x0072D300`).
     pub side: i32,

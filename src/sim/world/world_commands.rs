@@ -3218,7 +3218,7 @@ impl Simulation {
                 !self.entity_owned_by_id(command_owner, id)
             }
         };
-        match cmd {
+        let foreign = match cmd {
             Command::Stop { entity_id }
             | Command::Scatter { entity_id }
             | Command::DeployMcv { entity_id }
@@ -3242,7 +3242,27 @@ impl Simulation {
                     !command_owner.eq_ignore_ascii_case(self.interner.resolve(owner))
                 }),
             _ => cmd.megamission_actor().is_some_and(foreign),
+        };
+        // The rejection is a security boundary, not a native receiver result.
+        // A debug build asserts that the refused command still names a live
+        // actor and, under VMCE's authenticated grants, that its sender has a
+        // mapped House. Release keeps the silent rejection unchanged.
+        if foreign {
+            debug_assert!(
+                cmd.megamission_actor()
+                    .is_none_or(|id| self.substrate.entities.get(id).is_some()),
+                "foreign network command names a missing actor"
+            );
+            if self.session.has_network_house_grants()
+                && let Some(sender) = self.executing_record_sender
+            {
+                debug_assert!(
+                    self.session.network_source_house(sender).is_some(),
+                    "foreign network command has no authenticated House mapping"
+                );
+            }
         }
+        foreign
     }
 
     /// The acting object's half of the native order-admission gate.
@@ -3740,6 +3760,13 @@ mod tests {
         assert!(!sim.network_command_actor_foreign("Beta", &Command::Stop { entity_id: 11 }));
         sim.executing_record_sender = None;
         assert!(sim.network_command_actor_foreign("Alpha", &Command::Stop { entity_id: 10 }));
+
+        // The same gate through the production dispatch: the sender's own
+        // share of the House is accepted, the other House's actor is refused.
+        sim.executing_record_sender = Some(0);
+        assert!(sim.apply_command("Alpha", &Command::Stop { entity_id: 10 }, None));
+        assert!(!sim.apply_command("Alpha", &Command::Stop { entity_id: 11 }, None));
+        assert!(sim.substrate.entities.get(11).is_some());
 
         // Exercise the actual local encoder, native sender byte, queue decoder
         // and due-command gate for an additional House actor.

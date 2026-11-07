@@ -194,11 +194,16 @@ conditions for each role. There is no automatic “all roles failed” fallback.
 
 ## Result page and Continue
 
-- The BC6 result page has one row per role primary House and shows mission time.
-- On victory with a next mission: the host is ready automatically; each guest confirms ready;
-  after everyone is ready only the host can start the next mission.
+- Victory opens the original campaign score page `0x103`, with its native layout and
+  `StandaloneScore` title. It shows par time, your time, rank, commendation and kills.
+  Rank and commendation come from the map `[Ranking]` under/over-par fields.
+- On victory with a next mission, Continue is the team-ready action: each guest presses Continue
+  once, and after everyone is ready only the host can Continue into the next mission.
 - The next mission is revalidated against the same `campaign.ini` and role mapping.
-- On defeat, `EndOfGame=yes`, or no `NextScenario`, Continue is absent; only Quit is offered.
+- Defeat opens BC6 with the current stage name, the role score rows and Quit. It has no next
+  mission and shows no ranking report.
+- On the campaign's last mission, the `0x103` Continue returns to the lobby without loading
+  another stage; `EndOfGame=yes` completion is still deferred.
 - VMCE does not write `coopsave.ini` or cross-mission progress.
 
 ## Map-author notes
@@ -206,6 +211,9 @@ conditions for each role. There is no automatic “all roles failed” fallback.
 - Give every role primary House a different `Country`. Trigger owners and event/action country
   arguments resolve to a Country, and the first House registered for that Country wins.
 - Write one trigger per role when the condition belongs to that role.
+- `[Ranking]` `ParTimeEasy/Medium/Hard` and the matching `UnderParTitle`/`UnderParMessage` or
+  `OverParTitle`/`OverParMessage` feed the victory `0x103` page. Missing fields use the native
+  defaults; the page is still shown.
 - Custom countries can be registered in the map `[Countries]`/`[Colors]`; `Side` must already
   exist in rules `[Sides]`. VMCE does not merge a map-authored `[Sides]`.
 - `<Player @ X>` selectors, `<random>`/`<none>` role owners, action 15 `AllowWin` and event 33

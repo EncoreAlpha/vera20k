@@ -2092,6 +2092,9 @@ impl LiveLanCapture {
                     }
                 }
                 VmceOutcome::Real => {
+                    let victory_page = state.frontend.campaign_score_page.as_ref().filter(|page| {
+                        page.dialog == crate::ui::campaign_score_shell::CampaignScoreDialog::Victory
+                    });
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         let victory = page.victory;
                         let rows = page.model.rows.len();
@@ -2162,6 +2165,81 @@ impl LiveLanCapture {
                         } else {
                             VeraOutcomePhase::Quit
                         };
+                    } else if let Some(page) = victory_page {
+                        // VMCE's won mission uses the native campaign score
+                        // page 0x103; failure still uses BC6 above.
+                        let rows = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.cooperative_score_rows().len())
+                            .unwrap_or(0);
+                        ensure!(rows > 0, "VMCE real outcome page has no role rows");
+                        let can_continue =
+                            state.match_state.session.cooperative_round_can_continue();
+                        let native_frame = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.session().binary_frame());
+                        let state_hash = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.state_hash());
+                        let local_ready = state
+                            .match_state
+                            .session
+                            .cooperative_round()
+                            .is_some_and(|round| round.local_ready());
+                        let slot_ready: Vec<bool> = (0..4)
+                            .map(|index| {
+                                state
+                                    .match_state
+                                    .session
+                                    .cooperative_round_slot_ready(index)
+                            })
+                            .collect();
+                        let continue_enabled = state
+                            .match_state
+                            .session
+                            .cooperative_round_continue_enabled();
+                        self.vera_outcome_evidence = Some(json!({
+                            "kind": kind,
+                            "injected_frame": json!(null),
+                            "dialog": {
+                                "victory": true,
+                                "dialog": 0x103,
+                                "rows": rows,
+                                "time": page.model.your_time,
+                                "can_continue": can_continue,
+                                "render_frame": render_frame,
+                            },
+                            "round": {
+                                "local_ready": local_ready,
+                                "slot_ready": slot_ready,
+                                "continue_enabled": continue_enabled,
+                            },
+                            "native_frame": native_frame,
+                            "state_hash": state_hash,
+                        }));
+                        self.request_screenshot("vera-result-real-win");
+                        if let (Some(receipt), Some(evidence)) = (
+                            self.final_receipt.as_mut(),
+                            self.vera_outcome_evidence.as_ref(),
+                        ) {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.event(
+                            render_frame,
+                            "VERA outcome: map's real trigger chain opened campaign score 0x103",
+                        );
+                        self.vera_outcome_dialog_frame = Some(render_frame);
+                        self.vera_outcome_phase = if can_continue {
+                            VeraOutcomePhase::Round
+                        } else {
+                            VeraOutcomePhase::Quit
+                        };
                     } else {
                         ensure!(
                             render_frame < VERA_OUTCOME_REAL_TIMEOUT_FRAMES,
@@ -2209,7 +2287,13 @@ impl LiveLanCapture {
                 let Some(opened) = self.vera_outcome_dialog_frame else {
                     anyhow::bail!("VERA result dialog frame missing");
                 };
-                if state.frontend.coop_score_page.is_none() {
+                let native_victory_page = state.frontend.campaign_score_page.is_some()
+                    && state
+                        .match_state
+                        .session
+                        .cooperative_round()
+                        .is_some_and(|round| round.vera());
+                if state.frontend.coop_score_page.is_none() && !native_victory_page {
                     self.vera_outcome_phase = VeraOutcomePhase::NextMission;
                     return Ok(());
                 }
@@ -2229,10 +2313,17 @@ impl LiveLanCapture {
                 {
                     return Ok(());
                 }
-                crate::app::cooperative_round::apply_action(
-                    state,
-                    crate::ui::coop_score_shell::CoopScoreAction::Continue,
-                );
+                if native_victory_page {
+                    ensure!(
+                        crate::app::cooperative_round::vmce_victory_continue(state),
+                        "the native 0x103 victory page did not own Continue"
+                    );
+                } else {
+                    crate::app::cooperative_round::apply_action(
+                        state,
+                        crate::ui::coop_score_shell::CoopScoreAction::Continue,
+                    );
+                }
                 if let Some(evidence) = self.vera_outcome_evidence.as_mut()
                     && let Some(object) = evidence.as_object_mut()
                 {

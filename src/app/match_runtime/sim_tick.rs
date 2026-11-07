@@ -381,6 +381,57 @@ fn build_campaign_score_screen_model(
     model
 }
 
+/// VMCE's won mission uses the same campaign score `0x103` values, but its
+/// difficulty is the campaign round's cooperative difficulty rather than the
+/// single-player OptionsClass difficulty.
+pub(crate) fn build_vmce_victory_score_model(
+    state: &AppState,
+    elapsed_score_ticks: i32,
+) -> crate::ui::campaign_score_shell::CampaignScoreScreenModel {
+    let difficulty = state
+        .frontend
+        .multiplayer_shell_runtime
+        .cooperative_difficulty();
+    let houses = state.match_state.sim_runtime.as_ref().map(|runtime| {
+        runtime
+            .simulation
+            .houses()
+            .values()
+            .map(|house| (house.player_control(), house.stats().kills()))
+            .collect::<Vec<_>>()
+    });
+    let side = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .and_then(|runtime| {
+            crate::app::input::commands::preferred_local_owner_name(state)
+                .as_deref()
+                .and_then(|owner| runtime.simulation.interner().get(owner))
+                .and_then(|owner| runtime.simulation.houses().get(&owner))
+                .map(|house| house.side_index())
+        })
+        .unwrap_or(0);
+    let mut model = build_campaign_score_screen_model_from_sources(
+        elapsed_score_ticks,
+        difficulty,
+        &state.match_state.map_ranking,
+        houses.unwrap_or_default(),
+        side,
+        |key| resolve_campaign_score_label(state, key),
+    );
+    model.theme = state
+        .process_assets
+        .side_score_theme(
+            side,
+            crate::rules::ruleset::ScoreTheme::Campaign {
+                over_par: model.over_par,
+            },
+        )
+        .map(str::to_owned);
+    model
+}
+
 fn build_campaign_score_screen_model_from_sources(
     elapsed_score_ticks: i32,
     difficulty: i32,

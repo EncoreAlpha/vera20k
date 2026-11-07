@@ -164,16 +164,21 @@ VMCE 不按遭遇战出生点给角色分配基地。地图作者要为每个角
 
 ## 结果页与继续
 
-- BC6 结果页每个角色主 House 一行，并显示任务时间。
-- 胜利且存在下一关时：房主自动 ready，客人按 Continue 表示 ready；全员 ready 后只有房主能进入下一关。
+- 胜利进入原生战役结算页 `0x103`，保留原生布局和 `StandaloneScore` 标题，显示 par time、
+  your time、rank、commendation 和击杀数。Rank/Commendation 来自地图 `[Ranking]` 的
+  under/over par 字段。
+- 胜利且存在下一关时，Continue 是全队就绪动作：客人按一次 Continue 表示 ready，全员 ready
+  后只有房主能进入下一关。
 - 下一关会按同一份 `campaign.ini` 和角色映射重新校验。
-- 失败、`EndOfGame=yes` 或没有 `NextScenario` 时没有 Continue，只能退出。
+- 失败进入 BC6，显示当前关卡名称、各角色分数行和 Quit；没有下一关，也不显示 `[Ranking]` 战后报告。
+- 战役末关的 `0x103` Continue 直接回大厅，不再加载下一关；`EndOfGame=yes` 完成页仍留到后续版本。
 - VMCE 不写 `coopsave.ini`，也不保存跨关进度。
 
 ## 地图作者注意事项
 
 - 每个角色主 House 必须使用不同的 `Country`。触发器 owner 和事件/动作里的国家参数解析到 Country；同一 Country 的第一条 House 会胜出。
 - 角色条件按角色各写一份触发器，不要指望引擎自动复制或聚合。
+- 胜利页 `0x103` 读取地图 `[Ranking]` 的 `ParTimeEasy/Medium/Hard` 和对应的 under/over par 标题、评语；缺少字段时用原生默认值，页面仍显示。
 - 地图可以在 `[Countries]`/`[Colors]` 注册自定义国家；`Side` 必须已在规则 `[Sides]` 中。VMCE 不合并地图新增的 `[Sides]`。
 - 不要用 `<Player @ X>` 选择器、`<random>`/`<none>` 作为角色 owner、动作 15 `AllowWin` 或事件 33 做角色逻辑；请用国家 selector 和 `67`/`68`。
 - 增援小队、TaskForce 和基地车不会自动按角色复制；每个角色需要时各写一份。

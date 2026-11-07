@@ -92,20 +92,27 @@ VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不
 
 验证：`app::shell_network_setup` 26 项、`app::shell_network_setup::vmce_map` 7 项、`app::diagnostics::shell_capture` 89 项、core `skirmish_modes` 11 项、`sim::scenario_post_map` 9 项、`sim::world::house_defeat` 21 项、`sim::scenario_bootstrap` 70 项、`ui::multiplayer_setup` 9 项通过；`cargo build --profile fast --bin vera20k --no-default-features` 和 `--features vmce` 都通过。真实双进程胜利验收走 `settings/Maps/VMCE/testcampaign/`，系列显示名从该系列 `ra2md.csf` 的 `Name:AD03` 解析为「林德拉克计划」，下一关为 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash` 一致；失败验收两端 `can_continue=false`。
 
-### `0.1.21-dev` 遗留
+0.1.21 收尾验收：真实双进程胜利进入原生 `0x103`（dialog 259），两端 `can_continue=true`、用时 00:00:23；客人 Continue 记录 ready 后，房主 Continue 进入 `VMCE/testcampaign/stage02/all01umd.map`，两端 native frame 60 `state_hash=401089763868765532`。失败进入 BC6，两端 `can_continue=false`，当前关卡名显示在“前一个任务”行。`ui::coop_score_shell` 4 项、`sim_tick` 计分模型 1 项、`sim::world::world_commands` 定向测试通过。
 
-- 下一关沿用上一关 seed；角色分配沿用上一关；资金不继承。跨关资金、新 seed 和角色重选归 `0.1.22`。
-- `AltNextScenario`、`SkipMapSelect`/全局变量分支、`EndOfGame` 战役完成页、失败重试未实现。
-- `coopsave.ini` 和持久跨关进度未实现。
-- 3–4 人只做到会话/数据结构支持；结果页 ready 图标和分数行仍是原生两行布局，未做完整真机验收。
-- `0.1.19` 遗留的“对方 House 的命令被拒绝”运行时断言仍未补；目前由既有单元测试覆盖。
-- 结果页“前一个任务”行和描述区仍未接完整的战役身份，内容不完整。
+### `0.1.21-dev` 收尾
+
+已完成：
+
+- 胜利改走原生战役结算页 `0x103`，保留原生布局和 `StandaloneScore` 标题；失败继续走 BC6，只填当前关卡名称。
+- `0x103` 的 Continue 改为全队就绪：客人 Continue 表示 ready，房主在全员 ready 后 Continue 才进入下一关；最后一关 Continue 直接回大厅。
+- 地图 `[Ranking]` 的 par time、under/over par 标题和评语进入 `0x103` 的原生 Rank/Commendation/ParTime/YourTime 字段。
+- `0.1.19` 遗留的“对方 House 的命令被拒绝”补了 debug 断言；release 仍静默拒绝。
+- 普通 Cooperative 和原版 BC6/0x103 行为保持不变；3–4 人结果页继续沿用原生两行布局。
+
+移交 `0.1.22`：下一关新 seed、角色保留/重选、跨关资金、`SkipMapSelect`/`AltNextScenario`、`EndOfGame` 完成页、失败重试、`coopsave.ini` 和持久跨关进度。
+
+移交 `0.1.23`：3–4 人真机验收、结果页 3–4 行布局、暂停/离场等边界规则。
 
 ## 下一阶段计划
 
 ### `0.1.22-dev` 下一关与战役完成
 
-已完成的基础：单胜利链的 `NextScenario` 解析、冻结下一关配置、下一关装载和结果页 ready/Continue 已在 `0.1.21` 打通。下一阶段补规则和状态：
+已完成的基础：单胜利链的 `NextScenario` 解析、冻结下一关配置、下一关装载和 `0x103` 的全员 Continue 就绪已在 `0.1.21` 打通。下一阶段补规则和状态：
 
 - 战役身份在比赛期完整携带；全局变量和战役计时器按维度继承。
 - 每关使用新的共享 seed（当前复用上一关），并由回合/选项同步给所有玩家。
@@ -117,7 +124,7 @@ VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不
 - 两端 campaign/地图摘要不一致时拒绝继续并提示，不能静默加载。
 - 每关胜利的持久进度写盘可以继续留到后续版本；本阶段先完成内存内的下一关、角色/资金和结束规则。
 
-DONE：第 1 关胜利后再进第 2 关且角色、资金、seed 一致；`EndOfGame` 回大厅；失败重试同图；摘要不一致时两端拒绝继续。
+验收标准（尚未实现）：第 1 关胜利后再进第 2 关且角色、资金、seed 一致；`EndOfGame` 回大厅；失败重试同图；摘要不一致时两端拒绝继续。
 
 ### `0.1.23-dev` 边界规则
 
@@ -127,7 +134,7 @@ DONE：第 1 关胜利后再进第 2 关且角色、资金、seed 一致；`EndO
 - 难度仅房主可改且全队统一；游戏速度房主可调。
 - 3–4 人真机验收，以及结果页 3–4 行布局（如果仍沿用原生两行画面，需要明确这是展示限制还是做扩展布局）。
 
-DONE：状态机定向测试 + 双进程各跑一遍暂停/恢复/离场。
+验收标准（尚未实现）：状态机定向测试 + 双进程各跑一遍暂停/恢复/离场。
 
 ### 暂不排期
 

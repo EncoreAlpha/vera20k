@@ -34,7 +34,7 @@ VMCE 走的是另一条路：
 - 胜负只由地图触发器的结局动作决定；单方主 House 全灭不会自动结束任务。
 - 地图里的非角色 House（剧情方、共享方）按战役语义保留，不会因为开局没有单位就被多人自动判负或刷「被击败」消息；只有每名角色的主 House 走自动判负。
 - 任务内按战役语义关闭随机箱和 ShortGame，并跳过 Special House 自动全体结盟与 Secret Lab 随机分配；大厅里的 ShortGame/Crates 开关对 VERA 显示为禁用。
-- 当前版本在胜利且外部战役给出 `NextScenario` 时，结果页可 ready/Continue 进入下一关；不写 `coopsave.ini`、不保存跨关进度。失败、`EndOfGame` 或没有下一关时只提供退出。
+- 当前版本在胜利时进入原生战役结算页 `0x103`，且外部战役给出 `NextScenario` 时可全员 Continue 进入下一关；失败进入 BC6。不写 `coopsave.ini`、不保存跨关进度。`EndOfGame` 或没有下一关时只提供退出。
 
 VMCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然按原版规则运行；普通多人模式也不会因为 VMCE 的地图格式而改变。
 
@@ -167,13 +167,13 @@ LAN 大厅里的难度滑条对 VMCE 可见，并且由房主统一控制：
 
 ### 结果页与继续
 
-任务结束后，双方进入 BC6 合作结果页：
+胜利和失败使用不同的原版结果页：
 
-- 每名角色主 House 一行，列出击杀、损失、建造和分数；同时显示任务时间。
-- 当前 VERA 结果页没有单独的胜利/失败标题，也不显示难度选择控件；模式标签显示 `Multiplayer Campaign`，下一关显示战役里的地图路径。
-- 结果页不提供国家、颜色、起始位置和难度编辑；只保留每名玩家的分数行、ready 标记、Continue 和 Quit。
-- 胜利且战役给出下一关时：房主自动 ready，客人按 Continue 表示 ready；全员 ready 后只有房主能按 Continue 进入下一关。下一关仍会按外部战役配置校验地图与角色，并重新加载战场。
-- 失败、`EndOfGame=yes` 或没有 `NextScenario` 时：Continue 不出现，只能退出；退出后回到合作大厅。
+- 胜利进入原生战役结算页 `0x103`，保留原生布局和 `StandaloneScore` 标题；显示 par time、your time、rank、commendation 和击杀数。Rank/Commendation 读取地图 `[Ranking]` 的 `UnderParTitle/Message` 或 `OverParTitle/Message`，难度取当前 VMCE 战役难度。
+- `0x103` 没有 BC6 的 ready 行：客人按 Continue 表示 ready；全员 ready 后只有房主按 Continue 才能进入下一关。状态行显示当前 ready 人数。
+- 失败进入 BC6，显示当前关卡名称、各角色主 House 的分数行和 Quit；没有下一关，也不显示 `[Ranking]` 战后报告。
+- 胜利且战役给出下一关时，下一关仍会按外部战役配置校验地图与角色，并重新加载战场。
+- 战役末关的 `0x103` Continue 直接回大厅；`EndOfGame=yes` 完成页和失败重试尚未实现。
 - 结果页不写 `coopsave.ini`，也不写跨关进度。
 
 失败重试、`EndOfGame` 战役完成页、跨关角色/资金/新 seed 仍在开发中，见「当前限制」。
@@ -506,7 +506,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|
 | 联机范围 | LAN；WOL/CnCNet 不支持 |
 | 玩家数 | 结构支持最多 4 个角色；当前以 2 人 LAN 验收为主，3–4 人未完整验证 |
-| 结果页 | 胜利且有 `NextScenario` 时可 ready/Continue 进入下一关；失败重试和 `EndOfGame` 完成页未实现 |
+| 结果页 | 胜利走原生 `0x103`，有 `NextScenario` 时可全员 Continue 进入下一关；失败走 BC6。失败重试和 `EndOfGame` 完成页未实现 |
 | 战役进度 | 不保存；不写 `coopsave.ini` |
 | 任务内多人选项 | VERA 按战役语义关闭随机箱和 ShortGame（大厅对应开关禁用）；Special House/Secret Lab 的多人专属步骤不执行 |
 | 跨关角色/资金/seed | 角色沿用上一关的分配；资金不继承；下一关复用上一关 seed（规划中改为新 seed） |

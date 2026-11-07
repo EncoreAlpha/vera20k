@@ -52,6 +52,12 @@ impl CooperativeRoundState {
         self.local_ready
     }
 
+    /// Authored VMCE: the host is auto-ready and only its Continue starts the
+    /// next stage; a guest Continue is its ready action.
+    pub(crate) fn vera(&self) -> bool {
+        self.vera
+    }
+
     pub(crate) fn quit_enabled(&self) -> bool {
         self.outcome.is_none() && self.quit_enabled
     }
@@ -281,6 +287,41 @@ impl MatchSession {
             NetworkPhase::CooperativeRound { round, .. } => Some(round),
             _ => None,
         }
+    }
+
+    /// `0x89E05D`: whether the next stage exists. The native campaign's last
+    /// mission sets this false; VMCE keeps the same gate for its 0x103 page.
+    pub(crate) fn cooperative_round_can_continue(&self) -> bool {
+        self.cooperative_round()
+            .is_some_and(|round| round.can_continue)
+    }
+
+    /// The host's `0x0046EF06` readiness rows as `(ready, total, local)`.
+    /// Empty slots are always ready; only connected, non-observer humans
+    /// count toward the status shown by VMCE's victory page.
+    pub(crate) fn cooperative_round_ready_progress(&self) -> Option<(usize, usize, bool)> {
+        let Some(NetworkPhase::CooperativeRound {
+            connected,
+            launch,
+            round,
+            ..
+        }) = self.network.as_ref().map(|network| &network.phase)
+        else {
+            return None;
+        };
+        let mut ready = 0;
+        let mut total = 0;
+        for (index, human) in launch.humans.iter().enumerate() {
+            if human.is_observer() || !connected.contains(&index) {
+                continue;
+            }
+            let Some(row) = human.raw_slot_index else {
+                continue;
+            };
+            total += 1;
+            ready += usize::from(round.ready[usize::from(row)]);
+        }
+        Some((ready, total, round.local_ready()))
     }
 
     /// `0x0046FB50`: Continue is enabled while every row's player is still
