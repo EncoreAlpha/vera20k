@@ -201,6 +201,7 @@ impl Options {
             observer_row: self.observer_row,
             cooperative_difficulty: self.cooperative_difficulty,
             seed: self.seed,
+            #[cfg(feature = "vmce")]
             vmce_map_config: None,
         })
     }

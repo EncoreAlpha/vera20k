@@ -177,7 +177,10 @@ impl MatchSession {
         can_continue: bool,
         rows: usize,
     ) -> anyhow::Result<()> {
-        self.enter_cooperative_round_with_vera(next_map_file, can_continue, rows, None)
+        #[cfg(feature = "vmce")]
+        return self.enter_cooperative_round_with_vera(next_map_file, can_continue, rows, None);
+        #[cfg(not(feature = "vmce"))]
+        return self.enter_cooperative_round_with_vera(next_map_file, can_continue, rows);
     }
 
     /// VMCE's BC6 entry: the next external campaign stage was resolved
@@ -199,7 +202,7 @@ impl MatchSession {
         next_map_file: Option<String>,
         can_continue: bool,
         rows: usize,
-        vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
+        #[cfg(feature = "vmce")] vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
     ) -> anyhow::Result<()> {
         let network = self
             .network

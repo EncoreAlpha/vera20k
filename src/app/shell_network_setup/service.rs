@@ -19,6 +19,7 @@ pub(crate) struct HostOptions {
     pub(crate) observer_row: Option<u8>,
     pub(crate) cooperative_difficulty: i32,
     pub(crate) seed: Option<u32>,
+    #[cfg(feature = "vmce")]
     pub(crate) vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
 }
 
@@ -477,6 +478,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             observer_row,
             cooperative_difficulty,
             seed,
+            #[cfg(feature = "vmce")]
             vmce_map_config,
         }) => {
             // 0x5E3E73..0x5E3E90: a WOL parse drops every option text while

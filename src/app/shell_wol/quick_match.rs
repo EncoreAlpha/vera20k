@@ -959,6 +959,7 @@ fn build_host_options(
         observer_row: None,
         cooperative_difficulty: 0,
         seed: Some(pairing.seed),
+        #[cfg(feature = "vmce")]
         vmce_map_config: None,
     })
 }

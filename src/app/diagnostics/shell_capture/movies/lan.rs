@@ -811,6 +811,7 @@ impl LanCapture {
                 },
                 cooperative_difficulty: 0,
                 seed: Some(self.seed()?),
+                #[cfg(feature = "vmce")]
                 vmce_map_config: None,
             }),
         )?;

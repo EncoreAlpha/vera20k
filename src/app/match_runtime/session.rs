@@ -1489,61 +1489,46 @@ impl MatchSession {
         self.network.as_ref()?.map_metadata.as_ref()
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn network_vmce_map_config(
         &self,
     ) -> Option<&crate::app::match_bootstrap::NetworkVmceMapConfig> {
-        #[cfg(feature = "vmce")]
-        {
-            self.network.as_ref()?.vmce_map_config.as_ref()
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            None
-        }
+        self.network.as_ref()?.vmce_map_config.as_ref()
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn accept_network_vmce_map_config(
         &mut self,
         config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
     ) -> anyhow::Result<()> {
-        #[cfg(feature = "vmce")]
-        {
-            let Some(NetworkSession {
-                phase: NetworkPhase::Setup { launch, .. },
-                map_metadata,
-                vmce_map_config,
-                return_context,
-                ..
-            }) = self.network.as_mut()
-            else {
-                anyhow::bail!("network setup is not editable");
-            };
-            match (launch.mode.class.is_vmce(), config.as_ref()) {
-                (true, Some(config)) => {
-                    let map_file = launch
-                        .selected_map_file
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("VMCE setup has no selected map"))?;
-                    let metadata = map_metadata
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("VMCE setup has no map identity"))?;
-                    config.validate_binding(map_file, &metadata.source_sha256)?;
-                }
-                (true, None) if *return_context == NetworkReturnContext::Wol => {}
-                (true, None) => anyhow::bail!("VMCE host options omit the map config"),
-                (false, Some(_)) => anyhow::bail!("non-VMCE setup carries VMCE map settings"),
-                (false, None) => {}
+        let Some(NetworkSession {
+            phase: NetworkPhase::Setup { launch, .. },
+            map_metadata,
+            vmce_map_config,
+            return_context,
+            ..
+        }) = self.network.as_mut()
+        else {
+            anyhow::bail!("network setup is not editable");
+        };
+        match (launch.mode.class.is_vmce(), config.as_ref()) {
+            (true, Some(config)) => {
+                let map_file = launch
+                    .selected_map_file
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("VMCE setup has no selected map"))?;
+                let metadata = map_metadata
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("VMCE setup has no map identity"))?;
+                config.validate_binding(map_file, &metadata.source_sha256)?;
             }
-            *vmce_map_config = config;
-            Ok(())
+            (true, None) if *return_context == NetworkReturnContext::Wol => {}
+            (true, None) => anyhow::bail!("VMCE host options omit the map config"),
+            (false, Some(_)) => anyhow::bail!("non-VMCE setup carries VMCE map settings"),
+            (false, None) => {}
         }
-        #[cfg(not(feature = "vmce"))]
-        {
-            match config {
-                Some(_) => anyhow::bail!("VMCE is not built in"),
-                None => Ok(()),
-            }
-        }
+        *vmce_map_config = config;
+        Ok(())
     }
 
     ///5E4F49 mapsame flag, independent of general option/readiness changes.

@@ -1126,6 +1126,7 @@ fn parse_options(
             observer_row: session.network_observer_row(),
             cooperative_difficulty,
             seed: Some(seed),
+            #[cfg(feature = "vmce")]
             vmce_map_config: None,
         },
         current_speed,

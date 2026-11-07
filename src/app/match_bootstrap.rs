@@ -112,6 +112,7 @@ pub struct PreparedNetworkStartup {
 
 /// Typed local campaign projection plus the physical map identity it was
 /// admitted against. LAN publishes only the series directory and digest.
+#[cfg(feature = "vmce")]
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NetworkVmceMapConfig {
@@ -130,6 +131,7 @@ pub(crate) struct NetworkVmceMapConfig {
 /// A VMCE series's next stage, resolved from the external
 /// `campaign.ini` when BC6 opens. It carries the same series identity as
 /// the current stage and a fully loaded scenario config for the next map.
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone)]
 pub(crate) struct VmceNextStage {
     pub map_file: String,
@@ -144,6 +146,7 @@ pub(crate) struct VmceNextStage {
     pub map_ini: crate::rules::ini_parser::IniFile,
 }
 
+#[cfg(feature = "vmce")]
 impl PartialEq for VmceNextStage {
     fn eq(&self, other: &Self) -> bool {
         // `map_ini` is the parse of the physical source named by
@@ -156,11 +159,13 @@ impl PartialEq for VmceNextStage {
     }
 }
 
+#[cfg(feature = "vmce")]
 impl Eq for VmceNextStage {}
 
 /// The next stage's exchangeable identity: the catalog file and the digests
 /// both peers already resolved locally. `map_ini`/local source never travel;
 /// only this projection does, before the BC6 begin.
+#[cfg(feature = "vmce")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VmceStageIdentity {
     pub map_file: String,
@@ -169,6 +174,7 @@ pub(crate) struct VmceStageIdentity {
     pub config_sha256: String,
 }
 
+#[cfg(feature = "vmce")]
 impl VmceStageIdentity {
     pub(crate) fn of(next: Option<&VmceNextStage>) -> Option<Self> {
         #[cfg(not(feature = "vmce"))]
@@ -188,6 +194,7 @@ impl VmceStageIdentity {
     }
 }
 
+#[cfg(feature = "vmce")]
 impl NetworkVmceMapConfig {
     pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;
 

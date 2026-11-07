@@ -864,6 +864,7 @@ impl LiveLanCapture {
         rendered: PresentedShell,
         frame: u32,
     ) -> Result<()> {
+        #[cfg(feature = "vmce")]
         if matches!(
             self.target,
             LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
@@ -880,6 +881,7 @@ impl LiveLanCapture {
                 );
             }
         }
+        #[cfg(feature = "vmce")]
         if self.target == LanTarget::LiveVmceHost
             && self.phase == Phase::Loading
             && state.frontend.screen != GameScreen::Loading
@@ -1108,10 +1110,19 @@ impl LiveLanCapture {
             }
             Phase::HostSetup => {
                 let selected = self.config.as_ref().and_then(|config| config.map.clone());
-                let mode_id = if self.target == LanTarget::LiveVmceHost {
-                    Some(vmce_mode_id(state)?)
-                } else {
-                    None
+                let mode_id = {
+                    #[cfg(feature = "vmce")]
+                    {
+                        if self.target == LanTarget::LiveVmceHost {
+                            Some(vmce_mode_id(state)?)
+                        } else {
+                            None
+                        }
+                    }
+                    #[cfg(not(feature = "vmce"))]
+                    {
+                        None
+                    }
                 };
                 let prepared = if let Some(mut run) = self.cooperative.take() {
                     let result = run.prepare_host(state, rendered, &mut self.route, frame);
@@ -1161,6 +1172,7 @@ impl LiveLanCapture {
             Phase::HostReady
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) =>
             {
+                #[cfg(feature = "vmce")]
                 if self.target == LanTarget::LiveVmceHost {
                     self.step_vmce_host_setup(state, frame)?;
                     return Ok(());
@@ -1189,6 +1201,7 @@ impl LiveLanCapture {
             Phase::GuestSetup
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, false) =>
             {
+                #[cfg(feature = "vmce")]
                 if self.target == LanTarget::LiveVmceGuest {
                     self.step_vmce_guest_setup(state, frame)?;
                     return Ok(());
@@ -1327,6 +1340,7 @@ impl LiveLanCapture {
         self.open_human_rows(state, ai)
     }
 
+    #[cfg(feature = "vmce")]
     fn step_vmce_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         let session = &state.match_state.session;
         let launch = session.network_setup().context("VMCE host setup")?;
@@ -1387,6 +1401,7 @@ impl LiveLanCapture {
         Ok(())
     }
 
+    #[cfg(feature = "vmce")]
     fn step_vmce_guest_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         let session = &state.match_state.session;
         let launch = session.network_setup().context("VMCE guest setup")?;
@@ -1765,6 +1780,7 @@ impl LiveLanCapture {
             }
             return Ok(());
         }
+        #[cfg(feature = "vmce")]
         if matches!(
             self.target,
             LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
@@ -2656,7 +2672,10 @@ impl LiveLanCapture {
             "start_clicked": self.coop_setup_started_frame.is_some(),
             "start_clicked_frame": self.coop_setup_started_frame,
         });
-        receipt["vmce"] = vmce_runtime_receipt(state, self.vera_probe.as_ref())?;
+        #[cfg(feature = "vmce")]
+        {
+            receipt["vmce"] = vmce_runtime_receipt(state, self.vera_probe.as_ref())?;
+        }
         Ok(receipt)
     }
 
@@ -2827,6 +2846,7 @@ fn terminal_simulation_receipt(state: &AppState) -> Result<Value> {
     )
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_mode_id(state: &AppState) -> Result<i32> {
     state
         .frontend
@@ -2840,6 +2860,7 @@ fn vmce_mode_id(state: &AppState) -> Result<i32> {
 /// The frozen role/House grant matrix both peers received from the start
 /// roster and the external campaign overlay. It is read through
 /// ScenarioSession's public grant queries, never rebuilt here.
+#[cfg(feature = "vmce")]
 fn vmce_grants(state: &AppState) -> Result<Value> {
     let sim = &state
         .match_state
@@ -2891,6 +2912,7 @@ fn vmce_grants(state: &AppState) -> Result<Value> {
 /// Prove the peer's primary House is outside the local command authority:
 /// the grant matrix must exclude it both ways, and the production pick and
 /// selection owners must not select one of its mobile objects.
+#[cfg(feature = "vmce")]
 fn vmce_probe(state: &mut AppState) -> Result<Value> {
     let (local_source, local_primary, peer_source, peer_primary, peer_entity) = {
         let sim = &state
@@ -2997,6 +3019,7 @@ fn vmce_probe(state: &mut AppState) -> Result<Value> {
 }
 
 /// The running mission's VMCE identity plus the grants and the probe.
+#[cfg(feature = "vmce")]
 fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value> {
     let session = &state.match_state.session;
     let setup = session.network_setup().context("VMCE runtime roster")?;
@@ -3028,6 +3051,7 @@ fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value
 
 /// Error-only snapshot for the new VMCE setup targets. It reads current
 /// owners without sending requests, accepting the map, or writing a receipt.
+#[cfg(feature = "vmce")]
 fn vmce_setup_watchdog_snapshot(
     capture: &LiveLanCapture,
     state: &AppState,
@@ -3122,6 +3146,7 @@ fn coop_setup_rows(
     Ok((host, guest))
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_setup_snapshot(state: &AppState) -> Result<Value> {
     let session = &state.match_state.session;
     let launch = session.network_setup().context("VMCE setup snapshot")?;

@@ -329,6 +329,7 @@ impl LanService {
     /// Physical source, effective map and generated preview/staging are one
     /// admission through the retained transfer owner, for this exact options.
     fn setup_maps_verified(&self, session: &super::match_runtime::session::MatchSession) -> bool {
+        #[cfg(feature = "vmce")]
         if session
             .network_setup()
             .is_some_and(|launch| launch.mode.class.is_vmce())
@@ -5003,7 +5004,7 @@ mod tests {
         assert!(host.validate_scope(&reply) && host.peer_admission_matches(guest_address, &reply));
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn coop_lan_readiness_uses_local_vmce_config_without_transfer_state() {
         let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1301);

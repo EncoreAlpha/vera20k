@@ -680,8 +680,6 @@ pub(crate) fn commit_map_selection(
     } else {
         None
     };
-    #[cfg(not(feature = "vmce"))]
-    let vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig> = None;
     #[cfg(feature = "vmce")]
     if let Some(config) = vmce_map_config.as_ref() {
         config.validate_binding(&file, &metadata.source_sha256)?;

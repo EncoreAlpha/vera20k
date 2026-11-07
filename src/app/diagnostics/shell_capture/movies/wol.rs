@@ -5196,6 +5196,7 @@ fn unverified_host_options(state: &AppState) -> Result<NetworkSetupEvent> {
             observer_row: None,
             cooperative_difficulty: 0,
             seed: state.match_state.session.network_start_seed(),
+            #[cfg(feature = "vmce")]
             vmce_map_config: None,
         },
     ))
