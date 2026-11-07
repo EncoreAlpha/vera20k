@@ -103,6 +103,7 @@ VERA 跑的是战役地图，但游戏模式非零；只关掉自动判负还不
 - 地图 `[Ranking]` 的 par time、under/over par 标题和评语进入 `0x103` 的原生 Rank/Commendation/ParTime/YourTime 字段。
 - `0.1.19` 遗留的“对方 House 的命令被拒绝”补了 debug 断言；release 仍静默拒绝。
 - 普通 Cooperative 和原版 BC6/0x103 行为保持不变；3–4 人结果页继续沿用原生两行布局。
+- VMCE 房主可以在 LAN 房间中加 AI 座位做单人自测；AI 不占战役角色，地图忽略全局 AI 触发时可能不活动。
 
 移交 `0.1.22`：下一关新 seed、角色保留/重选、跨关资金、`SkipMapSelect`/`AltNextScenario`、`EndOfGame` 完成页、失败重试、`coopsave.ini` 和持久跨关进度。
 

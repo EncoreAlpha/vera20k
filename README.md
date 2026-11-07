@@ -106,7 +106,9 @@ missing label falls back to the directory name.
 2. Enter a LAN room and choose the **Multiplayer Campaign** mode row.
 3. The host picks a map; every guest must show the map as available (Ready).
 4. Each player confirms a role and readies; the host starts.
-5. The mission uses one deterministic shared world. Both peers must see the same opening,
+5. For a solo check, the host may add an AI seat like Skirmish. The AI does not take a
+   campaign role; on maps that ignore global AI triggers it may remain inactive.
+6. The mission uses one deterministic shared world. Both peers must see the same opening,
    triggers and result.
 
 VMCE is LAN-only. WOL, CnCNet, online matchmaking, mid-mission joins and mid-mission

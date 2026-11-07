@@ -309,7 +309,11 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         .flatten();
     // The host keeps at least two seats.
     let may_remove = seats.filter(|row| !removed(row)).count() > 2;
-    let ai_allowed = !watched && mode.class.lists_in_skirmish();
+    // Battle/FreeForAll list in Skirmish and allow AI rows. VMCE shares the
+    // same host seat editor for solo testing: an AI row may fill an Open seat
+    // without becoming a network participant or taking a campaign role.
+    let ai_allowed = !watched
+        && (mode.class.lists_in_skirmish() || mode.class.is_vmce());
     let mut listed = Vec::new();
     if several {
         let rows = 0..crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT as u8;
