@@ -52,48 +52,68 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
             .cooperative_difficulty(),
     )?;
     let text = options.encode();
-    let vmce_map_config = if session
-        .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vmce())
-    {
-        Some(
-            session
-                .network_vmce_map_config()
-                .cloned()
-                .ok_or_else(|| anyhow!("VMCE host has no selected map config"))?,
-        )
-    } else {
-        None
-    };
-    let vmce_series = if let Some(config) = vmce_map_config.as_ref() {
-        let file = session
+    #[cfg(feature = "vmce")]
+    let (vmce_roles, vmce_series) = {
+        let vmce_map_config = if session
             .network_setup()
-            .and_then(|launch| launch.selected_map_file.as_deref())
-            .ok_or_else(|| anyhow!("VMCE has no selected map"))?;
-        let (directory, sha256) = match crate::app::shell_network_setup::host_vmce_identity(
-            state,
-            file,
-            &config.source_sha256,
-        ) {
-            Ok(identity) => identity,
-            Err(error) => return Err(error),
-        };
-        if config.series_directory.as_deref() != Some(directory.as_str())
-            || config.series_sha256.as_deref() != Some(sha256.as_str())
+            .is_some_and(|launch| launch.mode.class.is_vmce())
         {
-            anyhow::bail!("host VMCE series changed after map selection");
-        }
-        ensure!(
-            config.source_sha256
-                == session
-                    .network_map_metadata()
-                    .ok_or_else(|| anyhow!("VMCE map metadata missing"))?
-                    .source_sha256,
-            "VMCE config is not bound to the selected map"
-        );
-        Some(VmceSeriesIdentity { directory, sha256 })
-    } else {
-        None
+            Some(
+                session
+                    .network_vmce_map_config()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("VMCE host has no selected map config"))?,
+            )
+        } else {
+            None
+        };
+        let vmce_series = if let Some(config) = vmce_map_config.as_ref() {
+            let file = session
+                .network_setup()
+                .and_then(|launch| launch.selected_map_file.as_deref())
+                .ok_or_else(|| anyhow!("VMCE has no selected map"))?;
+            let (directory, sha256) = match crate::app::shell_network_setup::host_vmce_identity(
+                state,
+                file,
+                &config.source_sha256,
+            ) {
+                Ok(identity) => identity,
+                Err(error) => return Err(error),
+            };
+            if config.series_directory.as_deref() != Some(directory.as_str())
+                || config.series_sha256.as_deref() != Some(sha256.as_str())
+            {
+                anyhow::bail!("host VMCE series changed after map selection");
+            }
+            ensure!(
+                config.source_sha256
+                    == session
+                        .network_map_metadata()
+                        .ok_or_else(|| anyhow!("VMCE map metadata missing"))?
+                        .source_sha256,
+                "VMCE config is not bound to the selected map"
+            );
+            Some(VmceSeriesIdentity { directory, sha256 })
+        } else {
+            None
+        };
+        let vmce_roles = session
+            .network_setup()
+            .filter(|launch| launch.mode.class.is_vmce())
+            .map(|launch| {
+                launch
+                    .humans
+                    .iter()
+                    .filter_map(|human| {
+                        Some(VmceRoleRow {
+                            row: human.raw_slot_index?,
+                            role: human.role,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        (vmce_roles, vmce_series)
     };
     let service = state.match_state.lan_service.as_ref().expect("LAN visit");
     let admissions = session
@@ -139,22 +159,9 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
                 .options
                 .room_options(),
         ),
-        vmce_roles: session
-            .network_setup()
-            .filter(|launch| launch.mode.class.is_vmce())
-            .map(|launch| {
-                launch
-                    .humans
-                    .iter()
-                    .filter_map(|human| {
-                        Some(VmceRoleRow {
-                            row: human.raw_slot_index?,
-                            role: human.role,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        #[cfg(feature = "vmce")]
+        vmce_roles,
+        #[cfg(feature = "vmce")]
         vmce_series,
     })?;
     let admitted = queue_payload(
@@ -195,14 +202,17 @@ struct ExtendedOptions {
     /// guest's local-first participant order cannot attach a role to the
     /// wrong person; the retail options string has no field for this
     /// project-specific state.
+    #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_roles: Vec<VmceRoleRow>,
     /// Host's full series identity; campaign contents and projected config
     /// remain local to each peer.
+    #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_series: Option<VmceSeriesIdentity>,
 }
 
+#[cfg(feature = "vmce")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct VmceSeriesIdentity {
@@ -214,6 +224,7 @@ struct VmceSeriesIdentity {
 /// `raw_slot_index` seat), never by the publisher's local participant order:
 /// LAN admits participants local-first, so the same people can be ordered
 /// differently on the two peers.
+#[cfg(feature = "vmce")]
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct VmceRoleRow {
@@ -245,7 +256,8 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
     }) else {
         return Ok(());
     };
-    receive_options_text(
+    #[cfg(feature = "vmce")]
+    return receive_options_text(
         state,
         &options.text,
         options.source_sha256,
@@ -254,7 +266,16 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.room,
         options.vmce_roles,
         options.vmce_series,
-    )
+    );
+    #[cfg(not(feature = "vmce"))]
+    return receive_options_text(
+        state,
+        &options.text,
+        options.source_sha256,
+        options.effective_digest,
+        options.selected_map_file,
+        options.room,
+    );
 }
 
 fn queue_payload(
@@ -325,8 +346,8 @@ fn receive_options_text(
     effective_digest: String,
     selected_map_file: String,
     room: Option<crate::skirmish_launch::RoomOptions>,
-    vmce_roles: Vec<VmceRoleRow>,
-    vmce_series: Option<VmceSeriesIdentity>,
+    #[cfg(feature = "vmce")] vmce_roles: Vec<VmceRoleRow>,
+    #[cfg(feature = "vmce")] vmce_series: Option<VmceSeriesIdentity>,
 ) -> Result<()> {
     ensure!(
         source_sha256.is_empty() || crate::map::source::valid_source_sha256(&source_sha256),
@@ -337,14 +358,17 @@ fn receive_options_text(
         &state.frontend.skirmish_modes,
         text,
     )?;
-    validate_vmce_series(
-        &options.launch,
-        &selected_map_file,
-        &source_sha256,
-        vmce_series.as_ref(),
-    )?;
-    if options.launch.mode.class.is_vmce() {
-        apply_vmce_roles(&mut options.launch, &vmce_roles)?;
+    #[cfg(feature = "vmce")]
+    {
+        validate_vmce_series(
+            &options.launch,
+            &selected_map_file,
+            &source_sha256,
+            vmce_series.as_ref(),
+        )?;
+        if options.launch.mode.class.is_vmce() {
+            apply_vmce_roles(&mut options.launch, &vmce_roles)?;
+        }
     }
     crate::map::source::validate_network_map_name(&selected_map_file)?;
     // VERA keeps the host's logical UTF-8 identity independently of the
@@ -355,6 +379,7 @@ fn receive_options_text(
     if let Some(room) = room {
         options.launch.options.set_room_options(room);
     }
+    #[cfg(feature = "vmce")]
     let local_vmce_config = if options.launch.mode.class.is_vmce() {
         let resolved = vmce_series.as_ref().and_then(|identity| {
             let (config, digest) = crate::app::shell_network_setup::resolve_local_vmce_config(
@@ -373,7 +398,10 @@ fn receive_options_text(
     } else {
         None
     };
-    options.vmce_map_config = local_vmce_config;
+    #[cfg(feature = "vmce")]
+    {
+        options.vmce_map_config = local_vmce_config;
+    }
     crate::app::shell_network_setup::service_event(state, NetworkSetupEvent::HostSetup(options))?;
     state
         .match_state
@@ -390,6 +418,7 @@ fn receive_options_text(
     Ok(())
 }
 
+#[cfg(feature = "vmce")]
 fn validate_vmce_series(
     launch: &SkirmishLaunchSession,
     map_file: &str,
@@ -422,6 +451,7 @@ fn validate_vmce_series(
     Ok(())
 }
 
+#[cfg(feature = "vmce")]
 fn campaign_identity_matches(
     advertised: &VmceSeriesIdentity,
     local: &crate::app::match_bootstrap::NetworkVmceMapConfig,
@@ -433,68 +463,85 @@ fn campaign_identity_matches(
 }
 
 pub(super) fn report_coop_campaign_unavailable(state: &mut AppState) {
-    let text = "VMCE requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
-    crate::app::shell_lan::append_chat(
-        state,
-        crate::ui::lan_shell::LanChatLine {
-            text: text.encode_utf16().collect(),
-            color: u32::MAX,
-        },
-    );
+    #[cfg(feature = "vmce")]
+    {
+        let text = "VMCE requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+        crate::app::shell_lan::append_chat(
+            state,
+            crate::ui::lan_shell::LanChatLine {
+                text: text.encode_utf16().collect(),
+                color: u32::MAX,
+            },
+        );
+    }
+    #[cfg(not(feature = "vmce"))]
+    let _ = state;
 }
 
 /// Re-read local files at each prepare/start boundary. A valid snapshot at
 /// options receipt is insufficient if campaign or map files changed later.
 pub(super) fn validate_current_coop_campaign(state: &AppState) -> Result<()> {
-    let session = &state.match_state.session;
-    let launch = session
-        .network_setup()
-        .ok_or_else(|| anyhow!("LAN setup is missing"))?;
-    if !launch.mode.class.is_vmce() {
+    #[cfg(not(feature = "vmce"))]
+    {
+        let _ = state;
         return Ok(());
     }
-    let file = launch
-        .selected_map_file
-        .as_deref()
-        .ok_or_else(|| anyhow!("VMCE has no selected map"))?;
-    let metadata = session
-        .network_map_metadata()
-        .ok_or_else(|| anyhow!("VMCE map identity is missing"))?;
-    let accepted = session
-        .network_vmce_map_config()
-        .ok_or_else(|| anyhow!("local VMCE series is not verified"))?;
-    accepted.validate_binding(file, &metadata.source_sha256)?;
-    let (directory, expected_sha256) = if session.host() {
-        crate::app::shell_network_setup::host_vmce_identity(state, file, &metadata.source_sha256)?
-    } else {
-        let service = state
-            .match_state
-            .lan_service
-            .as_ref()
-            .ok_or_else(|| anyhow!("LAN service is missing"))?;
-        let received = service
-            .received_options
-            .as_ref()
-            .filter(|received| service.setup_scope() == Some(received.scope))
-            .ok_or_else(|| anyhow!("host series identity is missing"))?;
-        let identity = received
-            .options
-            .vmce_series
-            .as_ref()
-            .ok_or_else(|| anyhow!("host did not provide a series identity"))?;
-        (identity.directory.clone(), identity.sha256.clone())
-    };
-    let (local, local_sha256) = crate::app::shell_network_setup::resolve_local_vmce_config(
-        state,
-        file,
-        &directory,
-        &metadata.source_sha256,
-    )?;
-    ensure!(
-        local_sha256 == expected_sha256 && local == *accepted,
-        "local VMCE series or map changed after options admission"
-    );
-    Ok(())
+    #[cfg(feature = "vmce")]
+    {
+        let session = &state.match_state.session;
+        let launch = session
+            .network_setup()
+            .ok_or_else(|| anyhow!("LAN setup is missing"))?;
+        if !launch.mode.class.is_vmce() {
+            return Ok(());
+        }
+        let file = launch
+            .selected_map_file
+            .as_deref()
+            .ok_or_else(|| anyhow!("VMCE has no selected map"))?;
+        let metadata = session
+            .network_map_metadata()
+            .ok_or_else(|| anyhow!("VMCE map identity is missing"))?;
+        let accepted = session
+            .network_vmce_map_config()
+            .ok_or_else(|| anyhow!("local VMCE series is not verified"))?;
+        accepted.validate_binding(file, &metadata.source_sha256)?;
+        let (directory, expected_sha256) = if session.host() {
+            crate::app::shell_network_setup::host_vmce_identity(
+                state,
+                file,
+                &metadata.source_sha256,
+            )?
+        } else {
+            let service = state
+                .match_state
+                .lan_service
+                .as_ref()
+                .ok_or_else(|| anyhow!("LAN service is missing"))?;
+            let received = service
+                .received_options
+                .as_ref()
+                .filter(|received| service.setup_scope() == Some(received.scope))
+                .ok_or_else(|| anyhow!("host series identity is missing"))?;
+            let identity = received
+                .options
+                .vmce_series
+                .as_ref()
+                .ok_or_else(|| anyhow!("host did not provide a series identity"))?;
+            (identity.directory.clone(), identity.sha256.clone())
+        };
+        let (local, local_sha256) = crate::app::shell_network_setup::resolve_local_vmce_config(
+            state,
+            file,
+            &directory,
+            &metadata.source_sha256,
+        )?;
+        ensure!(
+            local_sha256 == expected_sha256 && local == *accepted,
+            "local VMCE series or map changed after options admission"
+        );
+        Ok(())
+    }
 }
 
 /// Validate the LAN snapshot's typed fields without touching MatchSession or
@@ -511,19 +558,23 @@ fn prevalidate_received_options(
         "invalid map source identity"
     );
     let (mut parsed, _, _) = parse_options(session, modes, &options.text)?;
-    validate_vmce_series(
-        &parsed.launch,
-        &options.selected_map_file,
-        &options.source_sha256,
-        options.vmce_series.as_ref(),
-    )?;
-    if parsed.launch.mode.class.is_vmce() {
-        apply_vmce_roles(&mut parsed.launch, &options.vmce_roles)?;
+    #[cfg(feature = "vmce")]
+    {
+        validate_vmce_series(
+            &parsed.launch,
+            &options.selected_map_file,
+            &options.source_sha256,
+            options.vmce_series.as_ref(),
+        )?;
+        if parsed.launch.mode.class.is_vmce() {
+            apply_vmce_roles(&mut parsed.launch, &options.vmce_roles)?;
+        }
     }
     crate::map::source::validate_network_map_name(&options.selected_map_file)?;
     Ok(())
 }
 
+#[cfg(feature = "vmce")]
 fn apply_vmce_roles(
     launch: &mut crate::skirmish_launch::SkirmishLaunchSession,
     roles: &[VmceRoleRow],
@@ -776,6 +827,7 @@ pub(super) fn receive_extended(
                 }
             }
             crate::app::shell_network_setup::invalidate_network_agreement(state)?;
+            #[cfg(feature = "vmce")]
             receive_options_text(
                 state,
                 &options.text,
@@ -785,6 +837,15 @@ pub(super) fn receive_extended(
                 options.room,
                 options.vmce_roles,
                 options.vmce_series,
+            )?;
+            #[cfg(not(feature = "vmce"))]
+            receive_options_text(
+                state,
+                &options.text,
+                options.source_sha256,
+                options.effective_digest,
+                options.selected_map_file,
+                options.room,
             )?;
             super::maps::received_options(state, scope, options.random_map)
         }
@@ -1881,6 +1942,7 @@ mod tests {
         assert_eq!(slot.country, LaunchCountry::America);
     }
 
+    #[cfg(feature = "vmce")]
     #[test]
     fn lan_coop_snapshot_carries_only_campaign_identity_while_other_modes_keep_none() {
         let mut launch = fixture(true).network_setup().unwrap().clone();
