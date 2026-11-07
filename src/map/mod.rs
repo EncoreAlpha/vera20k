@@ -22,6 +22,10 @@ pub mod bridge_pavement;
 pub mod bridge_rim_tiles;
 pub mod cell_index;
 pub(crate) mod construction_trace;
+#[cfg(feature = "vmce")]
+pub mod vmce_config;
+#[cfg(not(feature = "vmce"))]
+#[path = "vmce_config_stub.rs"]
 pub mod vmce_config;
 pub mod entities;
 pub mod events;

@@ -171,12 +171,20 @@ pub(crate) struct VmceStageIdentity {
 
 impl VmceStageIdentity {
     pub(crate) fn of(next: Option<&VmceNextStage>) -> Option<Self> {
-        next.map(|next| Self {
-            map_file: next.map_file.clone(),
-            source_sha256: next.config.source_sha256.clone(),
-            effective_digest: next.effective_digest.clone(),
-            config_sha256: next.config.config_sha256.clone(),
-        })
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = next;
+            None
+        }
+        #[cfg(feature = "vmce")]
+        {
+            next.map(|next| Self {
+                map_file: next.map_file.clone(),
+                source_sha256: next.config.source_sha256.clone(),
+                effective_digest: next.effective_digest.clone(),
+                config_sha256: next.config.config_sha256.clone(),
+            })
+        }
     }
 }
 
@@ -188,43 +196,60 @@ impl NetworkVmceMapConfig {
         source_sha256: String,
         config: crate::map::vmce_config::VmceMapConfig,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            crate::map::source::valid_source_sha256(&source_sha256),
-            "VMCE config has no valid map byte identity"
-        );
-        let config_bytes = serde_json::to_vec(&config)?;
-        anyhow::ensure!(
-            config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES,
-            "VMCE config exceeds the network size limit"
-        );
-        let config_sha256 = crate::util::sha256::sha256_hex(&config_bytes);
-        Ok(Self {
-            map_file,
-            source_sha256,
-            config_sha256,
-            config,
-            series_directory: None,
-            series_sha256: None,
-        })
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (map_file, source_sha256, config);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            anyhow::ensure!(
+                crate::map::source::valid_source_sha256(&source_sha256),
+                "VMCE config has no valid map byte identity"
+            );
+            let config_bytes = serde_json::to_vec(&config)?;
+            anyhow::ensure!(
+                config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES,
+                "VMCE config exceeds the network size limit"
+            );
+            let config_sha256 = crate::util::sha256::sha256_hex(&config_bytes);
+            Ok(Self {
+                map_file,
+                source_sha256,
+                config_sha256,
+                config,
+                series_directory: None,
+                series_sha256: None,
+            })
+        }
     }
 
     pub(crate) fn with_series_identity(
-        mut self,
+        self,
         directory: String,
         sha256: String,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            std::path::Path::new(&directory).components().count() == 1
-                && std::path::Path::new(&directory)
-                    .components()
-                    .next()
-                    .is_some_and(|part| matches!(part, std::path::Component::Normal(_)))
-                && crate::map::source::valid_source_sha256(&sha256),
-            "invalid VMCE series identity"
-        );
-        self.series_directory = Some(directory);
-        self.series_sha256 = Some(sha256);
-        Ok(self)
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (self, directory, sha256);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            let mut this = self;
+            anyhow::ensure!(
+                std::path::Path::new(&directory).components().count() == 1
+                    && std::path::Path::new(&directory)
+                        .components()
+                        .next()
+                        .is_some_and(|part| matches!(part, std::path::Component::Normal(_)))
+                    && crate::map::source::valid_source_sha256(&sha256),
+                "invalid VMCE series identity"
+            );
+            this.series_directory = Some(directory);
+            this.series_sha256 = Some(sha256);
+            Ok(this)
+        }
     }
 
     pub(crate) fn validate_binding(
@@ -232,17 +257,25 @@ impl NetworkVmceMapConfig {
         map_file: &str,
         source_sha256: &str,
     ) -> anyhow::Result<()> {
-        let config_bytes = serde_json::to_vec(&self.config)?;
-        anyhow::ensure!(
-            self.map_file.eq_ignore_ascii_case(map_file)
-                && self.source_sha256 == source_sha256
-                && crate::map::source::valid_source_sha256(&self.source_sha256)
-                && crate::map::source::valid_source_sha256(&self.config_sha256)
-                && config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES
-                && self.config_sha256 == crate::util::sha256::sha256_hex(&config_bytes),
-            "VMCE config does not match the selected map identity"
-        );
-        Ok(())
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (map_file, source_sha256);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            let config_bytes = serde_json::to_vec(&self.config)?;
+            anyhow::ensure!(
+                self.map_file.eq_ignore_ascii_case(map_file)
+                    && self.source_sha256 == source_sha256
+                    && crate::map::source::valid_source_sha256(&self.source_sha256)
+                    && crate::map::source::valid_source_sha256(&self.config_sha256)
+                    && config_bytes.len() <= Self::MAX_CONFIG_JSON_BYTES
+                    && self.config_sha256 == crate::util::sha256::sha256_hex(&config_bytes),
+                "VMCE config does not match the selected map identity"
+            );
+            Ok(())
+        }
     }
 
     pub(crate) fn apply_to_map(
@@ -251,8 +284,16 @@ impl NetworkVmceMapConfig {
         source_sha256: &str,
         map_ini: &crate::rules::ini_parser::IniFile,
     ) -> anyhow::Result<crate::rules::ini_parser::IniFile> {
-        self.validate_binding(map_file, source_sha256)?;
-        self.config.apply_to_map(map_ini)
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (map_file, source_sha256, map_ini);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            self.validate_binding(map_file, source_sha256)?;
+            self.config.apply_to_map(map_ini)
+        }
     }
 }
 
