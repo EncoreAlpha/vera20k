@@ -306,6 +306,9 @@ pub(crate) enum NetworkLoadingRequest {
     /// VERA-only: the guest's next stage differs from the host's; both peers
     /// abandon the round to the lobby instead of loading different missions.
     CooperativeStageRejected,
+    /// VERA-only: this peer has no next stage (defeat or last mission), so
+    /// the other peer must not continue with one.
+    CooperativeStageAbsent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

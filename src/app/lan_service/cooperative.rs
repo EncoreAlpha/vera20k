@@ -15,7 +15,7 @@ use crate::app::match_runtime::session::{
 };
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
-    VmceStageRecord,
+    OPTIONS_KIND, VmceStageRecord,
 };
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
@@ -58,6 +58,7 @@ pub(crate) fn release_transport(state: &mut AppState) {
             transport.connections_mut().reset();
             transport.clear_lan_scope();
         }
+        service.pending_round.clear();
         service.clear_setup();
     }
 }
@@ -68,6 +69,23 @@ pub(super) fn poll(state: &mut AppState, now: u32) -> bool {
         || state.match_state.session.cooperative_round().is_none()
     {
         return false;
+    }
+    // Records that arrived between the mission's end and this round's phase
+    // opening were queued by the transport dispatcher; apply them first in
+    // arrival order so a peer's begin/ready/stage packet is not lost.
+    let pending: Vec<GlobalMessage> = state
+        .match_state
+        .lan_service
+        .as_mut()
+        .map(|service| service.pending_round.drain(..).collect())
+        .unwrap_or_default();
+    for incoming in pending {
+        if let Err(error) = receive(state, incoming) {
+            log::debug!("Ignored queued co-op round packet: {error:#}");
+        }
+        if state.match_state.session.cooperative_round().is_none() {
+            return false;
+        }
     }
     loop {
         let Some(incoming) = state
@@ -116,6 +134,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
             CooperativeSignal::Go => CooperativeRoundEvent::Go,
             CooperativeSignal::Begin => CooperativeRoundEvent::Begin,
             CooperativeSignal::StageRejected => CooperativeRoundEvent::StageRejected,
+            CooperativeSignal::StageAbsent => CooperativeRoundEvent::StageAbsent,
         }
     } else {
         let message = LanMessage::decode(&incoming.payload)?;
@@ -146,6 +165,23 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
         }
     };
     crate::app::cooperative_round::service_event(state, event)
+}
+
+/// Whether `payload` is one of the co-op round's records: a native BC6
+/// signal (`0x23..0x26`, `0x31`, `0x34`), the options `0x32`, or the
+/// VERA-only stage records (`0x36..0x38`).
+pub(super) fn is_round_record(payload: &[u8]) -> bool {
+    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
+        return CooperativeSignal::decode(payload).is_some();
+    }
+    if payload.len() == crate::net::lan_messages::LAN_MESSAGE_LEN {
+        let Ok(message) = LanMessage::decode(payload) else {
+            return false;
+        };
+        return message.kind() == LanMessageKind::Unknown(OPTIONS_KIND)
+            || VmceStageRecord::decode(&message).is_some();
+    }
+    false
 }
 
 /// `0x0C` (`0x004706E3`): only this game's hash posts a line, in the
@@ -201,6 +237,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             return;
         }
         NetworkLoadingRequest::CooperativeStageRejected => CooperativeSignal::StageRejected,
+        NetworkLoadingRequest::CooperativeStageAbsent => CooperativeSignal::StageAbsent,
         _ => return,
     };
     if let Ok(bytes) = signal.encode(&name) {
@@ -394,5 +431,48 @@ mod tests {
         // A random country's placeholder is not on the wire.
         received.humans[1].1.country = options.humans[1].1.country;
         assert_eq!(received, options);
+    }
+
+    /// The pre-round hold must recognize exactly the round's records, so a
+    /// peer's ready/options/stage packet is queued but neither setup traffic
+    /// nor chat is.
+    #[test]
+    fn the_pending_round_hold_recognizes_the_round_records() {
+        assert!(is_round_record(
+            &CooperativeSignal::Ready.encode("Guest").unwrap()
+        ));
+        assert!(is_round_record(
+            &CooperativeSignal::StageAbsent.encode("Guest").unwrap()
+        ));
+        let options = CooperativeOptionsRecord {
+            difficulty: 1,
+            humans: [CooperativeHumanWords {
+                start: -1,
+                country: -1,
+                color: -1,
+            }; 8],
+            ai: [CooperativeAiWords {
+                country: -1,
+                color: -1,
+                difficulty: 0,
+                start: -2,
+                team: -2,
+            }; 8],
+        };
+        assert!(is_round_record(
+            &options.encode("Host").unwrap().into_bytes()
+        ));
+        let stage = VmceStageRecord {
+            map_file: "mission02.map".into(),
+            source_sha256: "a".repeat(64),
+            effective_digest: "b".repeat(64),
+            config_sha256: "c".repeat(64),
+        };
+        assert!(
+            is_round_record(&stage.encode("Host").unwrap().into_bytes()),
+            "the VMCE stage record is a round record"
+        );
+        // A chat record is not part of the round's establishment.
+        assert!(!is_round_record(&[0x0C, 0, 0, 0]));
     }
 }

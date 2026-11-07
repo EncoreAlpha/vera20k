@@ -39,6 +39,9 @@ pub enum CooperativeSignal {
     /// both peers leave the round for the lobby. Stock BC6 has no such
     /// record; the native begin carries no stage identity at all.
     StageRejected,
+    /// `0x38`, VERA-only: this peer resolved no next stage (defeat or the
+    /// campaign's last mission). Stock BC6 has no such record either.
+    StageAbsent,
 }
 
 impl CooperativeSignal {
@@ -51,6 +54,7 @@ impl CooperativeSignal {
             Self::Go => 0x31,
             Self::Begin => 0x34,
             Self::StageRejected => 0x37,
+            Self::StageAbsent => 0x38,
         }
     }
 
@@ -75,6 +79,7 @@ impl CooperativeSignal {
                 0x31 => Self::Go,
                 0x34 => Self::Begin,
                 0x37 => Self::StageRejected,
+                0x38 => Self::StageAbsent,
                 _ => return None,
             },
         )

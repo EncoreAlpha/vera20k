@@ -28,8 +28,12 @@ pub(crate) struct CooperativeRoundState {
     ready: [bool; 8],
     /// `0x89E05C`.
     local_ready: bool,
-    /// `0x89E058`, the master's ack count.
-    acks: usize,
+    /// The master assigned the begin/options once; a repeated Continue must
+    /// not repeat the begin or count its own ack twice.
+    assigned: bool,
+    /// Per raw slot: that participant acked the begin. A repeated ack is a
+    /// no-op, so the count never passes `rows` from a duplicated packet.
+    acked: [bool; 8],
     /// The loop's local begin flag (`[ESP+0x13]`), set by `0x34`.
     begin: bool,
     /// Quit `0x5C0`'s enable state: the `0x32` arm disables it once the
@@ -117,6 +121,9 @@ pub(crate) enum CooperativeRoundEvent {
     KeepAlive,
     /// VERA-only `0x36`: the host's resolved next stage identity.
     StageIdentity(crate::app::match_bootstrap::VmceStageIdentity),
+    /// VERA-only `0x38`: this peer resolved no next stage (defeat or the
+    /// campaign's last mission).
+    StageAbsent,
     /// VERA-only `0x37`: a peer's next stage differs, so the round is
     /// abandoned for the lobby instead of loading different missions.
     StageRejected,
@@ -226,7 +233,8 @@ impl MatchSession {
         let mut round = CooperativeRoundState {
             ready,
             local_ready: false,
-            acks: 0,
+            assigned: false,
+            acked: [false; 8],
             begin: false,
             quit_enabled: true,
             can_continue,
@@ -263,13 +271,17 @@ impl MatchSession {
                 .loading_requests
                 .push(NetworkLoadingRequest::CooperativeReady);
         }
-        // Every VMCE peer advertises the next stage it resolved before the
-        // native begin: whichever identity arrives first exposes a mismatch,
-        // so neither side loads a different mission.
+        // Every VMCE peer advertises whether it resolved a next stage before
+        // the native begin: whichever identity arrives first exposes a
+        // mismatch, so neither side loads a different mission.
         if let Some(stage) = vera_stage {
             network
                 .loading_requests
                 .push(NetworkLoadingRequest::CooperativeStage(stage));
+        } else if vera {
+            network
+                .loading_requests
+                .push(NetworkLoadingRequest::CooperativeStageAbsent);
         }
         Ok(())
     }
@@ -357,10 +369,14 @@ impl MatchSession {
                     return false;
                 }
                 if round.vera {
-                    if self.host {
-                        round.can_continue && round.all_ready()
+                    if !round.can_continue {
+                        // A defeat or the last mission has no next stage to
+                        // wait for: Continue acknowledges the page and leaves.
+                        true
+                    } else if self.host {
+                        round.all_ready() && !round.assigned
                     } else {
-                        round.can_continue && !round.local_ready
+                        !round.local_ready
                     }
                 } else {
                     !round.local_ready
@@ -393,6 +409,21 @@ impl MatchSession {
             round,
         } = round_parts(self)?;
         anyhow::ensure!(round.outcome.is_none(), "the result dialog has closed");
+        if round.vera {
+            if !round.can_continue {
+                // Defeat and the last mission: every peer acknowledges the
+                // page and leaves for the lobby, with no ready/begin gate.
+                round.outcome = Some(false);
+                requests.push(NetworkLoadingRequest::CooperativeLeave);
+                return Ok(CooperativeRoundStep::Exit(false));
+            }
+            if host && round.rows == 1 {
+                // A solo host has no guest row to ack its begin, so Continue
+                // starts the next stage directly instead of waiting forever.
+                round.outcome = Some(true);
+                return Ok(CooperativeRoundStep::Exit(true));
+            }
+        }
         if online && round.can_continue {
             round.outcome = Some(false);
             return Ok(CooperativeRoundStep::ContinueInRoom);
@@ -402,7 +433,7 @@ impl MatchSession {
             // write. The button is enabled only once every guest is ready;
             // cooperative_round_assigned sends the begin and options.
             anyhow::ensure!(
-                round.can_continue && round.all_ready(),
+                round.can_continue && round.all_ready() && !round.assigned,
                 "the host Continue waits for every guest"
             );
             log::debug!("VMCE round: host Continue pressed; starting the next stage");
@@ -453,8 +484,20 @@ impl MatchSession {
             launch,
             round,
         } = round_parts(self)?;
+        // A repeated Continue must not send a second begin or count the
+        // host's own ack twice.
+        if round.assigned {
+            return Ok(());
+        }
+        round.assigned = true;
         requests.push(NetworkLoadingRequest::CooperativeBegin);
-        round.acks += 1;
+        if let Some(row) = launch
+            .humans
+            .get(launch.local_player_index)
+            .and_then(|human| human.raw_slot_index)
+        {
+            round.acked[usize::from(row)] = true;
+        }
         let options = round_options(launch, difficulty);
         requests.push(NetworkLoadingRequest::CooperativeOptions(options));
         Ok(())
@@ -501,11 +544,13 @@ impl MatchSession {
                 if round.vera_stage.as_ref() == Some(&advertised) {
                     return Ok(CooperativeRoundStep::None);
                 }
-                // Both peers must load the same mission: report the refusal
-                // and abandon the round locally so both return to the lobby.
-                round.outcome = Some(false);
-                requests.push(NetworkLoadingRequest::CooperativeStageRejected);
-                Ok(CooperativeRoundStep::Exit(false))
+                Ok(reject_vera_stage(round, requests))
+            }
+            CooperativeRoundEvent::StageAbsent => {
+                if round.vera_stage.is_none() {
+                    return Ok(CooperativeRoundStep::None);
+                }
+                Ok(reject_vera_stage(round, requests))
             }
             CooperativeRoundEvent::StageRejected => {
                 round.outcome = Some(false);
@@ -563,9 +608,13 @@ impl MatchSession {
                     changed,
                 })
             }
-            CooperativeRoundEvent::Ack { source: _ } => {
-                round.acks += 1;
-                if round.acks == round.rows {
+            CooperativeRoundEvent::Ack { source } => {
+                if let Some(row) = slot_of(launch, source) {
+                    round.acked[row] = true;
+                }
+                // Count distinct acked rows: a duplicated ack never reaches
+                // `rows` early and never overshoots it after the real ones.
+                if round.acked.iter().filter(|acked| **acked).count() >= round.rows {
                     round.outcome = Some(true);
                     requests.push(NetworkLoadingRequest::CooperativeGo);
                     return Ok(CooperativeRoundStep::Exit(true));
@@ -746,6 +795,18 @@ fn tail(
     CooperativeRoundStep::None
 }
 
+/// A peer's VMCE next stage differs from this peer's: refuse it and leave the
+/// round, so both peers return to the lobby instead of loading different
+/// missions.
+fn reject_vera_stage(
+    round: &mut CooperativeRoundState,
+    requests: &mut Vec<NetworkLoadingRequest>,
+) -> CooperativeRoundStep {
+    round.outcome = Some(false);
+    requests.push(NetworkLoadingRequest::CooperativeStageRejected);
+    CooperativeRoundStep::Exit(false)
+}
+
 fn clear_human_readiness(launch: &SkirmishLaunchSession, round: &mut CooperativeRoundState) {
     for human in &launch.humans {
         if let Some(row) = human.raw_slot_index {
@@ -923,6 +984,80 @@ mod tests {
         (session, startup)
     }
 
+    /// A frozen one-human VMCE LAN start (the host plus its AI seats): no
+    /// guest row exists to ack a begin.
+    fn frozen_vera_solo() -> (
+        MatchSession,
+        Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
+    ) {
+        let mut launch = super::super::tests::network_fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        launch.humans.truncate(1);
+        launch.local_player_index = 0;
+        launch.humans[0].role = crate::skirmish_launch::LaunchHumanRole::Player { group: 0 };
+        launch.rebuild_house_roster();
+        let mut session = MatchSession::default();
+        session.enter_network(NetworkReturnContext::LanLobby);
+        session
+            .accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        let map_file = session
+            .network_setup()
+            .unwrap()
+            .selected_map_file
+            .clone()
+            .unwrap();
+        let source_sha256 = "a".repeat(64);
+        session.network.as_mut().unwrap().map_metadata = Some(super::super::NetworkMapMetadata {
+            display_name: map_file.clone(),
+            player_capacity: 8,
+            official: false,
+            byte_length: 100,
+            digest: String::new(),
+            source_sha256: source_sha256.clone(),
+            effective_digest: "b".repeat(64),
+        });
+        session
+            .accept_network_vmce_map_config(Some(
+                crate::app::match_bootstrap::NetworkVmceMapConfig::new(
+                    map_file,
+                    source_sha256,
+                    crate::map::vmce_config::VmceMapConfig::default(),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let assignments = crate::skirmish_launch::VmceHouseAssignments {
+            participants: session
+                .network_setup()
+                .unwrap()
+                .humans
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, human)| crate::skirmish_launch::VmceHouseAssignment {
+                        participant_name: human.name.clone(),
+                        raw_slot_index: human.raw_slot_index.expect("fixture lobby row"),
+                        player_index: index as u8,
+                        owner_name: format!("VeraHouse{index}"),
+                    },
+                )
+                .collect(),
+            ..Default::default()
+        };
+        session.set_network_player_ready(0, true).unwrap();
+        session.set_network_map_status(0, 2).unwrap();
+        session.set_network_start_seed(SEED).unwrap();
+        session.prepare_network_timing(2, || 0).unwrap();
+        let LoadingStartup::Network(startup) = session
+            .freeze_network_start_with_vmce(SEED, Some(assignments))
+            .unwrap()
+        else {
+            panic!("network start");
+        };
+        (session, startup)
+    }
+
     /// A resolved VMCE next stage whose mini map binds Player1=Alpha and
     /// Player2=Beta. The map name is the only identity the tests vary.
     fn next_stage(map_file: &str) -> crate::app::match_bootstrap::VmceNextStage {
@@ -1014,17 +1149,147 @@ mod tests {
     }
 
     #[test]
+    fn vera_solo_host_continue_starts_without_waiting_for_a_guest_ack() {
+        let (mut session, _) = frozen_vera_solo();
+        session
+            .enter_vmce_round(Some(next_stage("mission02.map")), true, 1)
+            .unwrap();
+        session.take_network_loading_requests();
+        assert!(session.cooperative_round_continue_enabled());
+        assert_eq!(
+            session.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Exit(true),
+            "a solo host has no guest ack to wait for"
+        );
+        assert!(
+            !session
+                .take_network_loading_requests()
+                .iter()
+                .any(|request| matches!(request, NetworkLoadingRequest::CooperativeBegin))
+        );
+    }
+
+    #[test]
+    fn vera_defeat_and_last_mission_continue_leaves_for_the_lobby() {
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round(None, false, 2).unwrap();
+        host.take_network_loading_requests();
+        assert!(
+            host.cooperative_round_continue_enabled(),
+            "a defeat or last mission acknowledges the page instead of waiting"
+        );
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        assert!(
+            host.take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeLeave)
+        );
+    }
+
+    #[test]
+    fn vera_host_continue_is_idempotent_until_the_guests_ack() {
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round(Some(next_stage("mission02.map")), true, 2)
+            .unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::PeerReady { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        host.cooperative_round_assigned(0).unwrap();
+        assert!(matches!(
+            host.take_network_loading_requests().as_slice(),
+            [
+                NetworkLoadingRequest::CooperativeBegin,
+                NetworkLoadingRequest::CooperativeOptions(_)
+            ]
+        ));
+        // A repeated Continue/assignment cannot send a second begin or count
+        // the host's own ack twice.
+        assert!(!host.cooperative_round_continue_enabled());
+        assert!(host.continue_cooperative_round(0).is_err());
+        host.cooperative_round_assigned(0).unwrap();
+        assert!(host.take_network_loading_requests().is_empty());
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(true),
+            "the round still completes on the guest's single ack"
+        );
+        assert!(
+            host.take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeGo)
+        );
+    }
+
+    #[test]
+    fn vera_round_rejects_a_peer_with_a_different_next_stage_availability() {
+        let (mut guest, _) = frozen_vera(1);
+        guest
+            .enter_vmce_round(Some(next_stage("mission02.map")), true, 2)
+            .unwrap();
+        guest.take_network_loading_requests();
+        assert_eq!(
+            guest
+                .cooperative_round_event(CooperativeRoundEvent::StageAbsent, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false),
+            "a peer without a next stage must not load this one"
+        );
+        assert!(
+            guest
+                .take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeStageRejected)
+        );
+
+        let (mut guest, _) = frozen_vera(1);
+        guest.enter_vmce_round(None, false, 2).unwrap();
+        guest.take_network_loading_requests();
+        let identity =
+            crate::app::match_bootstrap::VmceStageIdentity::of(Some(&next_stage("mission02.map")))
+                .unwrap();
+        assert_eq!(
+            guest
+                .cooperative_round_event(CooperativeRoundEvent::StageIdentity(identity), 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+
+        // Both peers absent agree and wait for no stage.
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round(None, false, 2).unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::StageAbsent, 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+    }
+
+    #[test]
     fn vera_host_is_auto_ready_and_its_continue_waits_for_guests() {
         let (mut session, _) = frozen_vera(0);
         session
-            .enter_cooperative_round(Some("next.map".into()), true, 2)
+            .enter_vmce_round(Some(next_stage("next.map")), true, 2)
             .unwrap();
         assert!(session.cooperative_round().unwrap().local_ready());
         assert!(session.cooperative_round_slot_ready(0));
+        let requests = session.take_network_loading_requests();
         assert_eq!(
-            session.take_network_loading_requests(),
-            vec![NetworkLoadingRequest::CooperativeReady],
+            requests[0],
+            NetworkLoadingRequest::CooperativeReady,
             "the host announces its auto-ready slot"
+        );
+        assert!(
+            matches!(requests[1], NetworkLoadingRequest::CooperativeStage(_)),
+            "the host advertises the next stage it resolved"
         );
         assert!(
             !session.cooperative_round_continue_enabled(),
@@ -1052,8 +1317,9 @@ mod tests {
     fn vera_guest_continue_only_readies_its_slot() {
         let (mut session, _) = frozen_vera(1);
         session
-            .enter_cooperative_round(Some("next.map".into()), true, 2)
+            .enter_vmce_round(Some(next_stage("next.map")), true, 2)
             .unwrap();
+        session.take_network_loading_requests();
         assert!(!session.cooperative_round().unwrap().local_ready());
         assert!(
             session

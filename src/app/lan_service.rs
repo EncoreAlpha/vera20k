@@ -122,6 +122,9 @@ pub(crate) struct LanService {
     setup_reassembly: crate::net::lan_messages::extended_setup::Reassembly,
     maps: maps::Transfers,
     pending_setup: std::collections::VecDeque<(Vec<u8>, GlobalDestination)>,
+    /// VERA-only: co-op round records that arrived after the mission ended
+    /// but before the round phase opened. The round owns them once it exists.
+    pending_round: std::collections::VecDeque<GlobalMessage>,
     // Browser loading suspends the native ACK drain between event-loop turns.
     // The same service retains the queue and deadline; no progress is duplicated.
     #[cfg(any(
@@ -249,6 +252,7 @@ impl LanService {
             setup_reassembly: Default::default(),
             maps: Default::default(),
             pending_setup: Default::default(),
+            pending_round: Default::default(),
             #[cfg(any(
                 test,
                 all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown")
@@ -1808,6 +1812,25 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
         .starts_with(crate::net::lan_messages::extended_setup::MAGIC)
     {
         return options::receive_extended(state, incoming.source, &incoming.payload, now);
+    }
+    // A VMCE peer can send its round's records while this peer is still
+    // retiring the mission and before the round phase exists. Hold them; the
+    // round's service pass applies them in arrival order once it opens.
+    if cooperative::is_round_record(&incoming.payload)
+        && state.match_state.session_mode() == SessionMode::Lan
+        && state.match_state.session.cooperative_round().is_none()
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vmce())
+        && let Some(service) = state.match_state.lan_service.as_mut()
+    {
+        service.pending_round.push_back(incoming);
+        if service.pending_round.len() > 64 {
+            service.pending_round.pop_front();
+        }
+        return Ok(());
     }
     if loading::is_progress(&incoming.payload) {
         let scope = state
