@@ -149,7 +149,8 @@ pub(crate) fn resolve_local_vmce_config(
 
 fn next_scenario_token(ini: &IniFile, map_file: &str) -> Result<Option<String>> {
     let normalized = normalize_map_name(map_file)?;
-    let section_name = format!("Scenario:{normalized}");
+    let section_name = scenario_section_name(ini, &normalized)
+        .with_context(|| format!("campaign is missing [Scenario:{normalized}]"))?;
     let section = ini
         .section(&section_name)
         .with_context(|| format!("campaign is missing [{section_name}]"))?;
@@ -166,6 +167,54 @@ fn next_scenario_token(ini: &IniFile, map_file: &str) -> Result<Option<String>> 
     crate::map::source::validate_network_map_name(&next)
         .with_context(|| format!("invalid [{section_name}] NextScenario"))?;
     Ok(Some(next))
+}
+
+/// The authored `[Scenario:<map>]` section for `map_file`. Native INI section
+/// lookup is case-sensitive, but campaign authors spell the same map path
+/// differently in `ScenarioN` and in the section header, so VMCE matches the
+/// map path case-insensitively with `/` and `\` equivalent.
+fn scenario_section_name(ini: &IniFile, map_file: &str) -> Option<String> {
+    let normalized = normalize_map_name(map_file).ok()?;
+    ini.section_names().into_iter().find_map(|name| {
+        let (head, rest) = name.split_once(':')?;
+        (head.eq_ignore_ascii_case("Scenario")
+            && !rest.contains(':')
+            && map_path_matches(rest, &normalized))
+        .then(|| name.to_owned())
+    })
+}
+
+/// Split an authored `[Scenario:<map>:<House>]` control section into its map
+/// path and House name. A plain `[Scenario:<map>]` returns `None`.
+fn scenario_control_parts(name: &str) -> Option<(&str, &str)> {
+    let (head, rest) = name.split_once(':')?;
+    if !head.eq_ignore_ascii_case("Scenario") {
+        return None;
+    }
+    let (map, house) = rest.rsplit_once(':')?;
+    (!map.is_empty() && !house.is_empty() && !map.contains(':')).then_some((map, house))
+}
+
+/// Whether an authored map path names `normalized`: separators are
+/// interchangeable and ASCII case is ignored.
+fn map_path_matches(authored: &str, normalized: &str) -> bool {
+    authored.replace('\\', "/").eq_ignore_ascii_case(normalized)
+}
+
+/// The authored `[Scenario:<map>:<House>]` section for `map_file` and a
+/// canonical map House name, matched like [`scenario_section_name`].
+fn scenario_control_section<'a>(
+    ini: &'a IniFile,
+    map_file: &str,
+    house: &str,
+) -> Option<(&'a str, &'a crate::rules::ini_parser::IniSection)> {
+    let normalized = normalize_map_name(map_file).ok()?;
+    ini.section_names().into_iter().find_map(|name| {
+        let (map, authored_house) = scenario_control_parts(name)?;
+        (map_path_matches(map, &normalized) && authored_house.eq_ignore_ascii_case(house))
+            .then(|| (name, ini.section(name)))
+            .and_then(|(name, section)| Some((name, section?)))
+    })
 }
 
 /// Resolve the next stage for the current VMCE series map. Both
@@ -423,7 +472,8 @@ pub(crate) fn load_vmce_scenario(
     let manifest = parse_vmce_manifest(&ini)?;
     validate_vmce_manifest_maps(&series_dir, &manifest.maps)?;
     let normalized = normalize_map_name(map_file)?;
-    let section_name = format!("Scenario:{normalized}");
+    let section_name = scenario_section_name(&ini, &normalized)
+        .with_context(|| format!("campaign is missing [Scenario:{normalized}]"))?;
     let section = ini
         .section(&section_name)
         .with_context(|| format!("campaign is missing [{section_name}]"))?;
@@ -466,15 +516,21 @@ pub(crate) fn load_vmce_scenario(
         );
     }
     let listed: std::collections::BTreeSet<_> = listed_houses(map_ini).into_iter().collect();
-    let control_prefix = format!("{section_name}:");
     for control_section_name in ini.section_names() {
-        let Some(house) = control_section_name.strip_prefix(&control_prefix) else {
+        let Some((control_map, house)) = scenario_control_parts(control_section_name) else {
             continue;
         };
-        ensure!(
-            listed.contains(house),
-            "campaign control section [{control_section_name}] names a House absent from map [Houses]"
-        );
+        if !map_path_matches(control_map, &normalized) {
+            continue;
+        }
+        if !listed
+            .iter()
+            .any(|listed| listed.eq_ignore_ascii_case(house))
+        {
+            anyhow::bail!(
+                "campaign control section [{control_section_name}] names a House absent from map [Houses]"
+            );
+        }
         if let Some(controls) = ini.section(control_section_name) {
             for key in controls.physical_keys_including_explicit_empty() {
                 ensure!(
@@ -514,27 +570,29 @@ pub(crate) fn load_vmce_scenario(
         }
     }
     for house in listed_houses(map_ini) {
-        let control_section_name = format!("Scenario:{normalized}:{house}");
-        if let Some(controls) = ini.section(&control_section_name) {
-            text.push_str(&format!("[{house}]\n"));
-            for index in 1..=4 {
-                let key = format!("Player{index}Control");
-                if controls.is_present(&key) {
-                    let value = controls
-                        .read_bool_value(&key)
-                        .with_context(|| format!("invalid [{control_section_name}] {key}"))?;
-                    text.push_str(&format!("{key}={}\n", if value { "yes" } else { "no" }));
-                }
-            }
-            if controls.is_present("PlayerControl") {
+        let Some((control_section_name, controls)) =
+            scenario_control_section(&ini, &normalized, &house)
+        else {
+            continue;
+        };
+        text.push_str(&format!("[{house}]\n"));
+        for index in 1..=4 {
+            let key = format!("Player{index}Control");
+            if controls.is_present(&key) {
                 let value = controls
-                    .read_bool_value("PlayerControl")
-                    .with_context(|| format!("invalid [{control_section_name}] PlayerControl"))?;
-                text.push_str(&format!(
-                    "PlayerControl={}\n",
-                    if value { "yes" } else { "no" }
-                ));
+                    .read_bool_value(&key)
+                    .with_context(|| format!("invalid [{control_section_name}] {key}"))?;
+                text.push_str(&format!("{key}={}\n", if value { "yes" } else { "no" }));
             }
+        }
+        if controls.is_present("PlayerControl") {
+            let value = controls
+                .read_bool_value("PlayerControl")
+                .with_context(|| format!("invalid [{control_section_name}] PlayerControl"))?;
+            text.push_str(&format!(
+                "PlayerControl={}\n",
+                if value { "yes" } else { "no" }
+            ));
         }
     }
     let external = IniFile::from_bytes_preserving_empty_values(text.as_bytes())
@@ -904,6 +962,29 @@ mod tests {
         )
         .unwrap();
         assert!(load_vmce_scenario(&series_dir, "Allied/01.map", &map).is_err());
+
+        // `[Scenario:...]` matches the map path case-insensitively with `/`
+        // and `\` interchangeable; the House name in a control section also
+        // matches without case.
+        std::fs::write(
+            &manifest_path,
+            b"[Campaign]\nEntry=Allied/01.map\nScenarioCount=2\nScenario1=Allied/01.map\nScenario2=Soviet/02.map\n[scenario:allied\\01.MAP]\nPlayerCount=2\nPlayer1=Alpha\nPlayer2=Beta\nNextScenario=Soviet/02.map\n[SCENARIO:allied/01.map:neutral]\nPlayer1Control=yes\n",
+        )
+        .unwrap();
+        let config = load_vmce_scenario(&series_dir, "Allied/01.map", &map).unwrap();
+        let projected = config.apply_to_map(&map).unwrap();
+        let houses = crate::map::houses::parse_house_roster(&projected, &[], None);
+        let neutral = houses
+            .houses
+            .iter()
+            .find(|house| house.name == "Neutral")
+            .unwrap();
+        assert_eq!(
+            neutral.campaign_player_controls[0],
+            Some(true),
+            "a differently cased/separated scenario control section still applies"
+        );
+
         std::fs::remove_dir_all(directory).unwrap();
     }
 
