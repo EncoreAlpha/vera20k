@@ -2316,6 +2316,7 @@ mod tests {
         assert_eq!(a.state_hash(), b.state_hash());
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_trigger_difficulty_is_shared_and_roundtrips_while_absent_for_stock() {
         use std::collections::hash_map::DefaultHasher;

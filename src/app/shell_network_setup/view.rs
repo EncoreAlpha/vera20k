@@ -852,6 +852,7 @@ mod tests {
     use super::*;
     use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_role_colors_follow_each_authored_house() {
         let rules = RuleSet::from_ini(&IniFile::from_str(
@@ -868,6 +869,7 @@ mod tests {
         assert_eq!(details.colors[2], None);
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_lobby_uses_accepted_map_config_and_rejects_wrong_map() {
         let ini = IniFile::from_str(

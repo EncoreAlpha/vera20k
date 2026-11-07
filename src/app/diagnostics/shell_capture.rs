@@ -3613,6 +3613,7 @@ mod tests {
         assert!(parse_launch_args(values).is_err());
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn live_vmce_setup_requires_a_host_map_and_keeps_guest_map_host_authored() {
         let output = new_output_path("live-vera-campaign-setup-host");

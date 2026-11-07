@@ -309,6 +309,7 @@ mod tests {
         assert_eq!(CooperativeOptionsRecord::decode(&message), Some(record));
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_stage_record_round_trips_and_rejects_malformed_payloads() {
         let record = VmceStageRecord {

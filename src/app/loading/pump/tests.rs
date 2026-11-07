@@ -1276,6 +1276,7 @@ fn load_descriptor_source_family_format_matrix() {
     }
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_fresh_admission_rejects_generated_sources_before_house_resolution() {
     let mut launch = test_launch_session(LaunchCountry::America);
@@ -1306,6 +1307,7 @@ fn vmce_fresh_admission_rejects_generated_sources_before_house_resolution() {
     assert!(error.to_string().contains("authored physical map source"));
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_authored_admission_requires_frozen_house_assignments() {
     let mut launch = test_launch_session(LaunchCountry::America);
@@ -1341,6 +1343,7 @@ fn vmce_authored_admission_requires_frozen_house_assignments() {
     );
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_authored_admission_preserves_network_receipt_with_frozen_mapping() {
     use crate::app::loading::fresh_scenario::FreshScenarioFamily;

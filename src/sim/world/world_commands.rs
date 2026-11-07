@@ -3714,6 +3714,7 @@ mod tests {
         sim.substrate.entities.insert(entity);
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_unit_command_gate_uses_authenticated_source_grants() {
         use crate::sim::house_state::HouseState;

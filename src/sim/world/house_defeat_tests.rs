@@ -1348,6 +1348,7 @@ fn vmce_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
     (sim, houses, shared, rules)
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_does_not_auto_defeat_empty_scenario_houses() {
     use crate::sim::world::SimSoundEvent;
@@ -1378,6 +1379,7 @@ fn vmce_does_not_auto_defeat_empty_scenario_houses() {
     );
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_series_options_keep_role_houses_alive_with_units() {
     let (mut sim, houses, _shared, rules) = vmce_fixture();
@@ -1400,6 +1402,7 @@ fn vmce_series_options_keep_role_houses_alive_with_units() {
     );
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_house_loss_never_completes_the_match() {
     use crate::sim::scenario_session::ScenarioGameMode;
@@ -1445,6 +1448,7 @@ fn vmce_house_loss_never_completes_the_match() {
     );
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
     use crate::sim::world::FrameEffects;

@@ -123,6 +123,7 @@ fn local_retention_reaches_incoming_trigger_and_saved_world() {
     assert!(saved.sim.global_variables()[12]);
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_lobby_difficulty_selects_the_matching_trigger_flag() {
     let body = "[Triggers]\nDIFF=<none>,<none>,Difficulty,0,1,0,0,0\n\

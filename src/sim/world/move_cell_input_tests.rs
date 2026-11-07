@@ -180,6 +180,7 @@ fn query(mouse_over: bool, shift: bool) -> CellActionQuery {
     CellActionQuery { mouse_over, shift }
 }
 
+#[cfg(feature = "vmce")]
 #[test]
 fn vmce_local_extra_house_click_encodes_and_executes_move() {
     use crate::sim::scenario_session::ScenarioGameMode;

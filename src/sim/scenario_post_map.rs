@@ -1078,6 +1078,7 @@ mod tests {
     /// VMCE keeps the campaign's outcome lifecycle even though its LAN
     /// game mode is nonzero: Post_Map_Init's Special-House alliance pass and
     /// Secret Lab reward draws belong to the stock multiplayer family only.
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_post_map_skips_the_special_house_pass() {
         use crate::sim::scenario_session::ScenarioGameMode;

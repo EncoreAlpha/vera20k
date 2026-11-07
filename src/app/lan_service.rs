@@ -5003,6 +5003,7 @@ mod tests {
         assert!(host.validate_scope(&reply) && host.peer_admission_matches(guest_address, &reply));
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn coop_lan_readiness_uses_local_vmce_config_without_transfer_state() {
         let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1301);

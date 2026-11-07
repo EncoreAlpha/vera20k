@@ -1123,6 +1123,7 @@ mod tests {
         without_coop_lan_transfer,
     };
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_guest_reanswers_the_map_check_on_every_options_revision() {
         // Stock guests resend their `K` map status through the verified map
@@ -1138,6 +1139,7 @@ mod tests {
         assert!(!guest_rechecks_map_on_options(true, false, true, false));
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn modern_auto_accept_is_disabled_only_for_vmce() {
         use crate::skirmish_modes::MpModeClass::{Battle, Cooperative, Vmce};
@@ -1147,6 +1149,7 @@ mod tests {
         assert!(!mode_allows_automatic_accept(Vmce));
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_lan_never_admits_missing_custom_maps_for_transfer() {
         use crate::app::match_runtime::session::NetworkMapAdmission::{

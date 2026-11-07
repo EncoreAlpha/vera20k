@@ -874,6 +874,7 @@ mod tests {
         assert!(!sim.cooperative_humans_won(), "the enemy is not human");
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_terminal_frame_makes_no_score_draw() {
         use crate::sim::scenario_session::ScenarioGameMode;
@@ -909,6 +910,7 @@ mod tests {
         assert_eq!(sim.clone_scenario_rng().state(), before);
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_rows_take_role_primaries_not_the_shared_house() {
         use crate::sim::scenario_session::ScenarioGameMode;

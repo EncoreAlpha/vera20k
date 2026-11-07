@@ -3296,6 +3296,7 @@ mod item83_selection_order_tests {
         (sim, rules)
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_local_selection_reaches_shared_house_stop_command() {
         use crate::sim::scenario_session::ScenarioGameMode;

@@ -250,6 +250,7 @@ mod tests {
         )
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_config_projects_only_allowed_values_and_keeps_player1_control_precedence() {
         let map = map_ini();
@@ -272,6 +273,7 @@ mod tests {
         assert!(!projected.section("Basic").unwrap().is_present("Player3"));
     }
 
+#[cfg(feature = "vmce")]
     #[test]
     fn vmce_config_rejects_unknown_house_and_disallowed_keys() {
         let map = map_ini();
