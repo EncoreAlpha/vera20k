@@ -595,6 +595,30 @@ impl MatchSession {
             network.local_map_source = Some(next.local_map_source.clone());
             network.local_map_effective_digest = Some(next.effective_digest.clone());
         }
+        // The next map owns its own `[Basic] PlayerN`/`[Houses]` binding, so
+        // re-resolve each role against it instead of carrying the previous
+        // stage's House names. Keep the frozen lobby difficulty row: it is a
+        // start input, not a map-derived field.
+        let next_assignments = match vera_next.as_ref() {
+            Some(next) => {
+                let mut houses = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                    &next.map_ini,
+                    &next.map_file,
+                    &next.config.source_sha256,
+                    &next.config,
+                    launch,
+                    seed,
+                )?;
+                if let Some(difficulty) = previous_vera_houses
+                    .as_ref()
+                    .map(|houses| houses.difficulty)
+                {
+                    houses.difficulty = difficulty;
+                }
+                Some(houses)
+            }
+            None => None,
+        };
         let carry_over = saved
             .or_else(|| previous.carry_over().copied())
             .unwrap_or(crate::sim::campaign_carry_over::CampaignCarryOver::CLEARED);
@@ -613,7 +637,9 @@ impl MatchSession {
             super::WolStartTerms::default(),
         )
         .with_carry_over(carry_over);
-        if let Some(houses) = previous_vera_houses {
+        if let Some(houses) = next_assignments {
+            prepared = prepared.with_vmce_houses(houses);
+        } else if let Some(houses) = previous_vera_houses {
             prepared = prepared.with_vmce_houses(houses);
         }
         if let Some(next) = vera_next {
@@ -951,6 +977,11 @@ mod tests {
                 cache_lease: Default::default(),
             },
             effective_digest: "b".repeat(64),
+            // The next mission binds the same roles to different Houses than
+            // the previous stage's frozen assignments (VeraHouse0/1).
+            map_ini: crate::rules::ini_parser::IniFile::from_str(
+                "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
+            ),
         };
         session
             .enter_vmce_round(Some(next.clone()), true, 2)
@@ -988,7 +1019,26 @@ mod tests {
                 .map(|config| config.map_file.as_str()),
             Some("mission02.map")
         );
-        assert!(startup.vmce_houses().is_some());
+        let houses = startup
+            .vmce_houses()
+            .expect("the next stage carries re-resolved assignments");
+        assert_eq!(
+            houses
+                .participants
+                .iter()
+                .map(|assignment| (
+                    assignment.raw_slot_index,
+                    assignment.player_index,
+                    assignment.owner_name.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, "Alpha"), (1, 1, "Beta")],
+            "the next map's own Basic Player Houses bind each role"
+        );
+        assert_eq!(
+            houses.difficulty, 1,
+            "the frozen lobby difficulty row is carried into the next stage"
+        );
     }
 
     #[test]

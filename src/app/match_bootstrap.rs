@@ -128,14 +128,33 @@ pub(crate) struct NetworkVmceMapConfig {
 /// A VMCE series's next stage, resolved from the external
 /// `campaign.ini` when BC6 opens. It carries the same series identity as
 /// the current stage and a fully loaded scenario config for the next map.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct VmceNextStage {
     pub map_file: String,
     pub config: NetworkVmceMapConfig,
     pub metadata: crate::app::match_runtime::session::NetworkMapMetadata,
     pub local_map_source: crate::map::source::LoadedMapSource,
     pub effective_digest: String,
+    /// The next map's raw INI, read when the stage was resolved. The round
+    /// re-resolves the role-to-House assignments from this map (instead of
+    /// carrying the previous stage's House names), so a campaign may bind
+    /// the same role to a different House in each mission.
+    pub map_ini: crate::rules::ini_parser::IniFile,
 }
+
+impl PartialEq for VmceNextStage {
+    fn eq(&self, other: &Self) -> bool {
+        // `map_ini` is the parse of the physical source named by
+        // `local_map_source`; it is derived state, not an independent input.
+        self.map_file == other.map_file
+            && self.config == other.config
+            && self.metadata == other.metadata
+            && self.local_map_source == other.local_map_source
+            && self.effective_digest == other.effective_digest
+    }
+}
+
+impl Eq for VmceNextStage {}
 
 impl NetworkVmceMapConfig {
     pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;

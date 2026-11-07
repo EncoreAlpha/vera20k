@@ -240,6 +240,7 @@ pub(crate) fn resolve_next_vmce_stage(
         metadata,
         local_map_source: loaded.source,
         effective_digest,
+        map_ini: loaded.ini,
     }))
 }
 
