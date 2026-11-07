@@ -119,6 +119,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         focus=("npbug_",),
     ),
     Capability(
+        "vmce",
+        ("vmce",),
+        "VERA Multiplayer Campaign Expansion: LAN campaign series discovery, "
+        "explicit role-to-House binding, next-stage agreement and the VMCE "
+        "result page. The mode row and discovery are absent without the "
+        "feature.",
+        focus=("vmce_",),
+    ),
+    Capability(
         "debug-tools",
         ("debug-tools",),
         "Diagnostic builds: the browser dashboard, offline trainer and "
