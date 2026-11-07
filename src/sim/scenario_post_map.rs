@@ -71,10 +71,13 @@ impl Simulation {
         // mode. Its outcome/trigger lifecycle is the campaign one, so the
         // multiplayer-only Special-House and Secret-Lab passes must not run;
         // the authored House alliance graph arrives with the VERA authority.
+        #[cfg(feature = "vmce")]
         let vmce_outcome = self
             .session
             .multiplayer_mode_class()
             .is_some_and(|class| class.mission_outcome_from_triggers_only());
+        #[cfg(not(feature = "vmce"))]
+        let vmce_outcome = false;
 
         #[cfg(any(test, feature = "test-support"))]
         let mut skirmish_order = [None; 4];
@@ -1078,7 +1081,7 @@ mod tests {
     /// VMCE keeps the campaign's outcome lifecycle even though its LAN
     /// game mode is nonzero: Post_Map_Init's Special-House alliance pass and
     /// Secret Lab reward draws belong to the stock multiplayer family only.
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_post_map_skips_the_special_house_pass() {
         use crate::sim::scenario_session::ScenarioGameMode;

@@ -1380,6 +1380,7 @@ impl ScenarioSession {
     /// The shared Houses a source additionally controls are not separate
     /// players; mission viewpoints read this table. Empty without the grant
     /// table.
+    #[cfg(feature = "vmce")]
     pub(crate) fn campaign_source_houses(&self) -> &[u8] {
         &self.shared_house_sources
     }

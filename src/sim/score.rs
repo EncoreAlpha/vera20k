@@ -96,6 +96,7 @@ impl Simulation {
     /// a shared House another source also controls is not a separate player,
     /// so its rows follow the same role viewpoints the mission outcome uses.
     pub fn cooperative_score_rows(&self) -> Vec<CooperativeScoreRow> {
+        #[cfg(feature = "vmce")]
         let owners = if self
             .session()
             .multiplayer_mode_class()
@@ -109,6 +110,13 @@ impl Simulation {
                 .map(|house| house.name())
                 .collect()
         };
+        #[cfg(not(feature = "vmce"))]
+        let owners: Vec<InternedId> = self
+            .houses
+            .in_order()
+            .filter(|house| !house.multiplay_passive() && house.is_human())
+            .map(|house| house.name())
+            .collect();
         owners
             .into_iter()
             .filter_map(|owner| self.houses.get(&owner))
@@ -874,7 +882,7 @@ mod tests {
         assert!(!sim.cooperative_humans_won(), "the enemy is not human");
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_terminal_frame_makes_no_score_draw() {
         use crate::sim::scenario_session::ScenarioGameMode;
@@ -910,7 +918,7 @@ mod tests {
         assert_eq!(sim.clone_scenario_rng().state(), before);
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_rows_take_role_primaries_not_the_shared_house() {
         use crate::sim::scenario_session::ScenarioGameMode;

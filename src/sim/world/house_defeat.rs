@@ -394,6 +394,7 @@ impl Simulation {
     /// human.
     pub(crate) fn outcome_viewpoints(&self) -> Vec<InternedId> {
         if self.session.game_mode().is_network() {
+            #[cfg(feature = "vmce")]
             if self.session.has_network_house_grants() {
                 let mut viewpoints: Vec<InternedId> = Vec::new();
                 for &index in self.session.campaign_source_houses() {
