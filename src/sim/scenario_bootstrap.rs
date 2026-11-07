@@ -3276,11 +3276,19 @@ pub fn initialize_vmce_houses(
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
-    assignments
-        .validate_for_launch(launch)
-        .map_err(anyhow::Error::msg)?;
-    initialize_map_roster_houses(sim, house_roster, rules, Some(map_ini));
-    install_vmce_house_authority(sim, house_roster, rules, map_ini, launch, assignments)
+    #[cfg(not(feature = "vmce"))]
+    {
+        let _ = (sim, house_roster, rules, map_ini, launch, assignments);
+        anyhow::bail!("VMCE is not built in")
+    }
+    #[cfg(feature = "vmce")]
+    {
+        assignments
+            .validate_for_launch(launch)
+            .map_err(anyhow::Error::msg)?;
+        initialize_map_roster_houses(sim, house_roster, rules, Some(map_ini));
+        install_vmce_house_authority(sim, house_roster, rules, map_ini, launch, assignments)
+    }
 }
 
 /// Install the frozen VMCE command authority on an authored House roster
@@ -3295,121 +3303,134 @@ pub fn install_vmce_house_authority(
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
-    assignments
-        .validate_for_launch(launch)
-        .map_err(anyhow::Error::msg)?;
-
-    let basic = crate::map::basic::parse_basic_section(map_ini);
-    let slots = normalized_launch_slots(launch);
-    let mut source_by_human = vec![None; launch.humans.len()];
-    for slot in &slots {
-        for controller in &slot.controllers {
-            source_by_human[controller.human_index] = Some(controller.source);
-        }
+    #[cfg(not(feature = "vmce"))]
+    {
+        let _ = (sim, house_roster, rules, map_ini, launch, assignments);
+        anyhow::bail!("VMCE is not built in")
     }
-    let mut source_houses = vec![0u8; launch.humans.len()];
-    let mut grants = vec![Vec::<u8>::new(); launch.humans.len()];
-    let mut local_source = None;
-    for assignment in &assignments.participants {
-        let human_index = launch
-            .humans
-            .iter()
-            .position(|human| {
-                human.raw_slot_index == Some(assignment.raw_slot_index)
-                    && human.name == assignment.participant_name
-            })
-            .ok_or_else(|| anyhow::anyhow!("VMCE participant disappeared"))?;
-        let source = source_by_human[human_index]
-            .ok_or_else(|| anyhow::anyhow!("VMCE participant has no command source"))?;
-        let source_index =
-            usize::try_from(source).map_err(|_| anyhow::anyhow!("negative VMCE command source"))?;
-        anyhow::ensure!(
-            source_index < source_houses.len(),
-            "VMCE command source is outside the frozen participant roster"
-        );
-        let primary_name = basic.campaign_players.players[usize::from(assignment.player_index)]
-            .owner
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("VMCE role has no Basic Player House"))?;
-        anyhow::ensure!(
-            primary_name.eq_ignore_ascii_case(&assignment.owner_name),
-            "VMCE frozen primary House differs from the effective Basic Player roster"
-        );
-        let primary = sim
-            .houses
-            .order()
-            .iter()
-            .position(|owner| {
-                sim.interner
-                    .resolve(*owner)
-                    .eq_ignore_ascii_case(primary_name)
-            })
-            .ok_or_else(|| anyhow::anyhow!("VMCE primary House is absent"))?;
-        let primary = u8::try_from(primary)
-            .map_err(|_| anyhow::anyhow!("VMCE House index exceeds command format"))?;
-        source_houses[source_index] = primary;
-        grants[source_index].push(primary);
-        for (house_index, house) in house_roster.houses.iter().enumerate() {
-            if house.campaign_player_controls[usize::from(assignment.player_index)] == Some(true) {
-                grants[source_index].push(
-                    u8::try_from(house_index)
-                        .map_err(|_| anyhow::anyhow!("VMCE House index exceeds command format"))?,
-                );
+    #[cfg(feature = "vmce")]
+    {
+        assignments
+            .validate_for_launch(launch)
+            .map_err(anyhow::Error::msg)?;
+
+        let basic = crate::map::basic::parse_basic_section(map_ini);
+        let slots = normalized_launch_slots(launch);
+        let mut source_by_human = vec![None; launch.humans.len()];
+        for slot in &slots {
+            for controller in &slot.controllers {
+                source_by_human[controller.human_index] = Some(controller.source);
             }
         }
-        grants[source_index].sort_unstable();
-        grants[source_index].dedup();
-        if human_index == launch.local_player_index {
-            local_source = Some(source);
+        let mut source_houses = vec![0u8; launch.humans.len()];
+        let mut grants = vec![Vec::<u8>::new(); launch.humans.len()];
+        let mut local_source = None;
+        for assignment in &assignments.participants {
+            let human_index = launch
+                .humans
+                .iter()
+                .position(|human| {
+                    human.raw_slot_index == Some(assignment.raw_slot_index)
+                        && human.name == assignment.participant_name
+                })
+                .ok_or_else(|| anyhow::anyhow!("VMCE participant disappeared"))?;
+            let source = source_by_human[human_index]
+                .ok_or_else(|| anyhow::anyhow!("VMCE participant has no command source"))?;
+            let source_index = usize::try_from(source)
+                .map_err(|_| anyhow::anyhow!("negative VMCE command source"))?;
+            anyhow::ensure!(
+                source_index < source_houses.len(),
+                "VMCE command source is outside the frozen participant roster"
+            );
+            let primary_name = basic.campaign_players.players[usize::from(assignment.player_index)]
+                .owner
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("VMCE role has no Basic Player House"))?;
+            anyhow::ensure!(
+                primary_name.eq_ignore_ascii_case(&assignment.owner_name),
+                "VMCE frozen primary House differs from the effective Basic Player roster"
+            );
+            let primary = sim
+                .houses
+                .order()
+                .iter()
+                .position(|owner| {
+                    sim.interner
+                        .resolve(*owner)
+                        .eq_ignore_ascii_case(primary_name)
+                })
+                .ok_or_else(|| anyhow::anyhow!("VMCE primary House is absent"))?;
+            let primary = u8::try_from(primary)
+                .map_err(|_| anyhow::anyhow!("VMCE House index exceeds command format"))?;
+            source_houses[source_index] = primary;
+            grants[source_index].push(primary);
+            for (house_index, house) in house_roster.houses.iter().enumerate() {
+                if house.campaign_player_controls[usize::from(assignment.player_index)]
+                    == Some(true)
+                {
+                    grants[source_index].push(
+                        u8::try_from(house_index).map_err(|_| {
+                            anyhow::anyhow!("VMCE House index exceeds command format")
+                        })?,
+                    );
+                }
+            }
+            grants[source_index].sort_unstable();
+            grants[source_index].dedup();
+            if human_index == launch.local_player_index {
+                local_source = Some(source);
+            }
         }
-    }
 
-    // Human identity is shared and deterministic: any House granted to at
-    // least one role is not driven by the House AI. Local input selection is
-    // separately derived from the persisted grant row.
-    let house_order = sim.houses.order().to_vec();
-    for (house_index, owner) in house_order.into_iter().enumerate() {
-        let house = sim.houses.get_mut(&owner).expect("registered roster House");
-        let controlled = u8::try_from(house_index)
-            .ok()
-            .is_some_and(|house_index| grants.iter().any(|row| row.contains(&house_index)));
-        house.assign_network_human(controlled);
-    }
-    let local_house = local_source
-        .and_then(|source| usize::try_from(source).ok())
-        .and_then(|source| source_houses.get(source))
-        .and_then(|index| sim.houses.order().get(usize::from(*index)))
-        .copied();
-    sim.session.install_current_house(local_house);
-    if let Some(owner) = local_house
-        && let Some(country) = sim.houses.get(&owner).and_then(|house| house.country())
-    {
-        let country = sim.interner.resolve(country);
+        // Human identity is shared and deterministic: any House granted to at
+        // least one role is not driven by the House AI. Local input selection is
+        // separately derived from the persisted grant row.
+        let house_order = sim.houses.order().to_vec();
+        for (house_index, owner) in house_order.into_iter().enumerate() {
+            let house = sim.houses.get_mut(&owner).expect("registered roster House");
+            let controlled = u8::try_from(house_index)
+                .ok()
+                .is_some_and(|house_index| grants.iter().any(|row| row.contains(&house_index)));
+            house.assign_network_human(controlled);
+        }
+        let local_house = local_source
+            .and_then(|source| usize::try_from(source).ok())
+            .and_then(|source| source_houses.get(source))
+            .and_then(|index| sim.houses.order().get(usize::from(*index)))
+            .copied();
+        sim.session.install_current_house(local_house);
+        if let Some(owner) = local_house
+            && let Some(country) = sim.houses.get(&owner).and_then(|house| house.country())
+        {
+            let country = sim.interner.resolve(country);
+            sim.session
+                .install_scenario_side(rules.country_side_index_raw(country).unwrap_or(0));
+        }
         sim.session
-            .install_scenario_side(rules.country_side_index_raw(country).unwrap_or(0));
+            .install_network_house_grants(source_houses, grants, local_source);
+        // The admitted mode class selects the mission-outcome semantics: the
+        // cooperative result route, trigger-owned outcomes, and no automatic
+        // multiplayer completion for VERA's authored missions. VERA's room admits
+        // no observer Houses yet, so the observer list is empty.
+        sim.session
+            .install_multiplayer_house_identity(launch.mode.class, Vec::new());
+        // Authored VMCE Houses follow the map's own `[Houses] Allies=` graph.
+        // Network skirmish drives diplomacy from launch teams and never reads the
+        // map graph; a cooperative campaign map has no launch teams, so install
+        // the authored graph on the same constructed roster before map objects
+        // populate (campaign GameMode 0 reads it at this point too).
+        sim.install_house_alliances(
+            crate::sim::house_diplomacy::HouseAllianceAdmission::Admitted(
+                house_roster.alliance_map(),
+            ),
+            rules,
+        );
+        log::info!(
+            "VMCE authored alliances installed for {} Houses",
+            house_roster.houses.len()
+        );
+        Ok(())
     }
-    sim.session
-        .install_network_house_grants(source_houses, grants, local_source);
-    // The admitted mode class selects the mission-outcome semantics: the
-    // cooperative result route, trigger-owned outcomes, and no automatic
-    // multiplayer completion for VERA's authored missions. VERA's room admits
-    // no observer Houses yet, so the observer list is empty.
-    sim.session
-        .install_multiplayer_house_identity(launch.mode.class, Vec::new());
-    // Authored VMCE Houses follow the map's own `[Houses] Allies=` graph.
-    // Network skirmish drives diplomacy from launch teams and never reads the
-    // map graph; a cooperative campaign map has no launch teams, so install
-    // the authored graph on the same constructed roster before map objects
-    // populate (campaign GameMode 0 reads it at this point too).
-    sim.install_house_alliances(
-        crate::sim::house_diplomacy::HouseAllianceAdmission::Admitted(house_roster.alliance_map()),
-        rules,
-    );
-    log::info!(
-        "VMCE authored alliances installed for {} Houses",
-        house_roster.houses.len()
-    );
-    Ok(())
 }
 
 #[cfg(test)]

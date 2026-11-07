@@ -1763,8 +1763,15 @@ impl ScenarioSession {
     /// already validated the 0..=2 range; clamp here keeps a corrupted frozen
     /// payload from indexing past TriggerType's three flags.
     pub(crate) fn install_vmce_trigger_difficulty(&mut self, difficulty: i32) {
-        debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
-        self.vmce_trigger_difficulty = Some(difficulty.clamp(0, 2));
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = difficulty;
+        }
+        #[cfg(feature = "vmce")]
+        {
+            debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
+            self.vmce_trigger_difficulty = Some(difficulty.clamp(0, 2));
+        }
     }
 
     /// VMCE starts an authored campaign map under a nonzero network game
@@ -1773,8 +1780,15 @@ impl ScenarioSession {
     /// `ShortGame` buildings only), and random lobby crates are a multiplayer
     /// system the campaign never runs.
     pub(crate) fn install_vmce_series_options(&mut self) {
-        self.game_options.short_game = false;
-        self.game_options.crates = false;
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = self;
+        }
+        #[cfg(feature = "vmce")]
+        {
+            self.game_options.short_game = false;
+            self.game_options.crates = false;
+        }
     }
 
     /// VMCE's TriggerType difficulty row, when this scenario was started
@@ -2316,7 +2330,7 @@ mod tests {
         assert_eq!(a.state_hash(), b.state_hash());
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_trigger_difficulty_is_shared_and_roundtrips_while_absent_for_stock() {
         use std::collections::hash_map::DefaultHasher;
