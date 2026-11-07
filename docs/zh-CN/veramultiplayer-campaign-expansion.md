@@ -34,7 +34,7 @@ VMCE 走的是另一条路：
 - 胜负只由地图触发器的结局动作决定；单方主 House 全灭不会自动结束任务。
 - 地图里的非角色 House（剧情方、共享方）按战役语义保留，不会因为开局没有单位就被多人自动判负或刷「被击败」消息；只有每名角色的主 House 走自动判负。
 - 任务内按战役语义关闭随机箱和 ShortGame，并跳过 Special House 自动全体结盟与 Secret Lab 随机分配；大厅里的 ShortGame/Crates 开关对 VERA 显示为禁用。
-- 当前版本在胜利时进入原生战役结算页 `0x103`，且外部战役给出 `NextScenario` 时可全员 Continue 进入下一关；失败进入 BC6。不写 `coopsave.ini`、不保存跨关进度。`EndOfGame` 或没有下一关时只提供退出。
+- 当前版本在胜利和失败时都进入同一个 VMCE 结算页（原生战役计分页 `0x103` 的布局与输入，页面状态和 Continue 语义归 VMCE）：胜利且外部战役给出 `NextScenario` 时可全员 Continue 进入下一关；失败或末关的 Continue 是确认并回大厅。不写 `coopsave.ini`、不保存跨关进度。
 
 VMCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然按原版规则运行；普通多人模式也不会因为 VMCE 的地图格式而改变。
 
@@ -167,16 +167,17 @@ LAN 大厅里的难度滑条对 VMCE 可见，并且由房主统一控制：
 
 ### 结果页与继续
 
-胜利和失败使用不同的原版结果页：
+VMCE 的胜利、失败和末关使用同一个结算页（原生战役计分页 `0x103` 的布局与输入，结果状态和 Continue 语义归 VMCE）：
 
-- 胜利进入原生战役结算页 `0x103`，保留原生布局和 `StandaloneScore` 标题；显示 par time、your time、rank、commendation 和击杀数。Rank/Commendation 读取地图 `[Ranking]` 的 `UnderParTitle/Message` 或 `OverParTitle/Message`，难度取当前 VMCE 战役难度。
-- `0x103` 没有 BC6 的 ready 行：客人按 Continue 表示 ready；全员 ready 后只有房主按 Continue 才能进入下一关。状态行显示当前 ready 人数。
-- 失败进入 BC6，显示当前关卡名称、各角色主 House 的分数行和 Quit；没有下一关，也不显示 `[Ranking]` 战后报告。
-- 胜利且战役给出下一关时，下一关仍会按外部战役配置校验地图与角色，并重新加载战场。
-- 战役末关的 `0x103` Continue 直接回大厅；`EndOfGame=yes` 完成页和失败重试尚未实现。
+- 页面显示 par time、your time、rank、commendation 和击杀数。Rank/Commendation 读取地图 `[Ranking]` 的 `UnderParTitle/Message` 或 `OverParTitle/Message`，难度取大厅冻结的 VMCE 战役难度。
+- 页面右侧列出最多 4 名参战玩家：等待下一关时每行显示 Ready/Waiting，失败或末关只显示名字。状态行在等待阶段显示 ready 人数。
+- 胜利且战役给出下一关时，客人按 Continue 表示 ready；全员 ready 后只有房主按 Continue 才能进入下一关。
+- 失败或战役末关（`EndOfGame=yes` / 没有 `NextScenario`）时，Continue 只做确认并回大厅；没有下一关。
+- 胜利进入下一关前，双方交换各自解析出的下一关身份（地图路径 + 源文件/生效/配置摘要）；不一致时双方一起回大厅，不会一边加载一边等待。
+- 下一关加载时，角色按下一关自己的 `[Basic] PlayerN` / `[Houses]` 重新解析，不沿用上一关的 House 名；seed 和冻结难度沿用本局大厅。
 - 结果页不写 `coopsave.ini`，也不写跨关进度。
 
-失败重试、`EndOfGame` 战役完成页、跨关角色/资金/新 seed 仍在开发中，见「当前限制」。
+失败重试、`EndOfGame` 战役完成页、跨关资金/新 seed 仍在开发中，见「当前限制」。
 
 ### 当前不支持的玩家行为
 
@@ -460,7 +461,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 | `Player1..PlayerN` | House 名称 | 无（必填） | 必须出现在地图 `[Houses]` 中；角色 House 必须互不相同 |
 | `NextScenario` | 地图路径 | 空 | 胜利后结果页的下一关；相对系列目录，目标必须在 `ScenarioCount` 中 |
 | `AltNextScenario` | 地图路径 | 空 | 目前只校验；`SkipMapSelect`/全局变量分支尚未执行 |
-| `EndOfGame` | 布尔 | 空 | `yes` 使本关成为战役末关：结果页不提供 Continue |
+| `EndOfGame` | 布尔 | 空 | `yes` 使本关成为战役末关：没有下一关，结果页 Continue 只回大厅 |
 
 `[Scenario:<地图路径>:<House 名称>]`：
 
@@ -481,7 +482,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|---|
 | `[Countries]` | `N=<国家ID>` | 地图新增国家；已有国家保持规则索引，新值按出现顺序追加 |
 | `[<国家ID>]` | `Name=`、`UIName=`、`Side=`、`Color=` | 新国家的显示名、侧和颜色；`Side` 必须已在规则 `[Sides]` 中注册 |
-| `[Colors]` | `Name=三个数值` | 地图新增或覆盖颜色方案（按原版 `[Colors]` 的数值格式），供国家 `Color=` 引用 |
+| `[Colors]` | `Name=三个数值` | 地图新增颜色方案，供国家 `Color=` 引用；若与规则已有方案同名，VERA 目前更新其数值（原版对已有方案不更新，此差异待定） |
 | `[Houses]` | `N=<House 名称>` | 地图所属方注册表；角色和共享 House 都必须在这里 |
 | `[<House 名称>]` | `Country=` | 所属方的国家；角色 House 必须使用不同国家 |
 | `[<House 名称>]` | `Credits=`、`PercentBuilt=`、`TechLevel=`、`IQ=`、`Allies=`、`Color=` | 角色初始资金/建筑进度/科技等级/AI 智商/盟友列表/颜色；沿用原版读法 |
@@ -506,10 +507,10 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|
 | 联机范围 | LAN；WOL/CnCNet 不支持 |
 | 玩家数 | 结构支持最多 4 个角色；当前以 2 人 LAN 验收为主，3–4 人未完整验证 |
-| 结果页 | 胜利走原生 `0x103`，有 `NextScenario` 时可全员 Continue 进入下一关；失败走 BC6。失败重试和 `EndOfGame` 完成页未实现 |
+| 结果页 | 胜利、失败与末关统一走 VMCE 结算页（原生 `0x103` 布局/输入，最多显示 4 名参战角色）；有 `NextScenario` 时可全员 Continue 进入下一关，否则 Continue 回大厅。失败重试和 `EndOfGame` 完成页未实现 |
 | 战役进度 | 不保存；不写 `coopsave.ini` |
 | 任务内多人选项 | VERA 按战役语义关闭随机箱和 ShortGame（大厅对应开关禁用）；Special House/Secret Lab 的多人专属步骤不执行 |
-| 跨关角色/资金/seed | 角色沿用上一关的分配；资金不继承；下一关复用上一关 seed（规划中改为新 seed） |
+| 跨关角色/资金/seed | 角色按下一关地图重新解析，不沿用上一关 House 名；资金不继承；下一关复用上一关 seed（规划中改为新 seed） |
 | 任务内存档/读档 | 不支持 |
 | 任务中掉线 | 不接管 AI；不自动恢复 |
 | 任务中中途加入 | 不支持 |

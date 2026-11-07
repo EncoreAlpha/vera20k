@@ -57,6 +57,7 @@ simulation, session and network command owners.
 
 ## Feature docs
 
+- [Multiplayer Campaign (VMCE)](veramultiplayer-campaign-expansion.md): the optional LAN campaign expansion's player and map-author guide.
 - [End-game screens](ini-end-game-screens.md): the verdict card, its theme and the score page's own art.
 - [Health-strip modes](health-bars.md): the `[VERA] HealthBars=` client option.
 - [Render interpolation](render-interpolation.md): the `[VERA] RenderInterpolation=` option, smoother motion between simulation frames.
