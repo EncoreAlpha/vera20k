@@ -821,6 +821,7 @@ pub struct ScenarioSession {
     /// (0 = Easy, 1 = Normal, 2 = Hard). Process-shared start input; only
     /// Vmce installs it, so stock sessions keep the field absent and their
     /// exact hash stream.
+    #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_trigger_difficulty: Option<i32>,
     /// Scenario+35A0: SetDefaults6839C7 clears the raw stage word. MapSelect
@@ -1795,7 +1796,14 @@ impl ScenarioSession {
     /// from a frozen co-op lobby. Separate from campaign difficulty because the
     /// two owners have different scales and consumers.
     pub(crate) fn vmce_trigger_difficulty(&self) -> Option<i32> {
-        self.vmce_trigger_difficulty
+        #[cfg(feature = "vmce")]
+        {
+            self.vmce_trigger_difficulty
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            None
+        }
     }
 
     pub fn current_house(&self) -> Option<InternedId> {
@@ -1866,6 +1874,7 @@ impl ScenarioSession {
             b"scenario-campaign-startup-v1".hash(hasher);
             campaign.hash(hasher);
         }
+        #[cfg(feature = "vmce")]
         if let Some(difficulty) = s.vmce_trigger_difficulty {
             b"scenario-vera-campaign-trigger-difficulty-v1".hash(hasher);
             difficulty.hash(hasher);
@@ -2111,6 +2120,7 @@ impl ScenarioSession {
             local_shared_house_source: None,
             start_header: crate::map::preview::ScenarioStartHeader::default(),
             campaign: None,
+            #[cfg(feature = "vmce")]
             vmce_trigger_difficulty: None,
             campaign_map_stage: 0,
             input_locked: false,
