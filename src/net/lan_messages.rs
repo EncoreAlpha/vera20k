@@ -226,6 +226,8 @@ pub enum LanMessageError {
         actual: usize,
         maximum: usize,
     },
+    #[error("invalid VERA VMCE stage record")]
+    InvalidStageRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

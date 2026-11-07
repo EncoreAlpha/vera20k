@@ -300,6 +300,12 @@ pub(crate) enum NetworkLoadingRequest {
     CooperativeAck,
     /// The master's `0x31`.
     CooperativeGo,
+    /// VERA-only, before the native begin: the host's resolved next stage
+    /// identity, so a guest can refuse a different mission before loading.
+    CooperativeStage(crate::app::match_bootstrap::VmceStageIdentity),
+    /// VERA-only: the guest's next stage differs from the host's; both peers
+    /// abandon the round to the lobby instead of loading different missions.
+    CooperativeStageRejected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

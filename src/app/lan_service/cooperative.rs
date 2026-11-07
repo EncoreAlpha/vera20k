@@ -15,6 +15,7 @@ use crate::app::match_runtime::session::{
 };
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
+    VmceStageRecord,
 };
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
@@ -114,10 +115,18 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
             CooperativeSignal::Ready => CooperativeRoundEvent::PeerReady { source },
             CooperativeSignal::Go => CooperativeRoundEvent::Go,
             CooperativeSignal::Begin => CooperativeRoundEvent::Begin,
+            CooperativeSignal::StageRejected => CooperativeRoundEvent::StageRejected,
         }
     } else {
         let message = LanMessage::decode(&incoming.payload)?;
-        if let Some(record) = CooperativeOptionsRecord::decode(&message) {
+        if let Some(record) = VmceStageRecord::decode(&message) {
+            CooperativeRoundEvent::StageIdentity(crate::app::match_bootstrap::VmceStageIdentity {
+                map_file: record.map_file,
+                source_sha256: record.source_sha256,
+                effective_digest: record.effective_digest,
+                config_sha256: record.config_sha256,
+            })
+        } else if let Some(record) = CooperativeOptionsRecord::decode(&message) {
             let launch = state
                 .match_state
                 .session
@@ -178,6 +187,20 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             }
             return;
         }
+        NetworkLoadingRequest::CooperativeStage(stage) => {
+            let record = VmceStageRecord {
+                map_file: stage.map_file,
+                source_sha256: stage.source_sha256,
+                effective_digest: stage.effective_digest,
+                config_sha256: stage.config_sha256,
+            };
+            match record.encode(&name) {
+                Ok(message) => send_sources(state, message.as_bytes(), peers),
+                Err(error) => log::warn!("VMCE stage identity was not sent: {error}"),
+            }
+            return;
+        }
+        NetworkLoadingRequest::CooperativeStageRejected => CooperativeSignal::StageRejected,
         _ => return,
     };
     if let Ok(bytes) = signal.encode(&name) {

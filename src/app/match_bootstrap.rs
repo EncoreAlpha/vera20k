@@ -156,6 +156,28 @@ impl PartialEq for VmceNextStage {
 
 impl Eq for VmceNextStage {}
 
+/// The next stage's exchangeable identity: the catalog file and the digests
+/// both peers already resolved locally. `map_ini`/local source never travel;
+/// only this projection does, before the BC6 begin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VmceStageIdentity {
+    pub map_file: String,
+    pub source_sha256: String,
+    pub effective_digest: String,
+    pub config_sha256: String,
+}
+
+impl VmceStageIdentity {
+    pub(crate) fn of(next: Option<&VmceNextStage>) -> Option<Self> {
+        next.map(|next| Self {
+            map_file: next.map_file.clone(),
+            source_sha256: next.config.source_sha256.clone(),
+            effective_digest: next.effective_digest.clone(),
+            config_sha256: next.config.config_sha256.clone(),
+        })
+    }
+}
+
 impl NetworkVmceMapConfig {
     pub(crate) const MAX_CONFIG_JSON_BYTES: usize = 8 * 1024;
 

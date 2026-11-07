@@ -43,6 +43,11 @@ pub(crate) struct CooperativeRoundState {
     /// Authored VMCE: the host is auto-ready and only its Continue
     /// starts the next stage; a guest Continue is its ready action.
     vera: bool,
+    /// Authored VMCE: the next stage this peer resolved when the round
+    /// opened. Both peers compare it against the host's `0x36` record before
+    /// either loads the mission; `None` on stock Cooperative and on a VMCE
+    /// last mission.
+    vera_stage: Option<crate::app::match_bootstrap::VmceStageIdentity>,
     /// `0x89E04C` once the loop left: true runs the next mission.
     outcome: Option<bool>,
 }
@@ -110,6 +115,11 @@ pub(crate) enum CooperativeRoundEvent {
     },
     /// `0x0D`, the 20 s keepalive: only the loop's tail reads it.
     KeepAlive,
+    /// VERA-only `0x36`: the host's resolved next stage identity.
+    StageIdentity(crate::app::match_bootstrap::VmceStageIdentity),
+    /// VERA-only `0x37`: a peer's next stage differs, so the round is
+    /// abandoned for the lobby instead of loading different missions.
+    StageRejected,
 }
 
 /// What the app must do after a round step.
@@ -212,6 +222,7 @@ impl MatchSession {
             }
         }
         let vera = launch.mode.class.is_vmce();
+        let vera_stage = crate::app::match_bootstrap::VmceStageIdentity::of(vera_next.as_ref());
         let mut round = CooperativeRoundState {
             ready,
             local_ready: false,
@@ -221,6 +232,7 @@ impl MatchSession {
             can_continue,
             rows,
             vera,
+            vera_stage: vera_stage.clone(),
             outcome: None,
         };
         let host = self.host;
@@ -250,6 +262,14 @@ impl MatchSession {
             network
                 .loading_requests
                 .push(NetworkLoadingRequest::CooperativeReady);
+        }
+        // Every VMCE peer advertises the next stage it resolved before the
+        // native begin: whichever identity arrives first exposes a mismatch,
+        // so neither side loads a different mission.
+        if let Some(stage) = vera_stage {
+            network
+                .loading_requests
+                .push(NetworkLoadingRequest::CooperativeStage(stage));
         }
         Ok(())
     }
@@ -477,6 +497,21 @@ impl MatchSession {
                 .map(usize::from)
         };
         match event {
+            CooperativeRoundEvent::StageIdentity(advertised) => {
+                if round.vera_stage.as_ref() == Some(&advertised) {
+                    return Ok(CooperativeRoundStep::None);
+                }
+                // Both peers must load the same mission: report the refusal
+                // and abandon the round locally so both return to the lobby.
+                round.outcome = Some(false);
+                requests.push(NetworkLoadingRequest::CooperativeStageRejected);
+                Ok(CooperativeRoundStep::Exit(false))
+            }
+            CooperativeRoundEvent::StageRejected => {
+                round.outcome = Some(false);
+                requests.push(NetworkLoadingRequest::CooperativeLeave);
+                Ok(CooperativeRoundStep::Exit(false))
+            }
             CooperativeRoundEvent::PeerReady { source } => {
                 if let Some(row) = slot_of(launch, source) {
                     round.ready[row] = true;
@@ -888,6 +923,96 @@ mod tests {
         (session, startup)
     }
 
+    /// A resolved VMCE next stage whose mini map binds Player1=Alpha and
+    /// Player2=Beta. The map name is the only identity the tests vary.
+    fn next_stage(map_file: &str) -> crate::app::match_bootstrap::VmceNextStage {
+        crate::app::match_bootstrap::VmceNextStage {
+            map_file: map_file.into(),
+            config: crate::app::match_bootstrap::NetworkVmceMapConfig::new(
+                map_file.into(),
+                "a".repeat(64),
+                crate::map::vmce_config::VmceMapConfig::default(),
+            )
+            .unwrap(),
+            metadata: super::super::NetworkMapMetadata {
+                display_name: map_file.into(),
+                player_capacity: 8,
+                official: false,
+                byte_length: 100,
+                digest: String::new(),
+                source_sha256: "a".repeat(64),
+                effective_digest: "b".repeat(64),
+            },
+            local_map_source: crate::map::source::LoadedMapSource::Loose {
+                path: map_file.into(),
+                payload_len: 100,
+                source_sha256: "a".repeat(64),
+                cache_lease: Default::default(),
+            },
+            effective_digest: "b".repeat(64),
+            map_ini: crate::rules::ini_parser::IniFile::from_str(
+                "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
+            ),
+        }
+    }
+
+    #[test]
+    fn vera_round_identities_must_agree_before_the_next_stage_loads() {
+        let next = next_stage("mission02.map");
+        let identity = crate::app::match_bootstrap::VmceStageIdentity::of(Some(&next)).unwrap();
+
+        // Every peer advertises its resolved stage when the round opens.
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round(Some(next.clone()), true, 2).unwrap();
+        assert!(host.take_network_loading_requests().iter().any(
+            |request| matches!(request, NetworkLoadingRequest::CooperativeStage(stage) if stage == &identity)
+        ));
+
+        // A guest that resolved the same stage accepts it.
+        let (mut guest, _) = frozen_vera(1);
+        guest.enter_vmce_round(Some(next.clone()), true, 2).unwrap();
+        guest.take_network_loading_requests();
+        assert_eq!(
+            guest
+                .cooperative_round_event(CooperativeRoundEvent::StageIdentity(identity.clone()), 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+
+        // A guest that resolved a different mission refuses the host's
+        // stage instead of loading a different map.
+        let (mut guest, _) = frozen_vera(1);
+        guest
+            .enter_vmce_round(Some(next_stage("mission03.map")), true, 2)
+            .unwrap();
+        guest.take_network_loading_requests();
+        assert_eq!(
+            guest
+                .cooperative_round_event(CooperativeRoundEvent::StageIdentity(identity), 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        assert!(
+            guest.take_network_loading_requests().iter().any(|request| {
+                matches!(request, NetworkLoadingRequest::CooperativeStageRejected)
+            })
+        );
+
+        // The host treats the refusal as terminal and releases its guest.
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round(Some(next), true, 2).unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::StageRejected, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        assert!(
+            host.take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeLeave)
+        );
+    }
+
     #[test]
     fn vera_host_is_auto_ready_and_its_continue_waits_for_guests() {
         let (mut session, _) = frozen_vera(0);
@@ -953,36 +1078,7 @@ mod tests {
     #[test]
     fn vera_round_freezes_the_resolved_next_stage_into_the_next_start() {
         let (mut session, _) = frozen_vera(0);
-        let next = crate::app::match_bootstrap::VmceNextStage {
-            map_file: "mission02.map".into(),
-            config: crate::app::match_bootstrap::NetworkVmceMapConfig::new(
-                "mission02.map".into(),
-                "a".repeat(64),
-                crate::map::vmce_config::VmceMapConfig::default(),
-            )
-            .unwrap(),
-            metadata: super::super::NetworkMapMetadata {
-                display_name: "Mission 2".into(),
-                player_capacity: 8,
-                official: false,
-                byte_length: 100,
-                digest: String::new(),
-                source_sha256: "a".repeat(64),
-                effective_digest: "b".repeat(64),
-            },
-            local_map_source: crate::map::source::LoadedMapSource::Loose {
-                path: "mission02.map".into(),
-                payload_len: 100,
-                source_sha256: "a".repeat(64),
-                cache_lease: Default::default(),
-            },
-            effective_digest: "b".repeat(64),
-            // The next mission binds the same roles to different Houses than
-            // the previous stage's frozen assignments (VeraHouse0/1).
-            map_ini: crate::rules::ini_parser::IniFile::from_str(
-                "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
-            ),
-        };
+        let next = next_stage("mission02.map");
         session
             .enter_vmce_round(Some(next.clone()), true, 2)
             .unwrap();

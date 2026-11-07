@@ -35,6 +35,10 @@ pub enum CooperativeSignal {
     Go,
     /// `0x34`, the master's begin (`0x0046FF9C`, `0x00470244`).
     Begin,
+    /// `0x37`, VERA-only: a guest's next stage differs from the host's, so
+    /// both peers leave the round for the lobby. Stock BC6 has no such
+    /// record; the native begin carries no stage identity at all.
+    StageRejected,
 }
 
 impl CooperativeSignal {
@@ -46,6 +50,7 @@ impl CooperativeSignal {
             Self::Ready => 0x26,
             Self::Go => 0x31,
             Self::Begin => 0x34,
+            Self::StageRejected => 0x37,
         }
     }
 
@@ -69,10 +74,95 @@ impl CooperativeSignal {
                 0x26 => Self::Ready,
                 0x31 => Self::Go,
                 0x34 => Self::Begin,
+                0x37 => Self::StageRejected,
                 _ => return None,
             },
         )
     }
+}
+
+/// VERA-only record (`0x36`, not a native BC6 kind): the host's resolved
+/// next stage identity, sent before the native begin so a guest whose own
+/// campaign resolved a different stage can refuse before either peer loads
+/// it. The digests are the hex strings the local resolvers already produce.
+pub const STAGE_KIND: u32 = 0x36;
+const STAGE_OFFSET: usize = 0x2f;
+const STAGE_MAP_CAPACITY: usize = 0x80;
+const STAGE_SOURCE_OFFSET: usize = STAGE_OFFSET + 1 + STAGE_MAP_CAPACITY;
+const STAGE_EFFECTIVE_OFFSET: usize = STAGE_SOURCE_OFFSET + 64;
+const STAGE_CONFIG_OFFSET: usize = STAGE_EFFECTIVE_OFFSET + 64;
+const STAGE_END: usize = STAGE_CONFIG_OFFSET + 64;
+const _: () = assert!(STAGE_END <= LAN_MESSAGE_LEN);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmceStageRecord {
+    pub map_file: String,
+    pub source_sha256: String,
+    pub effective_digest: String,
+    pub config_sha256: String,
+}
+
+impl VmceStageRecord {
+    pub fn encode(&self, name: &str) -> Result<LanMessage, LanMessageError> {
+        let map = self.map_file.as_bytes();
+        if map.is_empty() || map.len() > STAGE_MAP_CAPACITY {
+            return Err(LanMessageError::TextTooLong {
+                field: "VMCE stage map",
+                actual: map.len(),
+                maximum: STAGE_MAP_CAPACITY,
+            });
+        }
+        for digest in [
+            &self.source_sha256,
+            &self.effective_digest,
+            &self.config_sha256,
+        ] {
+            if !digest_is_valid(digest) {
+                return Err(LanMessageError::InvalidStageRecord);
+            }
+        }
+        let mut message = LanMessage::with_name(LanMessageKind::Unknown(STAGE_KIND), name)?;
+        message.bytes[STAGE_OFFSET] = map.len() as u8;
+        message.bytes[STAGE_OFFSET + 1..STAGE_OFFSET + 1 + map.len()].copy_from_slice(map);
+        for (offset, digest) in [
+            (STAGE_SOURCE_OFFSET, &self.source_sha256),
+            (STAGE_EFFECTIVE_OFFSET, &self.effective_digest),
+            (STAGE_CONFIG_OFFSET, &self.config_sha256),
+        ] {
+            message.bytes[offset..offset + 64].copy_from_slice(digest.as_bytes());
+        }
+        Ok(message)
+    }
+
+    pub fn decode(message: &LanMessage) -> Option<Self> {
+        if message.u32(0) != STAGE_KIND {
+            return None;
+        }
+        let map_len = usize::from(message.bytes[STAGE_OFFSET]);
+        if map_len == 0 || map_len > STAGE_MAP_CAPACITY {
+            return None;
+        }
+        let map_file =
+            std::str::from_utf8(&message.bytes[STAGE_OFFSET + 1..STAGE_OFFSET + 1 + map_len])
+                .ok()?
+                .to_owned();
+        let digest = |offset: usize| {
+            std::str::from_utf8(&message.bytes[offset..offset + 64])
+                .ok()
+                .filter(|text| digest_is_valid(text))
+                .map(str::to_owned)
+        };
+        Some(Self {
+            map_file,
+            source_sha256: digest(STAGE_SOURCE_OFFSET)?,
+            effective_digest: digest(STAGE_EFFECTIVE_OFFSET)?,
+            config_sha256: digest(STAGE_CONFIG_OFFSET)?,
+        })
+    }
+}
+
+fn digest_is_valid(digest: &str) -> bool {
+    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// One raw slot's human words: `-1` in all three for an empty or AI slot.
@@ -212,5 +302,47 @@ mod tests {
             "slot 7's AI country, colour, difficulty, start and ally"
         );
         assert_eq!(CooperativeOptionsRecord::decode(&message), Some(record));
+    }
+
+    #[test]
+    fn vmce_stage_record_round_trips_and_rejects_malformed_payloads() {
+        let record = VmceStageRecord {
+            map_file: "VeraCampaign/mission02.map".into(),
+            source_sha256: "a".repeat(64),
+            effective_digest: "b".repeat(64),
+            config_sha256: "c".repeat(64),
+        };
+        let message = record.encode("Host").unwrap();
+        assert_eq!(message.u32(0), STAGE_KIND);
+        assert_eq!(VmceStageRecord::decode(&message), Some(record.clone()));
+
+        // A map name past the record's capacity, and a digest that is not a
+        // SHA-256 hex string, are refused before the packet is sent.
+        let mut too_long = record.clone();
+        too_long.map_file = "m".repeat(STAGE_MAP_CAPACITY + 1);
+        assert!(too_long.encode("Host").is_err());
+        let mut bad_digest = record;
+        bad_digest.source_sha256 = String::from("not-a-digest");
+        assert!(bad_digest.encode("Host").is_err());
+        // A record of another round kind is never read as a stage identity.
+        let options = CooperativeOptionsRecord {
+            difficulty: 1,
+            humans: [CooperativeHumanWords {
+                start: -1,
+                country: -1,
+                color: -1,
+            }; ROWS],
+            ai: [CooperativeAiWords {
+                country: -1,
+                color: -1,
+                difficulty: 0,
+                start: -2,
+                team: -2,
+            }; ROWS],
+        };
+        assert_eq!(
+            VmceStageRecord::decode(&options.encode("Host").unwrap()),
+            None
+        );
     }
 }
