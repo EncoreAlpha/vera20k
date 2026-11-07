@@ -53,6 +53,7 @@ fn team_value(team: LaunchTeam) -> i32 {
     }
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_role_metadata(
     ini: &crate::rules::ini_parser::IniFile,
     rules: Option<&crate::rules::ruleset::RuleSet>,
@@ -83,6 +84,7 @@ fn vmce_role_metadata(
     }
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_role_metadata_with_config(
     ini: &crate::rules::ini_parser::IniFile,
     rules: Option<&crate::rules::ruleset::RuleSet>,
@@ -99,6 +101,7 @@ fn vmce_role_metadata_with_config(
     }
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
     let Some(file) = state
         .match_state
@@ -182,6 +185,7 @@ fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
     })
 }
 
+#[cfg(feature = "vmce")]
 fn vmce_role_choices(
     state: &AppState,
     row: u8,
@@ -218,7 +222,7 @@ fn vmce_role_choices(
         }
         choices.push(SetupChoice {
             value,
-            text: format!("Player {} — {owner}", index + 1),
+            text: format!("Player {} 鈥?{owner}", index + 1),
             swatch: None,
         });
     }
@@ -263,6 +267,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let launch = session.network_setup()?;
     let protocol = state.frontend.network_setup_protocol.as_ref()?;
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
+    #[cfg(feature = "vmce")]
     let vera_details = mode.class.is_vmce().then(|| vmce_map_details(state));
     let host = session.host();
     let host_name = protocol.wol_host.as_deref();
@@ -640,6 +645,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 choice
             })
             .collect::<Vec<_>>();
+        #[cfg(feature = "vmce")]
         let (team, teams) = if mode.class.is_vmce() {
             vmce_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
         } else {
@@ -651,6 +657,14 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                     .collect::<Vec<_>>(),
             )
         };
+        #[cfg(not(feature = "vmce"))]
+        let (team, teams) = (
+            team,
+            skirmish_shell::team_choices(mode.must_ally)
+                .into_iter()
+                .map(|item| choice(state, item))
+                .collect::<Vec<_>>(),
+        );
         for (column, value, choices) in [
             (SetupColumn::Country, country, countries),
             (SetupColumn::Color, color, colors),
@@ -806,6 +820,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             .multiplayer_setup
             .as_ref()
             .is_some_and(|ui| ui.map_offer.is_some()),
+        #[cfg(feature = "vmce")]
         mode_label: if mode.class.is_vmce() {
             mode.ui_name_key.clone()
         } else {
@@ -818,6 +833,15 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 },
             )
         },
+        #[cfg(not(feature = "vmce"))]
+        mode_label: label(
+            state,
+            if launch.selected_map_file.is_none() {
+                "GUI:None"
+            } else {
+                &mode.ui_name_key
+            },
+        ),
         map_label: super::map_display_name(state)
             .map_or_else(|| label(state, "GUI:None"), str::to_owned),
         selected_map_index: map_index,
@@ -826,6 +850,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         cooperative,
         #[cfg(feature = "vmce")]
         vmce: mode.class.is_vmce(),
+        #[cfg(feature = "vmce")]
         cooperative_description: if mode.class.is_vmce() {
             Some(
                 vera_details
@@ -842,6 +867,15 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                     )
                 })
         },
+        #[cfg(not(feature = "vmce"))]
+        cooperative_description: coop.as_ref().and_then(|coop| coop.description).map(
+            |(campaign, stage)| {
+                label(
+                    state,
+                    &format!("NAME:COOPDESC{}{}", campaign + 1, stage + 1),
+                )
+            },
+        ),
     })
 }
 

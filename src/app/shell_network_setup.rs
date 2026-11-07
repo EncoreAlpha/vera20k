@@ -138,6 +138,7 @@ pub(crate) enum OnlineStartPhase {
     Submitted,
 }
 
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, Default)]
 pub(super) struct VmceMapDetails {
     pub owners: [Option<String>; 4],
@@ -148,6 +149,7 @@ pub(super) struct VmceMapDetails {
 pub(crate) struct NetworkSetupProtocol {
     /// Parsed map-authored Player1..Player4 labels, keyed by local map identity.
     /// The lobby view is rebuilt every frame, so it must not reload a map there.
+    #[cfg(feature = "vmce")]
     pub(super) vmce_role_cache:
         std::cell::RefCell<Option<(std::path::PathBuf, String, String, VmceMapDetails)>>,
     locked: bool,
@@ -372,6 +374,7 @@ impl NetworkSetupProtocol {
         // runs without C2.
         let wol_host = dialog.wol() && host && !quick_match;
         Self {
+            #[cfg(feature = "vmce")]
             vmce_role_cache: std::cell::RefCell::new(None),
             locked: false,
             quick_match,
