@@ -85,6 +85,10 @@ pub(crate) fn render_multiplayer_setup(
         crate::app::frontend::preview_zoom::close(state);
         return Ok(());
     };
+    #[cfg(feature = "vmce")]
+    let vmce = view.vmce;
+    #[cfg(not(feature = "vmce"))]
+    let vmce = false;
     crate::app::input::multiplayer_setup::update_geometry(state);
     let layout = crate::app::input::multiplayer_setup::layout(state);
     let scale = layout.page.scale;
@@ -107,7 +111,7 @@ pub(crate) fn render_multiplayer_setup(
     }
     let zoom_layout = ensure_zoom_texture(state, scale, !sliding && !view.preview_hidden);
     let heading = localized_label(state, view.page().title_key, view.page().title_key);
-    let heading = if view.vmce {
+    let heading = if vmce {
         "Cooperative Lobby".to_owned()
     } else {
         localized_label(state, view.page().title_key, view.page().title_key)
@@ -231,7 +235,7 @@ pub(crate) fn render_multiplayer_setup(
             .filter(|(key, _)| view.team_header || *key != "GUI:Team")
         {
             texts.push(text(
-                &if view.vmce {
+                &if vmce {
                     match *key {
                         "GUI:Players" => "Players".to_owned(),
                         "GUI:Side" => "Faction".to_owned(),
@@ -301,7 +305,7 @@ pub(crate) fn render_multiplayer_setup(
             let Some(rect) = layout.control_rect(combo.id) else {
                 continue;
             };
-            if view.vmce {
+            if vmce {
                 // Coop uses wider cells than the stock combo sprites support.
                 // Give every player and role a consistent visible field even
                 // when the original fixed-width face sprite is unavailable.
@@ -350,7 +354,8 @@ pub(crate) fn render_multiplayer_setup(
             let Some(icon) = icon else {
                 continue;
             };
-            if view.vmce && icon.vera_player {
+            #[cfg(feature = "vmce")]
+            if vmce && icon.vera_player {
                 let rect = layout.flags[row];
                 let rgb = icon.vera_house_color.map_or([0.12, 0.12, 0.12], |color| {
                     color.map(|value| f32::from(value) / 255.0)
@@ -364,7 +369,7 @@ pub(crate) fn render_multiplayer_setup(
                     SHELL_CONTROL_DEPTH - 0.00002,
                 );
             }
-            if !view.vmce
+            if !vmce
                 && let Some(flag) = icon
                     .country
                     .as_deref()
@@ -403,7 +408,7 @@ pub(crate) fn render_multiplayer_setup(
             }
         }
         // VERA's room keeps its options in Game Options; Difficulty stays.
-        if layout.game_options.is_none() && !view.vmce {
+        if layout.game_options.is_none() && !vmce {
             push_option_controls(
                 &mut controls,
                 &mut texts,
@@ -414,7 +419,7 @@ pub(crate) fn render_multiplayer_setup(
             );
         }
         for bar in view.trackbars.iter().filter(|bar| {
-            bar.visible && (!OPTION_TRACKBARS.contains(&bar.id) || (view.vmce && bar.id == SPEED))
+            bar.visible && (!OPTION_TRACKBARS.contains(&bar.id) || (vmce && bar.id == SPEED))
         }) {
             push_trackbar(
                 &mut controls,
@@ -435,18 +440,18 @@ pub(crate) fn render_multiplayer_setup(
                 SHELL_CONTROL_TEXT_DEPTH,
             ));
         }
-        if view.cooperative || view.vmce {
+        if view.cooperative || vmce {
             for (key, x) in [("TXT_Easy", 170), ("TXT_Normal", 295), ("TXT_Hard", 430)] {
                 texts.push(text(
                     &localized_label(state, key, key),
-                    scale.scale_rect(RectPx::new(x, if view.vmce { 267 } else { 190 }, 75, 20)),
+                    scale.scale_rect(RectPx::new(x, if vmce { 267 } else { 190 }, 75, 20)),
                     ShellAlign::H_CENTER,
                     SHELL_LABEL_TEXT_RGB,
                     SHELL_CONTROL_TEXT_DEPTH,
                 ));
             }
         }
-        if view.vmce {
+        if vmce {
             texts.push(text(
                 &localized_label(state, "GUI:GameSpeed", "Game Speed"),
                 scale.scale_rect(RectPx::new(180, 337, 110, 21)),
@@ -518,7 +523,7 @@ pub(crate) fn render_multiplayer_setup(
             ));
         }
         if !sliding {
-            if view.vmce
+            if vmce
                 && view.selected_map_index.is_some()
                 && state.frontend.skirmish_preview_texture.is_none()
             {
@@ -603,18 +608,17 @@ pub(crate) fn render_multiplayer_setup(
                     SHELL_CONTROL_DEPTH,
                 );
                 let spec = view.page().button(button.id).or_else(|| {
-                    view.vmce
-                        .then(|| crate::ui::multiplayer_setup::SetupDialog {
-                            modern: false,
-                            ..view.dialog
-                        })?
-                        .page()
-                        .button(button.id)
+                    vmce.then(|| crate::ui::multiplayer_setup::SetupDialog {
+                        modern: false,
+                        ..view.dialog
+                    })?
+                    .page()
+                    .button(button.id)
                 });
                 if let Some(spec) = spec {
                     texts.push(shell_text::draw_in_rect_scaled(
                         font,
-                        &if view.vmce {
+                        &if vmce {
                             match button.id {
                                 START => "Start Mission".to_owned(),
                                 ACCEPT => "Ready".to_owned(),

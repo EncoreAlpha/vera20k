@@ -422,7 +422,9 @@ impl SetupTrackbar {
 #[derive(Debug, Clone)]
 pub(crate) struct SetupRowIcon {
     pub(crate) country: Option<String>,
+    #[cfg(feature = "vmce")]
     pub(crate) vera_house_color: Option<[u8; 3]>,
+    #[cfg(feature = "vmce")]
     pub(crate) vera_player: bool,
     pub(crate) host: bool,
     pub(crate) accepted: bool,
@@ -464,6 +466,7 @@ pub(crate) struct SetupView {
     pub(crate) preview_hidden: bool,
     pub(crate) cooperative: bool,
     /// VERA's map-authored campaign mode, separate from retail Cooperative.
+    #[cfg(feature = "vmce")]
     pub(crate) vmce: bool,
     pub(crate) cooperative_description: Option<String>,
 }
@@ -1028,10 +1031,12 @@ impl MultiplayerSetupLayout {
                 .chain([GAME_OPTIONS_OK])
                 .find(hit);
         }
+        #[cfg(feature = "vmce")]
+        let vmce = view.vmce;
+        #[cfg(not(feature = "vmce"))]
+        let vmce = false;
         let in_room = |id: &u16| {
-            self.game_options.is_none()
-                || !OPTION_TRACKBARS.contains(id)
-                || (view.vmce && *id == SPEED)
+            self.game_options.is_none() || !OPTION_TRACKBARS.contains(id) || (vmce && *id == SPEED)
         };
         let paged = view.row_count > view.dialog.rows_per_page();
         view.combos
@@ -1048,7 +1053,7 @@ impl MultiplayerSetupLayout {
             .chain(
                 CHECKBOXES
                     .into_iter()
-                    .filter(|_| self.game_options.is_none() && !view.vmce),
+                    .filter(|_| self.game_options.is_none() && !vmce),
             )
             .chain([CHAT, CHAT_LOG])
             .chain(
@@ -1293,6 +1298,7 @@ mod tests {
             no_preview: false,
             preview_hidden: false,
             cooperative: false,
+            #[cfg(feature = "vmce")]
             vmce: false,
             cooperative_description: None,
         };
@@ -1315,24 +1321,27 @@ mod tests {
         let (x, y) = center(popup_layout.checkboxes[0]);
         assert_ne!(popup_layout.control_at(&view, x, y), Some(CHECKBOXES[0]));
         // Coop moves its speed control out of the ordinary options popup.
-        view.vmce = true;
-        view.trackbars = [SPEED, DIFFICULTY]
-            .into_iter()
-            .map(|id| SetupTrackbar {
-                id,
-                value: 0,
-                range: TrackbarRange::new(0, 2, 1),
-                enabled: true,
-                visible: true,
-            })
-            .collect();
-        let mut coop = MultiplayerSetupLayout::new(view.dialog, 800, 600, true);
-        crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600);
-        for id in [SPEED, DIFFICULTY] {
-            let (x, y) = center(coop.control_rect(id).unwrap());
-            assert_eq!(coop.control_at(&view, x, y), Some(id));
+        #[cfg(feature = "vmce")]
+        {
+            view.vmce = true;
+            view.trackbars = [SPEED, DIFFICULTY]
+                .into_iter()
+                .map(|id| SetupTrackbar {
+                    id,
+                    value: 0,
+                    range: TrackbarRange::new(0, 2, 1),
+                    enabled: true,
+                    visible: true,
+                })
+                .collect();
+            let mut coop = MultiplayerSetupLayout::new(view.dialog, 800, 600, true);
+            crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600);
+            for id in [SPEED, DIFFICULTY] {
+                let (x, y) = center(coop.control_rect(id).unwrap());
+                assert_eq!(coop.control_at(&view, x, y), Some(id));
+            }
+            view.vmce = false;
         }
-        view.vmce = false;
         view.dialog = dialog(true, SetupFlavor::Wol, false);
         let native = MultiplayerSetupLayout::new(view.dialog, 800, 600, false);
         assert!(native.game_options.is_none());

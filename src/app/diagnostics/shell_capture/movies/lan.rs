@@ -1886,6 +1886,7 @@ impl LanCapture {
                             },
                         )?;
                         let view = setup::view(state).context("VMCE BC")?;
+                        #[cfg(feature = "vmce")]
                         ensure!(view.vmce, "capture selected the stock Cooperative mode");
                         ensure!(
                             state

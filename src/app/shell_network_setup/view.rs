@@ -312,8 +312,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     // Battle/FreeForAll list in Skirmish and allow AI rows. VMCE shares the
     // same host seat editor for solo testing: an AI row may fill an Open seat
     // without becoming a network participant or taking a campaign role.
-    let ai_allowed = !watched
-        && (mode.class.lists_in_skirmish() || mode.class.is_vmce());
+    let ai_allowed = !watched && (mode.class.lists_in_skirmish() || mode.class.is_vmce());
     let mut listed = Vec::new();
     if several {
         let rows = 0..crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT as u8;
@@ -694,10 +693,12 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             };
             row_icons[visible_row] = Some(SetupRowIcon {
                 country: flag,
+                #[cfg(feature = "vmce")]
                 vera_house_color: human.and_then(|(_, human)| {
                     let role = usize::try_from(human.role.native_value()).ok()?;
                     vera_details.as_ref()?.colors.get(role).copied().flatten()
                 }),
+                #[cfg(feature = "vmce")]
                 vera_player: human.is_some_and(|(_, human)| !human.is_observer()),
                 // 0x5EA3E0: wolhost.pcx on the human row named [0xA8D610];
                 // a WOL guest learns it from the user list, otherwise the
@@ -823,6 +824,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         no_preview: protocol.wol_no_preview().0,
         preview_hidden: protocol.wol_no_preview().1,
         cooperative,
+        #[cfg(feature = "vmce")]
         vmce: mode.class.is_vmce(),
         cooperative_description: if mode.class.is_vmce() {
             Some(
@@ -852,7 +854,7 @@ mod tests {
     use super::*;
     use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_role_colors_follow_each_authored_house() {
         let rules = RuleSet::from_ini(&IniFile::from_str(
@@ -869,7 +871,7 @@ mod tests {
         assert_eq!(details.colors[2], None);
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_lobby_uses_accepted_map_config_and_rejects_wrong_map() {
         let ini = IniFile::from_str(
