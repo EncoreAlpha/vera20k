@@ -7,6 +7,10 @@
 mod actions;
 pub(crate) mod agreement;
 pub(crate) mod bans;
+#[cfg(feature = "vmce")]
+pub(crate) mod vmce_map;
+#[cfg(not(feature = "vmce"))]
+#[path = "shell_network_setup/vmce_map_stub.rs"]
 pub(crate) mod vmce_map;
 pub(crate) use vmce_map::{
     host_vmce_identity, refresh_vmce_entries, resolve_host_vmce_map_config,
