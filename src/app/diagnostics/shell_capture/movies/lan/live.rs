@@ -38,7 +38,9 @@ fn setup_control_at_row(
     }
     anyhow::bail!("setup page navigation did not reach the participant")
 }
-use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport, VmceOutcome};
+#[cfg(feature = "vmce")]
+use crate::app::diagnostics::shell_capture::VmceOutcome;
+use crate::app::diagnostics::shell_capture::{LiveLanConfig, LiveLanTransport};
 use crate::net::udp::UdpBindConfig;
 use crate::ui::multiplayer_setup::{SetupAction, SetupColumn};
 use std::collections::{BTreeMap, BTreeSet};
@@ -404,18 +406,27 @@ pub(super) struct LiveLanCapture {
     pair_linger_at: Option<u32>,
     pair_linger_wall: Option<Instant>,
     /// The peer-House control probe, recorded once after GO.
+    #[cfg(feature = "vmce")]
     vera_probe: Option<Value>,
     /// `--vera-outcome`: the mission outcome to inject after the prefix.
+    #[cfg(feature = "vmce")]
     vera_outcome: Option<VmceOutcome>,
+    #[cfg(feature = "vmce")]
     vera_outcome_phase: VeraOutcomePhase,
+    #[cfg(feature = "vmce")]
     vera_outcome_evidence: Option<Value>,
+    #[cfg(feature = "vmce")]
     vera_outcome_injected_frame: Option<u32>,
+    #[cfg(feature = "vmce")]
     vera_outcome_dialog_frame: Option<u32>,
     /// First render frame of the continued next mission.
+    #[cfg(feature = "vmce")]
     vera_outcome_next_frame: Option<u32>,
     /// Render frames observed since the injection (the shared sim may be done).
+    #[cfg(feature = "vmce")]
     vera_outcome_render_frames: u32,
     /// House names the houses-mode injection marked defeated.
+    #[cfg(feature = "vmce")]
     vera_outcome_houses: Option<Value>,
     /// Receipt built while an outcome run's world and roster were resident.
     final_receipt: Option<Value>,
@@ -425,6 +436,7 @@ pub(super) struct LiveLanCapture {
 
 /// The VERA outcome diagnostic's own small state machine. Every step reads the
 /// shared committed frame, so both peers inject at the same native frame.
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VeraOutcomePhase {
     /// Wait for the mission prefix, then ask for its screenshot.
@@ -506,6 +518,7 @@ impl LiveLanCapture {
             .as_ref()
             .and_then(|config| config.setup_crash)
             .map(setup_crash::SetupCrashCapture::new);
+        #[cfg(feature = "vmce")]
         let vera_outcome = config.as_ref().and_then(|config| config.vera_outcome);
         Self {
             target,
@@ -536,14 +549,23 @@ impl LiveLanCapture {
             locked_frames: None,
             pair_linger_at: None,
             pair_linger_wall: None,
+            #[cfg(feature = "vmce")]
             vera_probe: None,
+            #[cfg(feature = "vmce")]
             vera_outcome,
+            #[cfg(feature = "vmce")]
             vera_outcome_phase: VeraOutcomePhase::Prefix,
+            #[cfg(feature = "vmce")]
             vera_outcome_evidence: None,
+            #[cfg(feature = "vmce")]
             vera_outcome_injected_frame: None,
+            #[cfg(feature = "vmce")]
             vera_outcome_dialog_frame: None,
+            #[cfg(feature = "vmce")]
             vera_outcome_next_frame: None,
+            #[cfg(feature = "vmce")]
             vera_outcome_render_frames: 0,
+            #[cfg(feature = "vmce")]
             vera_outcome_houses: None,
             final_receipt: None,
             screenshot_requests: Vec::new(),
@@ -1558,6 +1580,7 @@ impl LiveLanCapture {
         }
         // After the injection the mission owner retires the world; the result
         // tail runs on render frames so it does not depend on another sim tick.
+        #[cfg(feature = "vmce")]
         if self.vera_outcome.is_some()
             && matches!(
                 self.vera_outcome_phase,
@@ -1576,7 +1599,7 @@ impl LiveLanCapture {
             anyhow::bail!("--vera-outcome requires a dev-overlays build");
         }
         ensure!(
-            state.frontend.screen == GameScreen::InGame || self.vera_outcome.is_some(),
+            state.frontend.screen == GameScreen::InGame || self.vera_outcome_pending(),
             "live LAN match left gameplay before completion"
         );
         if self.battle.is_none() && self.mass.is_none() && self.latency.is_none() {
@@ -1605,7 +1628,7 @@ impl LiveLanCapture {
             LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
         ) && self.actor.is_some()
             && self.pair_linger_at.is_none()
-            && self.vera_outcome.is_none()
+            && !self.vera_outcome_pending()
             && committed >= self.required_frames() + 600
         {
             anyhow::bail!(
@@ -1696,7 +1719,7 @@ impl LiveLanCapture {
             ensure!(
                 lan_battle_prefix
                     || vera_pair_lingering
-                    || self.vera_outcome.is_some()
+                    || self.vera_outcome_pending()
                     || live.peers().len() + 1 == active_players,
                 "live diagnostic peer disappeared"
             );
@@ -1707,7 +1730,7 @@ impl LiveLanCapture {
                 self.last_wait = Some(wait);
             }
         } else {
-            ensure!(self.vera_outcome.is_some(), "real live transport");
+            ensure!(self.vera_outcome_pending(), "real live transport");
         }
         if let Some(latency) = self.latency.as_mut() {
             if latency.step(state, required_frames)? {
@@ -1801,6 +1824,7 @@ impl LiveLanCapture {
         }
         // The outcome run reuses the prefix inputs above and then injects its
         // mission result; it never takes the ordinary completion branch.
+        #[cfg(feature = "vmce")]
         if self.vera_outcome.is_some() {
             #[cfg(feature = "dev-overlays")]
             {
@@ -1916,8 +1940,21 @@ impl LiveLanCapture {
     }
 
     /// Whether this capture injects a VERA mission outcome.
+    #[cfg(feature = "vmce")]
     pub(super) fn vera_outcome_enabled(&self) -> bool {
         self.vera_outcome.is_some()
+    }
+
+    /// Whether an outcome run is armed; always false in a stock build.
+    fn vera_outcome_pending(&self) -> bool {
+        #[cfg(feature = "vmce")]
+        {
+            self.vera_outcome.is_some()
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            false
+        }
     }
 
     /// Checkpoint screenshot labels requested since the last drain.
@@ -1934,7 +1971,7 @@ impl LiveLanCapture {
     /// then observe the result dialog (or the continued mission). Both peers
     /// inject at the same absolute committed frame, so the shared world sees
     /// one deterministic mutation.
-    #[cfg(feature = "dev-overlays")]
+    #[cfg(all(feature = "vmce", feature = "dev-overlays"))]
     fn step_vera_outcome(&mut self, state: &mut AppState, committed: u32) -> Result<()> {
         use crate::sim::house_state::HouseOutcomeKind;
 
@@ -2058,7 +2095,7 @@ impl LiveLanCapture {
     /// After the injection the app retires the mission on its own; this tail
     /// only observes the result dialog (or the continued mission) in render
     /// frames, so it keeps running while the shared simulation is paused.
-    #[cfg(feature = "dev-overlays")]
+    #[cfg(all(feature = "vmce", feature = "dev-overlays"))]
     fn finish_vera_outcome(&mut self, state: &mut AppState) -> Result<()> {
         self.vera_outcome_render_frames = self.vera_outcome_render_frames.saturating_add(1);
         let outcome = self.vera_outcome.context("VERA outcome diagnostic")?;

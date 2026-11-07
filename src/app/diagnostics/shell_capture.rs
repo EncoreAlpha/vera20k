@@ -1293,11 +1293,13 @@ pub(crate) struct LiveLanConfig {
     pub failure_prefix_output: Option<PathBuf>,
     /// VMCE only: inject one mission outcome through the production owner
     /// after the 300-frame prefix and observe the result dialog.
+    #[cfg(feature = "vmce")]
     pub vera_outcome: Option<VmceOutcome>,
 }
 
 /// A VMCE mission outcome the diagnostic injects once, through the same
 /// production owner a map's outcome action reaches.
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VmceOutcome {
     Win,
@@ -1310,6 +1312,7 @@ pub(crate) enum VmceOutcome {
     Real,
 }
 
+#[cfg(feature = "vmce")]
 impl VmceOutcome {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -1444,6 +1447,7 @@ where
     let mut lan_peer = None;
     let mut lan_map = None;
     let mut lan_setup_crash = None;
+    #[cfg(feature = "vmce")]
     let mut vera_outcome = None;
     let mut online_account = None;
     let mut online_host = None;
@@ -1554,6 +1558,7 @@ where
                 };
                 set_once(&mut lan_setup_crash, victim, "--lan-setup-crash")?;
             }
+            #[cfg(feature = "vmce")]
             "--vera-outcome" => {
                 let outcome = match next_utf8(&mut args, "value after --vera-outcome")?.as_str() {
                     "win" => VmceOutcome::Win,
@@ -2119,6 +2124,7 @@ where
         ) {
             ensure!(lan_map.is_some(), "VMCE host capture requires --lan-map");
         }
+        #[cfg(feature = "vmce")]
         if let Some(outcome) = vera_outcome {
             ensure!(
                 matches!(
@@ -2178,6 +2184,7 @@ where
             setup_crash: lan_setup_crash,
             profile_check,
             failure_prefix_output,
+            #[cfg(feature = "vmce")]
             vera_outcome,
         })
     } else {
@@ -3651,6 +3658,7 @@ mod tests {
                 setup_crash: None,
                 profile_check: false,
                 failure_prefix_output: None,
+                #[cfg(feature = "vmce")]
                 vera_outcome: None,
             })
         );
@@ -3664,7 +3672,7 @@ mod tests {
         assert!(parse_launch_args(values).is_err());
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn live_vmce_setup_requires_a_host_map_and_keeps_guest_map_host_authored() {
         let output = new_output_path("live-vera-campaign-setup-host");

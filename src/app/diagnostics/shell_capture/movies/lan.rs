@@ -623,6 +623,7 @@ impl LanCapture {
         }
     }
     pub(super) fn timeout(&self) -> Duration {
+        #[cfg(feature = "vmce")]
         if self
             .live
             .as_ref()
