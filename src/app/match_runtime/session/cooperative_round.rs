@@ -733,8 +733,6 @@ impl MatchSession {
                 None => None,
             }
         };
-        #[cfg(not(feature = "vmce"))]
-        let next_assignments: Option<crate::skirmish_launch::VmceHouseAssignments> = None;
         let carry_over = saved
             .or_else(|| previous.carry_over().copied())
             .unwrap_or(crate::sim::campaign_carry_over::CampaignCarryOver::CLEARED);
@@ -766,8 +764,6 @@ impl MatchSession {
                     .with_vmce_map_config(next.config);
             }
         }
-        #[cfg(not(feature = "vmce"))]
-        let _ = next_assignments;
         let startup = Arc::new(prepared);
         network.max_ahead_frames = Some(max_ahead_frames);
         network.wol_start = super::WolStartTerms::default();

@@ -3270,6 +3270,7 @@ pub fn initialize_map_roster_houses(
 /// be shared by several participants. This project-specific path consumes
 /// the existing campaign House parser and the sender identity retained by
 /// ScenarioSession; it does not change ordinary LAN or stock Cooperative.
+#[cfg(feature = "vmce")]
 pub fn initialize_vmce_houses(
     sim: &mut Simulation,
     house_roster: &HouseRoster,
@@ -3278,11 +3279,6 @@ pub fn initialize_vmce_houses(
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (sim, house_roster, rules, map_ini, launch, assignments);
-        anyhow::bail!("VMCE is not built in")
-    }
     #[cfg(feature = "vmce")]
     {
         assignments
@@ -3297,6 +3293,7 @@ pub fn initialize_vmce_houses(
 /// that the caller already built. The authored loader builds the Houses in its
 /// fresh prefix (campaign construction order) and reaches this half from the
 /// population callback, before map objects are read.
+#[cfg(feature = "vmce")]
 pub fn install_vmce_house_authority(
     sim: &mut Simulation,
     house_roster: &HouseRoster,
@@ -3305,11 +3302,6 @@ pub fn install_vmce_house_authority(
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     assignments: &crate::skirmish_launch::VmceHouseAssignments,
 ) -> anyhow::Result<()> {
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (sim, house_roster, rules, map_ini, launch, assignments);
-        anyhow::bail!("VMCE is not built in")
-    }
     #[cfg(feature = "vmce")]
     {
         assignments

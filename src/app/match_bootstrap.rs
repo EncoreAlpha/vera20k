@@ -331,46 +331,24 @@ impl PreparedNetworkStartup {
         }
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn with_vmce_houses(
-        self,
+        mut self,
         assignments: crate::skirmish_launch::VmceHouseAssignments,
     ) -> Self {
-        #[cfg(feature = "vmce")]
-        {
-            let mut this = self;
-            this.vmce_houses = Some(assignments);
-            this
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            let _ = assignments;
-            self
-        }
+        self.vmce_houses = Some(assignments);
+        self
     }
 
-    pub(crate) fn with_vmce_map_config(self, config: NetworkVmceMapConfig) -> Self {
-        #[cfg(feature = "vmce")]
-        {
-            let mut this = self;
-            this.vmce_map_config = Some(config);
-            this
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            let _ = config;
-            self
-        }
+    #[cfg(feature = "vmce")]
+    pub(crate) fn with_vmce_map_config(mut self, config: NetworkVmceMapConfig) -> Self {
+        self.vmce_map_config = Some(config);
+        self
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn vmce_map_config(&self) -> Option<&NetworkVmceMapConfig> {
-        #[cfg(feature = "vmce")]
-        {
-            self.vmce_map_config.as_ref()
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            None
-        }
+        self.vmce_map_config.as_ref()
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {
@@ -422,15 +400,9 @@ impl PreparedNetworkStartup {
         &self.launch
     }
 
+    #[cfg(feature = "vmce")]
     pub(crate) fn vmce_houses(&self) -> Option<&crate::skirmish_launch::VmceHouseAssignments> {
-        #[cfg(feature = "vmce")]
-        {
-            self.vmce_houses.as_ref()
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            None
-        }
+        self.vmce_houses.as_ref()
     }
     pub(crate) fn mode(&self) -> crate::app::match_runtime::session::SessionMode {
         self.mode
@@ -443,16 +415,12 @@ impl PreparedNetworkStartup {
 /// Resolve the synchronized lobby roles against the selected map's authored
 /// Basic Player roster. Random roles consume the remaining configured Houses
 /// in a seed-stable order shared by every participant.
+#[cfg(feature = "vmce")]
 pub(crate) fn resolve_vmce_houses(
     ini: &crate::rules::ini_parser::IniFile,
     launch: &SkirmishLaunchSession,
     seed: u32,
 ) -> anyhow::Result<crate::skirmish_launch::VmceHouseAssignments> {
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (ini, launch, seed);
-        anyhow::bail!("VMCE is not built in")
-    }
     #[cfg(feature = "vmce")]
     {
         let basic = crate::map::basic::parse_basic_section(ini);
@@ -565,6 +533,7 @@ pub(crate) fn resolve_vmce_houses(
     }
 }
 
+#[cfg(feature = "vmce")]
 pub(crate) fn resolve_vmce_houses_with_config(
     ini: &crate::rules::ini_parser::IniFile,
     map_file: &str,
@@ -573,11 +542,6 @@ pub(crate) fn resolve_vmce_houses_with_config(
     launch: &SkirmishLaunchSession,
     seed: u32,
 ) -> anyhow::Result<crate::skirmish_launch::VmceHouseAssignments> {
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (ini, map_file, source_sha256, config, launch, seed);
-        anyhow::bail!("VMCE is not built in")
-    }
     #[cfg(feature = "vmce")]
     {
         let effective = config.apply_to_map(map_file, source_sha256, ini)?;

@@ -2819,13 +2819,16 @@ impl MatchSession {
         &mut self,
         agreed_seed: u32,
     ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
-        self.freeze_network_start_with_vmce(agreed_seed, None)
+        #[cfg(feature = "vmce")]
+        return self.freeze_network_start_with_vmce(agreed_seed, None);
+        #[cfg(not(feature = "vmce"))]
+        return self.freeze_network_start_with_vmce(agreed_seed);
     }
 
     pub(crate) fn freeze_network_start_with_vmce(
         &mut self,
         agreed_seed: u32,
-        vmce_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
+        #[cfg(feature = "vmce")] vmce_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
         let network = self
             .network
@@ -2840,8 +2843,6 @@ impl MatchSession {
         );
         #[cfg(feature = "vmce")]
         let vmce_map_config = network.vmce_map_config.clone();
-        #[cfg(not(feature = "vmce"))]
-        let vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig> = None;
         #[cfg(feature = "vmce")]
         match (
             launch.mode.class.is_vmce(),
@@ -2870,10 +2871,6 @@ impl MatchSession {
                 anyhow::bail!("non-VMCE network start carries VMCE map settings")
             }
             (false, None, None) => {}
-        }
-        #[cfg(not(feature = "vmce"))]
-        {
-            let _ = (&vmce_houses, &vmce_map_config);
         }
         network.proposed_seed = Some(agreed_seed);
         admit_network_start_roster(launch)?;

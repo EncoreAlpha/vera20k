@@ -588,6 +588,7 @@ pub enum LaunchHumanRole {
 /// Frozen VMCE mapping from a synchronized lobby participant seat and
 /// role to the map-authored primary House. Generated from the agreed start
 /// seed and selected map, then carried unchanged into simulation bootstrap.
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VmceHouseAssignment {
     pub participant_name: String,
@@ -596,6 +597,7 @@ pub struct VmceHouseAssignment {
     pub owner_name: String,
 }
 
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VmceHouseAssignments {
     pub participants: Vec<VmceHouseAssignment>,
@@ -606,10 +608,12 @@ pub struct VmceHouseAssignments {
     pub difficulty: i32,
 }
 
+#[cfg(feature = "vmce")]
 fn default_vmce_difficulty() -> i32 {
     1
 }
 
+#[cfg(feature = "vmce")]
 impl Default for VmceHouseAssignments {
     fn default() -> Self {
         Self {
@@ -619,6 +623,7 @@ impl Default for VmceHouseAssignments {
     }
 }
 
+#[cfg(feature = "vmce")]
 impl VmceHouseAssignments {
     pub fn validate_for_launch(&self, launch: &SkirmishLaunchSession) -> Result<(), String> {
         if !(0..=2).contains(&self.difficulty) {
