@@ -38,9 +38,11 @@ pub enum CooperativeSignal {
     /// `0x37`, VERA-only: a guest's next stage differs from the host's, so
     /// both peers leave the round for the lobby. Stock BC6 has no such
     /// record; the native begin carries no stage identity at all.
+    #[cfg(feature = "vmce")]
     StageRejected,
     /// `0x38`, VERA-only: this peer resolved no next stage (defeat or the
     /// campaign's last mission). Stock BC6 has no such record either.
+    #[cfg(feature = "vmce")]
     StageAbsent,
 }
 
@@ -53,7 +55,9 @@ impl CooperativeSignal {
             Self::Ready => 0x26,
             Self::Go => 0x31,
             Self::Begin => 0x34,
+            #[cfg(feature = "vmce")]
             Self::StageRejected => 0x37,
+            #[cfg(feature = "vmce")]
             Self::StageAbsent => 0x38,
         }
     }
@@ -78,7 +82,9 @@ impl CooperativeSignal {
                 0x26 => Self::Ready,
                 0x31 => Self::Go,
                 0x34 => Self::Begin,
+                #[cfg(feature = "vmce")]
                 0x37 => Self::StageRejected,
+                #[cfg(feature = "vmce")]
                 0x38 => Self::StageAbsent,
                 _ => return None,
             },
@@ -90,15 +96,24 @@ impl CooperativeSignal {
 /// next stage identity, sent before the native begin so a guest whose own
 /// campaign resolved a different stage can refuse before either peer loads
 /// it. The digests are the hex strings the local resolvers already produce.
+#[cfg(feature = "vmce")]
 pub const STAGE_KIND: u32 = 0x36;
+#[cfg(feature = "vmce")]
 const STAGE_OFFSET: usize = 0x2f;
+#[cfg(feature = "vmce")]
 const STAGE_MAP_CAPACITY: usize = 0x80;
+#[cfg(feature = "vmce")]
 const STAGE_SOURCE_OFFSET: usize = STAGE_OFFSET + 1 + STAGE_MAP_CAPACITY;
+#[cfg(feature = "vmce")]
 const STAGE_EFFECTIVE_OFFSET: usize = STAGE_SOURCE_OFFSET + 64;
+#[cfg(feature = "vmce")]
 const STAGE_CONFIG_OFFSET: usize = STAGE_EFFECTIVE_OFFSET + 64;
+#[cfg(feature = "vmce")]
 const STAGE_END: usize = STAGE_CONFIG_OFFSET + 64;
+#[cfg(feature = "vmce")]
 const _: () = assert!(STAGE_END <= LAN_MESSAGE_LEN);
 
+#[cfg(feature = "vmce")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmceStageRecord {
     pub map_file: String,
@@ -107,6 +122,7 @@ pub struct VmceStageRecord {
     pub config_sha256: String,
 }
 
+#[cfg(feature = "vmce")]
 impl VmceStageRecord {
     pub fn encode(&self, name: &str) -> Result<LanMessage, LanMessageError> {
         let map = self.map_file.as_bytes();
@@ -166,6 +182,7 @@ impl VmceStageRecord {
     }
 }
 
+#[cfg(feature = "vmce")]
 fn digest_is_valid(digest: &str) -> bool {
     digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

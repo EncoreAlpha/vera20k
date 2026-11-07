@@ -51,6 +51,7 @@ pub(crate) struct CooperativeRoundState {
     /// opened. Both peers compare it against the host's `0x36` record before
     /// either loads the mission; `None` on stock Cooperative and on a VMCE
     /// last mission.
+    #[cfg(feature = "vmce")]
     vera_stage: Option<crate::app::match_bootstrap::VmceStageIdentity>,
     /// `0x89E04C` once the loop left: true runs the next mission.
     outcome: Option<bool>,
@@ -120,12 +121,15 @@ pub(crate) enum CooperativeRoundEvent {
     /// `0x0D`, the 20 s keepalive: only the loop's tail reads it.
     KeepAlive,
     /// VERA-only `0x36`: the host's resolved next stage identity.
+    #[cfg(feature = "vmce")]
     StageIdentity(crate::app::match_bootstrap::VmceStageIdentity),
     /// VERA-only `0x38`: this peer resolved no next stage (defeat or the
     /// campaign's last mission).
+    #[cfg(feature = "vmce")]
     StageAbsent,
     /// VERA-only `0x37`: a peer's next stage differs, so the round is
     /// abandoned for the lobby instead of loading different missions.
+    #[cfg(feature = "vmce")]
     StageRejected,
 }
 
@@ -179,6 +183,7 @@ impl MatchSession {
     /// VMCE's BC6 entry: the next external campaign stage was resolved
     /// locally by both peers, so carry it through the round and into the
     /// frozen next start.
+    #[cfg(feature = "vmce")]
     pub(crate) fn enter_vmce_round(
         &mut self,
         next: Option<crate::app::match_bootstrap::VmceNextStage>,
@@ -229,6 +234,7 @@ impl MatchSession {
             }
         }
         let vera = launch.mode.class.is_vmce();
+        #[cfg(feature = "vmce")]
         let vera_stage = crate::app::match_bootstrap::VmceStageIdentity::of(vera_next.as_ref());
         let mut round = CooperativeRoundState {
             ready,
@@ -240,6 +246,7 @@ impl MatchSession {
             can_continue,
             rows,
             vera,
+            #[cfg(feature = "vmce")]
             vera_stage: vera_stage.clone(),
             outcome: None,
         };
@@ -262,6 +269,7 @@ impl MatchSession {
             connected: connected.clone(),
             launch,
             round,
+            #[cfg(feature = "vmce")]
             vera_next,
         };
         network.loading_requests.clear();
@@ -274,14 +282,17 @@ impl MatchSession {
         // Every VMCE peer advertises whether it resolved a next stage before
         // the native begin: whichever identity arrives first exposes a
         // mismatch, so neither side loads a different mission.
-        if let Some(stage) = vera_stage {
-            network
-                .loading_requests
-                .push(NetworkLoadingRequest::CooperativeStage(stage));
-        } else if vera {
-            network
-                .loading_requests
-                .push(NetworkLoadingRequest::CooperativeStageAbsent);
+        #[cfg(feature = "vmce")]
+        {
+            if let Some(stage) = vera_stage {
+                network
+                    .loading_requests
+                    .push(NetworkLoadingRequest::CooperativeStage(stage));
+            } else if vera {
+                network
+                    .loading_requests
+                    .push(NetworkLoadingRequest::CooperativeStageAbsent);
+            }
         }
         Ok(())
     }
@@ -540,18 +551,21 @@ impl MatchSession {
                 .map(usize::from)
         };
         match event {
+            #[cfg(feature = "vmce")]
             CooperativeRoundEvent::StageIdentity(advertised) => {
                 if round.vera_stage.as_ref() == Some(&advertised) {
                     return Ok(CooperativeRoundStep::None);
                 }
                 Ok(reject_vera_stage(round, requests))
             }
+            #[cfg(feature = "vmce")]
             CooperativeRoundEvent::StageAbsent => {
                 if round.vera_stage.is_none() {
                     return Ok(CooperativeRoundStep::None);
                 }
                 Ok(reject_vera_stage(round, requests))
             }
+            #[cfg(feature = "vmce")]
             CooperativeRoundEvent::StageRejected => {
                 round.outcome = Some(false);
                 requests.push(NetworkLoadingRequest::CooperativeLeave);
@@ -657,6 +671,7 @@ impl MatchSession {
             .network
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+        #[cfg(feature = "vmce")]
         let NetworkPhase::CooperativeRound {
             previous,
             launch,
@@ -667,45 +682,60 @@ impl MatchSession {
         else {
             anyhow::bail!("no co-op round to continue");
         };
+        #[cfg(not(feature = "vmce"))]
+        let NetworkPhase::CooperativeRound {
+            previous,
+            launch,
+            round,
+            ..
+        } = &network.phase
+        else {
+            anyhow::bail!("no co-op round to continue");
+        };
         anyhow::ensure!(round.outcome == Some(true), "the round did not continue");
         super::admit_network_start_roster(launch)?;
         let seed = previous.seed.value;
         let mode = previous.mode();
+        #[cfg(feature = "vmce")]
         let previous_vera_houses = previous.vmce_houses().cloned();
+        #[cfg(feature = "vmce")]
         let vera_next = vera_next.clone();
-        if let Some(next) = vera_next.as_ref() {
-            #[cfg(feature = "vmce")]
-            {
+        #[cfg(feature = "vmce")]
+        let next_assignments = {
+            if let Some(next) = vera_next.as_ref() {
                 network.vmce_map_config = Some(next.config.clone());
+                network.map_metadata = Some(next.metadata.clone());
+                network.local_map_source = Some(next.local_map_source.clone());
+                network.local_map_effective_digest = Some(next.effective_digest.clone());
             }
-            network.map_metadata = Some(next.metadata.clone());
-            network.local_map_source = Some(next.local_map_source.clone());
-            network.local_map_effective_digest = Some(next.effective_digest.clone());
-        }
-        // The next map owns its own `[Basic] PlayerN`/`[Houses]` binding, so
-        // re-resolve each role against it instead of carrying the previous
-        // stage's House names. Keep the frozen lobby difficulty row: it is a
-        // start input, not a map-derived field.
-        let next_assignments = match vera_next.as_ref() {
-            Some(next) => {
-                let mut houses = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
-                    &next.map_ini,
-                    &next.map_file,
-                    &next.config.source_sha256,
-                    &next.config,
-                    launch,
-                    seed,
-                )?;
-                if let Some(difficulty) = previous_vera_houses
-                    .as_ref()
-                    .map(|houses| houses.difficulty)
-                {
-                    houses.difficulty = difficulty;
+            // The next map owns its own `[Basic] PlayerN`/`[Houses]` binding,
+            // so re-resolve each role against it instead of carrying the
+            // previous stage's House names. Keep the frozen lobby difficulty
+            // row: it is a start input, not a map-derived field.
+            match vera_next.as_ref() {
+                Some(next) => {
+                    let mut houses =
+                        crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                            &next.map_ini,
+                            &next.map_file,
+                            &next.config.source_sha256,
+                            &next.config,
+                            launch,
+                            seed,
+                        )?;
+                    if let Some(difficulty) = previous_vera_houses
+                        .as_ref()
+                        .map(|houses| houses.difficulty)
+                    {
+                        houses.difficulty = difficulty;
+                    }
+                    Some(houses)
                 }
-                Some(houses)
+                None => None,
             }
-            None => None,
         };
+        #[cfg(not(feature = "vmce"))]
+        let next_assignments: Option<crate::skirmish_launch::VmceHouseAssignments> = None;
         let carry_over = saved
             .or_else(|| previous.carry_over().copied())
             .unwrap_or(crate::sim::campaign_carry_over::CampaignCarryOver::CLEARED);
@@ -724,16 +754,21 @@ impl MatchSession {
             super::WolStartTerms::default(),
         )
         .with_carry_over(carry_over);
-        if let Some(houses) = next_assignments {
-            prepared = prepared.with_vmce_houses(houses);
-        } else if let Some(houses) = previous_vera_houses {
-            prepared = prepared.with_vmce_houses(houses);
+        #[cfg(feature = "vmce")]
+        {
+            if let Some(houses) = next_assignments {
+                prepared = prepared.with_vmce_houses(houses);
+            } else if let Some(houses) = previous_vera_houses {
+                prepared = prepared.with_vmce_houses(houses);
+            }
+            if let Some(next) = vera_next {
+                prepared = prepared
+                    .with_local_map_source(Some(next.local_map_source), Some(next.effective_digest))
+                    .with_vmce_map_config(next.config);
+            }
         }
-        if let Some(next) = vera_next {
-            prepared = prepared
-                .with_local_map_source(Some(next.local_map_source), Some(next.effective_digest))
-                .with_vmce_map_config(next.config);
-        }
+        #[cfg(not(feature = "vmce"))]
+        let _ = next_assignments;
         let startup = Arc::new(prepared);
         network.max_ahead_frames = Some(max_ahead_frames);
         network.wol_start = super::WolStartTerms::default();
@@ -801,6 +836,7 @@ fn tail(
 /// A peer's VMCE next stage differs from this peer's: refuse it and leave the
 /// round, so both peers return to the lobby instead of loading different
 /// missions.
+#[cfg(feature = "vmce")]
 fn reject_vera_stage(
     round: &mut CooperativeRoundState,
     requests: &mut Vec<NetworkLoadingRequest>,
@@ -911,6 +947,7 @@ mod tests {
     }
 
     /// The same frozen two-player LAN start in the authored VMCE mode.
+    #[cfg(feature = "vmce")]
     fn frozen_vera(
         local: usize,
     ) -> (
@@ -989,6 +1026,7 @@ mod tests {
 
     /// A frozen one-human VMCE LAN start (the host plus its AI seats): no
     /// guest row exists to ack a begin.
+    #[cfg(feature = "vmce")]
     fn frozen_vera_solo() -> (
         MatchSession,
         Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
@@ -1063,6 +1101,7 @@ mod tests {
 
     /// A resolved VMCE next stage whose mini map binds Player1=Alpha and
     /// Player2=Beta. The map name is the only identity the tests vary.
+    #[cfg(feature = "vmce")]
     fn next_stage(map_file: &str) -> crate::app::match_bootstrap::VmceNextStage {
         crate::app::match_bootstrap::VmceNextStage {
             map_file: map_file.into(),

@@ -257,6 +257,7 @@ enum NetworkPhase {
         round: CooperativeRoundState,
         /// VMCE's next stage, resolved from its external campaign on
         /// both peers when BC6 opened. Stock Cooperative leaves this empty.
+        #[cfg(feature = "vmce")]
         vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
     },
 }
@@ -302,12 +303,15 @@ pub(crate) enum NetworkLoadingRequest {
     CooperativeGo,
     /// VERA-only, before the native begin: the host's resolved next stage
     /// identity, so a guest can refuse a different mission before loading.
+    #[cfg(feature = "vmce")]
     CooperativeStage(crate::app::match_bootstrap::VmceStageIdentity),
     /// VERA-only: the guest's next stage differs from the host's; both peers
     /// abandon the round to the lobby instead of loading different missions.
+    #[cfg(feature = "vmce")]
     CooperativeStageRejected,
     /// VERA-only: this peer has no next stage (defeat or last mission), so
     /// the other peer must not continue with one.
+    #[cfg(feature = "vmce")]
     CooperativeStageAbsent,
 }
 

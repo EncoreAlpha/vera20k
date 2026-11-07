@@ -15,8 +15,10 @@ use crate::app::match_runtime::session::{
 };
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
-    OPTIONS_KIND, VmceStageRecord,
+    OPTIONS_KIND,
 };
+#[cfg(feature = "vmce")]
+use crate::net::lan_messages::cooperative::VmceStageRecord;
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
     SkirmishLocalSlot,
@@ -133,18 +135,26 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
             CooperativeSignal::Ready => CooperativeRoundEvent::PeerReady { source },
             CooperativeSignal::Go => CooperativeRoundEvent::Go,
             CooperativeSignal::Begin => CooperativeRoundEvent::Begin,
+            #[cfg(feature = "vmce")]
             CooperativeSignal::StageRejected => CooperativeRoundEvent::StageRejected,
+            #[cfg(feature = "vmce")]
             CooperativeSignal::StageAbsent => CooperativeRoundEvent::StageAbsent,
         }
     } else {
         let message = LanMessage::decode(&incoming.payload)?;
-        if let Some(record) = VmceStageRecord::decode(&message) {
+        #[cfg(feature = "vmce")]
+        let stage_event = VmceStageRecord::decode(&message).map(|record| {
             CooperativeRoundEvent::StageIdentity(crate::app::match_bootstrap::VmceStageIdentity {
                 map_file: record.map_file,
                 source_sha256: record.source_sha256,
                 effective_digest: record.effective_digest,
                 config_sha256: record.config_sha256,
             })
+        });
+        #[cfg(not(feature = "vmce"))]
+        let stage_event: Option<CooperativeRoundEvent> = None;
+        if let Some(event) = stage_event {
+            event
         } else if let Some(record) = CooperativeOptionsRecord::decode(&message) {
             let launch = state
                 .match_state
@@ -179,7 +189,16 @@ pub(super) fn is_round_record(payload: &[u8]) -> bool {
             return false;
         };
         return message.kind() == LanMessageKind::Unknown(OPTIONS_KIND)
-            || VmceStageRecord::decode(&message).is_some();
+            || {
+                #[cfg(feature = "vmce")]
+                {
+                    VmceStageRecord::decode(&message).is_some()
+                }
+                #[cfg(not(feature = "vmce"))]
+                {
+                    false
+                }
+            };
     }
     false
 }
@@ -223,6 +242,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             }
             return;
         }
+        #[cfg(feature = "vmce")]
         NetworkLoadingRequest::CooperativeStage(stage) => {
             let record = VmceStageRecord {
                 map_file: stage.map_file,
@@ -236,7 +256,9 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             }
             return;
         }
+        #[cfg(feature = "vmce")]
         NetworkLoadingRequest::CooperativeStageRejected => CooperativeSignal::StageRejected,
+        #[cfg(feature = "vmce")]
         NetworkLoadingRequest::CooperativeStageAbsent => CooperativeSignal::StageAbsent,
         _ => return,
     };
@@ -441,6 +463,7 @@ mod tests {
         assert!(is_round_record(
             &CooperativeSignal::Ready.encode("Guest").unwrap()
         ));
+        #[cfg(feature = "vmce")]
         assert!(is_round_record(
             &CooperativeSignal::StageAbsent.encode("Guest").unwrap()
         ));
@@ -462,16 +485,19 @@ mod tests {
         assert!(is_round_record(
             &options.encode("Host").unwrap().into_bytes()
         ));
-        let stage = VmceStageRecord {
-            map_file: "mission02.map".into(),
-            source_sha256: "a".repeat(64),
-            effective_digest: "b".repeat(64),
-            config_sha256: "c".repeat(64),
-        };
-        assert!(
-            is_round_record(&stage.encode("Host").unwrap().into_bytes()),
-            "the VMCE stage record is a round record"
-        );
+        #[cfg(feature = "vmce")]
+        {
+            let stage = VmceStageRecord {
+                map_file: "mission02.map".into(),
+                source_sha256: "a".repeat(64),
+                effective_digest: "b".repeat(64),
+                config_sha256: "c".repeat(64),
+            };
+            assert!(
+                is_round_record(&stage.encode("Host").unwrap().into_bytes()),
+                "the VMCE stage record is a round record"
+            );
+        }
         // A chat record is not part of the round's establishment.
         assert!(!is_round_record(&[0x0C, 0, 0, 0]));
     }
