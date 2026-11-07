@@ -620,9 +620,16 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 && !dialog.wol()
                 && !dialog.host
                 && vmce_map_config.is_none();
+            // Every options revision clears the host's remote map status
+            // (`invalidate_network_agreement`). A stock guest re-sends `K`
+            // through its verified map source; a VMCE guest has no LAN map
+            // transfer pass, so it must recompute the admission here or the
+            // host's Start gate keeps reporting GUI:HostNoMap.
+            let reanswer_map =
+                guest_rechecks_map_on_options(vmce, dialog.host, dialog.wol(), map_changed);
             let map_admission = if coop_lan_without_local_config {
                 Some(crate::app::match_runtime::session::NetworkMapAdmission::Unavailable)
-            } else if map_changed {
+            } else if reanswer_map {
                 let file = launch
                     .selected_map_file
                     .as_deref()
@@ -1112,8 +1119,24 @@ fn validate_host_vmce_map_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        mode_allows_automatic_accept, validate_host_vmce_map_config, without_coop_lan_transfer,
+        guest_rechecks_map_on_options, mode_allows_automatic_accept, validate_host_vmce_map_config,
+        without_coop_lan_transfer,
     };
+
+    #[test]
+    fn vmce_guest_reanswers_the_map_check_on_every_options_revision() {
+        // Stock guests resend their `K` map status through the verified map
+        // source on each revision; VMCE has no such pass, so an unchanged map
+        // still recomputes the admission.
+        assert!(guest_rechecks_map_on_options(true, false, false, false));
+        assert!(guest_rechecks_map_on_options(true, false, false, true));
+        assert!(!guest_rechecks_map_on_options(false, false, false, false));
+        assert!(guest_rechecks_map_on_options(false, false, false, true));
+        // A host does not answer its own map check, and WOL Coop is outside
+        // the LAN VMCE path.
+        assert!(!guest_rechecks_map_on_options(true, true, false, false));
+        assert!(!guest_rechecks_map_on_options(true, false, true, false));
+    }
 
     #[test]
     fn modern_auto_accept_is_disabled_only_for_vmce() {
@@ -1705,6 +1728,14 @@ fn without_coop_lan_transfer(
     }
 }
 
+/// Whether a host-options parse must recompute the local map admission. A
+/// changed map always does; a VMCE LAN guest must also do it for an unchanged
+/// map because hosting a new options revision clears the host's remote
+/// `map_status` and VMCE has no LAN map-transfer pass that would resend it.
+fn guest_rechecks_map_on_options(coop: bool, host: bool, wol: bool, map_changed: bool) -> bool {
+    map_changed || (coop && !host && !wol)
+}
+
 /// Verified map prefetch uses the editable lobby's existing progress owner
 /// before either LAN GO or WOL negotiation starts.
 pub(crate) fn set_network_map_progress(state: &mut AppState, progress: Option<(u32, u32)>) {
@@ -1971,7 +2002,6 @@ fn point_out_briefing(state: &mut AppState) {
     );
     state.platform.window.request_redraw();
 }
-
 
 /// The service could not take the local acceptance. It stays withdrawn
 /// until the room changes (a new revision or a verified map makes Accept
