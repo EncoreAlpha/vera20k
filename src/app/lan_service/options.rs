@@ -15,8 +15,9 @@ use crate::net::lan_messages::setup::{self, LanGameOptions, LanOptionsAi, LanOpt
 use crate::net::lan_messages::{LanMessage, game_name_hash};
 use crate::rules::ini_value::{crt_atoi, strtok};
 use crate::skirmish_launch::{
-    AiDifficulty, LaunchCountry, LaunchStartPosition, LaunchTeam, NETWORK_PLAYER_SLOT_COUNT,
-    SkirmishAiSlot, SkirmishLaunchMode, SkirmishLaunchSession, SkirmishLocalSlot,
+    AiDifficulty, LaunchCountry, LaunchHumanRole, LaunchStartPosition, LaunchTeam,
+    NETWORK_PLAYER_SLOT_COUNT, SkirmishAiSlot, SkirmishLaunchMode, SkirmishLaunchSession,
+    SkirmishLocalSlot,
 };
 use crate::util::native_string::{narrow_utf16_c_string, narrow_widened, widen_bytes};
 
@@ -141,7 +142,18 @@ pub(super) fn publish_options(state: &mut AppState) -> Result<bool> {
         vmce_roles: session
             .network_setup()
             .filter(|launch| launch.mode.class.is_vmce())
-            .map(|launch| launch.humans.iter().map(|human| human.role).collect())
+            .map(|launch| {
+                launch
+                    .humans
+                    .iter()
+                    .filter_map(|human| {
+                        Some(VmceRoleRow {
+                            row: human.raw_slot_index?,
+                            role: human.role,
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
         vmce_series,
     })?;
@@ -179,10 +191,12 @@ struct ExtendedOptions {
     /// VERA's room options, which the native options text has no field for.
     #[serde(default)]
     room: Option<crate::skirmish_launch::RoomOptions>,
-    /// VMCE's map role assignments; the retail options string has no
-    /// field for this project-specific state.
+    /// VMCE's map role assignments, keyed by the synchronized lobby row so a
+    /// guest's local-first participant order cannot attach a role to the
+    /// wrong person; the retail options string has no field for this
+    /// project-specific state.
     #[serde(default)]
-    vmce_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
+    vmce_roles: Vec<VmceRoleRow>,
     /// Host's full series identity; campaign contents and projected config
     /// remain local to each peer.
     #[serde(default)]
@@ -194,6 +208,17 @@ struct ExtendedOptions {
 struct VmceSeriesIdentity {
     directory: String,
     sha256: String,
+}
+
+/// One VMCE role assignment keyed by the synchronized lobby row (the native
+/// `raw_slot_index` seat), never by the publisher's local participant order:
+/// LAN admits participants local-first, so the same people can be ordered
+/// differently on the two peers.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VmceRoleRow {
+    row: u8,
+    role: LaunchHumanRole,
 }
 
 /// Host-authored admission projection for native Type3 assembly, derived from
@@ -300,7 +325,7 @@ fn receive_options_text(
     effective_digest: String,
     selected_map_file: String,
     room: Option<crate::skirmish_launch::RoomOptions>,
-    vmce_roles: Vec<crate::skirmish_launch::LaunchHumanRole>,
+    vmce_roles: Vec<VmceRoleRow>,
     vmce_series: Option<VmceSeriesIdentity>,
 ) -> Result<()> {
     ensure!(
@@ -501,22 +526,55 @@ fn prevalidate_received_options(
 
 fn apply_vmce_roles(
     launch: &mut crate::skirmish_launch::SkirmishLaunchSession,
-    roles: &[crate::skirmish_launch::LaunchHumanRole],
+    roles: &[VmceRoleRow],
 ) -> Result<()> {
     ensure!(
         launch.mode.class.is_vmce(),
         "LAN VMCE role roster without the VMCE mode"
     );
-    // The roster is positional over the host's admitted rows. A guest can
-    // receive the options snapshot before its own roster revision, so a
-    // lagging roster must not drop the whole packet: the stored snapshot is
-    // re-applied by `reapply_received_options` once the Roster revision
-    // arrives.
-    if roles.len() != launch.humans.len() {
+    if roles.is_empty() {
+        return Ok(());
+    }
+    // The roster is keyed by the synchronized lobby row (`raw_slot_index`),
+    // not by this peer's participant order: LAN admits participants
+    // local-first, so the host's and guest's `humans` vectors can order the
+    // same people differently.
+    let mut by_row = [None; NETWORK_PLAYER_SLOT_COUNT];
+    for entry in roles {
+        let slot = by_row
+            .get_mut(usize::from(entry.row))
+            .ok_or_else(|| anyhow!("LAN VMCE role row is outside setup rows"))?;
+        ensure!(slot.is_none(), "duplicate LAN VMCE role row");
+        *slot = Some(entry.role);
+    }
+    // A guest can receive the options snapshot before its own roster revision,
+    // or the roster can lag a republished options packet. Defer the whole
+    // assignment in that case: the stored snapshot is re-applied by
+    // `reapply_received_options` once the Roster revision arrives.
+    let mut bound_rows = 0usize;
+    for human in &launch.humans {
+        let Some(row) = human.raw_slot_index else {
+            continue;
+        };
+        bound_rows += 1;
+        if by_row
+            .get(usize::from(row))
+            .is_none_or(|role| role.is_none())
+        {
+            return Ok(());
+        }
+    }
+    if bound_rows != roles.len() {
         return Ok(());
     }
     let mut claimed = [false; 4];
-    for (human, role) in launch.humans.iter_mut().zip(roles.iter().copied()) {
+    for human in &mut launch.humans {
+        let Some(row) = human.raw_slot_index else {
+            continue;
+        };
+        let Some(role) = by_row[usize::from(row)] else {
+            continue;
+        };
         let value = role.native_value();
         if human.is_observer() {
             ensure!(value == -1, "LAN VMCE observer has a player role");
@@ -527,7 +585,7 @@ fn apply_vmce_roles(
             value == -2 || (0..4).contains(&value),
             "invalid LAN VMCE role"
         );
-        if human.raw_slot_index.is_some() && value >= 0 {
+        if value >= 0 {
             ensure!(!claimed[value as usize], "duplicate LAN VMCE role");
             claimed[value as usize] = true;
         }
@@ -1207,6 +1265,24 @@ mod tests {
         session
     }
 
+    /// The host's VMCE role projection keyed by synchronized seat, matching
+    /// `publish_options`.
+    #[cfg(feature = "vmce")]
+    fn vmce_role_rows(session: &MatchSession) -> Vec<VmceRoleRow> {
+        session
+            .network_setup()
+            .expect("admitted setup")
+            .humans
+            .iter()
+            .filter_map(|human| {
+                Some(VmceRoleRow {
+                    row: human.raw_slot_index?,
+                    role: human.role,
+                })
+            })
+            .collect()
+    }
+
     #[test]
     fn extended_options_and_roster_retain_thirtieth_participant() {
         let mut host = fixture(true);
@@ -1299,13 +1375,7 @@ mod tests {
             .unwrap();
         host.set_network_vmce_role(0, LaunchHumanRole::Player { group: 0 })
             .unwrap();
-        let roles = host
-            .network_setup()
-            .unwrap()
-            .humans
-            .iter()
-            .map(|human| human.role)
-            .collect();
+        let roles = vmce_role_rows(&host);
         let projected = projected_options(&host, 3, 0).unwrap();
         let snapshot = ExtendedOptions {
             text: projected.encode(),
@@ -1343,9 +1413,16 @@ mod tests {
             )
             .unwrap();
         let guest = guest.network_setup().unwrap();
-        assert_eq!(guest.humans[0].role.native_value(), 0);
-        assert!(guest.humans[1].is_observer());
-        assert_eq!(guest.humans[1].role.native_value(), -1);
+        let by_row = |row: u8| {
+            guest
+                .humans
+                .iter()
+                .find(|human| human.raw_slot_index == Some(row))
+                .expect("bound role row")
+        };
+        assert_eq!(by_row(0).role.native_value(), 0);
+        assert!(by_row(1).is_observer());
+        assert_eq!(by_row(1).role.native_value(), -1);
         assert_eq!(
             guest
                 .humans
@@ -1354,6 +1431,77 @@ mod tests {
                 .collect::<Vec<_>>(),
             teams
         );
+    }
+
+    /// Regression: `publish_options` projects roles in the host's participant
+    /// order, but a LAN guest admits participants local-first (its own row
+    /// first). Keying the roster by the synchronized seat keeps every role on
+    /// its own participant instead of mirroring the two peers.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_roles_follow_the_synchronized_seat_on_a_local_first_guest() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        let mode = modes.iter().find(|mode| mode.class.is_vmce()).unwrap();
+        let mut host = fixture(true);
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode = SkirmishLaunchMode::from_game_mode(mode);
+        for human in &mut launch.humans {
+            human.role = LaunchHumanRole::Player { group: -2 };
+        }
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        host.set_network_vmce_role(0, LaunchHumanRole::Player { group: 0 })
+            .unwrap();
+        host.set_network_vmce_role(1, LaunchHumanRole::Player { group: 1 })
+            .unwrap();
+        let snapshot = ExtendedOptions {
+            text: projected_options(&host, 3, 0).unwrap().encode(),
+            selected_map_file: "test.map".into(),
+            agreement: crate::app::shell_network_setup::agreement::MultiplayerAgreement {
+                version: "test".into(),
+                rules_digest: "test".into(),
+            },
+            source_sha256: String::new(),
+            effective_digest: String::new(),
+            random_map: None,
+            admissions: Vec::new(),
+            room: None,
+            vmce_roles: vmce_role_rows(&host),
+            vmce_series: None,
+        };
+
+        // The guest's admitted source order is its own row first, the host's
+        // row second: the reverse of the host's list.
+        let mut guest = MatchSession::default();
+        guest.enter_network(NetworkReturnContext::LanLobby);
+        let mut guest_launch = host.network_setup().unwrap().clone();
+        guest_launch.humans.swap(0, 1);
+        guest_launch.local_player_index = 0;
+        guest_launch.rebuild_house_roster();
+        guest
+            .accept_network_setup(guest_launch, false, Some(7), false)
+            .unwrap();
+
+        let (mut received, _, _) = parse_options(&guest, &modes, &snapshot.text).unwrap();
+        apply_vmce_roles(&mut received.launch, &snapshot.vmce_roles).unwrap();
+        guest
+            .accept_network_host_setup(
+                received.launch,
+                received.vacancies,
+                received.map_metadata.player_capacity,
+                None,
+                false,
+            )
+            .unwrap();
+
+        let guest = guest.network_setup().unwrap();
+        assert_eq!(guest.humans[0].name, "Guest");
+        assert_eq!(guest.humans[0].raw_slot_index, Some(1));
+        assert_eq!(guest.humans[0].role.native_value(), 1);
+        assert_eq!(guest.humans[1].name, "Host");
+        assert_eq!(guest.humans[1].raw_slot_index, Some(0));
+        assert_eq!(guest.humans[1].role.native_value(), 0);
     }
 
     #[cfg(feature = "vmce")]
@@ -1380,23 +1528,18 @@ mod tests {
             .unwrap();
         host.set_network_vmce_role(1, LaunchHumanRole::Player { group: 1 })
             .unwrap();
-        let roles: Vec<_> = host
-            .network_setup()
-            .unwrap()
-            .humans
-            .iter()
-            .map(|human| human.role)
-            .collect();
+        let roles = vmce_role_rows(&host);
 
-        // The lagging roster defers the positional roles without refusing the
-        // packet, so the stored revision can be re-applied once it arrives.
+        // A roster that does not yet carry every published seat defers the
+        // whole assignment without refusing the packet, so the stored
+        // revision can be re-applied once it arrives.
         apply_vmce_roles(&mut lagging, &roles).unwrap();
         assert_eq!(
             lagging.humans[0].role,
             LaunchHumanRole::Player { group: -2 }
         );
 
-        // The complete roster applies the same roles positionally.
+        // The complete roster applies each role to its own synchronized row.
         let mut applied = complete;
         apply_vmce_roles(&mut applied, &roles).unwrap();
         assert_eq!(applied.humans[0].role, LaunchHumanRole::Player { group: 0 });
@@ -1860,13 +2003,7 @@ mod tests {
             random_map: None,
             admissions: Vec::new(),
             room: None,
-            vmce_roles: host
-                .network_setup()
-                .unwrap()
-                .humans
-                .iter()
-                .map(|human| human.role)
-                .collect(),
+            vmce_roles: vmce_role_rows(&host),
             vmce_series: Some(identity.clone()),
         };
 
