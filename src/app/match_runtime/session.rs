@@ -1839,8 +1839,16 @@ impl MatchSession {
         index: usize,
         role: crate::skirmish_launch::LaunchHumanRole,
     ) -> anyhow::Result<()> {
-        self.validate_network_vmce_role(index, role)?;
-        self.accept_network_human_role(index, role)
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (index, role);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            self.validate_network_vmce_role(index, role)?;
+            self.accept_network_human_role(index, role)
+        }
     }
 
     pub(crate) fn validate_network_vmce_role(
@@ -1848,31 +1856,40 @@ impl MatchSession {
         index: usize,
         role: crate::skirmish_launch::LaunchHumanRole,
     ) -> anyhow::Result<()> {
-        let launch = match self.network.as_ref().map(|network| &network.phase) {
-            Some(
-                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
-            ) => launch,
-            _ => anyhow::bail!("network setup is not editable"),
-        };
-        anyhow::ensure!(launch.mode.class.is_vmce(), "not a VMCE setup");
-        anyhow::ensure!(index < launch.humans.len(), "unknown participant");
-        let value = role.native_value();
-        anyhow::ensure!(
-            value == -2 || (0..4).contains(&value),
-            "invalid VMCE Player role"
-        );
-        anyhow::ensure!(
-            launch
-                .humans
-                .iter()
-                .enumerate()
-                .all(|(other, human)| other == index
-                    || human.raw_slot_index.is_none()
-                    || human.role.native_value() != value
-                    || value == -2),
-            "VMCE Player role is already assigned"
-        );
-        Ok(())
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (index, role);
+            anyhow::bail!("VMCE is not built in")
+        }
+        #[cfg(feature = "vmce")]
+        {
+            let launch = match self.network.as_ref().map(|network| &network.phase) {
+                Some(
+                    NetworkPhase::Setup { launch, .. }
+                    | NetworkPhase::CooperativeRound { launch, .. },
+                ) => launch,
+                _ => anyhow::bail!("network setup is not editable"),
+            };
+            anyhow::ensure!(launch.mode.class.is_vmce(), "not a VMCE setup");
+            anyhow::ensure!(index < launch.humans.len(), "unknown participant");
+            let value = role.native_value();
+            anyhow::ensure!(
+                value == -2 || (0..4).contains(&value),
+                "invalid VMCE Player role"
+            );
+            anyhow::ensure!(
+                launch
+                    .humans
+                    .iter()
+                    .enumerate()
+                    .all(|(other, human)| other == index
+                        || human.raw_slot_index.is_none()
+                        || human.role.native_value() != value
+                        || value == -2),
+                "VMCE Player role is already assigned"
+            );
+            Ok(())
+        }
     }
 
     pub(crate) fn network_setup_capacity(&self) -> Option<i32> {
@@ -2825,6 +2842,7 @@ impl MatchSession {
         let vmce_map_config = network.vmce_map_config.clone();
         #[cfg(not(feature = "vmce"))]
         let vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig> = None;
+        #[cfg(feature = "vmce")]
         match (
             launch.mode.class.is_vmce(),
             vmce_houses.as_ref(),
@@ -2853,6 +2871,10 @@ impl MatchSession {
             }
             (false, None, None) => {}
         }
+        #[cfg(not(feature = "vmce"))]
+        {
+            let _ = (&vmce_houses, &vmce_map_config);
+        }
         network.proposed_seed = Some(agreed_seed);
         admit_network_start_roster(launch)?;
         let max_ahead_frames = network
@@ -2871,9 +2893,11 @@ impl MatchSession {
             max_ahead_frames,
             std::mem::take(&mut network.wol_start),
         );
+        #[cfg(feature = "vmce")]
         if let Some(assignments) = vmce_houses {
             prepared = prepared.with_vmce_houses(assignments);
         }
+        #[cfg(feature = "vmce")]
         if let Some(config) = vmce_map_config {
             prepared = prepared.with_vmce_map_config(config);
         }
