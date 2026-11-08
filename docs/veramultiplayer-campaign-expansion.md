@@ -68,7 +68,7 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.7-vmce.N` (currently `0.2.7-vmce.1`); LAN peers should run the same VMCE build.
+`0.2.7-vmce.N` (currently `0.2.7-vmce.2`); LAN peers should run the same VMCE build.
 
 ### Campaign directories
 
