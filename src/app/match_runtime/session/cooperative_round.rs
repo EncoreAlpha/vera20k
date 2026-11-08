@@ -55,6 +55,10 @@ pub(crate) struct CooperativeRoundState {
     vera_stage: Option<crate::app::match_bootstrap::VmceStageIdentity>,
     /// `0x89E04C` once the loop left: true runs the next mission.
     outcome: Option<bool>,
+    /// Authored VMCE: the page's verdict. The 0x103 layout is shared by win
+    /// and defeat, so this is the authoritative record for input and receipts.
+    #[cfg(feature = "vmce")]
+    page_victory: bool,
 }
 
 impl CooperativeRoundState {
@@ -74,6 +78,12 @@ impl CooperativeRoundState {
 
     pub(crate) fn outcome(&self) -> Option<bool> {
         self.outcome
+    }
+
+    /// Authored VMCE: the page's verdict.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn page_victory(&self) -> bool {
+        self.page_victory
     }
 
     fn all_ready(&self) -> bool {
@@ -251,6 +261,8 @@ impl MatchSession {
             vera,
             #[cfg(feature = "vmce")]
             vera_stage: vera_stage.clone(),
+            #[cfg(feature = "vmce")]
+            page_victory: false,
             outcome: None,
         };
         let host = self.host;
@@ -332,6 +344,16 @@ impl MatchSession {
         match &self.network.as_ref()?.phase {
             NetworkPhase::CooperativeRound { round, .. } => Some(round),
             _ => None,
+        }
+    }
+
+    /// Record the verdict that opened the authored VMCE page.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn set_cooperative_round_page_victory(&mut self, victory: bool) {
+        if let Some(network) = self.network.as_mut()
+            && let NetworkPhase::CooperativeRound { round, .. } = &mut network.phase
+        {
+            round.page_victory = victory;
         }
     }
 
@@ -1696,6 +1718,19 @@ mod tests {
             requests.contains(&NetworkLoadingRequest::CooperativeLeave),
             "the defeat page must leave with a missing peer: {requests:?}"
         );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_round_records_the_page_verdict_for_receipts_and_input() {
+        let (mut session, _) = frozen_vera(0);
+        session.enter_vmce_round(None, false, 2).unwrap();
+        assert!(
+            !session.cooperative_round().unwrap().page_victory(),
+            "the 0x103 layout is shared, so the verdict starts false"
+        );
+        session.set_cooperative_round_page_victory(true);
+        assert!(session.cooperative_round().unwrap().page_victory());
     }
 
     #[test]

@@ -2217,6 +2217,11 @@ impl LiveLanCapture {
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
                         let can_continue =
                             state.match_state.session.cooperative_round_can_continue();
+                        let victory = state
+                            .match_state
+                            .session
+                            .cooperative_round()
+                            .is_some_and(|round| round.page_victory());
                         let native_frame = state
                             .match_state
                             .sim_runtime
@@ -2248,7 +2253,7 @@ impl LiveLanCapture {
                             "kind": kind,
                             "injected_frame": json!(null),
                             "dialog": {
-                                "victory": true,
+                                "victory": victory,
                                 "dialog": 0x103,
                                 "rows": rows,
                                 "time": page.model.your_time,
@@ -2263,7 +2268,11 @@ impl LiveLanCapture {
                             "native_frame": native_frame,
                             "state_hash": state_hash,
                         }));
-                        self.request_screenshot("vera-result-real-win");
+                        self.request_screenshot(if victory {
+                            "vera-result-real-win"
+                        } else {
+                            "vera-result-real-lose"
+                        });
                         if let (Some(receipt), Some(evidence)) = (
                             self.final_receipt.as_mut(),
                             self.vera_outcome_evidence.as_ref(),
@@ -2275,7 +2284,7 @@ impl LiveLanCapture {
                             "VERA outcome: map's real trigger chain opened campaign score 0x103",
                         );
                         self.vera_outcome_dialog_frame = Some(render_frame);
-                        self.vera_outcome_phase = if can_continue {
+                        self.vera_outcome_phase = if victory && can_continue {
                             VeraOutcomePhase::Round
                         } else {
                             VeraOutcomePhase::Quit

@@ -40,7 +40,16 @@ pub(crate) fn open_victory(state: &mut AppState) {
     };
     let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
     let can_continue = next.is_some();
-    open_page(state, model, next, can_continue, rows, true, "victory");
+    open_page(
+        state,
+        model,
+        next,
+        can_continue,
+        rows,
+        true,
+        "victory",
+        true,
+    );
 }
 
 /// Open the result page for a lost mission. A defeat retries the same
@@ -55,7 +64,7 @@ pub(crate) fn open_defeat(state: &mut AppState) {
         return;
     };
     let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    open_page(state, model, None, false, rows, false, "defeat");
+    open_page(state, model, None, false, rows, false, "defeat", false);
 }
 
 /// Whether the open `0x103` page is VMCE's. Stock modes keep their own
@@ -212,6 +221,7 @@ fn open_page(
     rows: usize,
     admit_slots: bool,
     what: &str,
+    victory: bool,
 ) {
     state.frontend.score_page = None;
     state.frontend.score_art = None;
@@ -227,6 +237,10 @@ fn open_page(
         crate::app::cooperative_round::return_to_shell(state);
         return;
     }
+    state
+        .match_state
+        .session
+        .set_cooperative_round_page_victory(victory);
     if admit_slots {
         // The repaint's country pass 0x0046F6D0 against the next stage.
         let runtime = &state.frontend.multiplayer_shell_runtime;
