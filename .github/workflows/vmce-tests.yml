@@ -1,0 +1,41 @@
+name: VMCE tests
+
+# Fork-only gate for the optional Multiplayer Campaign Expansion. The upstream
+# capability workflow runs daily with `--soft-tests`, so a VMCE regression
+# could stay green there; this workflow makes the capability compile and its
+# focused tests block the fork's own pushes and PRs. It is intentionally a
+# separate file so syncing upstream never has to resolve a conflict in
+# `capability-tests.yml`; drop it when the fork merges upstream.
+on:
+  push:
+    branches: [feature/vmce]
+  pull_request:
+    branches: [feature/vmce]
+  workflow_dispatch:
+
+env:
+  # rust-lld links the large test binary much faster than link.exe.
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
+
+jobs:
+  vmce:
+    name: vmce (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - name: Capability registry and test map guards
+        run: python -m unittest tools.tests.test_capability_tests tools.tests.test_test_map
+      - name: Compile with VMCE
+        run: python -m tools.capability_tests build vmce
+      - name: VMCE focused tests
+        run: python -m tools.capability_tests focus vmce
