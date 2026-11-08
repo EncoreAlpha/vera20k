@@ -1372,6 +1372,11 @@ def _validate_run_args(args: argparse.Namespace) -> RunContext:
     validate_players(args.players)
     validate_jobs(args.jobs)
     timeout = validate_timeout_seconds(args.timeout_seconds)
+    # A dev probe is a single short flow test: fail the capture fast unless
+    # the caller explicitly chose a capture timeout.
+    if args.suite == "dev" and "VMCE_CAPTURE_TIMEOUT" not in os.environ:
+        global CAPTURE_TIMEOUT_SECONDS
+        CAPTURE_TIMEOUT_SECONDS = 120
     validate_port_base(args.port_base, args.players)
 
     exe = Path(args.exe).resolve()
