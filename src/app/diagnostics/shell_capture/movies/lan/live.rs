@@ -3065,33 +3065,41 @@ fn vmce_probe(state: &mut AppState) -> Result<Value> {
                 "peer command source {source} controls the local primary House {local_primary}"
             );
         }
-        let (peer_source, peer_primary) = sources
-            .iter()
-            .copied()
-            .find(|(source, primary)| *source != local_source && *primary != local_primary)
-            .context("probe peer primary House")?;
-        let peer_owner = sim.houses().order()[peer_primary];
-        let peer_entity = sim
-            .entities()
-            .values_sorted()
-            .filter(|entity| {
-                entity.owner() == peer_owner
-                    && entity.is_alive()
-                    && !entity.in_limbo()
-                    && matches!(
-                        entity.category(),
-                        crate::map::entities::EntityCategory::Unit
-                            | crate::map::entities::EntityCategory::Infantry
-                    )
-            })
-            .map(|entity| entity.stable_id())
-            .next()
-            .with_context(|| {
-                format!(
-                    "peer primary House {} has no mobile object to probe",
-                    houses[peer_primary]
-                )
-            })?;
+        // A four-role fixture may arm a role House without a mobile object;
+        // the probe still needs one peer House that has something to click.
+        let mut chosen = None;
+        for &(source, primary) in &sources {
+            if source == local_source || primary == local_primary {
+                continue;
+            }
+            let owner = sim.houses().order()[primary];
+            let entity = sim
+                .entities()
+                .values_sorted()
+                .filter(|entity| {
+                    entity.owner() == owner
+                        && entity.is_alive()
+                        && !entity.in_limbo()
+                        && matches!(
+                            entity.category(),
+                            crate::map::entities::EntityCategory::Unit
+                                | crate::map::entities::EntityCategory::Infantry
+                        )
+                })
+                .map(|entity| entity.stable_id())
+                .next();
+            if let Some(entity) = entity {
+                chosen = Some((source, primary, entity));
+                break;
+            }
+        }
+        let Some((peer_source, peer_primary, peer_entity)) = chosen else {
+            return Ok(json!({
+                "skipped": "no peer primary House has a mobile object to probe",
+                "local_source": local_source,
+                "local_primary": local_primary,
+            }));
+        };
         (
             local_source,
             local_primary,
