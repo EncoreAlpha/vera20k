@@ -448,12 +448,11 @@ fn paint_vmce_result_board(
             vmce_panel::push_native_centred(sprites, icon, cells.host, scale);
         }
     }
-    // Two leading-separated lines, cut to the status width.
-    let authored_w = scale.base_rect(board_layout.status).w.max(1);
-    let lines = vmce_panel::wrap_two_lines(font, &board.caption, authored_w);
+    // The caption owner supplies the hard break; keep both lines verbatim so a
+    // number and its unit never split.
     let line_h = (17.0 * scale.factor()).round().max(1.0) as i32;
     let leading = (2.0 * scale.factor()).round() as i32;
-    for (index, line) in lines.iter().enumerate() {
+    for (index, line) in board.caption_lines.iter().enumerate() {
         push(
             line.clone(),
             crate::ui::shell::geom::RectPx::new(

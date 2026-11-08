@@ -65,7 +65,12 @@ pub(crate) fn open_defeat(state: &mut AppState) {
         App::leave_mission_result_screen(state);
         return;
     };
-    let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
+    let mut model =
+        crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
+    // The ranking strings are time buckets, not a verdict; a lost mission must
+    // not read "Mission completed ahead of schedule" (0x6C9231). Keep the
+    // native par/your-time and kills statics, replace only the verdict text.
+    (model.rank, model.commendation) = defeat_headline();
     open_page(
         state,
         model,
@@ -203,41 +208,60 @@ pub(crate) fn result_board(
         .cooperative_round_ready_progress()
         .unwrap_or((0, rows.len(), false));
     let host = state.match_state.session.host();
-    let caption = continuation_caption(round.vera_ending(), host, ready, total);
+    let caption_lines = continuation_caption_lines(round.vera_ending(), host, ready, total);
     (!rows.is_empty()).then_some(VmceResultBoard {
         rows,
         victory,
-        caption,
+        caption_lines,
     })
 }
 
-/// The truthful status caption for one continuation. The three continuations
-/// keep their own gates in the round; this only states what the page does.
+/// The truthful status caption for one continuation, as two explicit lines.
+/// The hard break belongs here (not to a natural wrap) so a number and its
+/// unit stay together in every language. The three continuations keep their
+/// own gates in the round; this only states what the page does.
 #[cfg(feature = "vmce")]
-fn continuation_caption(
+pub(crate) fn continuation_caption_lines(
     ending: crate::app::match_runtime::session::VmceRoundEnding,
     host: bool,
     ready: usize,
     total: usize,
-) -> String {
+) -> [String; 2] {
     use crate::app::match_runtime::session::VmceRoundEnding;
+    // The ready glyphs in the rows are the progress; the caption states the
+    // gate itself, with no numeric placeholder to wrap.
+    let _ = (ready, total);
     match ending {
-        VmceRoundEnding::Next => crate::i18n::tr_fill(
-            "VERA:VmceResultNextStatus",
-            &[("ready", &ready), ("total", &total)],
-        ),
-        VmceRoundEnding::Retry => {
+        VmceRoundEnding::Next => [
+            crate::i18n::tr("VERA:VmceResultNextLine1"),
+            crate::i18n::tr("VERA:VmceResultNextLine2"),
+        ],
+        VmceRoundEnding::Retry => [
             if host {
-                crate::i18n::tr("VERA:VmceResultRetryHostStatus")
+                crate::i18n::tr("VERA:VmceResultRetryHostLine1")
             } else {
-                crate::i18n::tr("VERA:VmceResultRetryGuestStatus")
-            }
-        }
-        VmceRoundEnding::CampaignEnd => crate::i18n::tr_fill(
-            "VERA:VmceResultEndStatus",
-            &[("ready", &ready), ("total", &total)],
-        ),
+                crate::i18n::tr("VERA:VmceResultRetryGuestLine1")
+            },
+            crate::i18n::tr("VERA:VmceResultRetryLine2"),
+        ],
+        VmceRoundEnding::CampaignEnd => [
+            crate::i18n::tr("VERA:VmceResultEndLine1"),
+            crate::i18n::tr("VERA:VmceResultEndLine2"),
+        ],
     }
+}
+
+/// The defeat page's rank and message. Retail `0x103` is opened only by
+/// `GameExit::Victory` (`0x006C8E80`); a lost campaign mission takes the
+/// `GameExit::Defeat` (`0x00685DC0`) tail instead, so the shared dialog has no
+/// native defeat headline. VMCE authors defeat onto `0x103`, so it must not
+/// inherit the victory/ranking headline (`0x6C9231` under/over-par strings).
+#[cfg(feature = "vmce")]
+pub(crate) fn defeat_headline() -> (String, String) {
+    (
+        crate::i18n::tr("VERA:VmceResultDefeatRank"),
+        crate::i18n::tr("VERA:VmceResultDefeatMessage"),
+    )
 }
 
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
@@ -369,29 +393,38 @@ mod tests {
     use crate::app::match_runtime::session::VmceRoundEnding;
 
     #[test]
-    fn the_three_continuations_get_their_own_truthful_captions() {
-        let next = continuation_caption(VmceRoundEnding::Next, true, 2, 4);
-        let retry_host = continuation_caption(VmceRoundEnding::Retry, true, 0, 4);
-        let retry_guest = continuation_caption(VmceRoundEnding::Retry, false, 0, 4);
-        let end = continuation_caption(VmceRoundEnding::CampaignEnd, true, 4, 4);
+    fn the_three_continuations_get_their_own_two_line_captions() {
+        let next = continuation_caption_lines(VmceRoundEnding::Next, true, 2, 4);
+        let retry_host = continuation_caption_lines(VmceRoundEnding::Retry, true, 0, 4);
+        let retry_guest = continuation_caption_lines(VmceRoundEnding::Retry, false, 0, 4);
+        let end = continuation_caption_lines(VmceRoundEnding::CampaignEnd, true, 4, 4);
         assert!(
-            next.contains("2/4"),
-            "next caption carries its ready gate: {next}"
+            next[1].contains("ready") || next[1].contains("就绪"),
+            "next line states the all-ready gate: {next:?}"
         );
         assert!(
-            end.contains("4/4"),
-            "campaign-end caption carries its ready gate: {end}"
+            end[1].contains("30") && (end[1].contains("s") || end[1].contains("秒")),
+            "end line states the 30 s grace: {end:?}"
         );
         assert!(
-            next.contains("all are ready") || next.contains("全员就绪"),
-            "next caption states the all-ready gate: {next}"
+            retry_host[1].contains("15")
+                && retry_guest[1] == retry_host[1],
+            "retry line keeps the 15 s unit together on line two: {retry_host:?} / {retry_guest:?}"
         );
         assert!(
-            retry_host.contains("15") && retry_guest.contains("15"),
-            "retry captions carry the grace: {retry_host} / {retry_guest}"
+            retry_host[1].contains("15 s") || retry_host[1].contains("15 秒"),
+            "number and unit share one line: {retry_host:?}"
         );
         assert_ne!(next, end);
-        assert_ne!(retry_host, retry_guest);
-        assert_ne!(next, retry_host);
+        assert_ne!(retry_host[0], retry_guest[0]);
+        assert_ne!(next[0], retry_host[0]);
+    }
+
+    #[test]
+    fn the_defeat_headline_is_not_the_victory_commendation() {
+        let (rank, message) = defeat_headline();
+        assert!(!rank.is_empty() && !message.is_empty());
+        assert!(!message.contains("ahead of schedule"));
+        assert!(!message.contains("提前"));
     }
 }

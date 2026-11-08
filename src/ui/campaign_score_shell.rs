@@ -504,7 +504,9 @@ pub struct VmceResultRow {
 pub struct VmceResultBoard {
     pub rows: Vec<VmceResultRow>,
     pub victory: bool,
-    pub caption: String,
+    /// Exactly two lines; the hard break belongs to the caption owner so a
+    /// number and its unit never split across a natural wrap.
+    pub caption_lines: [String; 2],
 }
 
 /// One VMCE settlement board caption.

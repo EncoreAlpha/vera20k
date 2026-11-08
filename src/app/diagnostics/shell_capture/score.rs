@@ -1034,17 +1034,14 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         VmceResultTarget::CampaignEnd => (4, 4),
         VmceResultTarget::DefeatRetry => (0, 4),
     };
-    let caption = match target {
-        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => crate::i18n::tr_fill(
-            "VERA:VmceResultNextStatus",
-            &[("ready", &ready_count), ("total", &total)],
-        ),
-        VmceResultTarget::DefeatRetry => crate::i18n::tr("VERA:VmceResultRetryHostStatus"),
-        VmceResultTarget::CampaignEnd => crate::i18n::tr_fill(
-            "VERA:VmceResultEndStatus",
-            &[("ready", &ready_count), ("total", &total)],
-        ),
+    use crate::app::match_runtime::session::VmceRoundEnding;
+    let ending = match target {
+        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => VmceRoundEnding::Next,
+        VmceResultTarget::DefeatRetry => VmceRoundEnding::Retry,
+        VmceResultTarget::CampaignEnd => VmceRoundEnding::CampaignEnd,
     };
+    let caption_lines =
+        crate::app::vmce_result::continuation_caption_lines(ending, true, ready_count, total);
     let board = VmceResultBoard {
         rows: (0..4)
             .map(|role| VmceResultRow {
@@ -1060,18 +1057,24 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
             })
             .collect(),
         victory: target.victory(),
-        caption,
+        caption_lines,
     };
     let mut model = synthetic_campaign_score_model();
     model.par_time = "00:12:00".into();
-    model.your_time = "00:09:47".into();
+    model.your_time = if target.victory() {
+        "00:09:47".into()
+    } else {
+        "00:14:26".into()
+    };
     model.enemies_destroyed = "23".into();
     model.rank = if target.victory() {
-        "Colonel"
+        "Colonel".into()
     } else {
-        "Sergeant"
+        crate::app::vmce_result::defeat_headline().0
+    };
+    if !target.victory() {
+        model.commendation = crate::app::vmce_result::defeat_headline().1;
     }
-    .into();
     App::open_campaign_score_page(
         state,
         CampaignScoreScreenModel {

@@ -1155,10 +1155,15 @@ mod tests {
             "VERA:VmceResultRole",
             "VERA:VmceResultWon",
             "VERA:VmceResultLost",
-            "VERA:VmceResultNextStatus",
-            "VERA:VmceResultRetryHostStatus",
-            "VERA:VmceResultRetryGuestStatus",
-            "VERA:VmceResultEndStatus",
+            "VERA:VmceResultNextLine1",
+            "VERA:VmceResultNextLine2",
+            "VERA:VmceResultRetryHostLine1",
+            "VERA:VmceResultRetryGuestLine1",
+            "VERA:VmceResultRetryLine2",
+            "VERA:VmceResultEndLine1",
+            "VERA:VmceResultEndLine2",
+            "VERA:VmceResultDefeatRank",
+            "VERA:VmceResultDefeatMessage",
         ];
         for (tag, text) in shipped::FILES {
             let contents = parse(text);
