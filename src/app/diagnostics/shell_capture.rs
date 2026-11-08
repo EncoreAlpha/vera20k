@@ -32,6 +32,10 @@ mod score;
 mod skirmish;
 pub(crate) mod startup_host_loss;
 pub(crate) use skirmish::PresentedShell;
+#[cfg(feature = "vmce")]
+mod vmce_lobby;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_lobby::VmceLobbyTarget;
 
 pub(crate) const CAPTURE_FLAG: &str = "--shell-capture";
 const CHECKPOINT_MAIN_MENU_0XE2_STEADY: &str = "main-menu-0xe2-steady";
@@ -260,6 +264,10 @@ pub enum ShellCaptureCheckpoint {
     /// Then a page's column button: that page showing.
     OptionsSettings(Category),
     Lan(movies::LanTarget),
+    /// VERA's VMCE LAN lobby, installed from the diagnostics fixture with no
+    /// live peers or map file.
+    #[cfg(feature = "vmce")]
+    VmceLobby(VmceLobbyTarget),
     Wol(movies::WolTarget),
     /// Network on `0xE2`: after its teardown slide and a new `0xE2`'s entry
     /// slide, the settled main menu.
@@ -749,6 +757,10 @@ impl ShellCaptureCheckpoint {
             CHECKPOINT_WOL_0X10E_API_MISSING => Ok(Self::Wol0x10EApiMissing),
             CHECKPOINT_WOL_0X10E_BACK => Ok(Self::Wol0x10EBack),
             _ => {
+                #[cfg(feature = "vmce")]
+                if let Some(target) = VmceLobbyTarget::from_name(value) {
+                    return Ok(Self::VmceLobby(target));
+                }
                 if let Some((_, category)) = OPTIONS_SETTINGS_CHECKPOINTS
                     .iter()
                     .find(|(name, _)| *name == value)
@@ -1005,6 +1017,8 @@ impl ShellCaptureCheckpoint {
             Self::Score0x108HoverContinue => CHECKPOINT_SCORE_0X108_HOVER_CONTINUE,
             Self::Score0x108LeaveContinue => CHECKPOINT_SCORE_0X108_LEAVE_CONTINUE,
             Self::Score0x108SlideOut(_) => "score-0x108-slide-out",
+            #[cfg(feature = "vmce")]
+            Self::VmceLobby(target) => target.as_str(),
         }
     }
 
@@ -1744,14 +1758,24 @@ where
         && (width, height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
         && width >= 640
         && height >= 480;
+    // The VMCE lobby review also captures a fitted-shell window, which proves
+    // the board and roster scale together.
+    #[cfg(feature = "vmce")]
+    let scaled_vmce_lobby = matches!(checkpoint, ShellCaptureCheckpoint::VmceLobby(_))
+        && (width, height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
+        && width >= 640
+        && height >= 480;
+    #[cfg(not(feature = "vmce"))]
+    let scaled_vmce_lobby = false;
     ensure!(
         (width == EXPECTED_WIDTH && height == EXPECTED_HEIGHT)
             || (online_latency && width == 640 && height == 480)
-            || scaled_main_menu,
-        "checkpoint {} requires exactly {EXPECTED_WIDTH}x{EXPECTED_HEIGHT} (640x480 also allowed for --online-latency, a larger window for the main menu), got {width}x{height}",
+            || scaled_main_menu
+            || scaled_vmce_lobby,
+        "checkpoint {} requires exactly {EXPECTED_WIDTH}x{EXPECTED_HEIGHT} (640x480 also allowed for --online-latency, a larger window for the main menu or the VMCE lobby), got {width}x{height}",
         checkpoint.as_str()
     );
-    let neutral = if scaled_main_menu {
+    let neutral = if scaled_main_menu || scaled_vmce_lobby {
         (width / 2, height / 2)
     } else {
         (EXPECTED_CURSOR_X, EXPECTED_CURSOR_Y)
@@ -2575,6 +2599,8 @@ pub(crate) struct ShellCaptureSession {
     wol_welcome_provider_selected: bool,
     score: Option<score::ScoreCapture>,
     campaign_score: Option<score::CampaignScoreCapture>,
+    #[cfg(feature = "vmce")]
+    vmce_lobby: Option<vmce_lobby::VmceLobbyCapture>,
     outcome: Option<std::result::Result<(), String>>,
     /// Route-requested checkpoint PNGs, recorded in the final manifest.
     screenshots: Vec<serde_json::Value>,
@@ -2696,6 +2722,13 @@ impl ShellCaptureSession {
             }
             _ => None,
         };
+        #[cfg(feature = "vmce")]
+        let vmce_lobby = match request.checkpoint {
+            ShellCaptureCheckpoint::VmceLobby(target) => {
+                Some(vmce_lobby::VmceLobbyCapture::new(target))
+            }
+            _ => None,
+        };
         Self {
             request,
             started_at: None,
@@ -2707,6 +2740,8 @@ impl ShellCaptureSession {
             wol_welcome_provider_selected: false,
             score,
             campaign_score,
+            #[cfg(feature = "vmce")]
+            vmce_lobby,
             outcome: None,
             screenshots: Vec::new(),
             screenshot_requests: std::collections::VecDeque::new(),
@@ -2771,11 +2806,21 @@ impl ShellCaptureSession {
             ));
         }
         self.started_at = Some(Instant::now());
+        #[cfg(feature = "vmce")]
+        if let Some(capture) = self.vmce_lobby.as_mut()
+            && let Err(error) = capture.prepare(state)
+        {
+            self.fail(format!("VMCE lobby capture preparation failed: {error:#}"));
+        }
     }
 
     fn timeout(&self) -> Duration {
         if let Some(timeout) = self.request.timeout {
             return timeout;
+        }
+        #[cfg(feature = "vmce")]
+        if self.vmce_lobby.is_some() {
+            return Duration::from_secs(60);
         }
         if let Some(capture) = &self.skirmish {
             capture.timeout()
@@ -2840,6 +2885,10 @@ impl ShellCaptureSession {
     }
 
     fn steady_ready(&self, state: &AppState) -> Result<bool> {
+        #[cfg(feature = "vmce")]
+        if let Some(capture) = &self.vmce_lobby {
+            return capture.ready(state);
+        }
         if let Some(capture) = &self.movies {
             return capture.ready(state);
         }
@@ -2916,6 +2965,10 @@ impl ShellCaptureSession {
         }
         if let Some(capture) = &mut self.campaign_score {
             capture.after_present(state, rendered, self.frames_seen)?;
+        }
+        #[cfg(feature = "vmce")]
+        if let Some(capture) = &mut self.vmce_lobby {
+            capture.after_present(state)?;
         }
         Ok(())
     }
@@ -3256,50 +3309,43 @@ impl ShellCaptureSession {
             "capture state changed before bundle write"
         );
 
-        let manifest: Result<serde_json::Value> = match (
-            &self.skirmish,
-            &self.movies,
-            &self.score,
-            &self.campaign_score,
-        ) {
-            (Some(capture), _, _, _) => serde_json::to_value(capture.manifest(
-                &self.request,
-                surface_format,
-                pixels,
-                self.frames_seen,
-            ))
-            .context("serialize skirmish manifest"),
-            (None, Some(capture), _, _) => capture
-                .manifest(
+        let manifest: Result<serde_json::Value> = {
+            #[cfg(feature = "vmce")]
+            if let Some(capture) = &self.vmce_lobby {
+                Ok(capture.manifest(
+                    &self.request,
+                    surface_format,
+                    pixels,
+                    self.frames_seen,
+                    state,
+                ))
+            } else {
+                manifest_for_capture(
+                    &self.skirmish,
+                    &self.movies,
+                    &self.score,
+                    &self.campaign_score,
                     &self.request,
                     surface_format,
                     pixels,
                     self.frames_seen,
                     state,
                 )
-                .and_then(|manifest| {
-                    serde_json::to_value(manifest).context("serialize movies manifest")
-                }),
-            (None, None, Some(capture), _) => serde_json::to_value(capture.manifest(
-                &self.request,
-                surface_format,
-                pixels,
-                self.frames_seen,
-            ))
-            .context("serialize score manifest"),
-            (None, None, None, Some(capture)) => serde_json::to_value(capture.manifest(
-                &self.request,
-                surface_format,
-                pixels,
-                self.frames_seen,
-            ))
-            .context("serialize campaign score manifest"),
-            (None, None, None, None) => serde_json::to_value(capture_manifest(
-                &self.request,
-                surface_format,
-                pixels.len() as u64,
-            ))
-            .context("serialize manifest"),
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                manifest_for_capture(
+                    &self.skirmish,
+                    &self.movies,
+                    &self.score,
+                    &self.campaign_score,
+                    &self.request,
+                    surface_format,
+                    pixels,
+                    self.frames_seen,
+                    state,
+                )
+            }
         };
         let mut manifest = manifest?;
         if let Some(object) = manifest.as_object_mut() {
@@ -3319,6 +3365,15 @@ impl ShellCaptureSession {
         })?;
         let frame_path = self.request.output_dir().join(FRAME_FILE_NAME);
         write_new_file(&frame_path, pixels)?;
+        #[cfg(feature = "vmce")]
+        if self.vmce_lobby.is_some() {
+            vmce_lobby::write_vmce_lobby_frame_png(
+                self.request.output_dir(),
+                self.request.width,
+                self.request.height,
+                pixels,
+            )?;
+        }
         let manifest_path = self.request.output_dir().join(MANIFEST_FILE_NAME);
         write_new_file(&manifest_path, &manifest_bytes)?;
         if let Some(capture) = self.movies.as_mut() {
@@ -3452,6 +3507,47 @@ impl ShellCaptureSession {
             Some(Err(error)) => bail!("{error}"),
             None => bail!("shell capture event loop exited without a completed bundle"),
         }
+    }
+}
+
+/// The per-route bundle manifest. Shared by the VMCE lobby branch and the
+/// original four capture drivers so their manifest code stays one owner.
+#[allow(clippy::too_many_arguments)]
+fn manifest_for_capture(
+    skirmish: &Option<skirmish::SkirmishCapture>,
+    movies: &Option<movies::MoviesCapture>,
+    score: &Option<score::ScoreCapture>,
+    campaign_score: &Option<score::CampaignScoreCapture>,
+    request: &ShellCaptureRequest,
+    surface_format: wgpu::TextureFormat,
+    pixels: &[u8],
+    frames_seen: u32,
+    state: &AppState,
+) -> Result<serde_json::Value> {
+    match (skirmish, movies, score, campaign_score) {
+        (Some(capture), _, _, _) => {
+            serde_json::to_value(capture.manifest(request, surface_format, pixels, frames_seen))
+                .context("serialize skirmish manifest")
+        }
+        (None, Some(capture), _, _) => capture
+            .manifest(request, surface_format, pixels, frames_seen, state)
+            .and_then(|manifest| {
+                serde_json::to_value(manifest).context("serialize movies manifest")
+            }),
+        (None, None, Some(capture), _) => {
+            serde_json::to_value(capture.manifest(request, surface_format, pixels, frames_seen))
+                .context("serialize score manifest")
+        }
+        (None, None, None, Some(capture)) => {
+            serde_json::to_value(capture.manifest(request, surface_format, pixels, frames_seen))
+                .context("serialize campaign score manifest")
+        }
+        (None, None, None, None) => serde_json::to_value(capture_manifest(
+            request,
+            surface_format,
+            pixels.len() as u64,
+        ))
+        .context("serialize manifest"),
     }
 }
 

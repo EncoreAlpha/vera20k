@@ -69,16 +69,22 @@ fn vmce_role_metadata(
         return super::VmceMapDetails::default();
     }
     let owners = basic.campaign_players.players.map(|player| player.owner);
-    let colors = std::array::from_fn(|i| {
-        let house = roster
+    let houses: [Option<&crate::map::houses::HouseDefinition>; 4] = std::array::from_fn(|i| {
+        roster
             .houses
             .iter()
-            .find(|house| Some(house.name.as_str()) == owners[i].as_deref())?;
+            .find(|house| Some(house.name.as_str()) == owners[i].as_deref())
+    });
+    let colors = std::array::from_fn(|i| {
+        let house = houses[i]?;
         let scheme = schemes.get(usize::from(house.color.0))?;
         Some(crate::rules::color_scheme::hsv_to_rgb(scheme.hsv))
     });
+    let countries =
+        std::array::from_fn(|i| houses[i].as_ref().and_then(|house| house.country.clone()));
     super::VmceMapDetails {
         owners,
+        countries,
         colors,
         briefing: None,
     }
@@ -222,11 +228,146 @@ fn vmce_role_choices(
         }
         choices.push(SetupChoice {
             value,
-            text: format!("Player {} 鈥?{owner}", index + 1),
+            text: crate::i18n::tr_fill(
+                "VERA:VmceRoleChoice",
+                &[("number", &(index + 1)), ("house", &owner)],
+            ),
             swatch: None,
         });
     }
     (current, choices)
+}
+
+/// The first pair of authored roles whose Houses share one Country; a lobby
+/// error the role board reports. Read from the map details only, never from a
+/// peer's roster.
+#[cfg(feature = "vmce")]
+fn vmce_role_conflict(details: &super::VmceMapDetails) -> Option<(&str, &str, &str)> {
+    for role in 0..4 {
+        let Some(owner) = details.owners[role].as_deref() else {
+            continue;
+        };
+        let Some(country) = details.countries[role].as_deref() else {
+            continue;
+        };
+        if let Some(other) = details
+            .countries
+            .iter()
+            .enumerate()
+            .skip(role + 1)
+            .find_map(|(index, other)| {
+                other
+                    .as_deref()
+                    .is_some_and(|other| other.eq_ignore_ascii_case(country))
+                    .then_some(details.owners[index].as_deref())
+                    .flatten()
+            })
+        {
+            return Some((owner, country, other));
+        }
+    }
+    None
+}
+
+/// Whether the VMCE room has an inline status line right now. Layout and paint
+/// share this query so the reserved bar and the briefing never disagree.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_lobby_status_present(state: &AppState) -> bool {
+    let Some(protocol) = state.frontend.network_setup_protocol.as_ref() else {
+        return false;
+    };
+    if protocol.vmce_lobby_status.is_some() {
+        return true;
+    }
+    let conflict = {
+        let cache = protocol.vmce_role_cache.borrow();
+        cache
+            .as_ref()
+            .is_some_and(|(_, _, _, details)| vmce_role_conflict(details).is_some())
+    };
+    conflict
+}
+
+/// The VMCE board: the four authored role slots, their claimed participants
+/// and the local campaign-status warning. The map's role Houses are the role
+/// names; an unclaimed slot uses the native vacancy style.
+#[cfg(feature = "vmce")]
+fn vmce_lobby_board(
+    state: &AppState,
+    launch: &crate::skirmish_launch::SkirmishLaunchSession,
+    details: &super::VmceMapDetails,
+) -> (
+    [crate::ui::multiplayer_setup::VmceLobbyRoleSlot; 4],
+    Option<String>,
+) {
+    use crate::ui::multiplayer_setup::{VmceLobbyRole, VmceLobbyRoleSlot};
+    let session = &state.match_state.session;
+    let rules = state.rules();
+    let country_text = |country: &str| {
+        let Some(rules) = rules else {
+            return country.to_owned();
+        };
+        rules
+            .country_index(country)
+            .and_then(|index| {
+                let id = rules.country_name(index)?;
+                let (key, _) = rules.country_display_name_sources(id);
+                key.map(|key| label(state, key))
+            })
+            .unwrap_or_else(|| country.to_owned())
+    };
+    let country_flag = |country: &str| {
+        let rules = rules?;
+        let index = rules.country_index(country)?;
+        rules
+            .country_insignia_pcx(index.0)
+            .or_else(|| flag_pcx_for_side_item_data(i32::from(index.0)).map(str::to_owned))
+    };
+    let roles =
+        std::array::from_fn(|role| {
+            let Some(owner) = details.owners[role].as_deref() else {
+                return VmceLobbyRoleSlot::Waiting;
+            };
+            let Some((participant, human)) = launch.humans.iter().enumerate().find(|(_, human)| {
+                !human.is_observer() && human.role.native_value() == role as i32
+            }) else {
+                return VmceLobbyRoleSlot::Waiting;
+            };
+            VmceLobbyRoleSlot::Claimed(VmceLobbyRole {
+                role: owner.to_owned(),
+                country: details.countries[role].as_deref().map(country_text),
+                flag: details.countries[role].as_deref().and_then(country_flag),
+                color: details.colors[role],
+                host: human.raw_slot_index == Some(0),
+                ready: session.network_player_ready(participant),
+            })
+        });
+    // Two authored roles whose Houses share one Country are a lobby error the
+    // player can see before Ready; name the first pair.
+    let mut status = vmce_role_conflict(details).map(|(owner, country, other)| {
+        crate::i18n::tr_fill(
+            "VERA:VmceStatusRoleConflict",
+            &[
+                ("role", &label(state, owner)),
+                ("country", &country_text(country)),
+                ("other", &other),
+            ],
+        )
+    });
+    // A guest whose local map/series cannot match the host's is the stronger
+    // warning: the room cannot start until it is repaired.
+    if let Some(local) = state
+        .frontend
+        .network_setup_protocol
+        .as_ref()
+        .and_then(|protocol| protocol.vmce_lobby_status)
+    {
+        status = Some(match local {
+            super::VmceLobbyStatus::MissingAssets => crate::i18n::tr("VERA:VmceStatusMissingMap"),
+            super::VmceLobbyStatus::MapMismatch => crate::i18n::tr("VERA:VmceStatusMapMismatch"),
+        });
+    }
+    (roles, status)
 }
 
 /// Whether the local player could press Accept (`SetupView::accept_enabled`).
@@ -707,13 +848,6 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             };
             row_icons[visible_row] = Some(SetupRowIcon {
                 country: flag,
-                #[cfg(feature = "vmce")]
-                vera_house_color: human.and_then(|(_, human)| {
-                    let role = usize::try_from(human.role.native_value()).ok()?;
-                    vera_details.as_ref()?.colors.get(role).copied().flatten()
-                }),
-                #[cfg(feature = "vmce")]
-                vera_player: human.is_some_and(|(_, human)| !human.is_observer()),
                 // 0x5EA3E0: wolhost.pcx on the human row named [0xA8D610];
                 // a WOL guest learns it from the user list, otherwise the
                 // host is row 0.
@@ -776,6 +910,22 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             .find(|human| human.raw_slot_index == Some(row))?;
         ping_icon(protocol.ping(&human.name)?)
     });
+    #[cfg(feature = "vmce")]
+    let (vmce_roles, vmce_status): (
+        [crate::ui::multiplayer_setup::VmceLobbyRoleSlot; 4],
+        Option<String>,
+    ) = if mode.class.is_vmce() {
+        vmce_lobby_board(
+            state,
+            launch,
+            vera_details.as_ref().expect("VERA map details"),
+        )
+    } else {
+        (
+            std::array::from_fn(|_| crate::ui::multiplayer_setup::VmceLobbyRoleSlot::Waiting),
+            None,
+        )
+    };
     Some(SetupView {
         first_row,
         row_count,
@@ -851,11 +1001,15 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         #[cfg(feature = "vmce")]
         vmce: mode.class.is_vmce(),
         #[cfg(feature = "vmce")]
+        vmce_roles,
+        #[cfg(feature = "vmce")]
+        vmce_status,
+        #[cfg(feature = "vmce")]
         cooperative_description: if mode.class.is_vmce() {
             Some(
                 vera_details
                     .and_then(|details| details.briefing)
-                    .unwrap_or_else(|| "Mission briefing unavailable".to_owned()),
+                    .unwrap_or_else(|| crate::i18n::tr("VERA:VmceBriefingUnavailable")),
             )
         } else {
             coop.as_ref()
@@ -903,6 +1057,11 @@ mod tests {
         assert_eq!(details.colors[0], Some([255, 0, 0]));
         assert_eq!(details.colors[1], Some([0, 0, 255]));
         assert_eq!(details.colors[2], None);
+        // The board's Country column comes from each role House's own
+        // authored Country, and is absent beyond the authored roles.
+        assert_eq!(details.countries[0].as_deref(), Some("Americans"));
+        assert_eq!(details.countries[1].as_deref(), Some("Americans"));
+        assert_eq!(details.countries[2], None);
     }
 
     #[cfg(feature = "vmce")]

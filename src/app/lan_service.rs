@@ -1108,7 +1108,16 @@ fn reject_setup_compatibility(state: &mut AppState, message: &str) {
             color: u32::MAX,
         },
     );
-    super::shell_network_setup::fail_go_handoff(state);
+    // A VMCE room names the blocking cause in the native box: a peer's build
+    // or its selected-mode rules closure differs. Other rooms keep the native
+    // TXT_UNABLE_PLAY_WAAUGH box unchanged.
+    let vmce_notice = state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vmce())
+        .then(|| crate::i18n::tr("VERA:VmceBlockingVersionMismatch"));
+    super::shell_network_setup::fail_go_handoff_with(state, vmce_notice);
 }
 
 /// Recheck after a received map/seed closure is installed, before status1,

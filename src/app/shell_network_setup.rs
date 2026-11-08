@@ -24,9 +24,9 @@ pub(crate) mod maps;
 mod service;
 pub(crate) use service::{
     HostOptions, NetworkSetupEvent, accept_network_map_source, accept_network_random_map_preview,
-    fail_go_handoff, invalidate_network_agreement, poll, prepare_lan_guest_handoff,
-    refuse_local_acceptance, report_local_map_unavailable, service_event, set_network_map_progress,
-    withdraw_local_acceptance,
+    fail_go_handoff, fail_go_handoff_with, invalidate_network_agreement, poll,
+    prepare_lan_guest_handoff, refuse_local_acceptance, report_local_map_unavailable,
+    service_event, set_network_map_progress, withdraw_local_acceptance,
 };
 pub(crate) mod view;
 mod wol;
@@ -49,6 +49,7 @@ use crate::app::match_runtime::session::SessionMode;
 use crate::app::shell_lan::LanJoinAcceptance;
 use crate::skirmish_launch::{SkirmishHumanSlot, SkirmishLaunchSession};
 use crate::ui::multiplayer_setup::{MultiplayerSetupState, SetupDialog, SetupFlavor};
+use crate::ui::skirmish_shell::SkirmishValidationModalState;
 use crate::ui::wol_chat::WolChatLine;
 use crate::util::time::Instant;
 
@@ -142,8 +143,21 @@ pub(crate) enum OnlineStartPhase {
 #[derive(Debug, Clone, Default)]
 pub(super) struct VmceMapDetails {
     pub owners: [Option<String>; 4],
+    /// Each role House's authored `Country=`, for the lobby's role board.
+    pub countries: [Option<String>; 4],
     pub colors: [Option<[u8; 3]>; 4],
     pub briefing: Option<String>,
+}
+
+/// A VMCE guest's local campaign/map problem, shown in the lobby's inline
+/// status bar after the host's options revision is parsed.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VmceLobbyStatus {
+    /// The host's map or its campaign.ini is not installed locally.
+    MissingAssets,
+    /// A local copy exists but its bytes or series differ from the host's.
+    MapMismatch,
 }
 
 pub(crate) struct NetworkSetupProtocol {
@@ -152,6 +166,11 @@ pub(crate) struct NetworkSetupProtocol {
     #[cfg(feature = "vmce")]
     pub(super) vmce_role_cache:
         std::cell::RefCell<Option<(std::path::PathBuf, String, String, VmceMapDetails)>>,
+    /// The last local campaign/map admission failure a VMCE guest saw. The
+    /// lobby's inline status bar reads it; a later successful admission
+    /// clears it.
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_lobby_status: Option<VmceLobbyStatus>,
     locked: bool,
     /// WOL Quick Match (`[0xA8B244]` 1): the game channel's nodes and start
     /// run without C2/C9 (`0x007A6208..0x007A6229`, `0x0078A36C..0x0078A386`)
@@ -376,6 +395,8 @@ impl NetworkSetupProtocol {
         Self {
             #[cfg(feature = "vmce")]
             vmce_role_cache: std::cell::RefCell::new(None),
+            #[cfg(feature = "vmce")]
+            vmce_lobby_status: None,
             locked: false,
             quick_match,
             external: false,
@@ -427,6 +448,13 @@ impl NetworkSetupProtocol {
 
     pub(crate) fn start_in_progress(&self) -> bool {
         self.wol_start_pending || self.online_start_preparing
+    }
+
+    /// Record or clear a VMCE guest's local campaign/map admission problem.
+    /// Display state only; the map-status owner remains the admission flag.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn set_vmce_lobby_status(&mut self, status: Option<VmceLobbyStatus>) {
+        self.vmce_lobby_status = status;
     }
 
     /// VERA: the next join is the kept room's partner coming back.
@@ -657,6 +685,26 @@ fn chat_notice(state: &mut AppState, key: &str, args: &[crate::assets::csf_file:
             color: u32::MAX,
         },
     );
+}
+
+/// The setup page's blocking message box (`0xCE` over the empty shell
+/// backdrop), as the native TXT_UNABLE_PLAY_WAAUGH path presents it. The
+/// dialog keeps its native auto-sizing.
+pub(crate) fn show_blocking_notice(state: &mut AppState, message: String) {
+    let ok = App::csf_label(state, "TXT_OK", "TXT_OK");
+    let Some(ui) = state.frontend.multiplayer_setup.as_mut() else {
+        return;
+    };
+    ui.notice = Some(SkirmishValidationModalState::new(message, ok));
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.return_after_notice = true;
+        protocol.lan_go = Some(LanGoWait::Failed);
+    }
+    state
+        .frontend
+        .shell_controller
+        .push(crate::ui::shell::descriptor::DialogId(0xCE), true);
+    state.platform.window.request_redraw();
 }
 
 pub(crate) fn dialog(state: &AppState) -> SetupDialog {
@@ -978,6 +1026,14 @@ fn install_setup(
                 .accept_network_map_metadata(metadata, None, true)?;
         }
     }
+    show_setup_dialog(state, dialog, quick_match);
+    Ok(())
+}
+
+/// Present an already admitted setup page: the dialog, its UI state and the
+/// shell route. Shared by the production admission and the VMCE lobby capture
+/// fixture so both show the same page.
+fn show_setup_dialog(state: &mut AppState, dialog: SetupDialog, quick_match: bool) -> bool {
     state.frontend.lan = None;
     let mut setup_ui = MultiplayerSetupState::default();
     // VERA's rooms list their players first, from the first page.
@@ -998,7 +1054,7 @@ fn install_setup(
     if quick_match {
         // 0x117 stays up and takes the lines; no dialog opens.
         state.platform.window.request_redraw();
-        return Ok(());
+        return false;
     }
     state.frontend.shell_route = crate::app::shell_route::ShellRoute::NetworkSetup;
     state
@@ -1009,13 +1065,215 @@ fn install_setup(
     state.frontend.skirmish_preview_texture = None;
     shell_transition::invalidate_main_menu_dialog_instance(state);
     state.platform.window.request_redraw();
+    true
+}
+
+/// Dev diagnostics: the VMCE lobby states a shell capture reviews without a
+/// live network visit. State only; every paint path remains the production
+/// setup renderer.
+#[cfg(feature = "vmce")]
+pub(crate) struct VmceLobbyFixture {
+    pub host: bool,
+    /// Participants that claimed authored roles 1..N (the rest are Random).
+    pub claimed_roles: usize,
+    /// Remote participants show the native accepted glyph.
+    pub peer_ready: bool,
+    /// A local campaign/map admission problem for the inline status bar.
+    pub status: Option<VmceLobbyStatus>,
+    /// A blocking message shown in the native message box.
+    pub blocking: Option<String>,
+}
+
+/// Admit a synthetic VMCE LAN room into the production session/UI owners so
+/// the ordinary setup renderer can present it. No map file is read: the
+/// fixture supplies the role board data through the protocol's role cache.
+/// Retail art and rules are still required, as for every shell capture.
+#[cfg(feature = "vmce")]
+pub(crate) fn install_vmce_lobby_fixture(
+    state: &mut AppState,
+    fixture: &VmceLobbyFixture,
+) -> anyhow::Result<()> {
+    use crate::skirmish_launch::{
+        LaunchCountry, LaunchHumanRole, LaunchStartPosition, LaunchTeam, PreFillHouseRoster,
+        SkirmishHumanSlot, SkirmishLaunchMode, SkirmishLocalSlot,
+    };
+    let mode = state
+        .frontend
+        .skirmish_modes
+        .iter()
+        .find(|mode| mode.class.is_vmce())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("VMCE mode is not registered in this build"))?;
+    anyhow::ensure!(
+        state.platform.game_config.is_some(),
+        "VMCE lobby capture needs the retail asset directory"
+    );
+    let file = "VMCE/Capture/mission.map".to_owned();
+    let count = if fixture.host { 4 } else { 2 };
+    let humans: Vec<SkirmishHumanSlot> = (0..count)
+        .map(|index| {
+            let role = if fixture.host {
+                if index < fixture.claimed_roles {
+                    LaunchHumanRole::Player {
+                        group: index as i32,
+                    }
+                } else {
+                    LaunchHumanRole::Player { group: -2 }
+                }
+            } else if index > 0 && index <= fixture.claimed_roles {
+                LaunchHumanRole::Player {
+                    group: index as i32 - 1,
+                }
+            } else {
+                LaunchHumanRole::Player { group: -2 }
+            };
+            let row = if fixture.host {
+                index
+            } else {
+                // A LAN guest's roster is local-first but the host keeps the
+                // visible row 0; the local participant takes row 1.
+                (index + 1) % count
+            };
+            SkirmishHumanSlot {
+                raw_slot_index: Some(row as u8),
+                name: format!("Player {}", index + 1),
+                slot: SkirmishLocalSlot {
+                    country: LaunchCountry::America,
+                    country_random: false,
+                    color_index: index as u8,
+                    color_random: false,
+                    start_position: LaunchStartPosition::Auto,
+                    team: LaunchTeam::None,
+                },
+                role,
+            }
+        })
+        .collect();
+    let mut launch = SkirmishLaunchSession {
+        mode: SkirmishLaunchMode::from_game_mode(&mode),
+        selected_map_file: None,
+        humans,
+        local_player_index: 0,
+        ai_player_count: 0,
+        opponents: Vec::new(),
+        pre_fill_house_roster: PreFillHouseRoster::from_compact_skirmish(0),
+        options: state
+            .frontend
+            .skirmish_shell_state
+            .launch_options_base
+            .clone(),
+    };
+    launch.rebuild_house_roster();
+    let dialog = SetupDialog {
+        host: fixture.host,
+        flavor: SetupFlavor::Lan,
+        modern: true,
+    };
+    state
+        .match_state
+        .session
+        .enter_network(crate::app::match_runtime::session::NetworkReturnContext::LanLobby);
+    install_setup(
+        state,
+        launch.clone(),
+        dialog,
+        [NetworkVacancy::Open; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT],
+        None,
+    )?;
+    let mut host_options = launch;
+    host_options.selected_map_file = Some(file.clone());
+    if fixture.host {
+        state
+            .match_state
+            .session
+            .select_network_map(host_options.mode.clone(), file.clone(), 4)?;
+    } else {
+        state.match_state.session.accept_network_host_setup(
+            host_options,
+            [NetworkVacancy::Open; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT],
+            4,
+            None,
+            false,
+        )?;
+    }
+    let metadata = crate::app::match_runtime::session::NetworkMapMetadata {
+        display_name: "VMCE Capture Mission".to_owned(),
+        player_capacity: 4,
+        official: false,
+        byte_length: 1024,
+        digest: "c".repeat(64),
+        source_sha256: "a".repeat(64),
+        effective_digest: "b".repeat(64),
+    };
+    state.match_state.session.accept_network_map_metadata(
+        metadata.clone(),
+        Some(&metadata.display_name),
+        true,
+    )?;
+    let session = &mut state.match_state.session;
+    for index in 0..session
+        .network_setup()
+        .map_or(0, |launch| launch.humans.len())
+    {
+        session.set_network_player_ready(index, fixture.host || index > 0)?;
+    }
+    if !fixture.host {
+        session.set_network_player_ready(0, false)?;
+    }
+    let details = VmceMapDetails {
+        owners: [
+            Some("Alpha".to_owned()),
+            Some("Bravo".to_owned()),
+            Some("Charlie".to_owned()),
+            Some("Delta".to_owned()),
+        ],
+        countries: [
+            Some("Americans".to_owned()),
+            Some("Russians".to_owned()),
+            Some("French".to_owned()),
+            Some("Germans".to_owned()),
+        ],
+        colors: [
+            Some([255, 0, 0]),
+            Some([0, 0, 255]),
+            Some([0, 255, 0]),
+            Some([255, 255, 0]),
+        ],
+        briefing: Some(
+            "Synthetic VMCE lobby fixture; not native-parity evidence. This space stands in \
+             for the authored mission briefing, which wraps over these lines and fills the \
+             panel between the roster and the native difficulty row."
+                .to_owned(),
+        ),
+    };
+    let root = state
+        .platform
+        .game_config
+        .as_ref()
+        .expect("checked asset directory")
+        .paths
+        .ra2_dir
+        .clone();
+    let digest = format!("{}:{}", metadata.source_sha256, "");
+    let protocol = state
+        .frontend
+        .network_setup_protocol
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("setup protocol was not installed"))?;
+    protocol
+        .vmce_role_cache
+        .replace(Some((root, file.to_ascii_lowercase(), digest, details)));
+    protocol.set_vmce_lobby_status(fixture.status);
+    protocol.requests.clear();
+    if let Some(message) = &fixture.blocking {
+        let ok = App::csf_label(state, "TXT_OK", "TXT_OK");
+        if let Some(ui) = state.frontend.multiplayer_setup.as_mut() {
+            ui.notice = Some(SkirmishValidationModalState::new(message.clone(), ok));
+        }
+    }
     Ok(())
 }
 
-/// `[0xA8B254]` after the host's map choice (BC open `0x005ED668`, Use Map
-/// `0x005E7370`, C2 `0x00790DFE`): the selected map's record, or 0 when it
-/// has none (`0x005ED660`). Quick Match's setup has no dialog and never
-/// writes it, nor does an options parse.
 /// RESIDUAL: a guest's dialog init writes it too (C9 `0x00792978` with the
 /// mode's `+0x44` default, the LAN lobby `0x005DCB3B`/`0x005DDA8C`); VERA's
 /// guests keep the previous value. Only a guest's `+0x20` before the host's

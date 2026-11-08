@@ -424,12 +424,32 @@ impl SetupTrackbar {
 #[derive(Debug, Clone)]
 pub(crate) struct SetupRowIcon {
     pub(crate) country: Option<String>,
-    #[cfg(feature = "vmce")]
-    pub(crate) vera_house_color: Option<[u8; 3]>,
-    #[cfg(feature = "vmce")]
-    pub(crate) vera_player: bool,
     pub(crate) host: bool,
     pub(crate) accepted: bool,
+}
+
+/// One claimed slot of a VMCE room's authored campaign roles.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone)]
+pub(crate) struct VmceLobbyRole {
+    /// The primary House the role controls.
+    pub(crate) role: String,
+    /// The House's authored country, localized when the rules know it.
+    pub(crate) country: Option<String>,
+    /// The country insignia PCX the chrome atlas loaded.
+    pub(crate) flag: Option<String>,
+    /// The authored House color, shown as the board's swatch.
+    pub(crate) color: Option<[u8; 3]>,
+    pub(crate) host: bool,
+    pub(crate) ready: bool,
+}
+
+/// A board slot: an authored role with its claimant, or a native vacancy.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone)]
+pub(crate) enum VmceLobbyRoleSlot {
+    Waiting,
+    Claimed(VmceLobbyRole),
 }
 #[derive(Debug, Clone)]
 pub(crate) struct SetupView {
@@ -470,6 +490,13 @@ pub(crate) struct SetupView {
     /// VERA's map-authored campaign mode, separate from retail Cooperative.
     #[cfg(feature = "vmce")]
     pub(crate) vmce: bool,
+    /// The four authored campaign role slots, in order, for the VMCE board.
+    #[cfg(feature = "vmce")]
+    pub(crate) vmce_roles: [VmceLobbyRoleSlot; 4],
+    /// The VMCE inline status line: a local asset/role problem the guest or
+    /// host must fix before Ready/Start. Empty when the room is consistent.
+    #[cfg(feature = "vmce")]
+    pub(crate) vmce_status: Option<String>,
     pub(crate) cooperative_description: Option<String>,
 }
 impl SetupView {
@@ -719,6 +746,32 @@ pub(crate) struct GameOptionsLayout {
 const ROSTER_BUTTON_W: i32 = 124;
 const ROSTER_BUTTON_H: i32 = 24;
 
+/// VERA's display-only role board in a VMCE LAN room: the map's authored
+/// `Basic Player1..Player4` roles, listed right of the participant columns.
+/// Paint-only; no cell is a control or a hit target.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VmceLobbySidebar {
+    /// Role / Country / Ready+Host / Color column captions.
+    pub(crate) headers: [(&'static str, RectPx); 4],
+    /// The four role slots, in campaign order.
+    pub(crate) rows: [VmceLobbySidebarRow; 4],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VmceLobbySidebarRow {
+    pub(crate) role: RectPx,
+    pub(crate) country: RectPx,
+    pub(crate) status: RectPx,
+    pub(crate) color: RectPx,
+}
+
+/// The VMCE room's inline status bar, directly under the roster/sidebar
+/// block. Its height admits the native font's two lines.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VmceLobbyStatusBar {
+    pub(crate) frame: RectPx,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct MultiplayerSetupLayout {
     pub(crate) page: MenuPageLayout,
@@ -750,6 +803,10 @@ pub(crate) struct MultiplayerSetupLayout {
     /// is right-anchored. `None` on BC/BD/C2.
     pub(crate) no_preview: Option<RectPx>,
     pub(crate) cooperative_description: RectPx,
+    /// VERA's VMCE role board; `None` outside a VMCE LAN room.
+    pub(crate) vmce_sidebar: Option<VmceLobbySidebar>,
+    /// VERA's VMCE inline status bar; `None` outside a VMCE LAN room.
+    pub(crate) vmce_status_bar: Option<VmceLobbyStatusBar>,
     pub(crate) mode_label: RectPx,
     pub(crate) map_label: RectPx,
 }
@@ -888,6 +945,8 @@ impl MultiplayerSetupLayout {
             game_options: None,
             map_offer: crate::ui::shell::modal::quit_confirm_layout(width, height),
             cooperative_description: rect(60, 98, 540, 143),
+            vmce_sidebar: None,
+            vmce_status_bar: None,
             no_preview: (dialog.wol() && !host).then(|| rect(650, 37, 145, 113)),
             map_preview: scale.scale_rect(anchor_rect(
                 crate::ui::shell::descriptor::AnchorRule::RightAnchor,
@@ -1302,6 +1361,10 @@ mod tests {
             cooperative: false,
             #[cfg(feature = "vmce")]
             vmce: false,
+            #[cfg(feature = "vmce")]
+            vmce_roles: std::array::from_fn(|_| VmceLobbyRoleSlot::Waiting),
+            #[cfg(feature = "vmce")]
+            vmce_status: None,
             cooperative_description: None,
         };
         let center = |rect: RectPx| (rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -1337,7 +1400,7 @@ mod tests {
                 })
                 .collect();
             let mut coop = MultiplayerSetupLayout::new(view.dialog, 800, 600, true);
-            crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600);
+            crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600, false);
             for id in [SPEED, DIFFICULTY] {
                 let (x, y) = center(coop.control_rect(id).unwrap());
                 assert_eq!(coop.control_at(&view, x, y), Some(id));

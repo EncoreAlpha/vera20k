@@ -720,6 +720,28 @@ impl App {
             ) {
                 Ok(()) => true,
                 Err(error) => {
+                    // A VMCE campaign manifest that names neither NextScenario
+                    // nor EndOfGame=yes is a blocking lobby error: close the
+                    // chooser and name it in the native message box.
+                    #[cfg(feature = "vmce")]
+                    if state
+                        .frontend
+                        .skirmish_modes
+                        .iter()
+                        .find(|mode| mode.id == selection.mode_id)
+                        .is_some_and(|mode| mode.class.is_vmce())
+                        && error.to_string() == crate::i18n::tr("VERA:VmceCampaignInvalid")
+                    {
+                        let map = selected_file_name.clone();
+                        crate::app::shell_network_setup::show_blocking_notice(
+                            state,
+                            crate::i18n::tr_fill(
+                                "VERA:VmceBlockingInvalidCampaign",
+                                &[("map", &map)],
+                            ),
+                        );
+                        return true;
+                    }
                     log::warn!("Could not accept LAN map selection: {error:#}");
                     false
                 }

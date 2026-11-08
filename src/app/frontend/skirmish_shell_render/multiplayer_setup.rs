@@ -29,6 +29,8 @@ use crate::render::shell_paint::{self, ModalButton, PaintLabel};
 use crate::render::shell_text::{self, ShellAlign, ShellTextDraw};
 use crate::ui::multiplayer_setup::*;
 use crate::ui::shell::geom::RectPx;
+#[cfg(feature = "vmce")]
+use crate::ui::shell::geom::ShellScale;
 use crate::util::time::Instant;
 
 pub(crate) fn render_multiplayer_setup(
@@ -233,13 +235,11 @@ pub(crate) fn render_multiplayer_setup(
         {
             texts.push(text(
                 &if vmce {
-                    crate::i18n::tr(match *key {
-                        "GUI:Players" => "VERA:VmcePlayers",
-                        "GUI:Side" => "VERA:VmceFaction",
-                        "GUI:StartPosition" => "VERA:VmceStartPosition",
-                        "GUI:Team" => "VERA:VmceCoopRole",
-                        _ => key,
-                    })
+                    match *key {
+                        "GUI:Players" => crate::i18n::tr("VERA:VmcePlayers"),
+                        "GUI:Team" => crate::i18n::tr("VERA:VmceCoopRole"),
+                        _ => crate::i18n::tr(key),
+                    }
                 } else {
                     localized_label(state, key, key)
                 },
@@ -353,20 +353,10 @@ pub(crate) fn render_multiplayer_setup(
             let Some(icon) = icon else {
                 continue;
             };
-            #[cfg(feature = "vmce")]
-            if vmce && icon.vera_player {
-                let rect = layout.flags[row];
-                let rgb = icon.vera_house_color.map_or([0.12, 0.12, 0.12], |color| {
-                    color.map(|value| f32::from(value) / 255.0)
-                });
-                push_solid_rect(&mut controls, atlas, rect, rgb, SHELL_CONTROL_DEPTH);
-                push_rect_outline(
-                    &mut controls,
-                    atlas,
-                    rect,
-                    [0.5, 0.5, 0.5],
-                    SHELL_CONTROL_DEPTH - 0.00002,
-                );
+            // A VMCE room shows participant state on its display-only role
+            // board instead of the native per-row flag/acceptance icons.
+            if vmce {
+                continue;
             }
             if !vmce
                 && let Some(flag) = icon
@@ -458,6 +448,18 @@ pub(crate) fn render_multiplayer_setup(
                 SHELL_LABEL_TEXT_RGB,
                 SHELL_CONTROL_TEXT_DEPTH,
             ));
+        }
+        #[cfg(feature = "vmce")]
+        if vmce {
+            paint_vmce_lobby_board(
+                &mut controls,
+                &mut texts,
+                state,
+                &view,
+                &layout,
+                &text,
+                scale,
+            );
         }
         push_new_edit(
             &mut controls,
@@ -928,6 +930,212 @@ pub(crate) fn render_multiplayer_setup(
     }
     state.platform.window.request_redraw();
     Ok(())
+}
+
+/// The VMCE room's display-only role board and inline status strip. Uses the
+/// native bit font, roster row pitch, loaded country flags and the shell's own
+/// flat primitives for swatches/borders; nothing here is a control or hit
+/// target, and no native art is retinted.
+#[cfg(feature = "vmce")]
+#[allow(clippy::too_many_arguments)]
+fn paint_vmce_lobby_board(
+    controls: &mut Vec<SpriteInstance>,
+    texts: &mut Vec<ShellTextDraw>,
+    state: &AppState,
+    view: &SetupView,
+    layout: &MultiplayerSetupLayout,
+    text: &dyn Fn(&str, RectPx, ShellAlign, [f32; 3], f32) -> ShellTextDraw,
+    scale: ShellScale,
+) {
+    let (Some(atlas), Some(board)) = (
+        state.frontend.skirmish_shell_chrome.as_ref(),
+        layout.vmce_sidebar,
+    ) else {
+        return;
+    };
+    let border = [0.42, 0.34, 0.22];
+    let separator = [0.24, 0.20, 0.14];
+    let disabled_rgb = [0.10, 0.10, 0.10];
+    let outline_rgb = [0.34, 0.32, 0.28];
+    let first = board.rows[0];
+    let last = board.rows[3];
+    let left = first.role.x;
+    let right = last.color.x + last.color.w;
+    let top = board.headers[0].1.y;
+    let bottom = last.role.y + last.role.h;
+    push_rect_outline(
+        controls,
+        atlas,
+        RectPx::new(left - 1, top - 1, right - left + 3, bottom - top + 2),
+        border,
+        SHELL_CONTROL_DEPTH - 0.00003,
+    );
+    push_solid_rect(
+        controls,
+        atlas,
+        RectPx::new(
+            left,
+            board.headers[0].1.y + board.headers[0].1.h + 1,
+            right - left,
+            1,
+        ),
+        separator,
+        SHELL_CONTROL_DEPTH - 0.00002,
+    );
+    for (key, rect) in board.headers {
+        texts.push(text(
+            &crate::i18n::tr(key),
+            RectPx::new(rect.x + 2, rect.y, rect.w - 4, rect.h),
+            ShellAlign::NONE,
+            SHELL_LABEL_TEXT_RGB,
+            SHELL_CONTROL_TEXT_DEPTH,
+        ));
+    }
+    for (slot, cells) in view.vmce_roles.iter().zip(board.rows.iter()) {
+        match slot {
+            VmceLobbyRoleSlot::Waiting => {
+                // Native vacancy style: the localized waiting label spans the
+                // Role+Country cells; status stays blank and the swatch is
+                // the disabled variant.
+                texts.push(text(
+                    &localized_label(state, "GUI:Waiting", "Waiting"),
+                    RectPx::new(
+                        cells.role.x + 2,
+                        cells.role.y,
+                        cells.country.x + cells.country.w - cells.role.x - 4,
+                        cells.role.h,
+                    ),
+                    ShellAlign::V_CENTER,
+                    SHELL_LABEL_TEXT_RGB,
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
+                let swatch = RectPx::new(
+                    cells.color.x + 4,
+                    cells.color.y + 4,
+                    cells.color.w - 8,
+                    cells.color.h - 8,
+                );
+                push_solid_rect(controls, atlas, swatch, disabled_rgb, SHELL_CONTROL_DEPTH);
+                push_rect_outline(
+                    controls,
+                    atlas,
+                    swatch,
+                    outline_rgb,
+                    SHELL_CONTROL_DEPTH - 0.00002,
+                );
+            }
+            VmceLobbyRoleSlot::Claimed(role) => {
+                texts.push(text(
+                    &role.role,
+                    RectPx::new(
+                        cells.role.x + 2,
+                        cells.role.y,
+                        cells.role.w - 4,
+                        cells.role.h,
+                    ),
+                    ShellAlign::V_CENTER,
+                    SHELL_LABEL_TEXT_RGB,
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
+                let mut country_x = cells.country.x + 2;
+                if let Some(flag) = role
+                    .flag
+                    .as_deref()
+                    .and_then(|flag| atlas.lan_player_side(flag))
+                {
+                    let flag_rect = RectPx::new(
+                        cells.country.x + 2,
+                        cells.country.y + 3,
+                        18,
+                        cells.country.h - 6,
+                    );
+                    push_flag_entry_clipped_centered(
+                        controls,
+                        flag,
+                        flag_rect,
+                        scale,
+                        SHELL_CONTROL_DEPTH,
+                    );
+                    country_x = flag_rect.x + flag_rect.w + 2;
+                }
+                if let Some(country) = &role.country {
+                    texts.push(text(
+                        country,
+                        RectPx::new(
+                            country_x,
+                            cells.country.y,
+                            cells.country.x + cells.country.w - country_x - 2,
+                            cells.country.h,
+                        ),
+                        ShellAlign::V_CENTER,
+                        SHELL_LABEL_TEXT_RGB,
+                        SHELL_CONTROL_TEXT_DEPTH,
+                    ));
+                }
+                if let Some(status) = atlas.lan_player_status(role.host, role.ready) {
+                    push_flag_entry_clipped_centered(
+                        controls,
+                        status,
+                        RectPx::new(
+                            cells.status.x + 2,
+                            cells.status.y + 2,
+                            cells.status.w - 4,
+                            cells.status.h - 4,
+                        ),
+                        scale,
+                        SHELL_CONTROL_DEPTH,
+                    );
+                }
+                let rgb = role.color.map_or(disabled_rgb, |color| {
+                    color.map(|value| f32::from(value) / 255.0)
+                });
+                let swatch = RectPx::new(
+                    cells.color.x + 4,
+                    cells.color.y + 4,
+                    cells.color.w - 8,
+                    cells.color.h - 8,
+                );
+                push_solid_rect(controls, atlas, swatch, rgb, SHELL_CONTROL_DEPTH);
+                push_rect_outline(
+                    controls,
+                    atlas,
+                    swatch,
+                    outline_rgb,
+                    SHELL_CONTROL_DEPTH - 0.00002,
+                );
+            }
+        }
+    }
+    if let Some(bar) = layout.vmce_status_bar {
+        push_solid_rect(
+            controls,
+            atlas,
+            bar.frame,
+            [0.03, 0.03, 0.03],
+            SHELL_CONTROL_DEPTH - 0.00004,
+        );
+        push_rect_outline(
+            controls,
+            atlas,
+            bar.frame,
+            border,
+            SHELL_CONTROL_DEPTH - 0.00003,
+        );
+        if let Some(status) = &view.vmce_status {
+            texts.push(text(
+                status,
+                RectPx::new(
+                    bar.frame.x + 4,
+                    bar.frame.y + 2,
+                    bar.frame.w - 8,
+                    bar.frame.h - 4,
+                ),
+                ShellAlign::NONE,
+                SHELL_LABEL_TEXT_RGB,
+                SHELL_CONTROL_TEXT_DEPTH,
+            ));
+        }
+    }
 }
 
 /// The game options, in the room or in VERA's Game Options popup: their

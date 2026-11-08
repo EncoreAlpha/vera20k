@@ -378,18 +378,30 @@ fn receive_options_text(
     }
     #[cfg(feature = "vmce")]
     let local_vmce_config = if options.launch.mode.class.is_vmce() {
+        let mut failure = None;
         let resolved = vmce_series.as_ref().and_then(|identity| {
-            let (config, digest) = crate::app::shell_network_setup::resolve_local_vmce_config(
+            let (config, digest) = match crate::app::shell_network_setup::resolve_local_vmce_config(
                 state,
                 &selected_map_file,
                 &identity.directory,
                 &source_sha256,
-            )
-            .ok()?;
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    failure = Some(error);
+                    return None;
+                }
+            };
             campaign_identity_matches(identity, &config, &digest).then_some(config)
         });
         if resolved.is_none() && !state.match_state.session.host() {
             report_coop_campaign_unavailable(state);
+        }
+        if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+            let status = resolved
+                .is_none()
+                .then(|| classify_vmce_campaign_failure(failure.as_ref()));
+            protocol.set_vmce_lobby_status(status);
         }
         resolved
     } else {
@@ -462,7 +474,7 @@ fn campaign_identity_matches(
 pub(super) fn report_coop_campaign_unavailable(state: &mut AppState) {
     #[cfg(feature = "vmce")]
     {
-        let text = "VMCE requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+        let text = crate::i18n::tr("VERA:VmceMapMissing");
         crate::app::shell_lan::append_chat(
             state,
             crate::ui::lan_shell::LanChatLine {
@@ -473,6 +485,26 @@ pub(super) fn report_coop_campaign_unavailable(state: &mut AppState) {
     }
     #[cfg(not(feature = "vmce"))]
     let _ = state;
+}
+
+/// Classify a failed local campaign/map admission for the lobby's inline
+/// status bar: a present-but-different copy is a digest/source mismatch, and
+/// anything missing is an install problem.
+#[cfg(feature = "vmce")]
+fn classify_vmce_campaign_failure(
+    error: Option<&anyhow::Error>,
+) -> crate::app::shell_network_setup::VmceLobbyStatus {
+    use crate::app::shell_network_setup::VmceLobbyStatus;
+    let text = error.map(|error| format!("{error:#}")).unwrap_or_default();
+    if text.contains("differs")
+        || text.contains("does not list")
+        || text.contains("does not match")
+        || text.contains("changed")
+    {
+        VmceLobbyStatus::MapMismatch
+    } else {
+        VmceLobbyStatus::MissingAssets
+    }
 }
 
 /// Re-read local files at each prepare/start boundary. A valid snapshot at
@@ -2200,6 +2232,42 @@ mod tests {
         assert_eq!(
             guest, before,
             "tampered config cannot alter accepted session state"
+        );
+    }
+
+    /// A local copy that exists but differs is a digest/source mismatch; a
+    /// missing map, directory or campaign.ini is an install problem. The
+    /// lobby's inline status bar picks its message from this.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_campaign_failure_classification_names_missing_or_mismatched_bytes() {
+        use crate::app::shell_network_setup::VmceLobbyStatus;
+        let mismatch = [
+            "local VMCE map differs from host map",
+            "local campaign does not list the host's selected map",
+            "host-advertised VMCE series does not match the selected map",
+        ];
+        for message in mismatch {
+            assert_eq!(
+                classify_vmce_campaign_failure(Some(&anyhow::anyhow!(message))),
+                VmceLobbyStatus::MapMismatch,
+                "{message}"
+            );
+        }
+        let missing = [
+            "local VMCE campaign.ini is missing",
+            "local VMCE series directory is missing",
+        ];
+        for message in missing {
+            assert_eq!(
+                classify_vmce_campaign_failure(Some(&anyhow::anyhow!(message))),
+                VmceLobbyStatus::MissingAssets,
+                "{message}"
+            );
+        }
+        assert_eq!(
+            classify_vmce_campaign_failure(None),
+            VmceLobbyStatus::MissingAssets
         );
     }
 }

@@ -1138,6 +1138,17 @@ mod tests {
             "VERA:VmceReady",
             "VERA:VmceChangeMap",
             "VERA:VmceLeaveRoom",
+            "VERA:VmceRoleColumn",
+            "VERA:VmceCountryColumn",
+            "VERA:VmceReadyColumn",
+            "VERA:VmceStatusMissingMap",
+            "VERA:VmceStatusMapMismatch",
+            "VERA:VmceStatusRoleConflict",
+            "VERA:VmceBlockingInvalidCampaign",
+            "VERA:VmceBlockingVersionMismatch",
+            "VERA:VmceBriefingUnavailable",
+            "VERA:VmceColorColumn",
+            "VERA:VmceRoleChoice",
         ];
         for (tag, text) in shipped::FILES {
             let contents = parse(text);

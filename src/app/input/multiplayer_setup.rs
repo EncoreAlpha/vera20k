@@ -38,12 +38,18 @@ pub(crate) fn layout(state: &AppState) -> MultiplayerSetupLayout {
         })
         .is_some_and(|mode| mode.class.is_vmce())
     {
+        #[cfg(feature = "vmce")]
+        let status_present =
+            crate::app::shell_network_setup::view::vmce_lobby_status_present(state);
+        #[cfg(not(feature = "vmce"))]
+        let status_present = false;
         crate::ui::coop_lobby::apply(
             &mut layout,
             dialog,
             usize::from(state.match_state.session.network_player_row_limit()),
             w as i32,
             h as i32,
+            status_present,
         );
     }
     layout

@@ -5,7 +5,6 @@ use super::*;
 use crate::app::match_runtime::session::PeerChoicesChange;
 use crate::skirmish_launch::{LaunchTeam, SkirmishLaunchSession, SkirmishLocalSlot};
 use crate::ui::lan_shell::LanChatLine;
-use crate::ui::skirmish_shell::SkirmishValidationModalState;
 use crate::util::time::Instant;
 
 /// A host's full options as `0x005E3D10`'s default (digit-led) arm decodes
@@ -1377,6 +1376,12 @@ pub(crate) fn prepare_lan_guest_handoff(state: &mut AppState) -> anyhow::Result<
 }
 
 pub(crate) fn fail_go_handoff(state: &mut AppState) {
+    fail_go_handoff_with(state, None);
+}
+
+/// [`fail_go_handoff`] with a VERA-authored cause: the native
+/// TXT_UNABLE_PLAY_WAAUGH box is replaced by `notice` when it is `Some`.
+pub(crate) fn fail_go_handoff_with(state: &mut AppState, notice: Option<String>) {
     if state
         .frontend
         .network_setup_protocol
@@ -1397,25 +1402,10 @@ pub(crate) fn fail_go_handoff(state: &mut AppState) {
         App::fail_external_launch(state, "the direct start handshake failed");
         return;
     }
-    let message = App::csf_label(state, "TXT_UNABLE_PLAY_WAAUGH", "TXT_UNABLE_PLAY_WAAUGH");
-    let ok = App::csf_label(state, "TXT_OK", "OK");
-    state
-        .frontend
-        .multiplayer_setup
-        .as_mut()
-        .expect("setup interaction")
-        .notice = Some(SkirmishValidationModalState::new(message, ok));
-    let protocol = state
-        .frontend
-        .network_setup_protocol
-        .as_mut()
-        .expect("setup owner");
-    protocol.return_after_notice = true;
-    protocol.lan_go = Some(LanGoWait::Failed);
-    state
-        .frontend
-        .shell_controller
-        .push(crate::ui::shell::descriptor::DialogId(0xCE), true);
+    let message = notice.unwrap_or_else(|| {
+        App::csf_label(state, "TXT_UNABLE_PLAY_WAAUGH", "TXT_UNABLE_PLAY_WAAUGH")
+    });
+    super::show_blocking_notice(state, message);
 }
 
 fn prepare_local_map_for_handoff(state: &mut AppState) -> anyhow::Result<()> {
