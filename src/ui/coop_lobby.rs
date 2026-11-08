@@ -162,7 +162,9 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
     let headers = [
         VmceLobbyHeader {
             key: "VERA:VmceRoleColumn",
-            rect: rect(columns[0].0 + 2, header_y, columns[0].1 - 4, HEADER_H),
+            // 2 px more than the row content: the caption clears the native
+            // list frame's left bevel instead of touching it.
+            rect: rect(columns[0].0 + 4, header_y, columns[0].1 - 6, HEADER_H),
             centred: false,
         },
         VmceLobbyHeader {
@@ -356,6 +358,7 @@ mod tests {
         for (row, y) in board.rows.iter().zip([37, 63, 89, 115]) {
             assert_eq!(base(row.role).y, y);
         }
+        assert_eq!(base(board.headers[0].rect).x, 266);
         let rule = base(board.header_rule);
         assert_eq!(rule.y, 32);
         assert_eq!(rule.w, 366);
