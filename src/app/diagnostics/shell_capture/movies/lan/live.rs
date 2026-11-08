@@ -63,6 +63,11 @@ const VMCE_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
 /// setup shell for loading. A refusal keeps the host on MainMenu, so this
 /// bounded window reports the refusal instead of the generic capture timeout.
 const VMCE_START_WATCHDOG_FRAMES: u32 = 600;
+
+/// Render frames to hold the setup screen after the four-process lobby shot,
+/// giving the checkpoint readback time to finish before Start advances.
+#[cfg(feature = "vmce")]
+const VMCE_LOBBY_SHOT_FRAMES: u32 = 10;
 /// A VMCE peer that finished its own checks first keeps its transport
 /// alive while the slower peer settles, so neither fails on a peer that
 /// already exited. Both wait on each other; the wall clock bounds the wait.
@@ -192,6 +197,8 @@ enum Phase {
     Loading,
     Running,
     Finished,
+    /// `--lan-lobby-only`: the real four-process lobby frame is captured.
+    LobbyCaptured,
 }
 
 /// Read-only per-round evidence from the real AI House and production owners.
@@ -398,6 +405,9 @@ pub(super) struct LiveLanCapture {
     coop_setup_final: Option<Value>,
     coop_setup_guest_accepted: bool,
     coop_setup_started: Option<Instant>,
+    /// The render frame the VMCE host requested the four-process lobby shot.
+    #[cfg(feature = "vmce")]
+    coop_lobby_shot: Option<u32>,
     /// The render frame the VMCE host clicked the production Start.
     coop_setup_started_frame: Option<u32>,
     /// First committed frame whose authored map locked tactical input.
@@ -552,6 +562,8 @@ impl LiveLanCapture {
             coop_setup_final: None,
             coop_setup_guest_accepted: false,
             coop_setup_started: None,
+            #[cfg(feature = "vmce")]
+            coop_lobby_shot: None,
             coop_setup_started_frame: None,
             locked_frames: None,
             pair_linger_at: None,
@@ -879,6 +891,9 @@ impl LiveLanCapture {
     }
 
     pub(super) fn ready(&self) -> bool {
+        if self.phase == Phase::LobbyCaptured {
+            return true;
+        }
         if let Some(crash) = &self.setup_crash {
             return crash.ready();
         }
@@ -1041,8 +1056,12 @@ impl LiveLanCapture {
             .last()
             .and_then(|event| event["render_frame"].as_u64())
             .unwrap_or(0) as u32;
+        // A VMCE host legitimately waits in HostReady until every guest has
+        // booted and joined; the capture timeout bounds that wait instead of
+        // this progress guard.
         if frame.saturating_sub(last_action_frame) >= 1000
             && matches!(self.phase, Phase::GuestSetup | Phase::HostReady)
+            && !self.target.is_live_vmce_host()
             && state
                 .match_state
                 .session
@@ -1426,6 +1445,27 @@ impl LiveLanCapture {
             }
         }
         if !all_ready || !all_map {
+            return Ok(());
+        }
+        // Snapshot the real four-process lobby before the production Start
+        // advances to loading; the UI review needs a native lobby frame from a
+        // live room, not the synthetic fixture.
+        match self.coop_lobby_shot {
+            None => {
+                self.coop_lobby_shot = Some(frame);
+                self.request_screenshot("vera-campaign-lobby");
+                self.event(frame, "real four-process VMCE lobby captured before Start");
+                return Ok(());
+            }
+            Some(shot) if frame.saturating_sub(shot) < VMCE_LOBBY_SHOT_FRAMES => {
+                return Ok(());
+            }
+            Some(_) => {}
+        }
+        #[cfg(feature = "vmce")]
+        if self.config.as_ref().is_some_and(|config| config.lobby_only) {
+            self.phase = Phase::LobbyCaptured;
+            self.event(frame, "four-process lobby captured; stopping before Start");
             return Ok(());
         }
         let final_snapshot = vmce_setup_snapshot(state, HOST_NAME)?;
@@ -2470,7 +2510,10 @@ impl LiveLanCapture {
                     }
                     self.vera_outcome_evidence = Some(evidence);
                     self.request_screenshot("vera-campaign-end");
-                    self.event(render_frame, "VERA outcome: campaign completion returned to the menu");
+                    self.event(
+                        render_frame,
+                        "VERA outcome: campaign completion returned to the menu",
+                    );
                     self.phase = Phase::Finished;
                 } else {
                     ensure!(
@@ -2837,6 +2880,10 @@ impl LiveLanCapture {
     }
 
     pub(super) fn receipt(&self, state: &AppState) -> Result<Value> {
+        #[cfg(feature = "vmce")]
+        if self.phase == Phase::LobbyCaptured {
+            return self.vmce_lobby_receipt(state);
+        }
         if let Some(crash) = &self.setup_crash {
             return crash.receipt();
         }
@@ -2875,6 +2922,46 @@ impl LiveLanCapture {
 
     fn observed_receipt(&self, state: &AppState) -> Result<Value> {
         self.observed_receipt_through(state, None)
+    }
+
+    /// The receipt for a room stopped in the lobby: the joined roster, the
+    /// configured map and the native empty chat-log area, with no claims about
+    /// gameplay that never ran.
+    #[cfg(feature = "vmce")]
+    fn vmce_lobby_receipt(&self, state: &AppState) -> Result<Value> {
+        let session = &state.match_state.session;
+        let launch = session.network_setup().context("VMCE lobby roster")?;
+        let participants: Vec<Value> = launch
+            .humans
+            .iter()
+            .enumerate()
+            .map(|(index, human)| {
+                let row = human.raw_slot_index.map(usize::from).unwrap_or(index);
+                json!({
+                    "name": human.name,
+                    "row": row,
+                    "ready": session.network_player_ready(row),
+                    "map_status": session.network_map_status(row),
+                })
+            })
+            .collect();
+        let map = session.network_map_metadata();
+        Ok(json!({
+            "target": format!("{:?}", self.target),
+            "checkpoint": "lan-live-vera-campaign-host",
+            "scope": "four independent App processes; real LAN setup room with the configured VMCE map; native lobby captured before Start",
+            "process_id": std::process::id(),
+            "configured_participant_count": self.expected_players,
+            "participants": participants,
+            "map": {
+                "file": launch.selected_map_file,
+                "display_name": map.map(|map| map.display_name.clone()),
+            },
+            "mode": "vmce",
+            "lobby_empty_chat_log": true,
+            "start_clicked": false,
+            "route": self.route,
+        }))
     }
 
     fn observed_receipt_through(&self, state: &AppState, through: Option<u32>) -> Result<Value> {

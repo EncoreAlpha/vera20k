@@ -1320,6 +1320,9 @@ pub(crate) struct LiveLanConfig {
     /// after the 300-frame prefix and observe the result dialog.
     #[cfg(feature = "vmce")]
     pub vera_outcome: Option<VmceOutcome>,
+    /// VMCE only: stop after the real four-process lobby screenshot.
+    #[cfg(feature = "vmce")]
+    pub lobby_only: bool,
 }
 
 /// A VMCE mission outcome the diagnostic injects once, through the same
@@ -1480,6 +1483,7 @@ where
     let mut lan_name = None;
     let mut lan_map = None;
     let mut lan_setup_crash = None;
+    let mut lan_lobby_only = false;
     #[cfg(feature = "vmce")]
     let mut vera_outcome = None;
     let mut online_account = None;
@@ -1607,6 +1611,10 @@ where
                     _ => bail!("--lan-setup-crash requires host, guest or map-host"),
                 };
                 set_once(&mut lan_setup_crash, victim, "--lan-setup-crash")?;
+            }
+            "--lan-lobby-only" => {
+                ensure!(!lan_lobby_only, "--lan-lobby-only given more than once");
+                lan_lobby_only = true;
             }
             #[cfg(feature = "vmce")]
             "--vera-outcome" => {
@@ -2257,6 +2265,20 @@ where
             #[cfg(feature = "dev-overlays")]
             let _ = outcome;
         }
+        #[cfg(feature = "vmce")]
+        ensure!(
+            !lan_lobby_only
+                || matches!(
+                    checkpoint,
+                    ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVmceHost)
+                ),
+            "--lan-lobby-only requires the VMCE live host checkpoint"
+        );
+        #[cfg(not(feature = "vmce"))]
+        ensure!(
+            !lan_lobby_only,
+            "--lan-lobby-only requires the VMCE live host checkpoint"
+        );
         ensure!(
             lan_setup_crash.is_none()
                 || matches!(
@@ -2302,6 +2324,8 @@ where
             failure_prefix_output,
             #[cfg(feature = "vmce")]
             vera_outcome,
+            #[cfg(feature = "vmce")]
+            lobby_only: lan_lobby_only,
         })
     } else {
         ensure!(
@@ -2311,7 +2335,8 @@ where
                 && lan_players.is_none()
                 && lan_name.is_none()
                 && lan_map.is_none()
-                && lan_setup_crash.is_none(),
+                && lan_setup_crash.is_none()
+                && !lan_lobby_only,
             "LAN socket options require a live LAN checkpoint"
         );
         None
@@ -3852,6 +3877,8 @@ mod tests {
                 failure_prefix_output: None,
                 #[cfg(feature = "vmce")]
                 vera_outcome: None,
+                #[cfg(feature = "vmce")]
+                lobby_only: false,
             })
         );
         values[1] = "lan-live-guest".into();

@@ -1133,7 +1133,7 @@ mod tests {
             "VERA:VmcePlayers",
             "VERA:VmceFaction",
             "VERA:VmceStartPosition",
-            "VERA:VmceCoopRole",
+            "VERA:VmceRoleSelect",
             "VERA:VmceStartMission",
             "VERA:VmceReady",
             "VERA:VmceChangeMap",

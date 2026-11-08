@@ -39,6 +39,8 @@ const ROW_PAD: i32 = 1;
 /// The status strip's native two-line text height plus its 4 px padding.
 const STATUS_H: i32 = 42;
 const STATUS_GUTTER: i32 = 4;
+/// Extra air between the status strip and the reflowed briefing.
+const STATUS_BRIEFING_GAP: i32 = 2;
 const HEADER_H: i32 = 17;
 
 pub(crate) fn apply(
@@ -81,7 +83,7 @@ pub(crate) fn apply(
     layout.labels = vec![
         ("GUI:Players", rect(PLAYER_COMBO_X, 11, PLAYER_COMBO_W, 17)),
         (
-            "VERA:VmceCoopRole",
+            "VERA:VmceRoleSelect",
             rect(ROLE_COMBO_X, 11, ROLE_COMBO_W, 17),
         ),
     ];
@@ -108,7 +110,7 @@ pub(crate) fn apply(
                 STATUS_H - 2 * INNER_PAD,
             ),
         });
-        status_y + STATUS_H + STATUS_GUTTER
+        status_y + STATUS_H + STATUS_GUTTER + STATUS_BRIEFING_GAP
     } else {
         layout.vmce_status_bar = None;
         board_bottom + STATUS_GUTTER
@@ -311,7 +313,11 @@ mod tests {
             let text = coop.vmce_status_bar.expect("status").text;
             assert!((base(text).x - (base(status).x + INNER_PAD)).abs() <= 1);
             let briefing = base(coop.cooperative_description);
-            assert!((briefing.y - (base(status).y + STATUS_H + STATUS_GUTTER)).abs() <= 1);
+            assert!(
+                (briefing.y - (base(status).y + STATUS_H + STATUS_GUTTER + STATUS_BRIEFING_GAP))
+                    .abs()
+                    <= 1
+            );
             let speed = base(coop.control_rect(SPEED).unwrap());
             assert!(briefing.y + briefing.h <= speed.y);
             assert!(speed.y + speed.h <= base(coop.chat_log).y);
@@ -373,6 +379,19 @@ mod tests {
         assert_eq!(player, RectPx::new(74, 36, 96, 24));
         assert_eq!(role, RectPx::new(174, 36, 80, 24));
         assert_eq!(player.x + player.w + 4, role.x);
+        // The interactive column is Role Select; the display board header
+        // stays the plain role word.
+        assert!(
+            coop.labels
+                .iter()
+                .any(|(key, _)| *key == "VERA:VmceRoleSelect")
+        );
+        assert!(
+            !coop
+                .labels
+                .iter()
+                .any(|(key, _)| *key == "VERA:VmceCoopRole")
+        );
         // The board keeps a further 4 px gutter behind the role combo.
         assert_eq!(
             coop.vmce_sidebar.expect("board").frame.x,

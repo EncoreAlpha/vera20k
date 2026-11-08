@@ -237,7 +237,7 @@ pub(crate) fn render_multiplayer_setup(
                 &if vmce {
                     match *key {
                         "GUI:Players" => crate::i18n::tr("VERA:VmcePlayers"),
-                        "GUI:Team" => crate::i18n::tr("VERA:VmceCoopRole"),
+                        "GUI:Team" => crate::i18n::tr("VERA:VmceRoleSelect"),
                         _ => crate::i18n::tr(key),
                     }
                 } else {
@@ -337,7 +337,37 @@ pub(crate) fn render_multiplayer_setup(
                 },
                 scale,
             );
-            if let Some(item) = selected
+            // A VMCE role combo's locked 80 px cell shows only the role's
+            // player number; the board carries the full role and House.
+            let role_face: Option<String> = {
+                #[cfg(feature = "vmce")]
+                {
+                    vmce.then(|| {
+                        crate::ui::multiplayer_setup::SetupColumn::decode(combo.id)
+                            .filter(|(column, _)| {
+                                *column == crate::ui::multiplayer_setup::SetupColumn::Team
+                            })
+                            .and_then(|_| selected)
+                            .and_then(|item| {
+                                (item.value >= 0).then(|| format!("P{}", item.value + 1))
+                            })
+                    })
+                    .flatten()
+                }
+                #[cfg(not(feature = "vmce"))]
+                {
+                    None
+                }
+            };
+            if let Some(face) = role_face {
+                texts.push(text(
+                    &face,
+                    crate::ui::skirmish_shell::combo_text_rect(rect, scale),
+                    ShellAlign::V_CENTER,
+                    super::text::combo_face_text_color(!view.enabled(combo.id)),
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
+            } else if let Some(item) = selected
                 && item.swatch.is_none()
             {
                 texts.push(text(
