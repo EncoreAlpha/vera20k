@@ -848,6 +848,11 @@ pub(super) fn receive_extended(
         }
         crate::net::lan_messages::extended_setup::SetupKind::Roster => {
             let names: Vec<String> = serde_json::from_slice(bytes)?;
+            // A guest reaches the roster names through the host's extended
+            // options, whose admissions carry every admitted endpoint. The
+            // native Type3 channel is point-to-point here, so the host's
+            // roster is also the only place a guest learns its peers.
+            add_admitted_roster_participants(state, &names)?;
             let rows = parsed_roster(&state.match_state.session, &names)?;
             state.match_state.session.accept_network_roster(rows)?;
             // A stored options revision precedes this roster when the host
@@ -858,6 +863,75 @@ pub(super) fn receive_extended(
             Ok(())
         }
     }
+}
+
+/// Add a human row for every admitted roster name the guest has not learned
+/// through a direct Type3 packet. The host's options admissions are the
+/// authority for that name's endpoint and already passed admission; the
+/// roster only assigns its row.
+fn add_admitted_roster_participants(state: &mut AppState, names: &[String]) -> Result<()> {
+    if state.match_state.session.host() {
+        return Ok(());
+    }
+    let Some(launch) = state.match_state.session.network_setup().cloned() else {
+        return Ok(());
+    };
+    let template = state.frontend.multiplayer_shell_runtime.local_participant();
+    let admissions: Vec<(SocketAddrV4, String)> = state
+        .match_state
+        .lan_service
+        .as_ref()
+        .map(|service| {
+            service
+                .peer_admissions
+                .iter()
+                .map(|(endpoint, record)| (*endpoint, record.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    add_missing_admitted_humans(
+        &mut state.match_state.session,
+        &launch,
+        &template,
+        &admissions,
+        names,
+    )
+}
+
+fn add_missing_admitted_humans(
+    session: &mut MatchSession,
+    launch: &SkirmishLaunchSession,
+    template: &crate::skirmish_launch::SkirmishHumanSlot,
+    admissions: &[(SocketAddrV4, String)],
+    names: &[String],
+) -> Result<()> {
+    for name in names {
+        if matches!(
+            name.as_str(),
+            setup::OPEN
+                | setup::CLOSED
+                | setup::OPEN_OBSERVER
+                | setup::EASY_AI
+                | setup::MEDIUM_AI
+                | setup::HARD_AI
+        ) || launch.humans.iter().any(|human| human.name == *name)
+        {
+            continue;
+        }
+        let Some((endpoint, _)) = admissions
+            .iter()
+            .find(|(_, admitted)| admitted.eq_ignore_ascii_case(name))
+        else {
+            continue;
+        };
+        let mut human = template.clone();
+        human.name = name.clone();
+        human.raw_slot_index = None;
+        human.role = LaunchHumanRole::Player { group: -2 };
+        session.add_network_participant(human)?;
+        session.bind_network_endpoint(name, *endpoint)?;
+    }
+    Ok(())
 }
 
 pub(super) fn receive_roster(
@@ -1415,6 +1489,47 @@ mod tests {
             Some(29)
         );
         assert_eq!(guest.network_setup_capacity(), Some(30));
+    }
+
+    /// A guest learns its peers from the host's admitted roster: every name
+    /// with a host options admission becomes a real participant row, so the
+    /// next roster bind can place it.
+    #[test]
+    fn a_guest_adds_admitted_roster_names_it_has_not_met() {
+        let mut guest = fixture(false);
+        let template = guest.network_setup().unwrap().local_player().clone();
+        let launch = guest.network_setup().unwrap().clone();
+        let names = vec![
+            "Host".to_owned(),
+            "Guest".to_owned(),
+            "Guest2".to_owned(),
+            "Guest3".to_owned(),
+        ];
+        let second = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30102);
+        let third = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30103);
+        let admissions = vec![(second, "Guest2".to_owned()), (third, "Guest3".to_owned())];
+        add_missing_admitted_humans(&mut guest, &launch, &template, &admissions, &names).unwrap();
+        let launch = guest.network_setup().unwrap();
+        assert_eq!(launch.humans.len(), 4);
+        let index = |name: &str| {
+            launch
+                .humans
+                .iter()
+                .position(|human| human.name == name)
+                .unwrap()
+        };
+        assert_eq!(guest.network_endpoint(index("Guest2")), Some(second));
+        assert_eq!(guest.network_endpoint(index("Guest3")), Some(third));
+        assert!(
+            guest
+                .network_setup()
+                .unwrap()
+                .humans
+                .iter()
+                .filter(|human| human.name != "Host" && human.name != "Guest")
+                .all(|human| human.raw_slot_index.is_none()),
+            "the roster bind assigns rows, not the admission"
+        );
     }
 
     #[cfg(feature = "vmce")]
