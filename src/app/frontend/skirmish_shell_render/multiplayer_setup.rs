@@ -110,9 +110,8 @@ pub(crate) fn render_multiplayer_setup(
         state.frontend.skirmish_preview_texture = None;
     }
     let zoom_layout = ensure_zoom_texture(state, scale, !sliding && !view.preview_hidden);
-    let heading = localized_label(state, view.page().title_key, view.page().title_key);
     let heading = if vmce {
-        "Cooperative Lobby".to_owned()
+        crate::i18n::tr("VERA:VmceLobbyTitle")
     } else {
         localized_label(state, view.page().title_key, view.page().title_key)
     };
@@ -234,13 +233,13 @@ pub(crate) fn render_multiplayer_setup(
         {
             texts.push(text(
                 &if vmce {
-                    match *key {
-                        "GUI:Players" => "Players".to_owned(),
-                        "GUI:Side" => "Faction".to_owned(),
-                        "GUI:StartPosition" => "Start".to_owned(),
-                        "GUI:Team" => "Co-op Role".to_owned(),
-                        _ => localized_label(state, key, key),
-                    }
+                    crate::i18n::tr(match *key {
+                        "GUI:Players" => "VERA:VmcePlayers",
+                        "GUI:Side" => "VERA:VmceFaction",
+                        "GUI:StartPosition" => "VERA:VmceStartPosition",
+                        "GUI:Team" => "VERA:VmceCoopRole",
+                        _ => key,
+                    })
                 } else {
                     localized_label(state, key, key)
                 },
@@ -623,13 +622,13 @@ pub(crate) fn render_multiplayer_setup(
                     texts.push(shell_text::draw_in_rect_scaled(
                         font,
                         &if vmce {
-                            match button.id {
-                                START => "Start Mission".to_owned(),
-                                ACCEPT => "Ready".to_owned(),
-                                CHOOSE_MAP => "Change Map".to_owned(),
-                                BACK => "Leave Room".to_owned(),
-                                _ => localized_label(state, spec.csf_key, spec.csf_key),
-                            }
+                            crate::i18n::tr(match button.id {
+                                START => "VERA:VmceStartMission",
+                                ACCEPT => "VERA:VmceReady",
+                                CHOOSE_MAP => "VERA:VmceChangeMap",
+                                BACK => "VERA:VmceLeaveRoom",
+                                _ => spec.csf_key,
+                            })
                         } else {
                             view.dialog.button_label(button.id).map_or_else(
                                 || localized_label(state, spec.csf_key, spec.csf_key),

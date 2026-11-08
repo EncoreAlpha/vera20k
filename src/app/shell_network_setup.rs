@@ -1047,7 +1047,7 @@ pub(crate) fn show_statics(state: &mut AppState) {
     };
     #[cfg(feature = "vmce")]
     let heading = if view.vmce {
-        "Cooperative Lobby".to_owned()
+        crate::i18n::tr("VERA:VmceLobbyTitle")
     } else {
         App::csf_label(state, view.page().title_key, view.page().title_key)
     };

@@ -1125,4 +1125,31 @@ mod tests {
             assert!(report.complete(), "{report}");
         }
     }
+
+    #[test]
+    fn the_vmce_lobby_labels_are_shipped_in_every_language() {
+        let keys = [
+            "VERA:VmceLobbyTitle",
+            "VERA:VmcePlayers",
+            "VERA:VmceFaction",
+            "VERA:VmceStartPosition",
+            "VERA:VmceCoopRole",
+            "VERA:VmceStartMission",
+            "VERA:VmceReady",
+            "VERA:VmceChangeMap",
+            "VERA:VmceLeaveRoom",
+        ];
+        for (tag, text) in shipped::FILES {
+            let contents = parse(text);
+            for key in keys {
+                assert!(
+                    contents
+                        .entries
+                        .iter()
+                        .any(|entry| entry.label.eq_ignore_ascii_case(key)),
+                    "vera20k.{tag}.ini is missing {key}"
+                );
+            }
+        }
+    }
 }
