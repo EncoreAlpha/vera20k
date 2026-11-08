@@ -68,7 +68,7 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.7-vmce.N` (currently `0.2.7-vmce.3`); LAN peers should run the same VMCE build.
+`0.2.7-vmce.N` (currently `0.2.7-vmce.4`); LAN peers should run the same VMCE build.
 
 ### Campaign directories
 
@@ -268,10 +268,12 @@ conditions for each role. There is no automatic "all roles failed" fallback.
 - The two-player LAN path has been exercised end-to-end with real dual-process captures:
   win → next mission, defeat, last mission, shared-House no-auto-defeat, and a mismatched next
   stage returning both peers to the lobby.
+- The four-player path has been exercised end-to-end with four real processes on one host:
+  lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
+  the next mission on every peer. Three players are not run separately; they share the same
+  roster and round path.
 - `AltNextScenario`, `SkipMapSelect`, the `EndOfGame` campaign-completion page and defeat retry
   are not implemented.
-- 3–4 players are supported by the round protocol and the settlement page lists up to four
-  players, but real 3–4 player LAN sessions are not fully validated yet.
 - VMCE is an optional feature; a build without `--features vmce` has no VMCE mode row.
 
 ## Troubleshooting
