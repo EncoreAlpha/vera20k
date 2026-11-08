@@ -68,7 +68,7 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.7-vmce.N` (currently `0.2.7-vmce.2`); LAN peers should run the same VMCE build.
+`0.2.7-vmce.N` (currently `0.2.7-vmce.3`); LAN peers should run the same VMCE build.
 
 ### Campaign directories
 
@@ -181,11 +181,12 @@ by VMCE.
   source, effective-map and config digests). A mismatch returns both peers to the lobby instead
   of one side loading while the other waits.
 - On load, roles are re-resolved against the next map's own `[Basic] PlayerN`/`[Houses]`
-  binding; the previous mission's House names are not carried over. The shared seed and the
-  frozen difficulty row carry over.
+  binding; the previous mission's House names are not carried over. The next mission's seed is
+  derived deterministically from the previous seed and the next stage's identity (both peers
+  compute it locally); the frozen difficulty row carries over.
 - The result page does not write `coopsave.ini` or cross-mission progress.
 
-Defeat retry, the `EndOfGame` campaign-completion page and cross-mission money/new seed are
+Defeat retry, the `EndOfGame` campaign-completion page and cross-mission money are
 still in development; see Current limitations.
 
 ## campaign.ini reference
@@ -263,7 +264,10 @@ conditions for each role. There is no automatic "all roles failed" fallback.
 - LAN only; no WOL/CnCNet/online.
 - No in-mission save/load.
 - No AI takeover after a player disconnects; no mid-mission join or host migration.
-- No cross-mission money/seed/role reselection or persistent progress.
+- No cross-mission money/role reselection or persistent progress.
+- The two-player LAN path has been exercised end-to-end with real dual-process captures:
+  win → next mission, defeat, last mission, shared-House no-auto-defeat, and a mismatched next
+  stage returning both peers to the lobby.
 - `AltNextScenario`, `SkipMapSelect`, the `EndOfGame` campaign-completion page and defeat retry
   are not implemented.
 - 3–4 players are supported by the round protocol and the settlement page lists up to four
