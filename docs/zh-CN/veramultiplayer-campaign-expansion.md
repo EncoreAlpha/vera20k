@@ -172,13 +172,15 @@ VMCE 的胜利、失败和末关使用同一个结算页（原生战役计分页
 - 页面显示 par time、your time、rank、commendation 和击杀数。Rank/Commendation 读取地图 `[Ranking]` 的 `UnderParTitle/Message` 或 `OverParTitle/Message`，难度取大厅冻结的 VMCE 战役难度。
 - 页面右侧列出最多 4 名参战玩家：等待下一关时每行显示 Ready/Waiting，失败或末关只显示名字。状态行在等待阶段显示 ready 人数。
 - 胜利且战役给出下一关时，客人按 Continue 表示 ready；全员 ready 后只有房主按 Continue 才能进入下一关。
-- 失败或战役末关（`EndOfGame=yes` / 没有 `NextScenario`）时，Continue 只做确认并回大厅；没有下一关。
+- 失败时 Continue 是重试：所有在线 guest 打开失败页后（15 秒宽限，超时则剩余玩家），房主的 Continue 用同一冻结关卡、同一 seed、同一角色重开；guest 跟随 begin/ack，不要求再点 Continue；错过窗口的 guest 留在原局/回大厅。
+- 战役末关（`EndOfGame=yes`）时 Continue 是全员 Ready 闸门：全员 ready（或 30 秒超时直接开始并带入未 ready 的 guest）后，各端本地播放战役完成流程并回主菜单。
+- 既没有 `NextScenario` 也没有 `EndOfGame=yes` 的关卡视为非法战役，VMCE 主机开局时拒绝，不再猜测为结束。
 - 胜利进入下一关前，双方交换各自解析出的下一关身份（地图路径 + 源文件/生效/配置摘要）；不一致时双方一起回大厅，不会一边加载一边等待。
 - 下一关加载时，角色按下一关自己的 `[Basic] PlayerN` / `[Houses]` 重新解析，不沿用上一关的 House 名；下一关 seed 由上一关 seed 与下一关身份确定性派生（两端本地计算一致），冻结难度沿用本局大厅。
 - 结果页期间有玩家离开时，双方一起回大厅；此页没有原版的 Quit 按钮。
 - 结果页不写 `coopsave.ini`，也不写跨关进度。
 
-失败重试、`EndOfGame` 战役完成页、跨关资金仍在开发中，见「当前限制」。
+失败重试与 `EndOfGame` 完成页已接入；跨关资金、`AltNextScenario`/`SkipMapSelect` 仍未实现，见「当前限制」。
 
 ### 当前不支持的玩家行为
 
@@ -508,7 +510,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|
 | 联机范围 | LAN；WOL/CnCNet 不支持 |
 | 玩家数 | 结构支持最多 4 个角色；4 人 LAN 已用 4 个真实进程端到端验收（大厅/角色、300 帧校验和一致、胜利→4 行结算→全员 Continue 进下一关）；2 人胜利/失败/末关等路径同样已验收；3 人未单独跑（与 4 人同一协议路径） |
-| 结果页 | 胜利、失败与末关统一走 VMCE 结算页（原生 `0x103` 布局/输入，最多显示 4 名参战角色）；有 `NextScenario` 时可全员 Continue 进入下一关，否则 Continue 回大厅。失败重试和 `EndOfGame` 完成页未实现 |
+| 结果页 | 胜利、失败与末关统一走 VMCE 结算页（原生 `0x103` 布局/输入，最多显示 4 名参战角色）；有 `NextScenario` 时全员 Continue 进下一关；失败 Continue 由房主重开同一关；末关 `EndOfGame=yes` 全员 Continue 后本地完成并回主菜单 |
 | 战役进度 | 不保存；不写 `coopsave.ini` |
 | 任务内多人选项 | VERA 按战役语义关闭随机箱和 ShortGame（大厅对应开关禁用）；Special House/Secret Lab 的多人专属步骤不执行 |
 | 跨关角色/资金/seed | 角色按下一关地图重新解析，不沿用上一关 House 名；资金不继承；下一关 seed 由上一关 seed + 下一关身份确定性派生 |
@@ -516,7 +518,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 | 任务中掉线 | 不接管 AI；不自动恢复 |
 | 任务中中途加入 | 不支持 |
 | 房主迁移 | 不支持 |
-| 暂停规则 | 未完成合作暂停状态机；不要依赖暂停行为 |
+| 暂停规则 | 原生多人 ESC 菜单只在本地打开，LAN/WOL 模态泵继续跑 Main_Tick，没有网络暂停消息；VMCE 保持 sim 继续运行（原生优先），不提供全员暂停 |
 | 角色跨关重选/资金继承 | 未实现（规划中） |
 | 空位角色 AI 接管 | 未实现 |
 | `<Player @ X>` 选择器 | 不支持；请用国家 selector |

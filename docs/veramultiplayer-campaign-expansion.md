@@ -175,8 +175,17 @@ by VMCE.
   status line shows the ready count only while a stage is pending.
 - On a win with a next mission, a guest's Continue is its ready action; after everyone is
   ready only the host's Continue starts the next mission.
-- On a defeat or the campaign's last mission (`EndOfGame=yes` or no `NextScenario`), Continue
-  only acknowledges the page and returns to the lobby.
+- On a defeat, a guest's Continue is its ready action but the host decides: once every
+  online guest has opened the defeat page (15 s grace, then the remaining players),
+  the host's Continue restarts the same frozen stage with the same seed, roles and map.
+  Guests follow without pressing Continue; a guest that misses the window is left in
+  the lobby.
+- On the campaign's last mission (`EndOfGame=yes`), Continue is the all-ready gate: after
+  everyone is ready (or 30 s, which starts anyway and pulls unready guests into the
+  completion tail), every peer plays the campaign completion locally and returns to the
+  main menu.
+- A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
+  rejects it at host setup instead of guessing that the campaign ended.
 - Before a next mission loads, both peers exchange the identity they resolved (map path plus
   source, effective-map and config digests). A mismatch returns both peers to the lobby instead
   of one side loading while the other waits.
@@ -186,8 +195,8 @@ by VMCE.
   compute it locally); the frozen difficulty row carries over.
 - The result page does not write `coopsave.ini` or cross-mission progress.
 
-Defeat retry, the `EndOfGame` campaign-completion page and cross-mission money are
-still in development; see Current limitations.
+Cross-mission money, `AltNextScenario` execution and `SkipMapSelect` branches are still
+not implemented; see Current limitations.
 
 ## campaign.ini reference
 
@@ -206,9 +215,9 @@ still in development; see Current limitations.
 |---|---|---|---|
 | `PlayerCount` | integer `1..4` | `0` (invalid) | Number of player roles in this mission |
 | `Player1..PlayerN` | House name | required | Must exist in the map `[Houses]` registry; role Houses must be distinct |
-| `NextScenario` | map path | empty | Next mission after victory; must be listed in `ScenarioCount` |
+| `NextScenario` | map path | empty | Next mission after victory; must be listed in `ScenarioCount`; ignored when `EndOfGame=yes` |
 | `AltNextScenario` | map path | empty | Validated but not executed yet |
-| `EndOfGame` | boolean | empty | `yes` makes this the campaign's last mission: no next stage, Continue only returns to the lobby |
+| `EndOfGame` | boolean | empty | `yes` makes this the campaign's last mission and wins over `NextScenario`; a stage with neither key is rejected at VMCE host setup |
 
 `[Scenario:<map path>:<House name>]`:
 
@@ -272,8 +281,12 @@ conditions for each role. There is no automatic "all roles failed" fallback.
   lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
   the next mission on every peer. Three players are not run separately; they share the same
   roster and round path.
-- `AltNextScenario`, `SkipMapSelect`, the `EndOfGame` campaign-completion page and defeat retry
-  are not implemented.
+- `AltNextScenario` and `SkipMapSelect` execution are not implemented. Cross-mission money
+  is not implemented either.
+- Pause follows native multiplayer: ESC opens a local menu, the modal pump keeps
+  `Main_Tick` running (`0x0055DEE0` -> `0x00647040`; `0x00623120` calls `0x0055D360` in
+  network modes), and there is no pause packet or all-player pause. VERA's LAN/VMCE
+  simulation keeps running behind the menu; only the local input is held.
 - VMCE is an optional feature; a build without `--features vmce` has no VMCE mode row.
 
 ## Troubleshooting
