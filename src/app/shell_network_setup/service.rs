@@ -1232,6 +1232,53 @@ mod tests {
                 .is_ok()
         );
     }
+
+    /// A2: every accepted host-options revision queues this guest's `K` map
+    /// status. The VMCE guest has no LAN map-transfer pass, so a missing
+    /// queue would leave the host's Start gate reporting `GUI:HostNoMap`
+    /// after the second revision even when the map is present.
+    #[test]
+    fn every_options_revision_queues_one_map_status() {
+        use crate::app::match_runtime::session::NetworkMapAdmission;
+        use crate::app::shell_network_setup::{NetworkSetupProtocol, NetworkSetupRequest};
+        use crate::ui::multiplayer_setup::{SetupDialog, SetupFlavor};
+
+        let mut protocol = NetworkSetupProtocol::new(
+            SetupDialog {
+                host: false,
+                flavor: SetupFlavor::Lan,
+                modern: true,
+            },
+            false,
+        );
+        assert!(protocol.requests.is_empty());
+        assert_eq!(
+            super::queue_local_map_status(&mut protocol, NetworkMapAdmission::Present),
+            1
+        );
+        assert_eq!(
+            super::queue_local_map_status(&mut protocol, NetworkMapAdmission::Present),
+            1
+        );
+        let statuses: Vec<u8> = protocol
+            .requests
+            .iter()
+            .filter_map(|request| match request {
+                NetworkSetupRequest::MapStatus(status) => Some(*status),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, [1, 1], "each revision answers with one K status");
+        assert!(protocol.accept_eligible);
+        assert_eq!(
+            super::queue_local_map_status(&mut protocol, NetworkMapAdmission::Unavailable),
+            0
+        );
+        assert!(
+            !protocol.accept_eligible,
+            "an unavailable map never makes the guest accept-eligible"
+        );
+    }
 }
 
 /// The host checks a guest's `R` (`0x007A8260`): its slot passes the bans,
@@ -1704,10 +1751,7 @@ fn apply_local_map_admission(
         .network_setup_protocol
         .as_mut()
         .expect("setup owns protocol");
-    protocol.accept_eligible = admission.accept_eligible();
-    protocol
-        .requests
-        .push(NetworkSetupRequest::MapStatus(status));
+    queue_local_map_status(protocol, admission);
     // Original map possession result prints the localized map name;
     // K2 is eligible because the service can transfer the missing map.
     if let Some(key) = match status {
@@ -1729,7 +1773,7 @@ fn apply_local_map_admission(
         );
     }
     if coop_lan && status == 0 {
-        let text = "VMCE requires every listed map and the matching local campaign.ini. Install the host's campaign locally to prepare.";
+        let text = crate::i18n::tr("VERA:VmceMapMissing");
         crate::app::shell_lan::append_chat(
             state,
             LanChatLine {
@@ -1739,6 +1783,22 @@ fn apply_local_map_admission(
         );
     }
     Ok(())
+}
+
+/// Queue this peer's `K` map status for one accepted host-options revision.
+/// A VMCE guest re-runs the admission on every revision
+/// (`guest_rechecks_map_on_options`); skipping the queue leaves the host's
+/// Start gate without this peer's map answer (`GUI:HostNoMap`).
+fn queue_local_map_status(
+    protocol: &mut crate::app::shell_network_setup::NetworkSetupProtocol,
+    admission: crate::app::match_runtime::session::NetworkMapAdmission,
+) -> u8 {
+    let status = admission.status();
+    protocol.accept_eligible = admission.accept_eligible();
+    protocol
+        .requests
+        .push(NetworkSetupRequest::MapStatus(status));
+    status
 }
 
 fn without_coop_lan_transfer(
