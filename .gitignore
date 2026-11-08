@@ -165,3 +165,6 @@ tools/vendor-eval/
 /android/local.properties
 /android/**/build/
 /android/app/src/main/jniLibs/
+
+# Session-local native disassembly packets are never part of the tree.
+/gamemd-annotated-*.gzf
