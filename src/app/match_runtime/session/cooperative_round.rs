@@ -61,6 +61,23 @@ pub(crate) struct CooperativeRoundState {
     page_victory: bool,
 }
 
+/// VMCE's next-mission seed: a deterministic mix of the previously agreed
+/// seed and the resolved next stage's locally verified identity. Every peer
+/// derives it from facts it already holds, so no extra field travels; the
+/// same stage always yields the same seed, and a different mission does not
+/// replay the previous mission's random stream.
+#[cfg(feature = "vmce")]
+fn next_stage_seed(previous: u32, next: &crate::app::match_bootstrap::VmceNextStage) -> u32 {
+    let digest = crate::util::sha256::sha256_hex(
+        format!(
+            "vera-vmce-next-seed\n{previous}\n{}\n{}\n{}",
+            next.map_file, next.config.source_sha256, next.effective_digest
+        )
+        .as_bytes(),
+    );
+    u32::from_str_radix(&digest[..8], 16).expect("sha256 hex prefix")
+}
+
 impl CooperativeRoundState {
     pub(crate) fn local_ready(&self) -> bool {
         self.local_ready
@@ -739,6 +756,12 @@ impl MatchSession {
         };
         anyhow::ensure!(round.outcome == Some(true), "the round did not continue");
         super::admit_network_start_roster(launch)?;
+        #[cfg(feature = "vmce")]
+        let seed = match vera_next.as_ref() {
+            Some(next) => next_stage_seed(previous.seed.value, next),
+            None => previous.seed.value,
+        };
+        #[cfg(not(feature = "vmce"))]
         let seed = previous.seed.value;
         let mode = previous.mode();
         #[cfg(feature = "vmce")]
@@ -1316,6 +1339,49 @@ mod tests {
             host.take_network_loading_requests()
                 .contains(&NetworkLoadingRequest::CooperativeGo)
         );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_next_stage_freezes_a_new_deterministic_seed() {
+        let next = next_stage("mission02.map");
+        let seed = super::next_stage_seed(SEED, &next);
+        assert_ne!(seed, SEED, "a new mission starts a new random stream");
+        assert_eq!(
+            seed,
+            super::next_stage_seed(SEED, &next.clone()),
+            "the same stage identity always derives the same seed"
+        );
+
+        let (mut host, first) = frozen_vera(0);
+        host.enter_vmce_round(Some(next.clone()), true, 2).unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::PeerReady { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        host.cooperative_round_assigned(0).unwrap();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(true)
+        );
+        let LoadingStartup::Network(startup) = host.freeze_cooperative_round(30, 2, None).unwrap()
+        else {
+            panic!("network start");
+        };
+        assert_eq!(startup.seed.value, seed);
+        assert_ne!(startup.seed.value, first.seed.value);
+
+        // The map identity is part of the mix: a different next stage does
+        // not reuse this mission's stream.
+        let other = next_stage("mission03.map");
+        assert_ne!(super::next_stage_seed(SEED, &other), seed);
     }
 
     #[cfg(feature = "vmce")]
