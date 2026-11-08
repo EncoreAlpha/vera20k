@@ -23,7 +23,17 @@ pub(crate) fn open_victory(state: &mut AppState) {
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let next = resolve_next_stage(state);
+    let next = match resolve_next_stage(state) {
+        Ok(next) => next,
+        Err(error) => {
+            // A broken `campaign.ini` or a map that disappeared is not the
+            // campaign's last stage: do not show a false end page, send both
+            // peers back to the lobby through the round's leave path.
+            log::error!("VMCE next campaign stage is unavailable: {error:#}");
+            leave_after_stage_error(state);
+            return;
+        }
+    };
     let Some(rows) = score_rows(state) else {
         App::leave_mission_result_screen(state);
         return;
@@ -144,23 +154,46 @@ pub(crate) fn result_rows(state: &AppState) -> Option<Vec<String>> {
     (!rows.is_empty()).then_some(rows)
 }
 
-fn resolve_next_stage(state: &AppState) -> Option<VmceNextStage> {
-    state
+/// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
+/// stage; an `Err` is a broken series and must not be presented as one.
+fn resolve_next_stage(state: &AppState) -> anyhow::Result<Option<VmceNextStage>> {
+    let Some(current) = state.match_state.session.network_vmce_map_config() else {
+        return Ok(None);
+    };
+    crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(state, current)
+}
+
+fn leave_after_stage_error(state: &mut AppState) {
+    let Some(rows) = score_rows(state) else {
+        App::leave_mission_result_screen(state);
+        return;
+    };
+    crate::app::lan_service::cooperative::hold_transport(state);
+    App::retire_finished_scenario(state);
+    if let Err(error) = state
         .match_state
         .session
-        .network_vmce_map_config()
-        .cloned()
-        .and_then(
-            |current| match crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(
-                state, &current,
-            ) {
-                Ok(next) => next,
-                Err(error) => {
-                    log::warn!("VMCE next campaign stage is unavailable: {error:#}");
-                    None
-                }
-            },
-        )
+        .enter_vmce_round(None, false, rows)
+    {
+        log::error!("Could not open the VMCE round after a stage error: {error:#}");
+        crate::app::cooperative_round::return_to_shell(state);
+        return;
+    }
+    let difficulty = state
+        .frontend
+        .multiplayer_shell_runtime
+        .cooperative_difficulty();
+    match state
+        .match_state
+        .session
+        .continue_cooperative_round(difficulty)
+    {
+        Ok(step) => crate::app::cooperative_round::run_step(state, step),
+        Err(error) => {
+            log::warn!("VMCE result exit after a stage error was refused: {error:#}");
+            crate::app::cooperative_round::return_to_shell(state);
+        }
+    }
 }
 
 fn score_rows(state: &AppState) -> Option<usize> {
