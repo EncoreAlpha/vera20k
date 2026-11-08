@@ -881,6 +881,9 @@ fn reject_vera_stage(
     round: &mut CooperativeRoundState,
     requests: &mut Vec<NetworkLoadingRequest>,
 ) -> CooperativeRoundStep {
+    log::warn!(
+        "VMCE next-stage identity mismatch; returning both peers to the lobby instead of loading"
+    );
     round.outcome = Some(false);
     requests.push(NetworkLoadingRequest::CooperativeStageRejected);
     CooperativeRoundStep::Exit(false)
