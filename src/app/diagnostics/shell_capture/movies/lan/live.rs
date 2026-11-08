@@ -449,6 +449,10 @@ enum VeraOutcomePhase {
     Round,
     /// The next mission is loading/loaded; wait for its first live frame.
     NextMission,
+    /// Continue started the campaign completion; wait for the main menu.
+    Ending,
+    /// Continue restarted the same stage; wait for its first live frame.
+    Retrying,
     /// The BC6 page is up; quit after a short hold.
     Quit,
 }
@@ -1995,7 +1999,10 @@ impl LiveLanCapture {
         let kind = outcome.as_str();
         // Real-trigger runs never inject: arm a receipt as soon as the mission
         // is live, then let `finish_vera_outcome` observe the map's own chain.
-        if outcome == VmceOutcome::Real {
+        if matches!(
+            outcome,
+            VmceOutcome::Real | VmceOutcome::End | VmceOutcome::Retry
+        ) {
             // The receipt/exit validators consume the regular 300-frame
             // checksum/hash prefix, so arm once that prefix exists rather than
             // on an arbitrary early frame.
@@ -2078,7 +2085,7 @@ impl LiveLanCapture {
                             }
                             self.vera_outcome_houses = Some(json!(marked));
                         }
-                        VmceOutcome::Real => {
+                        VmceOutcome::Real | VmceOutcome::End | VmceOutcome::Retry => {
                             unreachable!("real-trigger mode never injects an outcome")
                         }
                     }
@@ -2093,7 +2100,7 @@ impl LiveLanCapture {
                             VmceOutcome::HouseLoss => {
                                 "VERA outcome: every player House marked defeated"
                             }
-                            VmceOutcome::Real => {
+                            VmceOutcome::Real | VmceOutcome::End | VmceOutcome::Retry => {
                                 "VERA outcome: real-trigger mode has no injected outcome"
                             }
                         },
@@ -2103,6 +2110,8 @@ impl LiveLanCapture {
             VeraOutcomePhase::Observe
             | VeraOutcomePhase::Round
             | VeraOutcomePhase::NextMission
+            | VeraOutcomePhase::Ending
+            | VeraOutcomePhase::Retrying
             | VeraOutcomePhase::Quit => {}
         }
         Ok(())
@@ -2160,9 +2169,15 @@ impl LiveLanCapture {
                         );
                     }
                 }
-                VmceOutcome::Real => {
-                    let victory_page = state.frontend.campaign_score_page.as_ref().filter(|page| {
-                        page.dialog == crate::ui::campaign_score_shell::CampaignScoreDialog::Victory
+                VmceOutcome::Real | VmceOutcome::End | VmceOutcome::Retry => {
+                    // End/retry use the same 0x103 page as a real win or
+                    // defeat; any VMCE page here is the one to continue.
+                    let victory_page = state.frontend.campaign_score_page.as_ref().filter(|_| {
+                        state
+                            .match_state
+                            .session
+                            .cooperative_round()
+                            .is_some_and(|round| round.vera())
                     });
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         let victory = page.victory;
@@ -2233,7 +2248,7 @@ impl LiveLanCapture {
                             "VERA outcome: map's real trigger chain opened the cooperative result dialog",
                         );
                         self.vera_outcome_dialog_frame = Some(render_frame);
-                        self.vera_outcome_phase = if victory && can_continue {
+                        self.vera_outcome_phase = if can_continue {
                             VeraOutcomePhase::Round
                         } else {
                             VeraOutcomePhase::Quit
@@ -2321,7 +2336,7 @@ impl LiveLanCapture {
                             "VERA outcome: map's real trigger chain opened campaign score 0x103",
                         );
                         self.vera_outcome_dialog_frame = Some(render_frame);
-                        self.vera_outcome_phase = if victory && can_continue {
+                        self.vera_outcome_phase = if can_continue {
                             VeraOutcomePhase::Round
                         } else {
                             VeraOutcomePhase::Quit
@@ -2433,7 +2448,79 @@ impl LiveLanCapture {
                         "VERA outcome: guest ready sent from the result dialog"
                     },
                 );
-                self.vera_outcome_phase = VeraOutcomePhase::NextMission;
+                self.vera_outcome_phase = match outcome {
+                    VmceOutcome::End => VeraOutcomePhase::Ending,
+                    VmceOutcome::Retry => VeraOutcomePhase::Retrying,
+                    _ => VeraOutcomePhase::NextMission,
+                };
+            }
+            VeraOutcomePhase::Ending => {
+                if state.frontend.campaign_score_page.is_none()
+                    && state.match_state.session.cooperative_round().is_none()
+                    && render_frame >= 60
+                {
+                    let evidence = json!({
+                        "kind": "end",
+                        "completed": true,
+                        "render_frame": render_frame,
+                        "screen": format!("{:?}", state.frontend.screen),
+                    });
+                    if let Some(receipt) = self.final_receipt.as_mut() {
+                        receipt["vera_outcome"] = evidence.clone();
+                    }
+                    self.vera_outcome_evidence = Some(evidence);
+                    self.request_screenshot("vera-campaign-end");
+                    self.event(render_frame, "VERA outcome: campaign completion returned to the menu");
+                    self.phase = Phase::Finished;
+                } else {
+                    ensure!(
+                        render_frame < 1_200,
+                        "VMCE campaign completion did not finish: screen={:?}",
+                        state.frontend.screen
+                    );
+                }
+            }
+            VeraOutcomePhase::Retrying => {
+                if state.frontend.screen == GameScreen::InGame {
+                    let native_frame = state
+                        .match_state
+                        .sim_runtime
+                        .as_ref()
+                        .map(|runtime| runtime.simulation.session().binary_frame());
+                    if native_frame == Some(60) {
+                        let evidence = json!({
+                            "kind": "retry",
+                            "retry_mission": {
+                                "map": state
+                                    .match_state
+                                    .session
+                                    .network_setup()
+                                    .and_then(|launch| launch.selected_map_file.clone()),
+                                "seed": state.match_state.session.network_start_seed(),
+                                "native_frame": native_frame,
+                                "render_frame": render_frame,
+                            },
+                        });
+                        if let Some(receipt) = self.final_receipt.as_mut() {
+                            receipt["vera_outcome"] = evidence.clone();
+                        }
+                        self.vera_outcome_evidence = Some(evidence);
+                        self.request_screenshot("vera-retry-mission");
+                        self.event(render_frame, "VERA outcome: the same mission restarted");
+                        self.phase = Phase::Finished;
+                    } else {
+                        ensure!(
+                            render_frame < 1_200,
+                            "VMCE retry did not reach native frame 60: {native_frame:?}"
+                        );
+                    }
+                } else {
+                    ensure!(
+                        render_frame < 1_200,
+                        "VMCE retry did not restart: screen={:?}",
+                        state.frontend.screen
+                    );
+                }
             }
             VeraOutcomePhase::NextMission => {
                 if state.frontend.screen == GameScreen::InGame

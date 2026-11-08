@@ -1321,6 +1321,10 @@ pub(crate) enum VmceOutcome {
     /// Do not inject anything: wait for the map's own trigger chain to open the
     /// cooperative result page, then record the verdict and trigger evidence.
     Real,
+    /// Real trigger chain, then Continue must reach the campaign completion.
+    End,
+    /// Real trigger chain, then Continue must replay the same stage.
+    Retry,
 }
 
 #[cfg(feature = "vmce")]
@@ -1331,6 +1335,8 @@ impl VmceOutcome {
             Self::Lose => "lose",
             Self::HouseLoss => "houses",
             Self::Real => "real",
+            Self::End => "end",
+            Self::Retry => "retry",
         }
     }
 }
@@ -1595,7 +1601,9 @@ where
                     "lose" => VmceOutcome::Lose,
                     "houses" => VmceOutcome::HouseLoss,
                     "real" => VmceOutcome::Real,
-                    _ => bail!("--vera-outcome requires win, lose, houses or real"),
+                    "end" => VmceOutcome::End,
+                    "retry" => VmceOutcome::Retry,
+                    _ => bail!("--vera-outcome requires win, lose, houses, real, end or retry"),
                 };
                 set_once(&mut vera_outcome, outcome, "--vera-outcome")?;
             }
