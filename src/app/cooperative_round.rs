@@ -261,7 +261,6 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     {
         log::warn!("co-op round countries: {error:#}");
     }
-    model.vera = false;
     // 0x0072D300 (Scenario+0x34B8's palette) and 0x0060CF00's SCRBK.
     state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
         crate::render::main_menu_shell_chrome::build_campaign_score_art(
@@ -387,7 +386,6 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
         side,
         map_index,
         can_continue,
-        vera: false,
     })
 }
 
@@ -517,7 +515,6 @@ pub(crate) struct CoopScoreView {
     pub(crate) continue_enabled: bool,
     pub(crate) quit_enabled: bool,
     pub(crate) difficulty: i32,
-    pub(crate) vera: bool,
 }
 
 pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
@@ -592,11 +589,6 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
             .frontend
             .multiplayer_shell_runtime
             .cooperative_difficulty(),
-        vera: state
-            .frontend
-            .coop_score_page
-            .as_ref()
-            .is_some_and(|page| page.model.vera),
     })
 }
 

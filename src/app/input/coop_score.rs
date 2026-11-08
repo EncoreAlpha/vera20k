@@ -51,9 +51,6 @@ fn enabled(
     if !can_continue && hidden_on_final_mission(id) {
         return false;
     }
-    if view.vera && hidden_for_vera(id) {
-        return false;
-    }
     match id {
         CONTINUE => view.continue_enabled,
         QUIT => view.quit_enabled,

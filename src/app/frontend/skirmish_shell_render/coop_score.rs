@@ -42,9 +42,9 @@ pub(crate) fn render_coop_score(
     let (width, height) = (state.render_width(), state.render_height());
     let fills = crate::app::frontend::shell_layout::fills_window(state);
     let now = Instant::now();
-    let (can_continue, map_index, vera) = {
+    let (can_continue, map_index) = {
         let model = &state.frontend.coop_score_page.as_ref().expect("view").model;
-        (model.can_continue, model.map_index, model.vera)
+        (model.can_continue, model.map_index)
     };
     match map_index.filter(|_| can_continue) {
         Some(index) => ensure_map_preview_texture(
@@ -56,8 +56,7 @@ pub(crate) fn render_coop_score(
         ),
         None => state.frontend.skirmish_preview_texture = None,
     }
-    let shown =
-        |id: u16| (can_continue || !hidden_on_final_mission(id)) && !(vera && hidden_for_vera(id));
+    let shown = |id: u16| can_continue || !hidden_on_final_mission(id);
     let controller_hover = state
         .frontend
         .coop_score_page
@@ -180,27 +179,6 @@ pub(crate) fn render_coop_score(
             ));
         }
     }
-    // VMCE's defeat page fills the native "Previous Mission" row with the
-    // stage just played. Stock Cooperative leaves the model value empty and
-    // keeps the static-only template.
-    if model.vera
-        && !model.previous_mission.is_empty()
-        && let (Some(label), Some(time)) = (
-            layout.control_rect(PREVIOUS_MISSION),
-            layout.control_rect(TIME),
-        )
-    {
-        let x = label.x + label.w + 4;
-        let width = time.x.saturating_sub(8).saturating_sub(x);
-        if width > 0 {
-            texts.push(text(
-                &model.previous_mission,
-                RectPx::new(x, label.y, width, label.h),
-                ShellAlign::NONE,
-                SHELL_LABEL_TEXT_RGB,
-            ));
-        }
-    }
     // The tail's cells: name, then "%d" for each count, in the row colour.
     for (row, cells) in model.rows.iter().zip(ROW_CELLS) {
         let values = [
@@ -232,7 +210,7 @@ pub(crate) fn render_coop_score(
         {
             push_flag_entry_clipped_centered(&mut controls, icon, rect, scale, SHELL_CONTROL_DEPTH);
         }
-        if !can_continue || vera {
+        if !can_continue {
             continue;
         }
         if let Some(flag) = slot
@@ -280,10 +258,7 @@ pub(crate) fn render_coop_score(
             }
         }
     }
-    if can_continue
-        && !vera
-        && let Some(rect) = layout.control_rect(DIFFICULTY)
-    {
+    if can_continue && let Some(rect) = layout.control_rect(DIFFICULTY) {
         // 0x0046DE20's slider: range 0..2 at [0xA8EB68], no value plaque.
         let bar = crate::ui::multiplayer_setup::SetupTrackbar {
             id: crate::ui::multiplayer_setup::DIFFICULTY,
