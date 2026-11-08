@@ -842,6 +842,10 @@ impl MatchSession {
                 network.map_metadata = Some(next.metadata.clone());
                 network.local_map_source = Some(next.local_map_source.clone());
                 network.local_map_effective_digest = Some(next.effective_digest.clone());
+            } else if let Some(config) = previous.vmce_map_config() {
+                // Retry keeps the current mission: restore the admitted map
+                // config the retired startup held.
+                network.vmce_map_config = Some(config.clone());
             }
             // The next map owns its own `[Basic] PlayerN`/`[Houses]` binding,
             // so re-resolve each role against it instead of carrying the
