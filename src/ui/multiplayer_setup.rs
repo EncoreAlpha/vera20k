@@ -754,6 +754,8 @@ const ROSTER_BUTTON_H: i32 = 24;
 pub(crate) struct VmceLobbySidebar {
     /// The native panel/list frame around the captions and the four rows.
     pub(crate) frame: RectPx,
+    /// The flat native dialog-palette fill inside the frame.
+    pub(crate) fill: RectPx,
     /// The dark rule under the one caption row.
     pub(crate) header_rule: RectPx,
     /// Role / Country / Ready+Host / Color captions, in that order.
@@ -789,6 +791,8 @@ pub(crate) struct VmceLobbySidebarRow {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VmceLobbyStatusBar {
     pub(crate) frame: RectPx,
+    /// The flat native dialog-palette fill inside the frame.
+    pub(crate) fill: RectPx,
     pub(crate) text: RectPx,
 }
 
@@ -823,6 +827,8 @@ pub(crate) struct MultiplayerSetupLayout {
     /// is right-anchored. `None` on BC/BD/C2.
     pub(crate) no_preview: Option<RectPx>,
     pub(crate) cooperative_description: RectPx,
+    /// VMCE's difficulty captions over the slider's thirds; `None` elsewhere.
+    pub(crate) difficulty_labels: Option<[RectPx; 3]>,
     /// VERA's VMCE role board; `None` outside a VMCE LAN room.
     pub(crate) vmce_sidebar: Option<VmceLobbySidebar>,
     /// VERA's VMCE inline status bar; `None` outside a VMCE LAN room.
@@ -965,6 +971,7 @@ impl MultiplayerSetupLayout {
             game_options: None,
             map_offer: crate::ui::shell::modal::quit_confirm_layout(width, height),
             cooperative_description: rect(60, 98, 540, 143),
+            difficulty_labels: None,
             vmce_sidebar: None,
             vmce_status_bar: None,
             no_preview: (dialog.wol() && !host).then(|| rect(650, 37, 145, 113)),

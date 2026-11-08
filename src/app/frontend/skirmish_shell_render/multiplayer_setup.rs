@@ -460,14 +460,32 @@ pub(crate) fn render_multiplayer_setup(
             ));
         }
         if view.cooperative || vmce {
-            for (key, x) in [("TXT_Easy", 170), ("TXT_Normal", 295), ("TXT_Hard", 430)] {
-                texts.push(text(
-                    &localized_label(state, key, key),
-                    scale.scale_rect(RectPx::new(x, if vmce { 267 } else { 190 }, 75, 20)),
-                    ShellAlign::H_CENTER,
-                    SHELL_LABEL_TEXT_RGB,
-                    SHELL_CONTROL_TEXT_DEPTH,
-                ));
+            if let Some(labels) = layout.difficulty_labels {
+                // VMCE: the three captions ride the slider's thirds on one
+                // baseline above it, set by the same layout owner as the track.
+                for (key, rect) in [
+                    ("TXT_Easy", labels[0]),
+                    ("TXT_Normal", labels[1]),
+                    ("TXT_Hard", labels[2]),
+                ] {
+                    texts.push(text(
+                        &localized_label(state, key, key),
+                        rect,
+                        ShellAlign::H_CENTER,
+                        SHELL_LABEL_TEXT_RGB,
+                        SHELL_CONTROL_TEXT_DEPTH,
+                    ));
+                }
+            } else {
+                for (key, x) in [("TXT_Easy", 170), ("TXT_Normal", 295), ("TXT_Hard", 430)] {
+                    texts.push(text(
+                        &localized_label(state, key, key),
+                        scale.scale_rect(RectPx::new(x, 190, 75, 20)),
+                        ShellAlign::H_CENTER,
+                        SHELL_LABEL_TEXT_RGB,
+                        SHELL_CONTROL_TEXT_DEPTH,
+                    ));
+                }
             }
         }
         if vmce {
@@ -987,9 +1005,9 @@ fn paint_vmce_lobby_board(
     ) else {
         return;
     };
-    // Native panel tile and list frame: the board is a native list panel, not
-    // text floating over the map terrain.
-    push_vmce_panel_tile(controls, atlas, board.frame, scale);
+    // Flat native dialog fill and the native list frame: a quiet panel, not
+    // tile noise over the map terrain.
+    push_vmce_panel_fill(controls, atlas, board.fill);
     push_vmce_list_frame(controls, atlas, board.frame, scale);
     push_vmce_rule(controls, atlas, board.header_rule, scale);
     for header in board.headers {
@@ -1069,42 +1087,85 @@ fn paint_vmce_lobby_board(
         }
     }
     if let Some(bar) = layout.vmce_status_bar {
-        push_vmce_panel_tile(controls, atlas, bar.frame, scale);
+        push_vmce_panel_fill(controls, atlas, bar.fill);
         push_vmce_list_frame(controls, atlas, bar.frame, scale);
         if let Some(status) = &view.vmce_status {
-            texts.push(text(
-                status,
-                bar.text,
-                ShellAlign::V_CENTER,
-                SHELL_LABEL_TEXT_RGB,
-                SHELL_CONTROL_TEXT_DEPTH,
-            ));
+            let authored_w = scale.base_rect(bar.text).w.max(1);
+            let lines = wrap_status_lines(font, status, authored_w);
+            let line_h = (17.0 * scale.factor()).round().max(1.0) as i32;
+            let leading = (2.0 * scale.factor()).round() as i32;
+            for (index, line) in lines.iter().enumerate() {
+                texts.push(text(
+                    line,
+                    RectPx::new(
+                        bar.text.x,
+                        bar.text.y + index as i32 * (line_h + leading),
+                        bar.text.w,
+                        line_h,
+                    ),
+                    ShellAlign::NONE,
+                    SHELL_LABEL_TEXT_RGB,
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
+            }
         }
     }
 }
 
-/// One native panel tile repeated across `rect` (clipped to the rect's edges).
+/// Flat fill under the board/status panel, sampled from the native 451x326
+/// dialog art's flat dark interior (RGB565 2,4,3): one quiet dark tone behind
+/// the native yellow text, with no tile seams.
 #[cfg(feature = "vmce")]
-fn push_vmce_panel_tile(
+const VMCE_PANEL_FILL_RGB: [f32; 3] = [16.0 / 255.0, 16.0 / 255.0, 25.0 / 255.0];
+
+/// One flat native dialog-palette fill inside the list frame.
+#[cfg(feature = "vmce")]
+fn push_vmce_panel_fill(
     out: &mut Vec<SpriteInstance>,
     atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
     rect: RectPx,
-    scale: ShellScale,
 ) {
-    let Some(tile) = atlas.right_panel_tile_sdbtnbkgd else {
-        return;
-    };
-    // The panel art is one SDTP cell. Drawing it once over the whole rect
-    // keeps its bevels on the frame edges instead of repeating seams through
-    // the rows.
-    push_entry_sized(
+    push_solid_rect(
         out,
-        tile,
-        rect.x as f32,
-        rect.y as f32,
-        [rect.w as f32, rect.h as f32],
+        atlas,
+        rect,
+        VMCE_PANEL_FILL_RGB,
         SHELL_PARENT_BACKGROUND_DEPTH - 0.00006,
     );
+}
+
+/// Cut the status text into at most two native-pixel lines, preferring an
+/// ASCII space, so the strip reads as two leading-separated rows.
+#[cfg(feature = "vmce")]
+fn wrap_status_lines(
+    font: &crate::render::bit_font::BitFont,
+    text: &str,
+    max_w: i32,
+) -> Vec<String> {
+    let max_w = max_w.max(1) as u32;
+    if font.text_width(text) <= max_w {
+        return vec![text.to_owned()];
+    }
+    let mut best = 0;
+    for (index, _) in text.char_indices() {
+        if font.text_width(&text[..index]) > max_w {
+            break;
+        }
+        best = index;
+    }
+    let split = text[..best]
+        .rfind(' ')
+        .map(|space| space + 1)
+        .filter(|&split| split > 0)
+        .unwrap_or_else(|| {
+            // No usable space: cut after the first character that fits.
+            text.char_indices()
+                .nth(1)
+                .map(|(index, _)| index)
+                .unwrap_or(text.len())
+        });
+    let (first, rest) = text.split_at(split);
+    vec![first.trim_end().to_owned(), rest.trim_start().to_owned()]
 }
 
 /// The native owner-draw list frame (`0x00619230`) around `rect`.

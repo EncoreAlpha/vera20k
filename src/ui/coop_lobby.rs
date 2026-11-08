@@ -37,7 +37,9 @@ const ROW_Y: i32 = 36;
 const ROW_H: i32 = 24;
 const ROW_PAD: i32 = 1;
 /// The status strip's native two-line text height plus its 4 px padding.
-const STATUS_H: i32 = 42;
+const STATUS_H: i32 = 48;
+/// The flat fill's inset inside the native list frame.
+const FILL_BORDER: i32 = 2;
 const STATUS_GUTTER: i32 = 4;
 /// Extra air between the status strip and the reflowed briefing.
 const STATUS_BRIEFING_GAP: i32 = 2;
@@ -103,11 +105,17 @@ pub(crate) fn apply(
         let status_y = board_bottom + STATUS_GUTTER;
         layout.vmce_status_bar = Some(VmceLobbyStatusBar {
             frame: rect(SIDEBAR_X, status_y, SIDEBAR_RIGHT - SIDEBAR_X, STATUS_H),
+            fill: rect(
+                SIDEBAR_X + FILL_BORDER,
+                status_y + FILL_BORDER,
+                SIDEBAR_RIGHT - SIDEBAR_X - 2 * FILL_BORDER,
+                STATUS_H - 2 * FILL_BORDER,
+            ),
             text: rect(
-                SIDEBAR_X + INNER_PAD,
-                status_y + INNER_PAD,
-                SIDEBAR_RIGHT - SIDEBAR_X - 2 * INNER_PAD,
-                STATUS_H - 2 * INNER_PAD,
+                SIDEBAR_X + FILL_BORDER + INNER_PAD,
+                status_y + FILL_BORDER + INNER_PAD,
+                SIDEBAR_RIGHT - SIDEBAR_X - 2 * (FILL_BORDER + INNER_PAD),
+                STATUS_H - 2 * (FILL_BORDER + INNER_PAD),
             ),
         });
         status_y + STATUS_H + STATUS_GUTTER + STATUS_BRIEFING_GAP
@@ -129,6 +137,13 @@ pub(crate) fn apply(
             *bounds = rect(300, 337, 129, 21);
         }
     }
+    // Centre the three captions over the slider's thirds on one baseline four
+    // pixels above the track; the last caption still ends inside the track.
+    layout.difficulty_labels = Some(std::array::from_fn(|index| {
+        let x0 = 180 + 266 * index as i32 / 3;
+        let x1 = 180 + 266 * (index as i32 + 1) / 3;
+        rect(x0, 271, x1 - x0, 17)
+    }));
     // A VMCE room's capacity is at most four authored roles, but keep the
     // ordinary paging placement if a larger roster is ever admitted.
     let bottom = ROW_Y + row_count.min(4) as i32 * ROW_PITCH + 2;
@@ -162,9 +177,8 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
     let headers = [
         VmceLobbyHeader {
             key: "VERA:VmceRoleColumn",
-            // 2 px more than the row content: the caption clears the native
-            // list frame's left bevel instead of touching it.
-            rect: rect(columns[0].0 + 4, header_y, columns[0].1 - 6, HEADER_H),
+            // 4 px inside the flat panel fill.
+            rect: rect(columns[0].0 + 2, header_y, columns[0].1 - 4, HEADER_H),
             centred: false,
         },
         VmceLobbyHeader {
@@ -206,13 +220,20 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
             color: rect(columns[4].0 + 2, content, columns[4].1 - 4, content_h),
         }
     });
+    let frame = rect(
+        SIDEBAR_X,
+        SIDEBAR_TOP,
+        SIDEBAR_RIGHT - SIDEBAR_X,
+        (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP,
+    );
     VmceLobbySidebar {
-        frame: rect(
-            SIDEBAR_X,
-            SIDEBAR_TOP,
-            SIDEBAR_RIGHT - SIDEBAR_X,
-            (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP,
-        ),
+        frame,
+        fill: scale.scale_rect(RectPx::new(
+            SIDEBAR_X + FILL_BORDER,
+            SIDEBAR_TOP + FILL_BORDER,
+            SIDEBAR_RIGHT - SIDEBAR_X - 2 * FILL_BORDER,
+            (14 + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP - 2 * FILL_BORDER,
+        )),
         header_rule,
         headers,
         rows,
@@ -312,8 +333,35 @@ mod tests {
             let status = coop.vmce_status_bar.expect("status").frame;
             assert!(base(board.frame).y + base(board.frame).h <= base(status).y);
             assert!((base(status).h - STATUS_H).abs() <= 1);
+            let difficulty = base(coop.control_rect(DIFFICULTY).expect("difficulty track"));
+            assert!(
+                (difficulty.x - 180).abs() <= 1
+                    && (difficulty.y - 290).abs() <= 1
+                    && (difficulty.w - 266).abs() <= 1
+                    && (difficulty.h - 22).abs() <= 1,
+                "difficulty track moved: {difficulty:?}"
+            );
+            let labels = coop.difficulty_labels.expect("difficulty captions");
+            let base_track = difficulty;
+            for (index, label) in labels.iter().enumerate() {
+                let label = base(*label);
+                let centre = label.x + label.w / 2;
+                let expected = base_track.x + base_track.w * (2 * index as i32 + 1) / 6;
+                assert!(
+                    (centre - expected).abs() <= 3,
+                    "caption {index} centre: {centre} vs {expected}"
+                );
+                assert!(
+                    (label.y + label.h - (base_track.y - 2)).abs() <= 2,
+                    "caption {index} baseline"
+                );
+                assert!((label.y - base(labels[0]).y).abs() <= 2);
+                assert!((label.h - base(labels[0]).h).abs() <= 1);
+            }
+            let last = base(labels[2]);
+            assert!(last.x + last.w <= base_track.x + base_track.w);
             let text = coop.vmce_status_bar.expect("status").text;
-            assert!((base(text).x - (base(status).x + INNER_PAD)).abs() <= 1);
+            assert!((base(text).x - (base(status).x + FILL_BORDER + INNER_PAD)).abs() <= 1);
             let briefing = base(coop.cooperative_description);
             assert!(
                 (briefing.y - (base(status).y + STATUS_H + STATUS_GUTTER + STATUS_BRIEFING_GAP))
@@ -358,7 +406,7 @@ mod tests {
         for (row, y) in board.rows.iter().zip([37, 63, 89, 115]) {
             assert_eq!(base(row.role).y, y);
         }
-        assert_eq!(base(board.headers[0].rect).x, 266);
+        assert_eq!(base(board.headers[0].rect).x, 264);
         let rule = base(board.header_rule);
         assert_eq!(rule.y, 32);
         assert_eq!(rule.w, 366);
