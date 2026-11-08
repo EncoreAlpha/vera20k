@@ -271,13 +271,6 @@ impl MatchSession {
         Ok(())
     }
 
-    /// The current VMCE continuation; `Next` outside a VMCE round.
-    #[cfg(feature = "vmce")]
-    pub(crate) fn vmce_round_ending(&self) -> VmceRoundEnding {
-        self.cooperative_round()
-            .map_or(VmceRoundEnding::Next, |round| round.vera_ending)
-    }
-
     fn enter_cooperative_round_with_vera(
         &mut self,
         next_map_file: Option<String>,
@@ -493,8 +486,7 @@ impl MatchSession {
                     } else if self.host {
                         // Retry is the host's decision and needs no guest
                         // readiness; campaign end keeps the all-ready gate.
-                        (round.vera_ending == VmceRoundEnding::Retry
-                            || round.all_ready())
+                        (round.vera_ending == VmceRoundEnding::Retry || round.all_ready())
                             && !round.assigned
                     } else {
                         !round.local_ready
