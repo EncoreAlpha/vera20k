@@ -1629,7 +1629,10 @@ pub(crate) fn clear_loading_state(state: &mut AppState) {
 
 fn reset_loading_presentation(state: &mut AppState) {
     state.match_state.match_presentation.interpolation.clear();
-    state.renderer.fps_overlay.set_simulation_readout(None);
+    state
+        .renderer
+        .performance_overlay
+        .set_simulation_readout(None);
     state.frontend.loading_screen_atlas = None;
     state.frontend.loading_progress = LoadingProgressState::standard_skirmish();
 }
@@ -1862,7 +1865,7 @@ fn pump_loading_after_present(
                 &state.renderer.depth_view,
                 &state.renderer.batch_renderer,
                 &state.renderer.bit_font,
-                &state.renderer.fps_overlay,
+                &state.renderer.performance_overlay,
                 native,
                 8,
                 render_size,
@@ -1933,7 +1936,7 @@ fn pump_loading_after_present(
                         &state.renderer.depth_view,
                         &state.renderer.batch_renderer,
                         &state.renderer.bit_font,
-                        &state.renderer.fps_overlay,
+                        &state.renderer.performance_overlay,
                         render_size,
                         scale,
                     )
@@ -2140,7 +2143,7 @@ fn pump_map_construction(
                     &state.renderer.depth_view,
                     &state.renderer.batch_renderer,
                     &state.renderer.bit_font,
-                    &state.renderer.fps_overlay,
+                    &state.renderer.performance_overlay,
                     render_size,
                     scale,
                 )
@@ -2249,7 +2252,7 @@ fn publish_load_complete(
             &state.renderer.depth_view,
             &state.renderer.batch_renderer,
             &state.renderer.bit_font,
-            &state.renderer.fps_overlay,
+            &state.renderer.performance_overlay,
             native,
             terminal_raw_percent,
             render_size,
@@ -3381,7 +3384,7 @@ fn fail_loading(state: &mut AppState, policy: LoadingFailurePolicy, err: anyhow:
         crate::app::App::return_to_main_menu(state);
     } else if policy == LoadingFailurePolicy::ReportNativeFailure {
         state.frontend.screen = GameScreen::MissionResult {
-            title: "Loading Failed".to_string(),
+            title: crate::i18n::tr("VERA:LoadingFailed"),
             detail: format!("{err:#}"),
         };
     } else {
@@ -3435,16 +3438,19 @@ pub(crate) fn present_saved_game_loading(state: &mut AppState) -> anyhow::Result
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Saved Game Loading"),
             });
+    state.renderer.window_ui.begin_frame();
     crate::app::frontend::skirmish_shell_render::render_saved_game_loading(
         state,
         &mut encoder,
         &output.texture,
     )?;
-    state.renderer.fps_overlay.encode(
+    state.renderer.performance_overlay.encode(
         &state.renderer.gpu,
         &state.renderer.batch_renderer,
         &mut encoder,
         &output.texture,
+        &state.renderer.bit_font,
+        None,
     );
     state
         .renderer
@@ -3463,7 +3469,8 @@ pub(crate) fn present_game_mode_blank(state: &AppState) {
         &state.renderer.gpu,
         &state.renderer.shell_surface_presenter,
         &state.renderer.batch_renderer,
-        &state.renderer.fps_overlay,
+        &state.renderer.performance_overlay,
+        &state.renderer.bit_font,
     ) {
         log::warn!("Game-mode blank frame failed: {err:#}");
     }
@@ -3556,7 +3563,7 @@ fn advance_and_present_native_progress<'a>(
     depth_view: &'a wgpu::TextureView,
     batch: &'a BatchRenderer,
     font: &'a BitFont,
-    fps_overlay: &'a crate::app::diagnostics::fps_overlay::FpsOverlay,
+    performance_overlay: &'a crate::app::diagnostics::performance_overlay::PerformanceOverlay,
     native: &'a mut NativeLoadingScreenState,
     raw_percent: u32,
     render_size: [u32; 2],
@@ -3573,7 +3580,7 @@ fn advance_and_present_native_progress<'a>(
                 depth_view,
                 batch,
                 font,
-                fps_overlay,
+                performance_overlay,
                 render_size,
                 scale,
             )
@@ -3591,7 +3598,7 @@ struct RenderingProgressSink<'a> {
     depth_view: &'a wgpu::TextureView,
     batch: &'a BatchRenderer,
     font: &'a BitFont,
-    fps_overlay: &'a crate::app::diagnostics::fps_overlay::FpsOverlay,
+    performance_overlay: &'a crate::app::diagnostics::performance_overlay::PerformanceOverlay,
     gate: GatedProgressSink<'a>,
     atlas: &'a LoadingScreenAtlas,
     composition: Option<&'a LoadingCompositionSnapshot>,
@@ -3611,7 +3618,7 @@ impl<'a> RenderingProgressSink<'a> {
         depth_view: &'a wgpu::TextureView,
         batch: &'a BatchRenderer,
         font: &'a BitFont,
-        fps_overlay: &'a crate::app::diagnostics::fps_overlay::FpsOverlay,
+        performance_overlay: &'a crate::app::diagnostics::performance_overlay::PerformanceOverlay,
         render_size: [u32; 2],
         scale: ShellScale,
     ) -> Self {
@@ -3621,7 +3628,7 @@ impl<'a> RenderingProgressSink<'a> {
             depth_view,
             batch,
             font,
-            fps_overlay,
+            performance_overlay,
             gate: GatedProgressSink {
                 progress: &mut native.progress,
                 progress_row: &mut native.progress_row,
@@ -3653,7 +3660,7 @@ impl LoadingProgressSink for RenderingProgressSink<'_> {
                 self.depth_view,
                 self.batch,
                 self.font,
-                self.fps_overlay,
+                self.performance_overlay,
                 self.atlas,
                 self.composition,
                 self.campaign_presentation,
