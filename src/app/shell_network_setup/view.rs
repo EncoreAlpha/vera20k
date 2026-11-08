@@ -228,14 +228,42 @@ fn vmce_role_choices(
         }
         choices.push(SetupChoice {
             value,
-            text: crate::i18n::tr_fill(
-                "VERA:VmceRoleChoice",
-                &[("number", &(index + 1)), ("house", &owner)],
+            text: fit_role_combo_text(
+                state,
+                crate::i18n::tr_fill(
+                    "VERA:VmceRoleChoiceShort",
+                    &[("number", &(index + 1)), ("house", &owner)],
+                ),
             ),
             swatch: None,
         });
     }
     (current, choices)
+}
+
+/// Fit a VMCE role choice into the locked 80 px combo cell: keep the native
+/// face's arrow and label inset clear and cut the rest with two dots. The
+/// limited text applies to the closed face and the dropdown alike, so neither
+/// crosses into the role board.
+#[cfg(feature = "vmce")]
+fn fit_role_combo_text(state: &AppState, text: String) -> String {
+    const MAX_AUTHORED_W: u32 = 56;
+    let font = &state.renderer.bit_font;
+    if font.text_width(&text) <= MAX_AUTHORED_W {
+        return text;
+    }
+    let mut cut = String::new();
+    for ch in text.chars() {
+        let mut candidate = cut.clone();
+        candidate.push(ch);
+        candidate.push_str("..");
+        if font.text_width(&candidate) > MAX_AUTHORED_W {
+            break;
+        }
+        cut.push(ch);
+    }
+    cut.push_str("..");
+    cut
 }
 
 /// The first pair of authored roles whose Houses share one Country; a lobby

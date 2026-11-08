@@ -1080,8 +1080,8 @@ pub(crate) struct VmceLobbyFixture {
     pub peer_ready: bool,
     /// A local campaign/map admission problem for the inline status bar.
     pub status: Option<VmceLobbyStatus>,
-    /// A blocking message shown in the native message box.
-    pub blocking: Option<String>,
+    /// Show the native invalid-campaign blocking message box.
+    pub blocking: bool,
 }
 
 /// Admit a synthetic VMCE LAN room into the production session/UI owners so
@@ -1108,7 +1108,26 @@ pub(crate) fn install_vmce_lobby_fixture(
         state.platform.game_config.is_some(),
         "VMCE lobby capture needs the retail asset directory"
     );
-    let file = "VMCE/Capture/mission.map".to_owned();
+    // Use a real local map so the native preview box shows retail art; the
+    // role board itself stays synthetic.
+    let catalog_entry = state
+        .frontend
+        .scenario_catalog
+        .shell_maps()
+        .iter()
+        .find(|entry| entry.preview.decoded.is_some() || entry.preview.has_packed_preview)
+        .or_else(|| {
+            state
+                .frontend
+                .scenario_catalog
+                .shell_maps()
+                .iter()
+                .find(|entry| !entry.file_name.is_empty())
+        })
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("VMCE lobby capture needs one local map"))?;
+    let file = catalog_entry.file_name.clone();
+    let display_name = catalog_entry.display_name.clone();
     let count = if fixture.host { 4 } else { 2 };
     let humans: Vec<SkirmishHumanSlot> = (0..count)
         .map(|index| {
@@ -1197,7 +1216,11 @@ pub(crate) fn install_vmce_lobby_fixture(
         )?;
     }
     let metadata = crate::app::match_runtime::session::NetworkMapMetadata {
-        display_name: "VMCE Capture Mission".to_owned(),
+        display_name: if display_name.is_empty() {
+            file.clone()
+        } else {
+            display_name.clone()
+        },
         player_capacity: 4,
         official: false,
         byte_length: 1024,
@@ -1264,11 +1287,19 @@ pub(crate) fn install_vmce_lobby_fixture(
         .vmce_role_cache
         .replace(Some((root, file.to_ascii_lowercase(), digest, details)));
     protocol.set_vmce_lobby_status(fixture.status);
+    // The fixture map is a real local catalog map; let the ordinary preview
+    // owner decode and cache its retail thumbnail for the setup box.
+    protocol.local_map_verified = true;
+    protocol.local_map_loose = false;
     protocol.requests.clear();
-    if let Some(message) = &fixture.blocking {
+    if fixture.blocking {
         let ok = App::csf_label(state, "TXT_OK", "TXT_OK");
+        let message = crate::i18n::tr_fill(
+            "VERA:VmceBlockingInvalidCampaign",
+            &[("map", &metadata.display_name)],
+        );
         if let Some(ui) = state.frontend.multiplayer_setup.as_mut() {
-            ui.notice = Some(SkirmishValidationModalState::new(message.clone(), ok));
+            ui.notice = Some(SkirmishValidationModalState::new(message, ok));
         }
     }
     Ok(())

@@ -1149,6 +1149,7 @@ mod tests {
             "VERA:VmceBriefingUnavailable",
             "VERA:VmceColorColumn",
             "VERA:VmceRoleChoice",
+            "VERA:VmceRoleChoiceShort",
         ];
         for (tag, text) in shipped::FILES {
             let contents = parse(text);

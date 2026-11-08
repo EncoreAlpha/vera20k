@@ -2,13 +2,14 @@
 //!
 //! The original page owns the chrome anchors. Only the player columns are
 //! rearranged: a map role already determines its House and country. A
-//! display-only role board (role / country / ready+host / color) sits right of
-//! the participant columns; it reuses the native roster pitch, bit font,
-//! country flags and color swatches and owns no interaction.
+//! display-only role board (role / country / ready / host / color) sits right
+//! of the participant columns on a native panel/list background; it reuses the
+//! native roster pitch, bit font, country flags and color swatches and owns no
+//! interaction.
 
 use crate::ui::multiplayer_setup::{
-    DIFFICULTY, MultiplayerSetupLayout, SPEED, SetupDialog, VmceLobbySidebar, VmceLobbySidebarRow,
-    VmceLobbyStatusBar,
+    DIFFICULTY, MultiplayerSetupLayout, SPEED, SetupDialog, VmceLobbyHeader, VmceLobbySidebar,
+    VmceLobbySidebarRow, VmceLobbyStatusBar,
 };
 use crate::ui::shell::geom::{RectPx, ShellScale};
 
@@ -18,21 +19,27 @@ const PLAYER_COMBO_X: i32 = 74;
 const PLAYER_COMBO_W: i32 = 96;
 const ROLE_COMBO_X: i32 = 174;
 const ROLE_COMBO_W: i32 = 80;
-/// Authored 800x600 metrics of the role board. The base columns are the
-/// approved 92/92/66/32; the spare width between the board and the right
-/// panel's frame (x 540..628) is distributed proportionally so no blank band
-/// is left between the group and the native panel.
+/// Authored 800x600 metrics of the role board. The board frame starts after
+/// the 4 px gutter behind the role combo and ends flush against the native
+/// right panel's bevel at x 632; the content keeps a 4 px inner padding. The
+/// base columns are the approved 92/92/33/33/32 split (Ready and Host share
+/// the old Ready+Host width) distributed over the available content width.
 const SIDEBAR_X: i32 = 258;
+const SIDEBAR_RIGHT: i32 = 632;
+const SIDEBAR_TOP: i32 = 10;
+const INNER_PAD: i32 = 4;
+const SIDEBAR_BASE_COLUMNS: [i32; 5] = [92, 92, 33, 33, 32];
 const SIDEBAR_BASE_W: i32 = 282;
-const SIDEBAR_RIGHT: i32 = 628;
-const SIDEBAR_BASE_COLUMNS: [i32; 4] = [92, 92, 66, 32];
-/// The native roster row pitch and the status bar's two-line height (the
-/// native GAME.FNT cell advance is 17 px).
+/// The native roster row pitch, its combo height, and the board's 2 px
+/// vertical padding inside each row.
 const ROW_PITCH: i32 = 26;
 const ROW_Y: i32 = 36;
 const ROW_H: i32 = 24;
-const STATUS_H: i32 = 38;
-const STATUS_GUTTER: i32 = 6;
+const ROW_PAD: i32 = 1;
+/// The status strip's native two-line text height plus its 4 px padding.
+const STATUS_H: i32 = 42;
+const STATUS_GUTTER: i32 = 4;
+const HEADER_H: i32 = 17;
 
 pub(crate) fn apply(
     layout: &mut MultiplayerSetupLayout,
@@ -82,25 +89,23 @@ pub(crate) fn apply(
         let y = ROW_Y + row as i32 * ROW_PITCH;
         columns[0] = rect(PLAYER_COMBO_X, y, PLAYER_COMBO_W, ROW_H);
         columns[4] = rect(ROLE_COMBO_X, y, ROLE_COMBO_W, ROW_H);
-        // The board owns the flags now; keep the retained rect on its country
-        // cell so no stale native flag column paints left of it.
-        layout.flags[row] = rect(SIDEBAR_X + 4, y + 3, 18, 17);
+        // The board owns the emblems now; keep the retained rect on its
+        // country slot so no stale native flag column paints left of it.
+        layout.flags[row] = rect(SIDEBAR_X + INNER_PAD + 2, y + ROW_PAD, 18, 20);
     }
     layout.vmce_sidebar = Some(sidebar(scale));
 
-    // The status bar sits directly under the four-row board with a small
-    // gutter when the room has something to report; the mission briefing
-    // follows it. Without a message the briefing takes the space back so the
-    // page has no empty strip between the roster and the briefing.
-    let board_bottom = ROW_Y + 4 * ROW_PITCH;
-    let briefing_y = if status_present {
+    // The board frame ends at its fourth row plus the 4 px inner padding.
+    let board_bottom = SIDEBAR_TOP + INNER_PAD + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD;
+    let briefing = if status_present {
         let status_y = board_bottom + STATUS_GUTTER;
         layout.vmce_status_bar = Some(VmceLobbyStatusBar {
-            frame: rect(
-                PLAYER_COMBO_X,
-                status_y,
-                SIDEBAR_RIGHT - PLAYER_COMBO_X,
-                STATUS_H,
+            frame: rect(SIDEBAR_X, status_y, SIDEBAR_RIGHT - SIDEBAR_X, STATUS_H),
+            text: rect(
+                SIDEBAR_X + INNER_PAD,
+                status_y + INNER_PAD,
+                SIDEBAR_RIGHT - SIDEBAR_X - 2 * INNER_PAD,
+                STATUS_H - 2 * INNER_PAD,
             ),
         });
         status_y + STATUS_H + STATUS_GUTTER
@@ -108,11 +113,12 @@ pub(crate) fn apply(
         layout.vmce_status_bar = None;
         board_bottom + STATUS_GUTTER
     };
+    // The briefing ends before the native difficulty caption at y 267.
     layout.cooperative_description = rect(
         PLAYER_COMBO_X,
-        briefing_y,
+        briefing,
         SIDEBAR_RIGHT - PLAYER_COMBO_X,
-        if status_present { 96 } else { 140 },
+        (262 - briefing).max(0),
     );
     for (id, bounds) in &mut layout.trackbars {
         if *id == DIFFICULTY {
@@ -133,45 +139,80 @@ pub(crate) fn apply(
 
 fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
-    // Widen the approved 282 px group into the spare strip left of the native
-    // right panel, keeping the approved proportions. Each edge is rounded
-    // from the cumulative proportion so the columns meet exactly.
-    let widened = SIDEBAR_RIGHT - SIDEBAR_X;
+    // Distribute the approved proportions over the inner width so the
+    // columns meet exactly; the last edge is the frame's inner right edge.
+    let inner_w = SIDEBAR_RIGHT - SIDEBAR_X - 2 * INNER_PAD;
     let edge = |index: usize| {
         let cumulative: i32 = SIDEBAR_BASE_COLUMNS[..=index].iter().sum();
-        SIDEBAR_X + ((widened * cumulative + SIDEBAR_BASE_W / 2) / SIDEBAR_BASE_W)
+        SIDEBAR_X + INNER_PAD + ((inner_w * cumulative + SIDEBAR_BASE_W / 2) / SIDEBAR_BASE_W)
     };
-    let lefts = [SIDEBAR_X, edge(0), edge(1), edge(2), SIDEBAR_RIGHT];
-    let columns: [(i32, i32); 4] =
-        std::array::from_fn(|column| (lefts[column], lefts[column + 1] - lefts[column]));
-    let headers = [
-        (
-            "VERA:VmceRoleColumn",
-            rect(columns[0].0, 11, columns[0].1, 17),
-        ),
-        (
-            "VERA:VmceCountryColumn",
-            rect(columns[1].0, 11, columns[1].1, 17),
-        ),
-        (
-            "VERA:VmceReadyColumn",
-            rect(columns[2].0, 11, columns[2].1, 17),
-        ),
-        (
-            "VERA:VmceColorColumn",
-            rect(columns[3].0, 11, columns[3].1, 17),
-        ),
+    let lefts = [
+        SIDEBAR_X + INNER_PAD,
+        edge(0),
+        edge(1),
+        edge(2),
+        edge(3),
+        SIDEBAR_RIGHT - INNER_PAD,
     ];
+    let columns: [(i32, i32); 5] =
+        std::array::from_fn(|column| (lefts[column], lefts[column + 1] - lefts[column]));
+    let header_y = SIDEBAR_TOP + INNER_PAD;
+    let headers = [
+        VmceLobbyHeader {
+            key: "VERA:VmceRoleColumn",
+            rect: rect(columns[0].0 + 2, header_y, columns[0].1 - 4, HEADER_H),
+            centred: false,
+        },
+        VmceLobbyHeader {
+            key: "VERA:VmceCountryColumn",
+            rect: rect(columns[1].0 + 2, header_y, columns[1].1 - 4, HEADER_H),
+            centred: false,
+        },
+        VmceLobbyHeader {
+            key: "VERA:VmceReadyColumn",
+            rect: rect(
+                columns[2].0,
+                header_y,
+                columns[3].0 + columns[3].1 - columns[2].0,
+                HEADER_H,
+            ),
+            centred: true,
+        },
+        VmceLobbyHeader {
+            key: "VERA:VmceColorColumn",
+            rect: rect(columns[4].0, header_y, columns[4].1, HEADER_H),
+            centred: true,
+        },
+    ];
+    // The one caption row's dark rule, then four rows on the native pitch.
+    let header_rule = rect(SIDEBAR_X + INNER_PAD, header_y + HEADER_H + 1, inner_w, 1);
     let rows = std::array::from_fn(|row| {
         let y = ROW_Y + row as i32 * ROW_PITCH;
+        let content = y + ROW_PAD;
+        let content_h = ROW_H - 2 * ROW_PAD;
         VmceLobbySidebarRow {
-            role: rect(columns[0].0, y, columns[0].1, ROW_H),
-            country: rect(columns[1].0, y, columns[1].1, ROW_H),
-            status: rect(columns[2].0, y, columns[2].1, ROW_H),
-            color: rect(columns[3].0, y, columns[3].1, ROW_H),
+            role: rect(columns[0].0 + 2, content, columns[0].1 - 4, content_h),
+            // The native flag PCX carries its country emblem beside the flag
+            // (the roster draws it in a 49x21 cell); give it the full native
+            // frame plus air, and centre it without clipping.
+            country_icon: rect(columns[1].0 + 1, y, 50, ROW_H),
+            country: rect(columns[1].0 + 54, content, columns[1].1 - 56, content_h),
+            ready: rect(columns[2].0 + 1, content, columns[2].1 - 2, content_h),
+            host: rect(columns[3].0 + 1, content, columns[3].1 - 2, content_h),
+            color: rect(columns[4].0 + 2, content, columns[4].1 - 4, content_h),
         }
     });
-    VmceLobbySidebar { headers, rows }
+    VmceLobbySidebar {
+        frame: rect(
+            SIDEBAR_X,
+            SIDEBAR_TOP,
+            SIDEBAR_RIGHT - SIDEBAR_X,
+            (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP,
+        ),
+        header_rule,
+        headers,
+        rows,
+    }
 }
 
 #[cfg(test)]
@@ -179,25 +220,37 @@ mod tests {
     use super::*;
     use crate::ui::multiplayer_setup::{ACCEPT, BACK, CHOOSE_MAP, START, SetupFlavor};
 
-    #[test]
-    fn coop_reuses_original_sidebar_anchors_at_multiple_sizes() {
+    fn coop_layout(
+        host: bool,
+        flavor: SetupFlavor,
+        width: i32,
+        height: i32,
+        status: bool,
+    ) -> MultiplayerSetupLayout {
         let dialog = SetupDialog {
-            host: true,
-            flavor: SetupFlavor::Lan,
+            host,
+            flavor,
             modern: true,
         };
+        let mut layout = MultiplayerSetupLayout::new(dialog, width, height, true);
+        apply(&mut layout, dialog, 4, width, height, status);
+        layout
+    }
+
+    #[test]
+    fn coop_reuses_original_sidebar_anchors_at_multiple_sizes() {
         for (width, height) in [(640, 480), (800, 600), (1920, 1080)] {
-            let mut coop = MultiplayerSetupLayout::new(dialog, width, height, true);
+            let coop = coop_layout(true, SetupFlavor::Lan, width, height, true);
             let native = MultiplayerSetupLayout::new(
                 SetupDialog {
+                    host: true,
+                    flavor: SetupFlavor::Lan,
                     modern: false,
-                    ..dialog
                 },
                 width,
                 height,
                 true,
             );
-            apply(&mut coop, dialog, 4, width, height, true);
             assert_eq!(coop.page.title, native.page.title);
             assert_eq!(coop.map_preview, native.map_preview);
             assert_eq!(coop.mode_label, native.mode_label);
@@ -207,107 +260,122 @@ mod tests {
             for id in [START, CHOOSE_MAP, BACK] {
                 assert_eq!(coop.page.button_rect(id), native.page.button_rect(id));
             }
-            // Participant columns, then a gutter, then the display board.
-            // Compare in authored 800x600 pixels: the layout's mapping may
-            // scale the page even at the retail window sizes (640 uses the
-            // 640-wide shell art), so device-space gaps are not integers.
+            // Authored-space comparisons: the mapping may scale the page.
             let scale = coop.page.scale;
             let base = |rect| scale.base_rect(rect);
             let player = base(coop.combos[0][0]);
             let role = base(coop.combos[0][4]);
             assert_eq!(player.x + player.w + 4, role.x);
             let board = coop.vmce_sidebar.expect("VMCE role board");
-            assert_eq!(base(board.rows[0].role).x, role.x + role.w + 4);
-            for row in &board.rows {
-                let cells = [
-                    base(row.role),
-                    base(row.country),
-                    base(row.status),
-                    base(row.color),
-                ];
-                assert!(role.x + role.w < cells[0].x);
-                // The board's columns meet exactly, with no overlap.
-                for pair in cells.windows(2) {
-                    assert_eq!(pair[0].x + pair[0].w, pair[1].x);
-                }
-                assert_eq!(cells[3].x + cells[3].w, 628);
+            // 4 px gutter behind the role combo, then the native panel frame.
+            assert_eq!(base(board.frame).x, role.x + role.w + 4);
+            assert_eq!(base(board.frame).x, SIDEBAR_X);
+            assert!((base(board.frame).x + base(board.frame).w - SIDEBAR_RIGHT).abs() <= 1);
+            for (index, header) in board.headers.iter().enumerate() {
+                assert!((base(header.rect).y - 14).abs() <= 1);
+                assert_eq!(base(header.rect).h, HEADER_H);
+                let cell = match index {
+                    0 => base(board.rows[0].role),
+                    1 => base(board.rows[0].country_icon),
+                    2 => base(board.rows[0].ready),
+                    _ => base(board.rows[0].color),
+                };
+                assert!((base(header.rect).x - cell.x).abs() <= 2, "header {index}");
             }
-            // The status bar follows the board directly and the briefing
-            // follows the bar; the native speed row stays below the briefing.
-            let status = base(coop.vmce_status_bar.expect("status").frame);
-            assert!(base(board.rows[3].role).y + base(board.rows[3].role).h < status.y);
+            for row in &board.rows {
+                let role_text = base(row.role);
+                let country_icon = base(row.country_icon);
+                let country_text = base(row.country);
+                let ready = base(row.ready);
+                let host = base(row.host);
+                let color = base(row.color);
+                assert!((role_text.y - country_icon.y).abs() <= 2);
+                assert!((country_icon.y - ready.y).abs() <= 2);
+                assert!((ready.y - host.y).abs() <= 2);
+                assert!((host.y - color.y).abs() <= 2);
+                assert!(role_text.x + role_text.w <= country_icon.x);
+                assert!(country_icon.x + country_icon.w <= country_text.x);
+                assert!(country_text.x + country_text.w <= ready.x);
+                assert!(ready.x + ready.w <= host.x);
+                assert!(host.x + host.w <= color.x);
+                assert!((color.x + color.w - (SIDEBAR_RIGHT - INNER_PAD - 2)).abs() <= 1);
+                // Rows keep the native pitch and 2 px vertical padding.
+                assert!((base(row.role).h - (ROW_H - 2 * ROW_PAD)).abs() <= 1);
+            }
+            assert!(
+                (base(board.rows[1].role).y - (base(board.rows[0].role).y + ROW_PITCH)).abs() <= 1
+            );
+            let status = coop.vmce_status_bar.expect("status").frame;
+            assert!(base(board.frame).y + base(board.frame).h <= base(status).y);
+            assert!((base(status).h - STATUS_H).abs() <= 1);
+            let text = coop.vmce_status_bar.expect("status").text;
+            assert!((base(text).x - (base(status).x + INNER_PAD)).abs() <= 1);
             let briefing = base(coop.cooperative_description);
-            assert!(status.y + status.h < briefing.y);
+            assert!((briefing.y - (base(status).y + STATUS_H + STATUS_GUTTER)).abs() <= 1);
             let speed = base(coop.control_rect(SPEED).unwrap());
-            assert!(briefing.y + briefing.h < speed.y);
-            assert!(speed.y + speed.h < base(coop.chat_log).y);
+            assert!(briefing.y + briefing.h <= speed.y);
+            assert!(speed.y + speed.h <= base(coop.chat_log).y);
 
-            // Without a message the reserved status strip disappears and the
-            // briefing starts directly under the board.
-            apply(&mut coop, dialog, 4, width, height, false);
+            // Without a message the reserved strip disappears and the briefing
+            // starts directly under the board.
+            let coop = coop_layout(true, SetupFlavor::Lan, width, height, false);
+            let board = coop.vmce_sidebar.expect("board");
             assert!(coop.vmce_status_bar.is_none());
             let briefing = base(coop.cooperative_description);
-            assert!(base(board.rows[3].role).y + base(board.rows[3].role).h < briefing.y);
-            assert_eq!(briefing.y, 146);
+            assert!(base(board.rows[3].role).y + base(board.rows[3].role).h <= briefing.y);
             let speed = base(coop.control_rect(SPEED).unwrap());
-            assert!(briefing.y + briefing.h < speed.y);
+            assert!(briefing.y + briefing.h <= speed.y);
         }
     }
 
     #[test]
     fn board_columns_meet_exactly_and_keep_the_approved_proportions() {
-        let dialog = SetupDialog {
-            host: true,
-            flavor: SetupFlavor::Lan,
-            modern: true,
-        };
-        let mut layout = MultiplayerSetupLayout::new(dialog, 800, 600, true);
-        apply(&mut layout, dialog, 4, 800, 600, true);
-        let board = layout.vmce_sidebar.expect("VMCE role board");
-        let first = board.rows[0];
-        assert_eq!(first.role.x, SIDEBAR_X);
-        assert_eq!(first.role.w, 121);
-        assert_eq!(first.country.w, 120);
-        assert_eq!(first.status.w, 87);
-        assert_eq!(first.color.w, 42);
-        assert_eq!(first.color.x + first.color.w, SIDEBAR_RIGHT);
-        for (row, expected_y) in board.rows.iter().zip([36, 62, 88, 114].into_iter()) {
-            for cell in [row.role, row.country, row.status, row.color] {
-                assert_eq!(cell.y, expected_y);
-                assert_eq!(cell.h, 24);
-            }
-        }
-        // Headers keep the native label row and share their column's edges.
+        let coop = coop_layout(true, SetupFlavor::Lan, 800, 600, false);
+        let board = coop.vmce_sidebar.expect("VMCE role board");
+        let base = |rect| coop.page.scale.base_rect(rect);
         let row = board.rows[0];
-        for (header, cell) in
-            board
-                .headers
-                .iter()
-                .zip([row.role, row.country, row.status, row.color])
-        {
-            assert_eq!(header.1.y, 11);
-            assert_eq!(header.1.h, 17);
-            assert_eq!(header.1.x, cell.x);
+        assert_eq!(base(row.role).x, 264);
+        assert_eq!(base(row.role).w, 115);
+        assert_eq!(base(row.country_icon).w, 50);
+        assert_eq!(base(row.country).w, 64);
+        assert_eq!(base(row.ready).x, 502);
+        assert_eq!(base(row.ready).w, 41);
+        assert_eq!(base(row.host).x, 545);
+        assert_eq!(base(row.host).w, 40);
+        assert_eq!(base(row.color).x, 588);
+        assert_eq!(base(row.color).w, 38);
+        for row in &board.rows {
+            assert_eq!(base(row.role).h, 22);
         }
+        for (row, y) in board.rows.iter().zip([37, 63, 89, 115]) {
+            assert_eq!(base(row.role).y, y);
+        }
+        let rule = base(board.header_rule);
+        assert_eq!(rule.y, 32);
+        assert_eq!(rule.w, 366);
+        let frame = base(board.frame);
+        assert_eq!((frame.x, frame.y, frame.w, frame.h), (258, 10, 374, 130));
+        assert_eq!(
+            (base(board.headers[2].rect).x, base(board.headers[2].rect).w),
+            (501, 85)
+        );
+        assert_eq!(
+            (base(board.headers[3].rect).x, base(board.headers[3].rect).w),
+            (586, 42)
+        );
     }
 
     #[test]
     fn role_combo_keeps_its_own_rect_and_hit_target() {
-        let dialog = SetupDialog {
-            host: true,
-            flavor: SetupFlavor::Lan,
-            modern: true,
-        };
-        let mut coop = MultiplayerSetupLayout::new(dialog, 800, 600, true);
-        apply(&mut coop, dialog, 4, 800, 600, false);
+        let coop = coop_layout(true, SetupFlavor::Lan, 800, 600, false);
         let player = coop.control_rect(0x411).unwrap();
         let role = coop.control_rect(0x76D).unwrap();
         assert_eq!(player, RectPx::new(74, 36, 96, 24));
         assert_eq!(role, RectPx::new(174, 36, 80, 24));
         assert_eq!(player.x + player.w + 4, role.x);
-        // The board starts after a further 4 px gutter.
+        // The board keeps a further 4 px gutter behind the role combo.
         assert_eq!(
-            coop.vmce_sidebar.expect("board").rows[0].role.x,
+            coop.vmce_sidebar.expect("board").frame.x,
             role.x + role.w + 4
         );
     }
@@ -315,22 +383,17 @@ mod tests {
     #[test]
     fn coop_guest_has_the_original_manual_ready_button() {
         for flavor in [SetupFlavor::Lan, SetupFlavor::Wol] {
-            let dialog = SetupDialog {
-                host: false,
-                flavor,
-                modern: true,
-            };
-            let mut coop = MultiplayerSetupLayout::new(dialog, 800, 600, true);
+            let coop = coop_layout(false, flavor, 800, 600, false);
             let original = MultiplayerSetupLayout::new(
                 SetupDialog {
+                    host: false,
+                    flavor,
                     modern: false,
-                    ..dialog
                 },
                 800,
                 600,
                 true,
             );
-            apply(&mut coop, dialog, 2, 800, 600, false);
             assert_eq!(coop.control_rect(ACCEPT), original.control_rect(ACCEPT));
             assert!(coop.control_rect(ACCEPT).is_some());
             assert_eq!(coop.control_rect(BACK), original.control_rect(BACK));

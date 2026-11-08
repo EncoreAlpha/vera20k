@@ -60,31 +60,28 @@ impl VmceLobbyTarget {
                 claimed_roles: 4,
                 peer_ready: true,
                 status: None,
-                blocking: None,
+                blocking: false,
             },
             Self::GuestWaiting => VmceLobbyFixture {
                 host: false,
                 claimed_roles: 1,
                 peer_ready: true,
                 status: None,
-                blocking: None,
+                blocking: false,
             },
             Self::InlineError => VmceLobbyFixture {
                 host: false,
                 claimed_roles: 1,
                 peer_ready: false,
                 status: Some(VmceLobbyStatus::MissingAssets),
-                blocking: None,
+                blocking: false,
             },
             Self::BlockingError => VmceLobbyFixture {
                 host: true,
                 claimed_roles: 4,
                 peer_ready: true,
                 status: None,
-                blocking: Some(crate::i18n::tr_fill(
-                    "VERA:VmceBlockingInvalidCampaign",
-                    &[("map", &"VMCE/Capture/mission.map")],
-                )),
+                blocking: true,
             },
         }
     }
@@ -114,7 +111,7 @@ impl VmceLobbyCapture {
         let fixture = self.target.fixture();
         self.route.push(json!({
             "state": self.target.as_str(),
-            "fixture_kind": "synthetic UI review; no network match or map file",
+            "fixture_kind": "synthetic role board; real local map drives the preview; no network match",
             "host": fixture.host,
             "claimed_roles": fixture.claimed_roles,
             "peer_ready": fixture.peer_ready,
@@ -147,6 +144,10 @@ impl VmceLobbyCapture {
         ensure!(
             state.frontend.shell_route.network_setup(),
             "VMCE lobby capture left the setup route"
+        );
+        ensure!(
+            state.frontend.skirmish_preview_texture.is_some(),
+            "VMCE lobby capture has no real map preview texture"
         );
         let Some(view) = crate::app::shell_network_setup::view(state) else {
             return Ok(false);
@@ -201,6 +202,22 @@ impl VmceLobbyCapture {
     ) -> Value {
         let fixture = self.target.fixture();
         let view = crate::app::shell_network_setup::view(state);
+        let map_file = state
+            .match_state
+            .session
+            .network_setup()
+            .and_then(|launch| launch.selected_map_file.clone());
+        let preview = state
+            .frontend
+            .skirmish_preview_texture
+            .as_ref()
+            .map(|preview| {
+                json!({
+                    "width": preview.width,
+                    "height": preview.height,
+                    "received": preview.received_preview.is_some(),
+                })
+            });
         let board = view.as_ref().map(|view| {
             view.vmce_roles
                 .iter()
@@ -226,7 +243,7 @@ impl VmceLobbyCapture {
             "schema_version": "vera20k.vmce-lobby-shell-capture.v1",
             "checkpoint": request.checkpoint.as_str(),
             "target": self.target.as_str(),
-            "fixture_kind": "synthetic UI review; no network match or map file",
+            "fixture_kind": "synthetic role board; real local map drives the preview; no network match",
             "fixture": {
                 "host": fixture.host,
                 "claimed_roles": fixture.claimed_roles,
@@ -239,7 +256,17 @@ impl VmceLobbyCapture {
                 "mode_label": view.as_ref().map(|view| &view.mode_label),
                 "map_label": view.as_ref().map(|view| &view.map_label),
                 "inline_status": view.as_ref().and_then(|view| view.vmce_status.as_deref()),
-                "blocking_message": fixture.blocking,
+                "blocking_message": state
+                .frontend
+                .multiplayer_setup
+                .as_ref()
+                .and_then(|ui| ui.notice.as_ref())
+                .map(|notice| notice.message.clone()),
+            },
+            "language": request.language,
+            "map": {
+                "file": map_file,
+                "preview_texture": preview,
             },
             "parity_certification": "NONE",
             "presenter_domain": "final-swapchain-after-rgb565",

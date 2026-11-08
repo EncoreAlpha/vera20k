@@ -748,20 +748,39 @@ const ROSTER_BUTTON_H: i32 = 24;
 
 /// VERA's display-only role board in a VMCE LAN room: the map's authored
 /// `Basic Player1..Player4` roles, listed right of the participant columns.
-/// Paint-only; no cell is a control or a hit target.
+/// The native panel tile fills the frame and the native list frame lines its
+/// border; paint-only, no cell is a control or a hit target.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VmceLobbySidebar {
-    /// Role / Country / Ready+Host / Color column captions.
-    pub(crate) headers: [(&'static str, RectPx); 4],
+    /// The native panel/list frame around the captions and the four rows.
+    pub(crate) frame: RectPx,
+    /// The dark rule under the one caption row.
+    pub(crate) header_rule: RectPx,
+    /// Role / Country / Ready+Host / Color captions, in that order.
+    pub(crate) headers: [VmceLobbyHeader; 4],
     /// The four role slots, in campaign order.
     pub(crate) rows: [VmceLobbySidebarRow; 4],
 }
 
 #[derive(Debug, Clone, Copy)]
+pub(crate) struct VmceLobbyHeader {
+    pub(crate) key: &'static str,
+    pub(crate) rect: RectPx,
+    pub(crate) centred: bool,
+}
+
+/// One board row. `role` is the left-aligned role label; `country_icon` is
+/// the full native-size slot the country emblem is centred in and `country`
+/// the text after it; `ready` and `host` are the two Ready+Host subcells;
+/// `color` is the swatch cell. Every text/icon rect already carries the 2 px
+/// vertical padding the board gives each row.
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct VmceLobbySidebarRow {
     pub(crate) role: RectPx,
+    pub(crate) country_icon: RectPx,
     pub(crate) country: RectPx,
-    pub(crate) status: RectPx,
+    pub(crate) ready: RectPx,
+    pub(crate) host: RectPx,
     pub(crate) color: RectPx,
 }
 
@@ -770,6 +789,7 @@ pub(crate) struct VmceLobbySidebarRow {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VmceLobbyStatusBar {
     pub(crate) frame: RectPx,
+    pub(crate) text: RectPx,
 }
 
 #[derive(Debug, Clone)]

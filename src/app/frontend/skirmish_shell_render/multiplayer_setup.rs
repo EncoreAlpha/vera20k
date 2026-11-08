@@ -458,6 +458,7 @@ pub(crate) fn render_multiplayer_setup(
                 &view,
                 &layout,
                 &text,
+                font,
                 scale,
             );
         }
@@ -932,10 +933,11 @@ pub(crate) fn render_multiplayer_setup(
     Ok(())
 }
 
-/// The VMCE room's display-only role board and inline status strip. Uses the
-/// native bit font, roster row pitch, loaded country flags and the shell's own
-/// flat primitives for swatches/borders; nothing here is a control or hit
-/// target, and no native art is retinted.
+/// The VMCE room's display-only role board and inline status strip. The board
+/// sits on the native SDBTNBKGD panel tile with the native list frame around
+/// it; its captions and four rows use the native bit font, roster pitch,
+/// full-size country emblems and host/accepted glyphs. Nothing here is a
+/// control or hit target, and no native art is retinted.
 #[cfg(feature = "vmce")]
 #[allow(clippy::too_many_arguments)]
 fn paint_vmce_lobby_board(
@@ -945,197 +947,228 @@ fn paint_vmce_lobby_board(
     view: &SetupView,
     layout: &MultiplayerSetupLayout,
     text: &dyn Fn(&str, RectPx, ShellAlign, [f32; 3], f32) -> ShellTextDraw,
+    font: &crate::render::bit_font::BitFont,
     scale: ShellScale,
 ) {
+    use crate::ui::multiplayer_setup::VmceLobbyRoleSlot;
     let (Some(atlas), Some(board)) = (
         state.frontend.skirmish_shell_chrome.as_ref(),
         layout.vmce_sidebar,
     ) else {
         return;
     };
-    let border = [0.42, 0.34, 0.22];
-    let separator = [0.24, 0.20, 0.14];
-    let disabled_rgb = [0.10, 0.10, 0.10];
-    let outline_rgb = [0.34, 0.32, 0.28];
-    let first = board.rows[0];
-    let last = board.rows[3];
-    let left = first.role.x;
-    let right = last.color.x + last.color.w;
-    let top = board.headers[0].1.y;
-    let bottom = last.role.y + last.role.h;
-    push_rect_outline(
-        controls,
-        atlas,
-        RectPx::new(left - 1, top - 1, right - left + 3, bottom - top + 2),
-        border,
-        SHELL_CONTROL_DEPTH - 0.00003,
-    );
-    push_solid_rect(
-        controls,
-        atlas,
-        RectPx::new(
-            left,
-            board.headers[0].1.y + board.headers[0].1.h + 1,
-            right - left,
-            1,
-        ),
-        separator,
-        SHELL_CONTROL_DEPTH - 0.00002,
-    );
-    for (key, rect) in board.headers {
+    // Native panel tile and list frame: the board is a native list panel, not
+    // text floating over the map terrain.
+    push_vmce_panel_tile(controls, atlas, board.frame, scale);
+    push_vmce_list_frame(controls, atlas, board.frame, scale);
+    push_vmce_rule(controls, atlas, board.header_rule, scale);
+    for header in board.headers {
+        let align = if header.centred {
+            ShellAlign::H_CENTER | ShellAlign::V_CENTER
+        } else {
+            ShellAlign::V_CENTER
+        };
         texts.push(text(
-            &crate::i18n::tr(key),
-            RectPx::new(rect.x + 2, rect.y, rect.w - 4, rect.h),
-            ShellAlign::NONE,
+            &crate::i18n::tr(header.key),
+            header.rect,
+            align,
             SHELL_LABEL_TEXT_RGB,
             SHELL_CONTROL_TEXT_DEPTH,
         ));
     }
+    let disabled_rgb = [0.10, 0.10, 0.10];
+    let outline_rgb = [0.34, 0.32, 0.28];
     for (slot, cells) in view.vmce_roles.iter().zip(board.rows.iter()) {
         match slot {
             VmceLobbyRoleSlot::Waiting => {
-                // Native vacancy style: the localized waiting label spans the
-                // Role+Country cells; status stays blank and the swatch is
-                // the disabled variant.
+                // Native vacancy style: the localized waiting label inside the
+                // Role cell only; Country/Ready/Host stay blank and the swatch
+                // is the disabled variant.
+                let waiting = localized_label(state, "GUI:Waiting", "Waiting");
                 texts.push(text(
-                    &localized_label(state, "GUI:Waiting", "Waiting"),
-                    RectPx::new(
-                        cells.role.x + 2,
-                        cells.role.y,
-                        cells.country.x + cells.country.w - cells.role.x - 4,
-                        cells.role.h,
-                    ),
+                    &ellipsize_native(font, &waiting, cells.role.w),
+                    cells.role,
                     ShellAlign::V_CENTER,
                     SHELL_LABEL_TEXT_RGB,
                     SHELL_CONTROL_TEXT_DEPTH,
                 ));
-                let swatch = RectPx::new(
-                    cells.color.x + 4,
-                    cells.color.y + 4,
-                    cells.color.w - 8,
-                    cells.color.h - 8,
-                );
-                push_solid_rect(controls, atlas, swatch, disabled_rgb, SHELL_CONTROL_DEPTH);
-                push_rect_outline(
-                    controls,
-                    atlas,
-                    swatch,
-                    outline_rgb,
-                    SHELL_CONTROL_DEPTH - 0.00002,
-                );
+                push_vmce_swatch(controls, atlas, cells.color, disabled_rgb, outline_rgb);
             }
             VmceLobbyRoleSlot::Claimed(role) => {
                 texts.push(text(
-                    &role.role,
-                    RectPx::new(
-                        cells.role.x + 2,
-                        cells.role.y,
-                        cells.role.w - 4,
-                        cells.role.h,
-                    ),
+                    &ellipsize_native(font, &role.role, cells.role.w),
+                    cells.role,
                     ShellAlign::V_CENTER,
                     SHELL_LABEL_TEXT_RGB,
                     SHELL_CONTROL_TEXT_DEPTH,
                 ));
-                let mut country_x = cells.country.x + 2;
                 if let Some(flag) = role
                     .flag
                     .as_deref()
                     .and_then(|flag| atlas.lan_player_side(flag))
                 {
-                    let flag_rect = RectPx::new(
-                        cells.country.x + 2,
-                        cells.country.y + 3,
-                        18,
-                        cells.country.h - 6,
-                    );
-                    push_flag_entry_clipped_centered(
-                        controls,
-                        flag,
-                        flag_rect,
-                        scale,
-                        SHELL_CONTROL_DEPTH,
-                    );
-                    country_x = flag_rect.x + flag_rect.w + 2;
+                    // Full native frame, centred in its own cell, never
+                    // cropped or stretched.
+                    push_native_centred(controls, flag, cells.country_icon, scale);
                 }
                 if let Some(country) = &role.country {
                     texts.push(text(
-                        country,
-                        RectPx::new(
-                            country_x,
-                            cells.country.y,
-                            cells.country.x + cells.country.w - country_x - 2,
-                            cells.country.h,
-                        ),
+                        &ellipsize_native(font, country, cells.country.w),
+                        cells.country,
                         ShellAlign::V_CENTER,
                         SHELL_LABEL_TEXT_RGB,
                         SHELL_CONTROL_TEXT_DEPTH,
                     ));
                 }
-                if let Some(status) = atlas.lan_player_status(role.host, role.ready) {
-                    push_flag_entry_clipped_centered(
-                        controls,
-                        status,
-                        RectPx::new(
-                            cells.status.x + 2,
-                            cells.status.y + 2,
-                            cells.status.w - 4,
-                            cells.status.h - 4,
-                        ),
-                        scale,
-                        SHELL_CONTROL_DEPTH,
-                    );
+                if let Some(ready) = atlas.lan_player_status(false, role.ready) {
+                    push_native_centred(controls, ready, cells.ready, scale);
                 }
-                let rgb = role.color.map_or(disabled_rgb, |color| {
-                    color.map(|value| f32::from(value) / 255.0)
-                });
-                let swatch = RectPx::new(
-                    cells.color.x + 4,
-                    cells.color.y + 4,
-                    cells.color.w - 8,
-                    cells.color.h - 8,
-                );
-                push_solid_rect(controls, atlas, swatch, rgb, SHELL_CONTROL_DEPTH);
-                push_rect_outline(
+                if let Some(host) = atlas.lan_player_status(role.host, false) {
+                    push_native_centred(controls, host, cells.host, scale);
+                }
+                push_vmce_swatch(
                     controls,
                     atlas,
-                    swatch,
+                    cells.color,
+                    role.color.map_or(disabled_rgb, |color| {
+                        color.map(|value| f32::from(value) / 255.0)
+                    }),
                     outline_rgb,
-                    SHELL_CONTROL_DEPTH - 0.00002,
                 );
             }
         }
     }
     if let Some(bar) = layout.vmce_status_bar {
-        push_solid_rect(
-            controls,
-            atlas,
-            bar.frame,
-            [0.03, 0.03, 0.03],
-            SHELL_CONTROL_DEPTH - 0.00004,
-        );
-        push_rect_outline(
-            controls,
-            atlas,
-            bar.frame,
-            border,
-            SHELL_CONTROL_DEPTH - 0.00003,
-        );
+        push_vmce_panel_tile(controls, atlas, bar.frame, scale);
+        push_vmce_list_frame(controls, atlas, bar.frame, scale);
         if let Some(status) = &view.vmce_status {
             texts.push(text(
                 status,
-                RectPx::new(
-                    bar.frame.x + 4,
-                    bar.frame.y + 2,
-                    bar.frame.w - 8,
-                    bar.frame.h - 4,
-                ),
-                ShellAlign::NONE,
+                bar.text,
+                ShellAlign::V_CENTER,
                 SHELL_LABEL_TEXT_RGB,
                 SHELL_CONTROL_TEXT_DEPTH,
             ));
         }
     }
+}
+
+/// One native panel tile repeated across `rect` (clipped to the rect's edges).
+#[cfg(feature = "vmce")]
+fn push_vmce_panel_tile(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
+    rect: RectPx,
+    scale: ShellScale,
+) {
+    let Some(tile) = atlas.right_panel_tile_sdbtnbkgd else {
+        return;
+    };
+    // The panel art is one SDTP cell. Drawing it once over the whole rect
+    // keeps its bevels on the frame edges instead of repeating seams through
+    // the rows.
+    push_entry_sized(
+        out,
+        tile,
+        rect.x as f32,
+        rect.y as f32,
+        [rect.w as f32, rect.h as f32],
+        SHELL_PARENT_BACKGROUND_DEPTH - 0.00006,
+    );
+}
+
+/// The native owner-draw list frame (`0x00619230`) around `rect`.
+#[cfg(feature = "vmce")]
+fn push_vmce_list_frame(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
+    rect: RectPx,
+    scale: ShellScale,
+) {
+    for (line, tone) in crate::ui::shell::list::list_frame_lines(scale.base_rect(rect)) {
+        push_solid_rect(
+            out,
+            atlas,
+            scale.scale_rect(line),
+            tone.rgb().map(|channel| f32::from(channel) / 255.0),
+            SHELL_PARENT_BACKGROUND_DEPTH - 0.00007,
+        );
+    }
+}
+
+/// One native list-tone rule, used for the caption separator.
+#[cfg(feature = "vmce")]
+fn push_vmce_rule(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
+    rect: RectPx,
+    scale: ShellScale,
+) {
+    push_solid_rect(
+        out,
+        atlas,
+        scale.scale_rect(rect),
+        crate::ui::shell::list::ListFrameTone::Dark
+            .rgb()
+            .map(|channel| f32::from(channel) / 255.0),
+        SHELL_PARENT_BACKGROUND_DEPTH - 0.00008,
+    );
+}
+
+/// Native art at its own grown size, centred in `cell`: no crop, no stretch.
+#[cfg(feature = "vmce")]
+fn push_native_centred(
+    out: &mut Vec<SpriteInstance>,
+    entry: crate::render::skirmish_shell_chrome::SkirmishShellChromeEntry,
+    cell: RectPx,
+    scale: ShellScale,
+) {
+    let [w, h] = scale.art_size(entry.pixel_size[0], entry.pixel_size[1]);
+    let (w, h) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32);
+    push_entry_sized(
+        out,
+        entry,
+        (cell.x + (cell.w - w) / 2) as f32,
+        (cell.y + (cell.h - h) / 2) as f32,
+        [w as f32, h as f32],
+        SHELL_CONTROL_DEPTH,
+    );
+}
+
+/// The board's flat color swatch, inset in its cell.
+#[cfg(feature = "vmce")]
+fn push_vmce_swatch(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
+    cell: RectPx,
+    rgb: [f32; 3],
+    outline: [f32; 3],
+) {
+    let swatch = RectPx::new(cell.x + 2, cell.y + 2, cell.w - 4, cell.h - 4);
+    push_solid_rect(out, atlas, swatch, rgb, SHELL_CONTROL_DEPTH);
+    push_rect_outline(out, atlas, swatch, outline, SHELL_CONTROL_DEPTH - 0.00002);
+}
+
+/// Cut `text` to `max_w` native pixels and mark the cut with two dots, so a
+/// label never crosses its cell border.
+#[cfg(feature = "vmce")]
+fn ellipsize_native(font: &crate::render::bit_font::BitFont, text: &str, max_w: i32) -> String {
+    let max_w = max_w.max(0) as u32;
+    if font.text_width(text) <= max_w {
+        return text.to_owned();
+    }
+    let mut cut = String::new();
+    for ch in text.chars() {
+        let mut candidate = cut.clone();
+        candidate.push(ch);
+        candidate.push_str("..");
+        if font.text_width(&candidate) > max_w {
+            break;
+        }
+        cut.push(ch);
+    }
+    cut.push_str("..");
+    cut
 }
 
 /// The game options, in the room or in VERA's Game Options popup: their
