@@ -149,6 +149,7 @@ SCENARIOS = {
 }
 
 SUITES = {
+    "dev": ("2p-win",),
     "fast": ("4p-win",),
     "smoke": ("4p-win", "2p-win"),
     "full": ("4p-win", "2p-win"),
