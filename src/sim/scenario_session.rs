@@ -1377,12 +1377,15 @@ impl ScenarioSession {
     }
 
     /// Each VMCE network source's primary House index, in source order.
-    /// The shared Houses a source additionally controls are not separate
-    /// players; mission viewpoints read this table. Empty without the grant
-    /// table.
+    /// Sources with no grant row (an observer or a non-participant seat) are
+    /// not players and are omitted: mission viewpoints read only this list.
     #[cfg(feature = "vmce")]
-    pub(crate) fn campaign_source_houses(&self) -> &[u8] {
-        &self.shared_house_sources
+    pub(crate) fn campaign_source_houses(&self) -> impl Iterator<Item = u8> + '_ {
+        self.shared_house_sources
+            .iter()
+            .zip(&self.network_house_grants)
+            .filter(|(_, grants)| !grants.is_empty())
+            .map(|(&house, _)| house)
     }
 
     pub(crate) fn network_house_grants_valid(&self, house_count: usize) -> bool {

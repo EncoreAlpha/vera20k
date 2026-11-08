@@ -394,12 +394,16 @@ pub(crate) fn build_vmce_victory_score_model(
         .multiplayer_shell_runtime
         .cooperative_difficulty();
     let houses = state.match_state.sim_runtime.as_ref().map(|runtime| {
-        runtime
+        // Native 0x6C92C1 sums PlayerControl Houses; a VMCE role's primary
+        // House is player-controlled through the campaign grant table instead,
+        // so read the role rows the mission outcome already uses. A shared or
+        // observer House is not a row and must not add its kills.
+        let kills = runtime
             .simulation
-            .houses()
-            .values()
-            .map(|house| (house.player_control(), house.stats().kills()))
-            .collect::<Vec<_>>()
+            .cooperative_score_rows()
+            .iter()
+            .fold(0u32, |sum, row| sum.wrapping_add(row.kills));
+        vec![(true, kills)]
     });
     let side = state
         .match_state

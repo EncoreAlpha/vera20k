@@ -968,4 +968,60 @@ mod tests {
         );
         let _ = shared;
     }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_rows_and_sources_ignore_a_seat_without_a_grant() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut sim = Simulation::with_seed(0x5C4E_F003);
+        sim.session.set_game_mode(ScenarioGameMode::Lan);
+        let mut insert = |name: &str, score: i32| {
+            insert_house(
+                &mut sim,
+                HouseFixture {
+                    name,
+                    defeated: false,
+                    passive: false,
+                    score,
+                    units_killed: 0,
+                    buildings_killed: 0,
+                    units_lost: 0,
+                    buildings_lost: 0,
+                    built: 0,
+                },
+            )
+        };
+        let host = insert("Host", 10);
+        let guest = insert("Guest", 20);
+        let shared = insert("Shared", 30);
+        sim.session.install_multiplayer_house_identity(
+            crate::skirmish_modes::MpModeClass::Vmce,
+            Vec::new(),
+        );
+        // The third source has no row: an observer seat, which must not become
+        // a player viewpoint or add a result row.
+        sim.session.install_network_house_grants_for_test(
+            vec![0, 1, 0],
+            vec![vec![0, 2], vec![1, 2], Vec::new()],
+            Some(0),
+        );
+        for owner in [host, guest, shared] {
+            sim.houses
+                .get_mut(&owner)
+                .unwrap()
+                .set_is_human_for_test(true);
+        }
+        let rows = sim.cooperative_score_rows();
+        let owners: Vec<_> = rows.iter().map(|row| row.owner).collect();
+        assert_eq!(
+            owners,
+            vec![host, guest],
+            "a seat without a grant is no row"
+        );
+        assert_eq!(
+            sim.session.campaign_source_houses().collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
 }

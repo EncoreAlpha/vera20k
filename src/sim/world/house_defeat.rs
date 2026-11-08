@@ -397,7 +397,7 @@ impl Simulation {
             #[cfg(feature = "vmce")]
             if self.session.has_network_house_grants() {
                 let mut viewpoints: Vec<InternedId> = Vec::new();
-                for &index in self.session.campaign_source_houses() {
+                for index in self.session.campaign_source_houses() {
                     let Some(owner) = self.houses.order().get(usize::from(index)).copied() else {
                         continue;
                     };
