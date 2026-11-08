@@ -650,7 +650,9 @@ impl crate::sim::world::Simulation {
     /// unselected (`+0x83`) man of a `HouseClass::IsHumanPlayer @ 0x0050B6F0`
     /// house whose type has a `VoiceComment=` takes one Main
     /// `RandomRanged(0, 2)` (`0x0051CF90`) and on 0 plays the first comment at
-    /// his Location (`VocClass::PlayAt @ 0x007509E0`).
+    /// his Location (`VocClass::PlayAt @ 0x007509E0`). VMCE's shared House
+    /// grants replace the native current-House gate for **output only**: the
+    /// draw stays shared, playback follows this process's control grant.
     pub(crate) fn infantry_idle_comment(
         &mut self,
         id: u64,
@@ -677,8 +679,8 @@ impl crate::sim::world::Simulation {
         else {
             return;
         };
-        let should_play_locally =
-            !actor.selection.is_selected() && self.house_is_human_player(actor.owner());
+        let should_play_locally = !actor.selection.is_selected()
+            && self.house_is_locally_controlled_player(actor.owner());
         let voice_roll = self.main_rng.next_range_i32_inclusive(0, 2);
         if voice_roll != 0 || (campaign_shared && !should_play_locally) {
             return;
@@ -1437,8 +1439,9 @@ mod tests {
     }
 
     /// VMCE consumes VoiceComment draws for every granted human House on
-    /// every peer. Current-house ownership and selection independently gate
-    /// local playback; an ungranted AI House consumes no draw.
+    /// every peer. Local playback is gated by this process's control grant
+    /// (primary or shared House), while selection gates it independently; an
+    /// ungranted AI House consumes no draw.
     #[cfg(feature = "vmce")]
     #[test]
     fn coop_idle_voice_comment_keeps_main_rng_aligned_for_remote_granted_house() {
@@ -1512,7 +1515,8 @@ mod tests {
         };
         let local_unselected = run("Americans", "Americans", false);
         let local_selected = run("Americans", "Americans", true);
-        let remote_unselected = run("Russians", "Americans", false);
+        let shared_local = run("Russians", "Americans", false);
+        let remote_owner = run("Americans", "Russians", false);
         let ai_unselected = run("Americans", "Yuri", false);
         let mut expected = SimRng::new(main_seed);
         expected.next_range_i32_inclusive(0, 2);
@@ -1526,27 +1530,37 @@ mod tests {
             "selection does not gate the draw"
         );
         assert_eq!(
-            remote_unselected.1, local_unselected.1,
-            "current House does not gate the draw"
+            shared_local.1, local_unselected.1,
+            "the shared House does not gate the draw"
+        );
+        assert_eq!(
+            remote_owner.1, local_unselected.1,
+            "a House this player does not control still draws"
         );
         assert_eq!(local_selected.2, local_unselected.2);
         assert_eq!(
-            remote_unselected.2, local_unselected.2,
+            shared_local.2, local_unselected.2,
             "the next Main draw remains aligned"
         );
+        assert_eq!(remote_owner.2, local_unselected.2);
         assert_eq!(
             local_unselected.3, local_selected.3,
             "voice output does not alter shared simulation state"
         );
-        assert_eq!(local_unselected.3, remote_unselected.3);
+        assert_eq!(local_unselected.3, shared_local.3);
         assert_eq!(local_unselected.4, ["Hi"]);
         assert!(
             local_selected.4.is_empty(),
             "a selected local unit is silent"
         );
+        assert_eq!(
+            shared_local.4,
+            ["Hi"],
+            "a shared House this player controls speaks locally"
+        );
         assert!(
-            remote_unselected.4.is_empty(),
-            "remote House voice stays local to its owner"
+            remote_owner.4.is_empty(),
+            "a House this player does not control stays silent"
         );
         assert_eq!(
             ai_unselected.0, ai_unselected.1,
