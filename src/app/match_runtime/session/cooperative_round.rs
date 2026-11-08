@@ -379,7 +379,16 @@ impl MatchSession {
             Some(NetworkPhase::CooperativeRound {
                 connected, round, ..
             }) => {
-                if round.outcome.is_some() || connected.len() < round.rows {
+                if round.outcome.is_some() {
+                    return false;
+                }
+                if round.vera && !round.can_continue {
+                    // Defeat and the last mission need no next-stage gate:
+                    // the page only acknowledges and leaves, so a peer that
+                    // already left must not disable the remaining Continue.
+                    return true;
+                }
+                if connected.len() < round.rows {
                     return false;
                 }
                 if round.vera {
@@ -599,11 +608,22 @@ impl MatchSession {
                 if let Some(row) = slot_of(launch, source) {
                     round.ready[row] = false;
                 }
+                connected.retain(|index| *index != source);
+                round.quit_enabled = true;
+                #[cfg(feature = "vmce")]
+                if round.vera {
+                    // VMCE's 0x103 page has no Quit path and the next stage
+                    // cannot start without every participant. Return both
+                    // sides to the lobby instead of stranding the page.
+                    if round.outcome.is_none() {
+                        round.outcome = Some(false);
+                        requests.push(NetworkLoadingRequest::CooperativeLeave);
+                    }
+                    return Ok(CooperativeRoundStep::Exit(false));
+                }
                 // The node is deleted (A8DA84--); its slot stays unready,
                 // so all-ready can no longer pass. Continue is disabled
                 // (by the connected count) and Quit enabled again.
-                connected.retain(|index| *index != source);
-                round.quit_enabled = true;
                 Ok(CooperativeRoundStep::PeerLeft { source })
             }
             CooperativeRoundEvent::Begin => {
@@ -1627,6 +1647,55 @@ mod tests {
         );
         assert_eq!(session.cooperative_round().unwrap().outcome(), Some(false));
         assert!(session.freeze_cooperative_round(30, 1, None).is_err());
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_peer_left_returns_the_remaining_peer_to_the_lobby() {
+        let (mut session, _) = frozen_vera(1);
+        session.enter_cooperative_round(None, true, 2).unwrap();
+        assert!(
+            session.cooperative_round().unwrap().vera(),
+            "fixture must be the authored VMCE round"
+        );
+        assert_eq!(
+            session
+                .cooperative_round_event(CooperativeRoundEvent::PeerLeft { source: 0 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        let requests = session.take_network_loading_requests();
+        assert!(
+            requests.contains(&NetworkLoadingRequest::CooperativeLeave),
+            "the remaining peer must leave for the lobby: {requests:?}"
+        );
+        assert_eq!(session.cooperative_round().unwrap().outcome(), Some(false));
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_defeat_page_keeps_continue_after_a_peer_is_gone() {
+        let (mut session, _) = frozen_vera(1);
+        session.enter_cooperative_round(None, false, 2).unwrap();
+        let Some(NetworkPhase::CooperativeRound { connected, .. }) =
+            session.network.as_mut().map(|network| &mut network.phase)
+        else {
+            panic!("VMCE round");
+        };
+        connected.retain(|index| *index != 0);
+        assert!(
+            session.cooperative_round_continue_enabled(),
+            "a defeat/last-mission page must still leave with a missing peer"
+        );
+        assert_eq!(
+            session.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        let requests = session.take_network_loading_requests();
+        assert!(
+            requests.contains(&NetworkLoadingRequest::CooperativeLeave),
+            "the defeat page must leave with a missing peer: {requests:?}"
+        );
     }
 
     #[test]
