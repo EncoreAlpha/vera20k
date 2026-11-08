@@ -37,6 +37,7 @@ pub(crate) use crate::sim::scenario_session::ScenarioGameMode as SessionMode;
 mod cooperative_round;
 pub(crate) use cooperative_round::{
     CooperativeRoundEvent, CooperativeRoundOptions, CooperativeRoundState, CooperativeRoundStep,
+    VmceRoundEnding,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

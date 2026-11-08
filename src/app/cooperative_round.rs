@@ -696,6 +696,8 @@ pub(crate) fn run_step(state: &mut AppState, step: CooperativeRoundStep) {
         }
         CooperativeRoundStep::Exit(true) => begin_next_mission(state),
         CooperativeRoundStep::Exit(false) => finish(state),
+        CooperativeRoundStep::CampaignEnd => crate::app::App::vmce_campaign_end(state),
+        CooperativeRoundStep::Retry => retry_last_mission(state),
         CooperativeRoundStep::ContinueInRoom => {
             // The room the host gets back takes the round's mode and the
             // stage `+0xA0` selected, the mission BC6 would have loaded.
@@ -799,6 +801,35 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
 /// RESIDUAL: the scenario movies around a continuation (Win, PostScore and
 /// PreMapSelect after a victory, Lose after a defeat, then Intro/Brief and
 /// Action on a victory) have no owner. No retail co-op map sets them.
+/// VMCE defeat retry: re-enter the same frozen stage with the same agreed
+/// seed and role assignments. `vera_next` is empty on a defeat round, so
+/// `freeze_cooperative_round` reuses the previous startup's map and seed.
+fn retry_last_mission(state: &mut AppState) {
+    state.frontend.campaign_score_page = None;
+    state.frontend.campaign_score_art = None;
+    let game_speed = state
+        .match_state
+        .session
+        .network_setup()
+        .map_or(0, |launch| launch.options.game_speed);
+    let (max_ahead, latency_fudge) =
+        crate::net::lockstep::cooperative_continuation_timing(game_speed, &[]);
+    match state
+        .match_state
+        .session
+        .freeze_cooperative_round(max_ahead, latency_fudge, None)
+    {
+        Ok(startup) => crate::app::loading::pump::begin_loading(
+            state,
+            crate::app::loading::pump::LoadingRequest::network(startup),
+        ),
+        Err(error) => {
+            log::error!("Could not retry the VMCE mission: {error:#}");
+            return_to_shell(state);
+        }
+    }
+}
+
 fn begin_next_mission(state: &mut AppState) {
     let saved = state
         .frontend

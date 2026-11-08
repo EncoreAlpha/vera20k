@@ -244,6 +244,25 @@ fn victory_plan(
 }
 
 impl App {
+    /// VMCE's last-mission Continue: the campaign tail without the
+    /// single-player campaign startup. Every peer plays the local completion
+    /// presentation after the co-op round's all-ready gate, then returns to
+    /// the main menu.
+    pub(crate) fn vmce_campaign_end(state: &mut AppState) {
+        state.frontend.campaign_score_page = None;
+        state.frontend.campaign_score_art = None;
+        crate::app::lan_service::cooperative::release_transport(state);
+        Self::close_finished_scenario(state);
+        state.frontend.shell_route = crate::app::shell_route::ShellRoute::MainMenu;
+        Self::advance_campaign_victory(
+            state,
+            CampaignVictory {
+                movies: VecDeque::new(),
+                then: VictoryEnd::Credits,
+            },
+        );
+    }
+
     /// Read everything the victory tail needs while the won Simulation is
     /// still resident. Only a won mission of an installed campaign qualifies.
     pub(super) fn take_campaign_victory(state: &mut AppState) -> Option<CampaignVictory> {

@@ -147,7 +147,14 @@ pub(crate) fn resolve_local_vmce_config(
     Ok((config, series_sha256))
 }
 
-fn next_scenario_token(ini: &IniFile, map_file: &str) -> Result<Option<String>> {
+/// Authored campaign continuation. `EndOfGame=yes` wins over a stray
+/// NextScenario; a scenario with neither is not a valid campaign stage.
+pub(crate) enum VmceCampaignOutcome {
+    Next(String),
+    EndOfGame,
+}
+
+fn campaign_outcome(ini: &IniFile, map_file: &str) -> Result<VmceCampaignOutcome> {
     let normalized = normalize_map_name(map_file)?;
     let section_name = scenario_section_name(ini, &normalized)
         .with_context(|| format!("campaign is missing [Scenario:{normalized}]"))?;
@@ -155,18 +162,18 @@ fn next_scenario_token(ini: &IniFile, map_file: &str) -> Result<Option<String>> 
         .section(&section_name)
         .with_context(|| format!("campaign is missing [{section_name}]"))?;
     if section.read_bool_value("EndOfGame").unwrap_or(false) {
-        return Ok(None);
+        return Ok(VmceCampaignOutcome::EndOfGame);
     }
     let next = section
         .read_string("NextScenario", "", 1024)
         .trim()
         .to_owned();
     if next.is_empty() {
-        return Ok(None);
+        anyhow::bail!("{}", crate::i18n::tr("VERA:VmceCampaignInvalid"));
     }
     crate::map::source::validate_network_map_name(&next)
         .with_context(|| format!("invalid [{section_name}] NextScenario"))?;
-    Ok(Some(next))
+    Ok(VmceCampaignOutcome::Next(next))
 }
 
 /// The authored `[Scenario:<map>]` section for `map_file`. Native INI section
@@ -221,15 +228,20 @@ fn scenario_control_section<'a>(
 /// peers resolve locally from the already-admitted series identity; this
 /// function never transfers a map. `AltNextScenario` is left for the
 /// `SkipMapSelect`/global-variable branch.
+pub(crate) enum VmceResolvedStage {
+    Next(crate::app::match_bootstrap::VmceNextStage),
+    EndOfGame,
+}
+
 pub(crate) fn resolve_next_vmce_stage(
     state: &AppState,
     current: &crate::app::match_bootstrap::NetworkVmceMapConfig,
-) -> Result<Option<crate::app::match_bootstrap::VmceNextStage>> {
+) -> Result<VmceResolvedStage> {
     let Some(directory) = current.series_directory.as_deref() else {
-        return Ok(None);
+        anyhow::bail!("the admitted VMCE series has no directory");
     };
     let Some(expected_sha256) = current.series_sha256.as_deref() else {
-        return Ok(None);
+        anyhow::bail!("the admitted VMCE series has no identity");
     };
     let (maps_root, vmce_root) = vmce_roots(state)?;
     let series_dir = series_root(&vmce_root, directory)?;
@@ -243,8 +255,9 @@ pub(crate) fn resolve_next_vmce_stage(
     let manifest = parse_vmce_manifest(&ini)?;
     validate_vmce_manifest_maps(&series_dir, &manifest.maps)?;
     let (_, current_entry) = split_catalog_map(&current.map_file)?;
-    let Some(target) = next_scenario_token(&ini, &current_entry)? else {
-        return Ok(None);
+    let target = match campaign_outcome(&ini, &current_entry)? {
+        VmceCampaignOutcome::EndOfGame => return Ok(VmceResolvedStage::EndOfGame),
+        VmceCampaignOutcome::Next(target) => target,
     };
     ensure!(
         manifest.maps.iter().any(|map| same_map_name(map, &target)),
@@ -283,14 +296,16 @@ pub(crate) fn resolve_next_vmce_stage(
         source_sha256,
         effective_digest: effective_digest.clone(),
     };
-    Ok(Some(crate::app::match_bootstrap::VmceNextStage {
-        map_file: catalog_map_file(directory, &target),
-        config: next,
-        metadata,
-        local_map_source: loaded.source,
-        effective_digest,
-        map_ini: loaded.ini,
-    }))
+    Ok(VmceResolvedStage::Next(
+        crate::app::match_bootstrap::VmceNextStage {
+            map_file: catalog_map_file(directory, &target),
+            config: next,
+            metadata,
+            local_map_source: loaded.source,
+            effective_digest,
+            map_ini: loaded.ini,
+        },
+    ))
 }
 
 fn vmce_roots(state: &AppState) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
@@ -477,6 +492,9 @@ pub(crate) fn load_vmce_scenario(
     let section = ini
         .section(&section_name)
         .with_context(|| format!("campaign is missing [{section_name}]"))?;
+    // A VMCE stage must say how the campaign continues: EndOfGame=yes wins
+    // over a stray NextScenario, and neither is a host-side setup error.
+    let _ = campaign_outcome(&ini, &normalized)?;
     let player_count = section.read_int("PlayerCount", 0);
     ensure!(
         (1..=4).contains(&player_count),
@@ -1032,21 +1050,24 @@ mod tests {
     }
 
     #[test]
-    fn next_scenario_token_prefers_end_of_game_and_requires_a_listed_target() {
+    fn campaign_outcome_prefers_end_of_game_and_requires_a_listed_target() {
         let ini = IniFile::from_str(
             "[Scenario:mission/01.map]\nNextScenario=mission/02.map\n[Scenario:mission/02.map]\nNextScenario=mission/01.map\nEndOfGame=yes\n",
         );
-        assert_eq!(
-            next_scenario_token(&ini, "mission/01.map")
-                .unwrap()
-                .as_deref(),
-            Some("mission/02.map")
-        );
-        assert_eq!(next_scenario_token(&ini, "mission/02.map").unwrap(), None);
+        assert!(matches!(
+            campaign_outcome(&ini, "mission/01.map").unwrap(),
+            VmceCampaignOutcome::Next(target) if target == "mission/02.map"
+        ));
+        assert!(matches!(
+            campaign_outcome(&ini, "mission/02.map").unwrap(),
+            VmceCampaignOutcome::EndOfGame
+        ));
         let empty = IniFile::from_str("[Scenario:mission/03.map]\nPlayerCount=2\n");
-        assert_eq!(next_scenario_token(&empty, "mission/03.map").unwrap(), None);
+        assert!(campaign_outcome(&empty, "mission/03.map").is_err());
+        let explicit_no = IniFile::from_str("[Scenario:mission/03.map]\nEndOfGame=no\n");
+        assert!(campaign_outcome(&explicit_no, "mission/03.map").is_err());
         let escaping =
             IniFile::from_str("[Scenario:mission/03.map]\nNextScenario=../outside.map\n");
-        assert!(next_scenario_token(&escaping, "mission/03.map").is_err());
+        assert!(campaign_outcome(&escaping, "mission/03.map").is_err());
     }
 }

@@ -24,7 +24,7 @@ pub(crate) fn open_victory(state: &mut AppState) {
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
     let next = match resolve_next_stage(state) {
-        Ok(next) => next,
+        Ok(outcome) => outcome,
         Err(error) => {
             // A broken `campaign.ini` or a map that disappeared is not the
             // campaign's last stage: do not show a false end page, send both
@@ -39,21 +39,23 @@ pub(crate) fn open_victory(state: &mut AppState) {
         return;
     };
     let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    let can_continue = next.is_some();
+    let (next, ending) = match next {
+        crate::app::shell_network_setup::vmce_map::VmceResolvedStage::Next(next) => (
+            Some(next),
+            crate::app::match_runtime::session::VmceRoundEnding::Next,
+        ),
+        crate::app::shell_network_setup::vmce_map::VmceResolvedStage::EndOfGame => (
+            None,
+            crate::app::match_runtime::session::VmceRoundEnding::CampaignEnd,
+        ),
+    };
     open_page(
-        state,
-        model,
-        next,
-        can_continue,
-        rows,
-        true,
-        "victory",
-        true,
+        state, model, next, true, ending, rows, true, "victory", true,
     );
 }
 
-/// Open the result page for a lost mission. A defeat retries the same
-/// mission, so it never carries a next stage.
+/// Open the result page for a lost mission. Continue retries the same
+/// frozen mission on every peer; no next stage is carried.
 pub(crate) fn open_defeat(state: &mut AppState) {
     let elapsed = state
         .match_state
@@ -64,7 +66,17 @@ pub(crate) fn open_defeat(state: &mut AppState) {
         return;
     };
     let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    open_page(state, model, None, false, rows, false, "defeat", false);
+    open_page(
+        state,
+        model,
+        None,
+        true,
+        crate::app::match_runtime::session::VmceRoundEnding::Retry,
+        rows,
+        false,
+        "defeat",
+        false,
+    );
 }
 
 /// Whether the open `0x103` page is VMCE's. Stock modes keep their own
@@ -165,9 +177,11 @@ pub(crate) fn result_rows(state: &AppState) -> Option<Vec<String>> {
 
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
 /// stage; an `Err` is a broken series and must not be presented as one.
-fn resolve_next_stage(state: &AppState) -> anyhow::Result<Option<VmceNextStage>> {
+fn resolve_next_stage(
+    state: &AppState,
+) -> anyhow::Result<crate::app::shell_network_setup::vmce_map::VmceResolvedStage> {
     let Some(current) = state.match_state.session.network_vmce_map_config() else {
-        return Ok(None);
+        anyhow::bail!("the finished stage has no admitted VMCE series");
     };
     crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(state, current)
 }
@@ -218,6 +232,7 @@ fn open_page(
     model: crate::ui::campaign_score_shell::CampaignScoreScreenModel,
     next: Option<VmceNextStage>,
     can_continue: bool,
+    ending: crate::app::match_runtime::session::VmceRoundEnding,
     rows: usize,
     admit_slots: bool,
     what: &str,
@@ -228,10 +243,11 @@ fn open_page(
     state.frontend.coop_score_page = None;
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) = state
-        .match_state
-        .session
-        .enter_vmce_round(next, can_continue, rows)
+    if let Err(error) =
+        state
+            .match_state
+            .session
+            .enter_vmce_round_ending(next, can_continue, ending, rows)
     {
         log::error!("Could not open the VMCE {what} result: {error:#}");
         crate::app::cooperative_round::return_to_shell(state);

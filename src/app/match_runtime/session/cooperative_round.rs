@@ -59,6 +59,27 @@ pub(crate) struct CooperativeRoundState {
     /// and defeat, so this is the authoritative record for input and receipts.
     #[cfg(feature = "vmce")]
     page_victory: bool,
+    /// Authored VMCE: what Continue starts. `Next` is the existing next
+    /// stage, `CampaignEnd` plays the campaign's completion tail, and
+    /// `Retry` re-enters the same frozen stage.
+    vera_ending: VmceRoundEnding,
+}
+
+/// VMCE's result-page continuation. Kept in the round so every peer's
+/// begin/ack tail reaches the same local step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VmceRoundEnding {
+    Next,
+    CampaignEnd,
+    Retry,
+}
+
+fn vera_result_step(round: &CooperativeRoundState) -> CooperativeRoundStep {
+    match round.vera_ending {
+        VmceRoundEnding::Next => CooperativeRoundStep::Exit(true),
+        VmceRoundEnding::CampaignEnd => CooperativeRoundStep::CampaignEnd,
+        VmceRoundEnding::Retry => CooperativeRoundStep::Retry,
+    }
 }
 
 /// VMCE's next-mission seed: a deterministic mix of the previously agreed
@@ -189,6 +210,11 @@ pub(crate) enum CooperativeRoundStep {
     /// VERA: Continue on WOL left with result 0 for the room the players
     /// return to, which its host sets to the next stage.
     ContinueInRoom,
+    /// VMCE last mission: play the campaign completion tail (credits) on
+    /// every peer after the all-ready gate.
+    CampaignEnd,
+    /// VMCE defeat: re-enter the same frozen stage without a ready gate.
+    Retry,
 }
 
 impl MatchSession {
@@ -222,6 +248,34 @@ impl MatchSession {
     ) -> anyhow::Result<()> {
         let map_file = next.as_ref().map(|stage| stage.map_file.clone());
         self.enter_cooperative_round_with_vera(map_file, can_continue, rows, next)
+    }
+
+    /// Enter the VMCE result round with an explicit continuation: campaign
+    /// end or a same-stage retry instead of the next stage.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn enter_vmce_round_ending(
+        &mut self,
+        next: Option<crate::app::match_bootstrap::VmceNextStage>,
+        can_continue: bool,
+        ending: VmceRoundEnding,
+        rows: usize,
+    ) -> anyhow::Result<()> {
+        self.enter_vmce_round(next, can_continue, rows)?;
+        if let Some(super::NetworkSession {
+            phase: super::NetworkPhase::CooperativeRound { round, .. },
+            ..
+        }) = self.network.as_mut()
+        {
+            round.vera_ending = ending;
+        }
+        Ok(())
+    }
+
+    /// The current VMCE continuation; `Next` outside a VMCE round.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_round_ending(&self) -> VmceRoundEnding {
+        self.cooperative_round()
+            .map_or(VmceRoundEnding::Next, |round| round.vera_ending)
     }
 
     fn enter_cooperative_round_with_vera(
@@ -280,6 +334,7 @@ impl MatchSession {
             vera_stage: vera_stage.clone(),
             #[cfg(feature = "vmce")]
             page_victory: false,
+            vera_ending: VmceRoundEnding::Next,
             outcome: None,
         };
         let host = self.host;
@@ -436,7 +491,11 @@ impl MatchSession {
                         // wait for: Continue acknowledges the page and leaves.
                         true
                     } else if self.host {
-                        round.all_ready() && !round.assigned
+                        // Retry is the host's decision and needs no guest
+                        // readiness; campaign end keeps the all-ready gate.
+                        (round.vera_ending == VmceRoundEnding::Retry
+                            || round.all_ready())
+                            && !round.assigned
                     } else {
                         !round.local_ready
                     }
@@ -483,7 +542,15 @@ impl MatchSession {
                 // A solo host has no guest row to ack its begin, so Continue
                 // starts the next stage directly instead of waiting forever.
                 round.outcome = Some(true);
-                return Ok(CooperativeRoundStep::Exit(true));
+                return Ok(vera_result_step(round));
+            }
+            if round.vera_ending == VmceRoundEnding::Retry {
+                // Defeat retry is a host decision; guests follow the begin
+                // exchange without pressing Continue.
+                if host {
+                    return Ok(CooperativeRoundStep::Assign);
+                }
+                return Ok(CooperativeRoundStep::None);
             }
         }
         if online && round.can_continue {
@@ -693,13 +760,13 @@ impl MatchSession {
                 if round.acked.iter().filter(|acked| **acked).count() >= round.rows {
                     round.outcome = Some(true);
                     requests.push(NetworkLoadingRequest::CooperativeGo);
-                    return Ok(CooperativeRoundStep::Exit(true));
+                    return Ok(vera_result_step(round));
                 }
                 Ok(tail(requests, host, round))
             }
             CooperativeRoundEvent::Go => {
                 round.outcome = Some(true);
-                Ok(CooperativeRoundStep::Exit(true))
+                Ok(vera_result_step(round))
             }
             CooperativeRoundEvent::Chat {
                 source,
@@ -1511,6 +1578,48 @@ mod tests {
             host.cooperative_round_event(CooperativeRoundEvent::StageAbsent, 0)
                 .unwrap(),
             CooperativeRoundStep::None
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_retry_and_campaign_end_pick_their_final_step() {
+        use crate::app::match_runtime::session::VmceRoundEnding;
+
+        // Retry: the host skips the ready gate and the guest's ack reaches
+        // the same local step.
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+            .unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        host.cooperative_round_assigned(0).unwrap();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Retry
+        );
+
+        // Campaign end: the normal all-ready gate, then the completion step.
+        let (mut host, _) = frozen_vera(0);
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::CampaignEnd, 2)
+            .unwrap();
+        host.take_network_loading_requests();
+        host.cooperative_round_event(CooperativeRoundEvent::PeerReady { source: 1 }, 0)
+            .unwrap();
+        assert!(host.cooperative_round_continue_enabled());
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        host.cooperative_round_assigned(0).unwrap();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::CampaignEnd
         );
     }
 
