@@ -174,10 +174,18 @@ fn snapshot(
         }
         (admission.clone(), None)
     };
-    let (bind, peer_endpoint) = core
+    let config = core
         .config
         .as_ref()
-        .and_then(|config| config.transport.explicit_endpoints())
+        .context("setup crash requires explicit LAN sockets")?;
+    let bind = config
+        .transport
+        .explicit_bind()
+        .context("setup crash requires explicit LAN sockets")?;
+    let peer_endpoint = *config
+        .transport
+        .explicit_peers()
+        .first()
         .context("setup crash requires explicit LAN sockets")?;
     let Some(source) = session.network_endpoint_source(peer_endpoint) else {
         return Ok(None);
@@ -412,10 +420,10 @@ impl SetupCrashCapture {
                 .as_u64()
                 .context("kill observation bucket")? as u32,
         );
-        let (_, peer_endpoint) = core
+        let peer_endpoint = *core
             .config
             .as_ref()
-            .and_then(|config| config.transport.explicit_endpoints())
+            .and_then(|config| config.transport.explicit_peers().first())
             .context("setup crash requires explicit LAN sockets")?;
         let peer_retired = state
             .match_state

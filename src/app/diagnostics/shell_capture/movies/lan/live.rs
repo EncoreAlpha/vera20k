@@ -473,7 +473,10 @@ impl LiveLanCapture {
                 | LanTarget::LiveDesyncGuest
         )
         .then(online::LiveRoundFlow::new_lan);
-        Self::new_config(target, Some(config), flow)
+        let players = config.players;
+        let mut capture = Self::new_config(target, Some(config), flow);
+        capture.expected_players = players;
+        capture
     }
 
     pub(super) fn new_online(
@@ -635,6 +638,31 @@ impl LiveLanCapture {
                 | LanTarget::LiveCoopFinalHost
                 | LanTarget::BattleHost
         ) || self.target.is_live_vmce_host()
+    }
+
+    /// This process's lobby identity: the host keeps the diagnostic name, a
+    /// guest uses `--lan-name` so several guests can share one room.
+    fn player_name(&self) -> &str {
+        if self.host() {
+            HOST_NAME
+        } else {
+            self.config
+                .as_ref()
+                .and_then(|config| config.name.as_deref())
+                .unwrap_or(GUEST_NAME)
+        }
+    }
+
+    /// The admitted row this process drives in the setup dialog.
+    fn local_setup_row(
+        &self,
+        launch: &crate::skirmish_launch::SkirmishLaunchSession,
+    ) -> Result<usize> {
+        launch
+            .humans
+            .iter()
+            .position(|human| human.name == self.player_name())
+            .with_context(|| format!("admitted LAN row {:?}", self.player_name()))
     }
 
     fn required_frames(&self) -> u32 {
@@ -985,7 +1013,7 @@ impl LiveLanCapture {
                     launch
                         .humans
                         .iter()
-                        .any(|human| human.name == GUEST_NAME && human.is_observer())
+                        .any(|human| human.name == self.player_name() && human.is_observer())
                 })
         {
             self.guest_watched = true;
@@ -1050,20 +1078,20 @@ impl LiveLanCapture {
                     "LAN transport was already installed"
                 );
                 let config = self.config.as_ref().expect("LAN transport configuration");
-                let mut service = match config.transport {
+                let mut service = match &config.transport {
                     LiveLanTransport::ProductionBroadcast => {
                         crate::app::lan_service::LanService::open(
                             crate::app::match_runtime::frame_pacer::wall_clock_bucket(),
                         )?
                     }
-                    LiveLanTransport::Explicit { bind, peer } => {
+                    LiveLanTransport::Explicit { bind, peers } => {
                         let alternate = std::net::SocketAddrV4::new(*bind.ip(), bind.port() + 2);
                         crate::app::lan_service::LanService::open_on(
                             UdpBindConfig {
-                                primary: bind,
+                                primary: *bind,
                                 alternate,
                             },
-                            &[peer],
+                            peers,
                         )?
                     }
                 };
@@ -1080,7 +1108,7 @@ impl LiveLanCapture {
                 self.phase = Phase::Lobby;
             }
             Phase::Lobby if rendered == PresentedShell::LanLobby && lobby_settled(state) => {
-                let name = if self.host() { HOST_NAME } else { GUEST_NAME };
+                let name = self.player_name();
                 lobby_click(state, lobby::layout(state).name);
                 lobby::key_press(state, Some(KeyCode::Home), None);
                 for _ in 0..32 {
@@ -1197,7 +1225,7 @@ impl LiveLanCapture {
                 }
                 let session = &state.match_state.session;
                 if let Some(launch) = session.network_setup()
-                    && launch.humans.len() == 2
+                    && launch.humans.len() == self.expected_players
                     && launch
                         .humans
                         .iter()
@@ -1362,40 +1390,41 @@ impl LiveLanCapture {
     fn step_vmce_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         let session = &state.match_state.session;
         let launch = session.network_setup().context("VMCE host setup")?;
-        if launch.humans.len() < 2 {
+        if launch.humans.len() != self.expected_players {
             return Ok(());
         }
         ensure!(
             session.host() && launch.mode.class == crate::skirmish_modes::MpModeClass::Vmce,
             "live Coop host lost its admitted mode"
         );
-        let (host, guest) = coop_setup_rows(launch)?;
-        let host_ready = session.network_player_ready(host);
-        let guest_ready = session.network_player_ready(guest);
-        let host_map = session.network_map_status(host) == Some(1);
-        let guest_map = session.network_map_status(guest) == Some(1);
+        let local = self.local_setup_row(launch)?;
+        let local_ready = session.network_player_ready(local);
+        let local_map = session.network_map_status(local) == Some(1);
+        let all_ready = (0..launch.humans.len()).all(|index| session.network_player_ready(index));
+        let all_map =
+            (0..launch.humans.len()).all(|index| session.network_map_status(index) == Some(1));
 
         if self.coop_setup_initial.is_none() {
-            if !host_ready || !host_map {
+            if !local_ready || !local_map {
                 return Ok(());
             }
-            self.coop_setup_initial = Some(vmce_setup_snapshot(state)?);
+            self.coop_setup_initial = Some(vmce_setup_snapshot(state, HOST_NAME)?);
             self.event(
                 frame,
-                if guest_ready && guest_map {
-                    "host snapshot captured after guest Ready/map status had already arrived"
+                if all_ready && all_map {
+                    "host snapshot captured after every guest Ready/map status had already arrived"
                 } else {
-                    "host map/config accepted; waiting for guest Ready and map status"
+                    "host map/config accepted; waiting for every guest Ready and map status"
                 },
             );
-            if !guest_ready || !guest_map {
+            if !all_ready || !all_map {
                 return Ok(());
             }
         }
-        if !host_ready || !guest_ready || !host_map || !guest_map {
+        if !all_ready || !all_map {
             return Ok(());
         }
-        let final_snapshot = vmce_setup_snapshot(state)?;
+        let final_snapshot = vmce_setup_snapshot(state, HOST_NAME)?;
         ensure_coop_setup_ready_transition(
             self.coop_setup_initial
                 .as_ref()
@@ -1406,7 +1435,7 @@ impl LiveLanCapture {
         self.coop_setup_final = Some(final_snapshot.clone());
         self.route.push(json!({
             "render_frame": frame,
-            "action": "guest Ready received by host over real LAN",
+            "action": "every guest Ready received by host over real LAN",
             "state": final_snapshot,
         }));
         // mode+14's VMCE admission validates the frozen role/House roster
@@ -1432,9 +1461,9 @@ impl LiveLanCapture {
         if self.coop_setup_final.is_some() {
             return Ok(());
         }
-        let (_, guest) = coop_setup_rows(launch)?;
+        let local = self.local_setup_row(launch)?;
         if !self.coop_setup_guest_accepted {
-            if session.network_map_status(guest) != Some(1)
+            if session.network_map_status(local) != Some(1)
                 || !setup::view(state)
                     .context("VMCE guest view")?
                     .accept_enabled
@@ -1442,19 +1471,19 @@ impl LiveLanCapture {
                 return Ok(());
             }
             ensure!(
-                !session.network_player_ready(guest),
+                !session.network_player_ready(local),
                 "guest was already Ready before the diagnostic Accept"
             );
-            self.coop_setup_initial = Some(vmce_setup_snapshot(state)?);
+            self.coop_setup_initial = Some(vmce_setup_snapshot(state, self.player_name())?);
             setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
             let accepted = state
                 .match_state
                 .session
                 .network_setup()
                 .context("accepted Coop guest setup")?;
-            let (_, guest) = coop_setup_rows(accepted)?;
+            let local = self.local_setup_row(accepted)?;
             ensure!(
-                state.match_state.session.network_player_ready(guest),
+                state.match_state.session.network_player_ready(local),
                 "production Accept did not set guest Ready"
             );
             self.coop_setup_guest_accepted = true;
@@ -1465,7 +1494,7 @@ impl LiveLanCapture {
                 .coop_setup_initial
                 .clone()
                 .context("initial VMCE guest snapshot")?;
-            let final_snapshot = vmce_setup_snapshot(state)?;
+            let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
             ensure_coop_setup_ready_transition(&initial, &final_snapshot, false)?;
             self.coop_setup_final = Some(final_snapshot.clone());
             self.route.push(json!({
@@ -1484,10 +1513,10 @@ impl LiveLanCapture {
             .coop_setup_initial
             .as_ref()
             .context("initial VMCE guest snapshot")?;
-        if session.network_map_status(guest) != Some(1) || !session.network_player_ready(guest) {
+        if session.network_map_status(local) != Some(1) || !session.network_player_ready(local) {
             return Ok(());
         }
-        let final_snapshot = vmce_setup_snapshot(state)?;
+        let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
         ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
         self.coop_setup_final = Some(final_snapshot.clone());
         self.route.push(json!({
@@ -2140,6 +2169,10 @@ impl LiveLanCapture {
                         let rows = page.model.rows.len();
                         let can_continue = page.model.can_continue;
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
+                        ensure!(
+                            rows == self.expected_players,
+                            "VMCE result rows do not match the admitted players"
+                        );
                         let native_frame = state
                             .match_state
                             .sim_runtime
@@ -2215,6 +2248,10 @@ impl LiveLanCapture {
                             .map(|runtime| runtime.simulation.cooperative_score_rows().len())
                             .unwrap_or(0);
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
+                        ensure!(
+                            rows == self.expected_players,
+                            "VMCE result rows do not match the admitted players"
+                        );
                         let can_continue =
                             state.match_state.session.cooperative_round_can_continue();
                         let victory = state
@@ -2785,6 +2822,42 @@ impl LiveLanCapture {
                     .is_some_and(|failure| failure.returned()),
             "finished live capture lost its transport"
         );
+        let explicit_bind = self
+            .config
+            .as_ref()
+            .and_then(|config| config.transport.explicit_bind())
+            .map(|bind| bind.to_string());
+        let explicit_peers = self.config.as_ref().map(|config| {
+            config
+                .transport
+                .explicit_peers()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        });
+        let configured_name = self.config.as_ref().and_then(|config| config.name.clone());
+        let live_peers = live.map(|live| {
+            live.peers()
+                .iter()
+                .map(|peer| {
+                    json!({"house":peer.house_id(),"frame":peer.frame(),"advertised_commands":peer.advertised_commands(),"received_commands":peer.received_commands()})
+                })
+                .collect::<Vec<_>>()
+        });
+        let mobile_objects = sim
+            .entities()
+            .values_sorted()
+            .filter(|entity| {
+                matches!(
+                    entity.category(),
+                    crate::map::entities::EntityCategory::Infantry
+                        | crate::map::entities::EntityCategory::Unit
+                )
+            })
+            .map(|entity| {
+                json!({"id":entity.stable_id(),"owner":sim.interner().resolve(entity.owner()),"position":entity.position,"alive":entity.is_alive()})
+            })
+            .collect::<Vec<_>>();
         let mut receipt = json!({"target":format!("{:?}",self.target),"service_boundary":if self.ai.is_some() {"one App process; real HTTPS/UDP relay; ordinary frame boundary"} else if self.target.online() {"independent App processes; real HTTPS/UDP relay; ordinary frame boundary"} else {"two independent App processes; real UDP/global/private queues; ordinary frame boundary"},
             "scope":if self.target.desync_failure() { "real300-frame CRC and strong-hash prefix followed by external scoped FRAMEINFO corruption, actual checksum CE Stop and ordinary LAN lobby cleanup" } else if self.failure.is_some() { "shared 300-frame prefix followed by real peer disappearance and ordinary wait recovery or Quit; bounded runtime validation, not whole-match/native parity" } else if self.target.online() {"observed production match before real outcome; tactical commands and simulation checksums"} else if self.battle.is_some() { "Battle opening, paid GI rally/combat, paid GAPILE repair and sale with an unfinished Infantry queue, natural crew, refunds and cleanup, then former-foundation Move; bounded runtime validation, not whole-match/native parity" } else { "300 native frames and local Move/Stop; bounded runtime validation, not whole-match/native parity" },
             "process_id":std::process::id(),
@@ -2797,13 +2870,13 @@ impl LiveLanCapture {
             "ai_activity":self.ai.as_ref().map(AiActivity::receipt).transpose()?,
             "solo_ai_input_bound_native_frames":self.ai.as_ref().map(|_| SOLO_AI_INPUT_BOUND_FRAMES),
             "production_broadcast":self.config.as_ref().map(|config|matches!(config.transport,LiveLanTransport::ProductionBroadcast)),
-            "bind":self.config.as_ref().and_then(|config|config.transport.explicit_endpoints()).map(|(bind,_)|bind.to_string()),"peer":self.config.as_ref().and_then(|config|config.transport.explicit_endpoints()).map(|(_,peer)|peer.to_string()),"startup":self.startup,"map_admission":self.map_admission,
+            "bind":explicit_bind,"lan_peers":explicit_peers,"players":self.expected_players,"name":configured_name,"startup":self.startup,"map_admission":self.map_admission,
             "native_checksums":checksums,"simulation_hashes":hashes,
             "simulation_hash_interval":crate::sim::replay::PLAY_HASH_INTERVAL.get(),
             "actions":self.actions,"actor_last_seen":self.actor_last_seen,"observed_movement":self.observed_movement,"stopped_position":self.stop_observation.position(),"stop_settled_at_frame":self.stop_observation.settled.as_ref().map(|(frame,_)|frame),"route":self.route,
             "final_native_frame":sim.session().binary_frame(),"checksum_failure":format!("{:?}",sim.pending_network_failure()),
-            "sent_commands":live.map(|live| live.sent_commands()),"peers":live.map(|live| live.peers().iter().map(|peer| json!({"house":peer.house_id(),"frame":peer.frame(),"advertised_commands":peer.advertised_commands(),"received_commands":peer.received_commands()})).collect::<Vec<_>>()),
-            "mobile_objects":sim.entities().values_sorted().filter(|entity| matches!(entity.category(), crate::map::entities::EntityCategory::Infantry | crate::map::entities::EntityCategory::Unit)).map(|entity| json!({"id":entity.stable_id(),"owner":sim.interner().resolve(entity.owner()),"position":entity.position,"alive":entity.is_alive()})).collect::<Vec<_>>() });
+            "sent_commands":live.map(|live| live.sent_commands()),"peers":live_peers,
+            "mobile_objects":mobile_objects });
         receipt["latency"] = json!(self.latency.as_ref().map(latency::LatencyCapture::receipt));
         Ok(receipt)
     }
@@ -3151,33 +3224,8 @@ fn vmce_setup_watchdog_snapshot(
     })
 }
 
-fn coop_setup_rows(
-    launch: &crate::skirmish_launch::SkirmishLaunchSession,
-) -> Result<(usize, usize)> {
-    ensure!(
-        launch.humans.len() == 2
-            && launch
-                .humans
-                .iter()
-                .all(|human| human.raw_slot_index.is_some()),
-        "VMCE setup capture requires exactly two admitted human rows"
-    );
-    let host = launch
-        .humans
-        .iter()
-        .position(|human| human.name == HOST_NAME)
-        .context("admitted LAN host row")?;
-    let guest = launch
-        .humans
-        .iter()
-        .position(|human| human.name == GUEST_NAME)
-        .context("admitted LAN guest row")?;
-    ensure!(host != guest, "host and guest rows alias");
-    Ok((host, guest))
-}
-
 #[cfg(feature = "vmce")]
-fn vmce_setup_snapshot(state: &AppState) -> Result<Value> {
+fn vmce_setup_snapshot(state: &AppState, local_name: &str) -> Result<Value> {
     let session = &state.match_state.session;
     let launch = session.network_setup().context("VMCE setup snapshot")?;
     ensure!(
@@ -3228,7 +3276,20 @@ fn vmce_setup_snapshot(state: &AppState) -> Result<Value> {
             && metadata.source_sha256 == config.source_sha256,
         "local VMCE bytes or effective map differ from the accepted host identity"
     );
-    let (host, guest) = coop_setup_rows(launch)?;
+    let players = launch.humans.len();
+    ensure!(
+        (2..=4).contains(&players)
+            && launch
+                .humans
+                .iter()
+                .all(|human| human.raw_slot_index.is_some()),
+        "VMCE setup capture needs two to four admitted human rows"
+    );
+    let local_row = launch
+        .humans
+        .iter()
+        .position(|human| human.name == local_name)
+        .with_context(|| format!("admitted LAN row {local_name:?}"))?;
     let participants = launch
         .humans
         .iter()
@@ -3257,8 +3318,8 @@ fn vmce_setup_snapshot(state: &AppState) -> Result<Value> {
             "source_sha256": config.source_sha256,
             "config_sha256": config.config_sha256,
         },
-        "host_row": host,
-        "guest_row": guest,
+        "players": players,
+        "local_row": local_row,
         "participants": participants,
     }))
 }
@@ -3271,54 +3332,63 @@ fn ensure_coop_setup_ready_transition(
     for field in ["map_file", "map_source_sha256", "effective_digest"] {
         ensure!(
             initial[field] == final_state[field],
-            "VMCE map identity changed while accepting the guest: {field}"
+            "VMCE map identity changed while accepting a peer: {field}"
         );
     }
     ensure!(
         initial["config"]["config_sha256"] == final_state["config"]["config_sha256"],
         "VMCE config changed during the Ready transition"
     );
-    let initial_host = coop_setup_participant(initial, HOST_NAME)?;
-    let initial_guest = coop_setup_participant(initial, GUEST_NAME)?;
-    let final_host = coop_setup_participant(final_state, HOST_NAME)?;
-    let final_guest = coop_setup_participant(final_state, GUEST_NAME)?;
+    let players = initial["players"]
+        .as_u64()
+        .context("VMCE participant count")? as usize;
+    ensure!(
+        (2..=4).contains(&players) && final_state["players"] == initial["players"],
+        "VMCE participant count changed during the Ready transition"
+    );
+    let initial_rows = initial["participants"]
+        .as_array()
+        .context("VMCE participant snapshot")?;
+    let final_rows = final_state["participants"]
+        .as_array()
+        .context("VMCE participant snapshot")?;
+    ensure!(
+        initial_rows.len() == players && final_rows.len() == players,
+        "VMCE participant rows do not match the admitted count"
+    );
+    for (before, after) in initial_rows.iter().zip(final_rows) {
+        ensure!(
+            before["name"] == after["name"]
+                && before["raw_row"] == after["raw_row"]
+                && before["role"] == after["role"],
+            "VMCE participant identity or role changed while accepting: {:?}",
+            before["name"]
+        );
+    }
+    let local_row = initial["local_row"].as_u64().context("VMCE local row")? as usize;
+    ensure!(
+        local_row < players && initial["host"] == host_observes_room,
+        "VMCE setup snapshot is from the wrong process role"
+    );
     if host_observes_room {
         ensure!(
-            initial_host["ready"] == true
-                && initial_host["map_status"] == 1
-                && final_host["ready"] == true
-                && final_guest["ready"] == true
-                && final_host["map_status"] == 1
-                && final_guest["map_status"] == 1,
-            "host did not observe both real LAN participants Ready with accepted maps"
+            initial_rows[local_row]["ready"] == true
+                && initial_rows[local_row]["map_status"] == 1
+                && final_rows
+                    .iter()
+                    .all(|row| { row["ready"] == true && row["map_status"] == 1 }),
+            "host did not observe every real LAN participant Ready with accepted maps"
         );
     } else {
         ensure!(
-            initial_guest["ready"] == false
-                && initial_guest["map_status"] == 1
-                && final_guest["ready"] == true
-                && final_guest["map_status"] == 1,
+            initial_rows[local_row]["ready"] == false
+                && initial_rows[local_row]["map_status"] == 1
+                && final_rows[local_row]["ready"] == true
+                && final_rows[local_row]["map_status"] == 1,
             "guest local Ready/map-status did not transition across production Accept"
         );
     }
-    for name in [HOST_NAME, GUEST_NAME] {
-        let before = coop_setup_participant(initial, name)?;
-        let after = coop_setup_participant(final_state, name)?;
-        ensure!(
-            before["raw_row"] == after["raw_row"] && before["role"] == after["role"],
-            "VMCE participant role changed while accepting: {name}"
-        );
-    }
     Ok(())
-}
-
-fn coop_setup_participant<'a>(snapshot: &'a Value, name: &str) -> Result<&'a Value> {
-    snapshot["participants"]
-        .as_array()
-        .context("VMCE participant snapshot")?
-        .iter()
-        .find(|row| row["name"] == name)
-        .with_context(|| format!("VMCE {name} participant"))
 }
 
 fn local_owner(state: &AppState) -> Result<String> {

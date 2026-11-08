@@ -1259,22 +1259,29 @@ impl LanSetupCrash {
 
 /// Only socket routing differs between these diagnostic modes. Production
 /// broadcast delegates all defaults to the ordinary LAN service owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LiveLanTransport {
     ProductionBroadcast,
+    /// Direct routing between the capture's processes: the host lists every
+    /// guest bind; each guest lists the host bind.
     Explicit {
         bind: std::net::SocketAddrV4,
-        peer: std::net::SocketAddrV4,
+        peers: Vec<std::net::SocketAddrV4>,
     },
 }
 
 impl LiveLanTransport {
-    pub(crate) fn explicit_endpoints(
-        self,
-    ) -> Option<(std::net::SocketAddrV4, std::net::SocketAddrV4)> {
+    pub(crate) fn explicit_bind(&self) -> Option<std::net::SocketAddrV4> {
         match self {
             Self::ProductionBroadcast => None,
-            Self::Explicit { bind, peer } => Some((bind, peer)),
+            Self::Explicit { bind, .. } => Some(*bind),
+        }
+    }
+
+    pub(crate) fn explicit_peers(&self) -> &[std::net::SocketAddrV4] {
+        match self {
+            Self::ProductionBroadcast => &[],
+            Self::Explicit { peers, .. } => peers,
         }
     }
 }
@@ -1284,6 +1291,10 @@ impl LiveLanTransport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LiveLanConfig {
     pub transport: LiveLanTransport,
+    /// Admitted human rows this capture drives (2 or 4 for VMCE).
+    pub players: usize,
+    /// This process's lobby name; the host keeps the fixed diagnostic name.
+    pub name: Option<String>,
     /// Host-only logical catalog name; RandMap.Sed drives the normal generator.
     pub map: Option<String>,
     /// Optional real pre-GO process-loss checkpoint. It never changes a timer.
@@ -1444,7 +1455,9 @@ where
     let mut timeout = None;
     let mut lan_production_broadcast = false;
     let mut lan_bind = None;
-    let mut lan_peer = None;
+    let mut lan_peers: Vec<std::net::SocketAddrV4> = Vec::new();
+    let mut lan_players = None;
+    let mut lan_name = None;
     let mut lan_map = None;
     let mut lan_setup_crash = None;
     #[cfg(feature = "vmce")]
@@ -1537,12 +1550,29 @@ where
                     .context("--lan-bind requires an IPv4 address and port")?,
                 "--lan-bind",
             )?,
-            "--lan-peer" => set_once(
-                &mut lan_peer,
-                next_utf8(&mut args, "value after --lan-peer")?
-                    .parse::<std::net::SocketAddrV4>()
-                    .context("--lan-peer requires an IPv4 address and port")?,
-                "--lan-peer",
+            "--lan-peer" => {
+                let value = next_utf8(&mut args, "value after --lan-peer")?;
+                for endpoint in value.split(',') {
+                    lan_peers.push(
+                        endpoint
+                            .trim()
+                            .parse::<std::net::SocketAddrV4>()
+                            .context("--lan-peer requires IPv4 endpoints separated by commas")?,
+                    );
+                }
+            }
+            "--lan-players" => set_once(
+                &mut lan_players,
+                parse_u32(
+                    next_utf8(&mut args, "value after --lan-players")?,
+                    "--lan-players",
+                )?,
+                "--lan-players",
+            )?,
+            "--lan-name" => set_once(
+                &mut lan_name,
+                next_utf8(&mut args, "value after --lan-name")?,
+                "--lan-name",
             )?,
             "--lan-map" => set_once(
                 &mut lan_map,
@@ -1741,7 +1771,7 @@ where
             "--lan-production-broadcast requires a normal LAN live host or guest checkpoint"
         );
         ensure!(
-            lan_bind.is_none() && lan_peer.is_none() && lan_setup_crash.is_none(),
+            lan_bind.is_none() && lan_peers.is_empty() && lan_setup_crash.is_none(),
             "--lan-production-broadcast cannot override sockets or combine with a fault checkpoint"
         );
     }
@@ -2080,11 +2110,48 @@ where
         None
     };
     let live_lan = if live {
+        let players = usize::try_from(lan_players.unwrap_or(2))
+            .context("--lan-players is too large for this process")?;
+        ensure!(
+            (2..=4).contains(&players),
+            "--lan-players supports exactly 2 or 4 admitted human rows"
+        );
+        if players != 2 {
+            ensure!(
+                matches!(
+                    checkpoint,
+                    ShellCaptureCheckpoint::Lan(target) if target.is_live_vmce()
+                ),
+                "--lan-players 4 requires a VMCE live host or guest checkpoint"
+            );
+            ensure!(
+                lan_name.is_some(),
+                "--lan-players 4 requires --lan-name for the per-process lobby identity"
+            );
+        }
+        ensure!(
+            lan_name.is_none() || matches!(checkpoint, ShellCaptureCheckpoint::Lan(_)),
+            "--lan-name requires a live LAN checkpoint"
+        );
+        let host_target = matches!(
+            checkpoint,
+            ShellCaptureCheckpoint::Lan(target) if target.is_live_vmce_host()
+        );
+        let expected_peers = if players == 2 {
+            1
+        } else if host_target {
+            players - 1
+        } else {
+            1
+        };
         let transport = if lan_production_broadcast {
+            ensure!(
+                players == 2,
+                "--lan-players 4 requires explicit --lan-peer endpoints"
+            );
             LiveLanTransport::ProductionBroadcast
         } else {
             let bind = lan_bind.context("live LAN capture requires --lan-bind")?;
-            let peer = lan_peer.context("live LAN capture requires --lan-peer")?;
             ensure!(
                 (1..=u16::MAX - 2).contains(&bind.port()),
                 "--lan-bind needs a nonzero port with room for alternate port+2"
@@ -2094,17 +2161,32 @@ where
                 "--lan-bind is not a unicast bind address"
             );
             ensure!(
-                peer.port() != 0
-                    && !peer.ip().is_unspecified()
-                    && !peer.ip().is_broadcast()
-                    && !peer.ip().is_multicast(),
-                "--lan-peer needs a unicast IPv4 endpoint"
+                lan_peers.len() == expected_peers,
+                "--lan-players {players} needs {expected_peers} --lan-peer endpoint(s) on this target"
             );
-            ensure!(
-                peer != bind && !(peer.ip() == bind.ip() && peer.port() == bind.port() + 2),
-                "LAN peer overlaps a local socket"
-            );
-            LiveLanTransport::Explicit { bind, peer }
+            let mut seen = Vec::with_capacity(lan_peers.len());
+            for peer in &lan_peers {
+                ensure!(
+                    peer.port() != 0
+                        && !peer.ip().is_unspecified()
+                        && !peer.ip().is_broadcast()
+                        && !peer.ip().is_multicast(),
+                    "--lan-peer needs a unicast IPv4 endpoint"
+                );
+                ensure!(
+                    *peer != bind && !(peer.ip() == bind.ip() && peer.port() == bind.port() + 2),
+                    "LAN peer overlaps a local socket"
+                );
+                ensure!(
+                    !seen.contains(peer),
+                    "--lan-peer lists the same endpoint twice"
+                );
+                seen.push(*peer);
+            }
+            LiveLanTransport::Explicit {
+                bind,
+                peers: lan_peers,
+            }
         };
         if let Some(file) = lan_map.as_deref() {
             ensure!(
@@ -2180,6 +2262,8 @@ where
         };
         Some(LiveLanConfig {
             transport,
+            players,
+            name: lan_name,
             map: lan_map,
             setup_crash: lan_setup_crash,
             profile_check,
@@ -2191,7 +2275,9 @@ where
         ensure!(
             !lan_production_broadcast
                 && lan_bind.is_none()
-                && lan_peer.is_none()
+                && lan_peers.is_empty()
+                && lan_players.is_none()
+                && lan_name.is_none()
                 && lan_map.is_none()
                 && lan_setup_crash.is_none(),
             "LAN socket options require a live LAN checkpoint"
@@ -3652,8 +3738,10 @@ mod tests {
             Some(LiveLanConfig {
                 transport: LiveLanTransport::Explicit {
                     bind: "127.0.0.1:31000".parse().unwrap(),
-                    peer: "127.0.0.1:31010".parse().unwrap(),
+                    peers: vec!["127.0.0.1:31010".parse().unwrap()],
                 },
+                players: 2,
+                name: None,
                 map: None,
                 setup_crash: None,
                 profile_check: false,
@@ -3713,6 +3801,72 @@ mod tests {
             "127.0.0.1:31010",
         ]));
         assert!(parse_launch_args(host_without_map).is_err());
+    }
+
+    /// A four-process VMCE run needs three guest endpoints on the host, one
+    /// on each guest, and a unique lobby name per guest.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn four_player_vmce_capture_requires_matching_peers_and_names() {
+        let output = new_output_path("lan-four-player");
+        let base = |target: &str| {
+            let mut values = valid_args(&output);
+            values[1] = target.into();
+            values.extend(args(&[
+                "--lan-bind",
+                "127.0.0.1:31300",
+                "--lan-players",
+                "4",
+                "--lan-map",
+                "Lindrak.map",
+            ]));
+            values
+        };
+        let host_peers = [
+            "--lan-peer",
+            "127.0.0.1:31310,127.0.0.1:31320,127.0.0.1:31330",
+        ];
+        let mut host = base("lan-live-vera-campaign-host");
+        host.extend(args(&host_peers));
+        host.extend(args(&["--lan-name", "LiveHost"]));
+        assert!(parse_launch_args(host.clone()).is_ok());
+
+        let mut missing_name = host.clone();
+        let name = missing_name
+            .iter()
+            .position(|value| value == "--lan-name")
+            .unwrap();
+        missing_name.drain(name..name + 2);
+        assert!(parse_launch_args(missing_name).is_err());
+
+        let mut too_few_peers = base("lan-live-vera-campaign-host");
+        too_few_peers.extend(args(&["--lan-peer", "127.0.0.1:31310"]));
+        too_few_peers.extend(args(&["--lan-name", "LiveHost"]));
+        assert!(parse_launch_args(too_few_peers).is_err());
+
+        let mut duplicate_peer = base("lan-live-vera-campaign-host");
+        duplicate_peer.extend(args(&[
+            "--lan-peer",
+            "127.0.0.1:31310,127.0.0.1:31310,127.0.0.1:31320",
+        ]));
+        duplicate_peer.extend(args(&["--lan-name", "LiveHost"]));
+        assert!(parse_launch_args(duplicate_peer).is_err());
+
+        let mut guest = valid_args(&output);
+        guest[1] = "lan-live-vera-campaign-guest".into();
+        guest.extend(args(&[
+            "--lan-bind",
+            "127.0.0.1:31310",
+            "--lan-peer",
+            "127.0.0.1:31300",
+            "--lan-players",
+            "4",
+            "--lan-name",
+            "Guest1",
+        ]));
+        assert!(parse_launch_args(guest.clone()).is_ok());
+        guest.extend(args(&["--lan-peer", "127.0.0.1:31320"]));
+        assert!(parse_launch_args(guest).is_err());
     }
 
     #[cfg(feature = "vmce")]
