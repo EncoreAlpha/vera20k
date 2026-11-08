@@ -129,10 +129,42 @@ fn synthetic_campaign_score_model() -> CampaignScoreScreenModel {
     }
 }
 
+/// One synthetic VMCE settlement page state: page verdict, each row's ready
+/// marker and the continuation the caption describes.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum VmceResultTarget {
+    HostVictoryNext,
+    GuestReady,
+    DefeatRetry,
+    CampaignEnd,
+}
+
+#[cfg(feature = "vmce")]
+impl VmceResultTarget {
+    /// Screenshot / receipt label.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::HostVictoryNext => "vmce-result-host-victory-next",
+            Self::GuestReady => "vmce-result-guest-ready",
+            Self::DefeatRetry => "vmce-result-defeat-retry",
+            Self::CampaignEnd => "vmce-result-campaign-end",
+        }
+    }
+
+    fn victory(self) -> bool {
+        !matches!(self, Self::DefeatRetry)
+    }
+}
+
 pub(super) struct CampaignScoreCapture {
     phase: CampaignScorePhase,
     route: Vec<Value>,
     animation: Option<CampaignAnimationSequence>,
+    #[cfg(feature = "vmce")]
+    vmce: Option<VmceResultTarget>,
+    /// One checkpoint screenshot requested after the page settles.
+    pending_shot: Option<&'static str>,
 }
 
 impl CampaignScoreCapture {
@@ -141,7 +173,29 @@ impl CampaignScoreCapture {
             phase: CampaignScorePhase::MainMenu,
             route: Vec::new(),
             animation: None,
+            #[cfg(feature = "vmce")]
+            vmce: None,
+            pending_shot: None,
         }
+    }
+
+    /// A synthetic VMCE settlement page-state fixture for visual review.
+    #[cfg(feature = "vmce")]
+    pub(super) fn vmce(target: VmceResultTarget) -> Self {
+        Self {
+            phase: CampaignScorePhase::MainMenu,
+            route: Vec::new(),
+            animation: None,
+            vmce: Some(target),
+            pending_shot: None,
+        }
+    }
+
+    pub(super) fn take_screenshot_requests(&mut self) -> Vec<String> {
+        self.pending_shot
+            .take()
+            .map(|label| vec![label.to_owned()])
+            .unwrap_or_default()
     }
 
     pub(super) fn animation_sequence() -> Self {
@@ -149,6 +203,9 @@ impl CampaignScoreCapture {
             phase: CampaignScorePhase::MainMenu,
             route: Vec::new(),
             animation: Some(CampaignAnimationSequence::default()),
+            #[cfg(feature = "vmce")]
+            vmce: None,
+            pending_shot: None,
         }
     }
 
@@ -167,9 +224,35 @@ impl CampaignScoreCapture {
         }
 
         if self.phase == CampaignScorePhase::MainMenu {
-            if rendered == PresentedShell::MainMenu
-                && steady_main_menu_capture_ready(MainMenuCaptureSnapshot::from_state(state))?
+            // A fitted-shell VMCE settlement shot (1920, ...) is allowed to
+            // leave the 800x600 reference surface: its page scales with it.
+            let mut menu_snapshot = MainMenuCaptureSnapshot::from_state(state);
+            #[cfg(feature = "vmce")]
+            if self.vmce.is_some()
+                && (menu_snapshot.width, menu_snapshot.height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
             {
+                menu_snapshot.width = EXPECTED_WIDTH;
+                menu_snapshot.height = EXPECTED_HEIGHT;
+                menu_snapshot.cursor_x = EXPECTED_CURSOR_X as f32;
+                menu_snapshot.cursor_y = EXPECTED_CURSOR_Y as f32;
+            }
+            if rendered == PresentedShell::MainMenu
+                && steady_main_menu_capture_ready(menu_snapshot)?
+            {
+                #[cfg(feature = "vmce")]
+                if let Some(target) = self.vmce {
+                    install_vmce_result_fixture(state, target)?;
+                    self.route.push(json!({
+                        "dialog": 0x103,
+                        "frame": frame,
+                        "action": "open synthetic VMCE settlement fixture through App::open_campaign_score_page",
+                        "fixture": "synthetic UI example; page-state only",
+                        "vmce_result": target.label(),
+                    }));
+                    self.pending_shot = Some(target.label());
+                    self.phase = CampaignScorePhase::Settling(SETTLE_FRAMES);
+                    return Ok(());
+                }
                 App::open_campaign_score_page(
                     state,
                     synthetic_campaign_score_model(),
@@ -916,4 +999,94 @@ impl ScoreCapture {
                 "sha256": crate::util::sha256::sha256_hex(pixels)}
         })
     }
+}
+
+/// Install one synthetic VMCE settlement page state through the production
+/// session/UI owners: a VMCE LAN room supplies the real role/country data, the
+/// page model stays the retail `0x103` example, and the board carries only the
+/// ready/verdict/continuation values this visual fixture reviews. No real
+/// match, no transport, no protocol.
+#[cfg(feature = "vmce")]
+fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -> Result<()> {
+    use crate::ui::campaign_score_shell::CampaignScoreScreenModel;
+    use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
+    crate::app::shell_network_setup::install_vmce_lobby_fixture(
+        state,
+        &crate::app::shell_network_setup::VmceLobbyFixture {
+            host: true,
+            claimed_roles: 4,
+            peer_ready: true,
+            status: None,
+            blocking: false,
+        },
+    )?;
+    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
+        .ok_or_else(|| anyhow::anyhow!("VMCE result fixture needs authored role metadata"))?;
+    let ready = match target {
+        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => {
+            [Some(true), Some(true), Some(false), Some(false)]
+        }
+        VmceResultTarget::DefeatRetry => [None, None, None, None],
+        VmceResultTarget::CampaignEnd => [Some(true); 4],
+    };
+    let (ready_count, total) = match target {
+        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => (2, 4),
+        VmceResultTarget::CampaignEnd => (4, 4),
+        VmceResultTarget::DefeatRetry => (0, 4),
+    };
+    let caption = match target {
+        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => crate::i18n::tr_fill(
+            "VERA:VmceResultNextStatus",
+            &[("ready", &ready_count), ("total", &total)],
+        ),
+        VmceResultTarget::DefeatRetry => crate::i18n::tr("VERA:VmceResultRetryHostStatus"),
+        VmceResultTarget::CampaignEnd => crate::i18n::tr_fill(
+            "VERA:VmceResultEndStatus",
+            &[("ready", &ready_count), ("total", &total)],
+        ),
+    };
+    let board = VmceResultBoard {
+        rows: (0..4)
+            .map(|role| VmceResultRow {
+                role: crate::i18n::tr_fill(
+                    "VERA:VmceResultRole",
+                    &[("number", &(role + 1)), ("house", &roles[role].owner)],
+                ),
+                country: roles[role].country.clone(),
+                flag: roles[role].flag.clone(),
+                won: target.victory(),
+                ready: ready[role],
+                host: role == 0,
+            })
+            .collect(),
+        victory: target.victory(),
+        caption,
+    };
+    let mut model = synthetic_campaign_score_model();
+    model.par_time = "00:12:00".into();
+    model.your_time = "00:09:47".into();
+    model.enemies_destroyed = "23".into();
+    model.rank = if target.victory() {
+        "Colonel"
+    } else {
+        "Sergeant"
+    }
+    .into();
+    App::open_campaign_score_page(
+        state,
+        CampaignScoreScreenModel {
+            your_time: model.your_time.clone(),
+            ..model
+        },
+        "Synthetic VMCE settlement capture".into(),
+        "Synthetic UI fixture; not native-parity evidence.".into(),
+    );
+    let _ = App::ensure_skirmish_shell_chrome(state);
+    state
+        .frontend
+        .campaign_score_page
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("VMCE result fixture did not open the 0x103 page"))?
+        .set_vmce_board(Some(board));
+    Ok(())
 }

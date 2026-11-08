@@ -133,46 +133,111 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
     true
 }
 
-/// The up-to-four participant rows VMCE's settlement page shows: each
-/// connected human's name and, while a next stage is still being agreed, its
-/// ready state. Stock modes have no VMCE round and show no rows.
-pub(crate) fn result_rows(state: &AppState) -> Option<Vec<String>> {
+/// The settlement board the `0x103` page shows: one row per connected human
+/// with its authored role, country and verdict, plus the truthful caption for
+/// the continuation this page gates. Read-only projection of the round and
+/// launch the page already owns; no second result state.
+#[cfg(feature = "vmce")]
+pub(crate) fn result_board(
+    state: &AppState,
+) -> Option<crate::ui::campaign_score_shell::VmceResultBoard> {
+    use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
     let round = state.match_state.session.cooperative_round()?;
     if !round.vera() {
         return None;
     }
     let launch = state.match_state.session.network_setup()?;
+    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)?;
     let connected = state.match_state.session.network_connected_source_indices();
-    let waiting_for_guests = state.match_state.session.cooperative_round_can_continue();
-    let ready_label = crate::app::frontend::shell_pass::resolve_csf(state, "TXT_READY");
-    let waiting_label = crate::app::frontend::shell_pass::resolve_csf(state, "TXT_WAITING");
+    let can_continue = state.match_state.session.cooperative_round_can_continue();
+    let victory = round.page_victory();
+    // Per-row verdict: the mission viewpoint's own survival when the finished
+    // world is still resident; otherwise the page verdict every peer shows.
+    let mut survived = std::collections::BTreeMap::new();
+    if let Some(runtime) = state.match_state.sim_runtime.as_ref() {
+        let sim = &runtime.simulation;
+        for row in sim.cooperative_score_rows() {
+            survived.insert(sim.interner().resolve(row.owner).to_owned(), row.survived);
+        }
+    }
     let mut rows = Vec::new();
     for (index, human) in launch.humans.iter().enumerate() {
         if human.is_observer() || !connected.contains(&index) {
             continue;
         }
-        let mut row = human.name.clone();
-        if waiting_for_guests {
-            let ready = state
-                .match_state
-                .session
-                .cooperative_round_slot_ready(index);
-            let label = if ready { &ready_label } else { &waiting_label };
-            row.push_str("  ");
-            if label.is_empty()
-                || label.as_ref() == (if ready { "TXT_READY" } else { "TXT_WAITING" })
-            {
-                row.push_str(if ready { "Ready" } else { "Waiting" });
-            } else {
-                row.push_str(label.trim());
-            }
+        let role = human.role.native_value();
+        if role < 0 {
+            continue;
         }
-        rows.push(row);
+        let role = role as usize;
+        if role >= roles.len() {
+            continue;
+        }
+        let info = &roles[role];
+        rows.push(VmceResultRow {
+            role: crate::i18n::tr_fill(
+                "VERA:VmceResultRole",
+                &[("number", &(role + 1)), ("house", &info.owner)],
+            ),
+            country: info.country.clone(),
+            flag: info.flag.clone(),
+            won: survived
+                .get(info.owner.as_str())
+                .copied()
+                .unwrap_or(victory),
+            ready: can_continue.then(|| {
+                state
+                    .match_state
+                    .session
+                    .cooperative_round_slot_ready(index)
+            }),
+            host: human.raw_slot_index == Some(0),
+        });
         if rows.len() == 4 {
             break;
         }
     }
-    (!rows.is_empty()).then_some(rows)
+    let (ready, total, _) = state
+        .match_state
+        .session
+        .cooperative_round_ready_progress()
+        .unwrap_or((0, rows.len(), false));
+    let host = state.match_state.session.host();
+    let caption = continuation_caption(round.vera_ending(), host, ready, total);
+    (!rows.is_empty()).then_some(VmceResultBoard {
+        rows,
+        victory,
+        caption,
+    })
+}
+
+/// The truthful status caption for one continuation. The three continuations
+/// keep their own gates in the round; this only states what the page does.
+#[cfg(feature = "vmce")]
+fn continuation_caption(
+    ending: crate::app::match_runtime::session::VmceRoundEnding,
+    host: bool,
+    ready: usize,
+    total: usize,
+) -> String {
+    use crate::app::match_runtime::session::VmceRoundEnding;
+    match ending {
+        VmceRoundEnding::Next => crate::i18n::tr_fill(
+            "VERA:VmceResultNextStatus",
+            &[("ready", &ready), ("total", &total)],
+        ),
+        VmceRoundEnding::Retry => {
+            if host {
+                crate::i18n::tr("VERA:VmceResultRetryHostStatus")
+            } else {
+                crate::i18n::tr("VERA:VmceResultRetryGuestStatus")
+            }
+        }
+        VmceRoundEnding::CampaignEnd => crate::i18n::tr_fill(
+            "VERA:VmceResultEndStatus",
+            &[("ready", &ready), ("total", &total)],
+        ),
+    }
 }
 
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
@@ -285,5 +350,48 @@ fn open_page(
             log::warn!("VMCE {what} round countries: {error:#}");
         }
     }
+    #[cfg(feature = "vmce")]
+    let board = result_board(state);
+    // The settlement board's flags/host/ready glyphs come from the skirmish
+    // chrome the lobby already loaded; VMCE result pages only exist after it.
+    #[cfg(feature = "vmce")]
+    let _ = App::ensure_skirmish_shell_chrome(state);
     App::open_campaign_score_page(state, model, String::new(), String::new());
+    #[cfg(feature = "vmce")]
+    if let Some(page) = state.frontend.campaign_score_page.as_mut() {
+        page.set_vmce_board(board);
+    }
+}
+
+#[cfg(all(test, feature = "vmce"))]
+mod tests {
+    use super::*;
+    use crate::app::match_runtime::session::VmceRoundEnding;
+
+    #[test]
+    fn the_three_continuations_get_their_own_truthful_captions() {
+        let next = continuation_caption(VmceRoundEnding::Next, true, 2, 4);
+        let retry_host = continuation_caption(VmceRoundEnding::Retry, true, 0, 4);
+        let retry_guest = continuation_caption(VmceRoundEnding::Retry, false, 0, 4);
+        let end = continuation_caption(VmceRoundEnding::CampaignEnd, true, 4, 4);
+        assert!(
+            next.contains("2/4"),
+            "next caption carries its ready gate: {next}"
+        );
+        assert!(
+            end.contains("4/4"),
+            "campaign-end caption carries its ready gate: {end}"
+        );
+        assert!(
+            next.contains("all are ready") || next.contains("全员就绪"),
+            "next caption states the all-ready gate: {next}"
+        );
+        assert!(
+            retry_host.contains("15") && retry_guest.contains("15"),
+            "retry captions carry the grace: {retry_host} / {retry_guest}"
+        );
+        assert_ne!(next, end);
+        assert_ne!(retry_host, retry_guest);
+        assert_ne!(next, retry_host);
+    }
 }

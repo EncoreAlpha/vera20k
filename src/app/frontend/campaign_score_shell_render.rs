@@ -112,20 +112,7 @@ pub(crate) fn render_campaign_score_page(
         .and_then(|control| control.tooltip_key)
         .map(|key| resolve_csf(state, key).into_owned())
         .unwrap_or_default();
-    let status = if status.is_empty() {
-        #[cfg(feature = "vmce")]
-        let fallback = vmce_result_status(state).unwrap_or_default();
-        #[cfg(not(feature = "vmce"))]
-        let fallback = String::new();
-        fallback
-    } else {
-        status
-    };
     let pressed = active.then(|| controller.pressed()).flatten();
-    // VMCE's settlement page lists its up-to-four participants; stock
-    // campaign pages have no VMCE round and therefore no rows.
-    #[cfg(feature = "vmce")]
-    let vmce_rows = crate::app::vmce_result::result_rows(state);
 
     let mut labels: Vec<PaintLabel<'static>> = Vec::new();
     let campaign_page = state
@@ -168,21 +155,6 @@ pub(crate) fn render_campaign_score_page(
                 path_a_reveal: None,
             });
         }
-        #[cfg(feature = "vmce")]
-        if let Some(rows) = vmce_rows.as_ref() {
-            for (index, row) in rows.iter().enumerate() {
-                let Some(rect) = layout.vmce_rows.get(index).copied() else {
-                    break;
-                };
-                labels.push(PaintLabel {
-                    text: row.clone().into(),
-                    rect,
-                    align: ShellAlign::NONE,
-                    rgb: SHELL_TEXT_RGB_ENABLED,
-                    path_a_reveal: None,
-                });
-            }
-        }
     }
 
     let chrome = state
@@ -209,6 +181,31 @@ pub(crate) fn render_campaign_score_page(
     chrome_sprites.extend(monitor_frame.and_then(|frame| {
         shell_paint::paint_warning_monitor(chrome, layout.warning_monitor, frame, layout.scale)
     }));
+
+    // The board is an opaque overlay on top of SCRBK/SCRT, so its sprites are
+    // their own draw submitted after the dialog art (a chrome draw would be
+    // covered by the art).
+    #[cfg(feature = "vmce")]
+    let mut vmce_board_sprites: Vec<crate::render::batch::SpriteInstance> = Vec::new();
+    #[cfg(feature = "vmce")]
+    if let (Some(board_layout), Some(board)) = (
+        layout.vmce_result,
+        state
+            .frontend
+            .campaign_score_page
+            .as_ref()
+            .and_then(|page| page.vmce_board()),
+    ) {
+        let board = board.clone();
+        paint_vmce_result_board(
+            state,
+            &layout,
+            board_layout,
+            &board,
+            &mut vmce_board_sprites,
+            &mut labels,
+        );
+    }
 
     if let Some(wave) = wave.as_ref() {
         // The slide engine paints the whole right-panel column; the steady
@@ -316,6 +313,15 @@ pub(crate) fn render_campaign_score_page(
         texture: &chrome.texture,
         instances: button_sprites,
     });
+    #[cfg(feature = "vmce")]
+    if !vmce_board_sprites.is_empty()
+        && let Some(skirmish) = state.frontend.skirmish_shell_chrome.as_ref()
+    {
+        draws.push(TexturedDraw {
+            texture: &skirmish.texture,
+            instances: vmce_board_sprites,
+        });
+    }
     encode_shell_pass(
         state,
         encoder,
@@ -332,35 +338,6 @@ pub(crate) fn render_campaign_score_page(
 }
 
 /// The low two bits of Win32 STATIC style select left, centre or right.
-/// VMCE's settlement page uses the native status static for the all-Continue
-/// handoff while a next stage is being agreed: the host sees how many guests
-/// are ready, a guest sees Ready or Waiting for the host. A defeat or the
-/// last mission has no ready gate and keeps the status line empty.
-#[cfg(feature = "vmce")]
-fn vmce_result_status(state: &AppState) -> Option<String> {
-    if !state.match_state.session.cooperative_round_can_continue() {
-        return None;
-    }
-    let (ready, total, local_ready) = state
-        .match_state
-        .session
-        .cooperative_round_ready_progress()?;
-    if total == 0 {
-        return None;
-    }
-    let key = if local_ready {
-        "TXT_WAITING"
-    } else {
-        "TXT_READY"
-    };
-    let label = resolve_csf(state, key);
-    if label == key || label.trim().is_empty() {
-        Some(format!("{ready}/{total}"))
-    } else {
-        Some(format!("{} {ready}/{total}", label.trim()))
-    }
-}
-
 fn static_align(dialog: CampaignScoreDialog, id: u16) -> ShellAlign {
     match dialog.control(id).map(|control| control.native_style & 0x3) {
         Some(1) => ShellAlign::H_CENTER,
@@ -371,4 +348,121 @@ fn static_align(dialog: CampaignScoreDialog, id: u16) -> ShellAlign {
 
 fn rgb_f32(rgb: [u8; 3]) -> [f32; 3] {
     rgb.map(|channel| f32::from(channel) / 255.0)
+}
+
+/// VMCE's settlement board: one flat native dialog fill and the native list
+/// frame behind four role rows, their ready/host glyphs and the truthful
+/// continuation caption. The board never touches the native `0x103` statics
+/// (rank, commendation, times, kills) or the Continue cell.
+#[cfg(feature = "vmce")]
+#[allow(clippy::too_many_arguments)]
+fn paint_vmce_result_board(
+    state: &AppState,
+    layout: &crate::ui::campaign_score_shell::CampaignScoreLayout,
+    board_layout: crate::ui::campaign_score_shell::VmceResultLayout,
+    board: &crate::ui::campaign_score_shell::VmceResultBoard,
+    sprites: &mut Vec<crate::render::batch::SpriteInstance>,
+    labels: &mut Vec<PaintLabel<'static>>,
+) {
+    use crate::app::frontend::skirmish_shell_render::vmce_panel;
+    let Some(chrome) = state.frontend.skirmish_shell_chrome.as_ref() else {
+        return;
+    };
+    let scale = layout.scale;
+    let depth = shell_paint::DIALOG_BACKGROUND_DEPTH;
+    vmce_panel::push_fill(sprites, chrome, board_layout.fill, depth);
+    vmce_panel::push_list_frame(sprites, chrome, board_layout.frame, scale, depth);
+    vmce_panel::push_rule(sprites, chrome, board_layout.header_rule, scale, depth);
+    vmce_panel::push_rule(sprites, chrome, board_layout.status_rule, scale, depth);
+    let no_ready_gate = board.rows.iter().all(|row| row.ready.is_none());
+    for (index, header) in board_layout.headers.into_iter().enumerate() {
+        let key = if index == 3 && no_ready_gate {
+            "VERA:VmceHostColumn"
+        } else {
+            header.key
+        };
+        labels.push(PaintLabel {
+            text: crate::i18n::tr(key).into(),
+            rect: header.rect,
+            align: if header.centred || (index == 3 && no_ready_gate) {
+                ShellAlign::H_CENTER
+            } else {
+                ShellAlign::NONE
+            },
+            rgb: SHELL_TEXT_RGB_ENABLED,
+            path_a_reveal: None,
+        });
+    }
+    let font = &state.renderer.bit_font;
+    let mut push = |text: String, rect, align| {
+        labels.push(PaintLabel {
+            text: text.into(),
+            rect,
+            align,
+            rgb: SHELL_TEXT_RGB_ENABLED,
+            path_a_reveal: None,
+        });
+    };
+    for (row, cells) in board.rows.iter().zip(board_layout.rows.iter()) {
+        push(
+            vmce_panel::ellipsize_native(font, &row.role, scale.base_rect(cells.role).w),
+            cells.role,
+            ShellAlign::NONE,
+        );
+        if let Some(flag) = row
+            .flag
+            .as_deref()
+            .and_then(|flag| chrome.lan_player_side(flag))
+        {
+            vmce_panel::push_native_centred(sprites, flag, cells.country_icon, scale);
+        }
+        if !row.country.is_empty() {
+            push(
+                vmce_panel::ellipsize_native(font, &row.country, scale.base_rect(cells.country).w),
+                cells.country,
+                ShellAlign::NONE,
+            );
+        }
+        push(
+            crate::i18n::tr(if row.won {
+                "VERA:VmceResultWon"
+            } else {
+                "VERA:VmceResultLost"
+            }),
+            cells.verdict,
+            ShellAlign::H_CENTER,
+        );
+        if let Some(ready) = row.ready {
+            let icon = if ready {
+                chrome.lan_player_status(false, true)
+            } else {
+                chrome.lan_player_not_ready()
+            };
+            if let Some(icon) = icon {
+                vmce_panel::push_native_centred(sprites, icon, cells.ready, scale);
+            }
+        }
+        if row.host
+            && let Some(icon) = chrome.lan_player_status(true, false)
+        {
+            vmce_panel::push_native_centred(sprites, icon, cells.host, scale);
+        }
+    }
+    // Two leading-separated lines, cut to the status width.
+    let authored_w = scale.base_rect(board_layout.status).w.max(1);
+    let lines = vmce_panel::wrap_two_lines(font, &board.caption, authored_w);
+    let line_h = (17.0 * scale.factor()).round().max(1.0) as i32;
+    let leading = (2.0 * scale.factor()).round() as i32;
+    for (index, line) in lines.iter().enumerate() {
+        push(
+            line.clone(),
+            crate::ui::shell::geom::RectPx::new(
+                board_layout.status.x,
+                board_layout.status.y + index as i32 * (line_h + leading),
+                board_layout.status.w,
+                line_h,
+            ),
+            ShellAlign::NONE,
+        );
+    }
 }

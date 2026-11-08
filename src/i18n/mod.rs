@@ -1150,6 +1150,15 @@ mod tests {
             "VERA:VmceColorColumn",
             "VERA:VmceRoleChoice",
             "VERA:VmceRoleChoiceShort",
+            "VERA:VmceHostColumn",
+            "VERA:VmceResultColumn",
+            "VERA:VmceResultRole",
+            "VERA:VmceResultWon",
+            "VERA:VmceResultLost",
+            "VERA:VmceResultNextStatus",
+            "VERA:VmceResultRetryHostStatus",
+            "VERA:VmceResultRetryGuestStatus",
+            "VERA:VmceResultEndStatus",
         ];
         for (tag, text) in shipped::FILES {
             let contents = parse(text);

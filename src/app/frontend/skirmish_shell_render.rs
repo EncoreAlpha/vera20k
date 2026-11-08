@@ -2102,6 +2102,7 @@ pub(crate) use wol_page::{
 pub(crate) use wol_persona::{paint_wol_auto_login_children, paint_wol_locale_children};
 pub(crate) use wol_quick_match::paint_wol_quick_match_children;
 mod coop_score;
+pub(crate) mod vmce_panel;
 mod multiplayer_setup;
 pub(crate) use coop_score::render_coop_score;
 pub(crate) use keyboard::render_keyboard_shell;

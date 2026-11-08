@@ -17,6 +17,7 @@ use super::text::{
     button_text_rect, localized_label, push_start_marker_labels, rect_to_text_rect, static_label,
     status_line_label,
 };
+use super::vmce_panel;
 use super::{
     SHELL_CONTROL_DEPTH, SHELL_CONTROL_TEXT_DEPTH, SHELL_DISABLED_TEXT_RGB_FROM_PACKED_0000009F,
     SHELL_DROPDOWN_DEPTH, SHELL_DROPDOWN_TEXT_DEPTH, SHELL_LABEL_TEXT_RGB,
@@ -1007,9 +1008,21 @@ fn paint_vmce_lobby_board(
     };
     // Flat native dialog fill and the native list frame: a quiet panel, not
     // tile noise over the map terrain.
-    push_vmce_panel_fill(controls, atlas, board.fill);
-    push_vmce_list_frame(controls, atlas, board.frame, scale);
-    push_vmce_rule(controls, atlas, board.header_rule, scale);
+    vmce_panel::push_fill(controls, atlas, board.fill, SHELL_PARENT_BACKGROUND_DEPTH);
+    vmce_panel::push_list_frame(
+        controls,
+        atlas,
+        board.frame,
+        scale,
+        SHELL_PARENT_BACKGROUND_DEPTH,
+    );
+    vmce_panel::push_rule(
+        controls,
+        atlas,
+        board.header_rule,
+        scale,
+        SHELL_PARENT_BACKGROUND_DEPTH,
+    );
     for header in board.headers {
         let align = if header.centred {
             ShellAlign::H_CENTER | ShellAlign::V_CENTER
@@ -1034,7 +1047,7 @@ fn paint_vmce_lobby_board(
                 // is the disabled variant.
                 let waiting = localized_label(state, "GUI:Waiting", "Waiting");
                 texts.push(text(
-                    &ellipsize_native(font, &waiting, cells.role.w),
+                    &vmce_panel::ellipsize_native(font, &waiting, cells.role.w),
                     cells.role,
                     ShellAlign::V_CENTER,
                     SHELL_LABEL_TEXT_RGB,
@@ -1044,7 +1057,7 @@ fn paint_vmce_lobby_board(
             }
             VmceLobbyRoleSlot::Claimed(role) => {
                 texts.push(text(
-                    &ellipsize_native(font, &role.role, cells.role.w),
+                    &vmce_panel::ellipsize_native(font, &role.role, cells.role.w),
                     cells.role,
                     ShellAlign::V_CENTER,
                     SHELL_LABEL_TEXT_RGB,
@@ -1057,11 +1070,11 @@ fn paint_vmce_lobby_board(
                 {
                     // Full native frame, centred in its own cell, never
                     // cropped or stretched.
-                    push_native_centred(controls, flag, cells.country_icon, scale);
+                    vmce_panel::push_native_centred(controls, flag, cells.country_icon, scale);
                 }
                 if let Some(country) = &role.country {
                     texts.push(text(
-                        &ellipsize_native(font, country, cells.country.w),
+                        &vmce_panel::ellipsize_native(font, country, cells.country.w),
                         cells.country,
                         ShellAlign::V_CENTER,
                         SHELL_LABEL_TEXT_RGB,
@@ -1069,10 +1082,10 @@ fn paint_vmce_lobby_board(
                     ));
                 }
                 if let Some(ready) = atlas.lan_player_status(false, role.ready) {
-                    push_native_centred(controls, ready, cells.ready, scale);
+                    vmce_panel::push_native_centred(controls, ready, cells.ready, scale);
                 }
                 if let Some(host) = atlas.lan_player_status(role.host, false) {
-                    push_native_centred(controls, host, cells.host, scale);
+                    vmce_panel::push_native_centred(controls, host, cells.host, scale);
                 }
                 push_vmce_swatch(
                     controls,
@@ -1087,11 +1100,17 @@ fn paint_vmce_lobby_board(
         }
     }
     if let Some(bar) = layout.vmce_status_bar {
-        push_vmce_panel_fill(controls, atlas, bar.fill);
-        push_vmce_list_frame(controls, atlas, bar.frame, scale);
+        vmce_panel::push_fill(controls, atlas, bar.fill, SHELL_PARENT_BACKGROUND_DEPTH);
+        vmce_panel::push_list_frame(
+            controls,
+            atlas,
+            bar.frame,
+            scale,
+            SHELL_PARENT_BACKGROUND_DEPTH,
+        );
         if let Some(status) = &view.vmce_status {
             let authored_w = scale.base_rect(bar.text).w.max(1);
-            let lines = wrap_status_lines(font, status, authored_w);
+            let lines = vmce_panel::wrap_two_lines(font, status, authored_w);
             let line_h = (17.0 * scale.factor()).round().max(1.0) as i32;
             let leading = (2.0 * scale.factor()).round() as i32;
             for (index, line) in lines.iter().enumerate() {
@@ -1110,120 +1129,6 @@ fn paint_vmce_lobby_board(
             }
         }
     }
-}
-
-/// Flat fill under the board/status panel, sampled from the native 451x326
-/// dialog art's flat dark interior (RGB565 2,4,3): one quiet dark tone behind
-/// the native yellow text, with no tile seams.
-#[cfg(feature = "vmce")]
-const VMCE_PANEL_FILL_RGB: [f32; 3] = [16.0 / 255.0, 16.0 / 255.0, 25.0 / 255.0];
-
-/// One flat native dialog-palette fill inside the list frame.
-#[cfg(feature = "vmce")]
-fn push_vmce_panel_fill(
-    out: &mut Vec<SpriteInstance>,
-    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
-    rect: RectPx,
-) {
-    push_solid_rect(
-        out,
-        atlas,
-        rect,
-        VMCE_PANEL_FILL_RGB,
-        SHELL_PARENT_BACKGROUND_DEPTH - 0.00006,
-    );
-}
-
-/// Cut the status text into at most two native-pixel lines, preferring an
-/// ASCII space, so the strip reads as two leading-separated rows.
-#[cfg(feature = "vmce")]
-fn wrap_status_lines(
-    font: &crate::render::bit_font::BitFont,
-    text: &str,
-    max_w: i32,
-) -> Vec<String> {
-    let max_w = max_w.max(1) as u32;
-    if font.text_width(text) <= max_w {
-        return vec![text.to_owned()];
-    }
-    let mut best = 0;
-    for (index, _) in text.char_indices() {
-        if font.text_width(&text[..index]) > max_w {
-            break;
-        }
-        best = index;
-    }
-    let split = text[..best]
-        .rfind(' ')
-        .map(|space| space + 1)
-        .filter(|&split| split > 0)
-        .unwrap_or_else(|| {
-            // No usable space: cut after the first character that fits.
-            text.char_indices()
-                .nth(1)
-                .map(|(index, _)| index)
-                .unwrap_or(text.len())
-        });
-    let (first, rest) = text.split_at(split);
-    vec![first.trim_end().to_owned(), rest.trim_start().to_owned()]
-}
-
-/// The native owner-draw list frame (`0x00619230`) around `rect`.
-#[cfg(feature = "vmce")]
-fn push_vmce_list_frame(
-    out: &mut Vec<SpriteInstance>,
-    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
-    rect: RectPx,
-    scale: ShellScale,
-) {
-    for (line, tone) in crate::ui::shell::list::list_frame_lines(scale.base_rect(rect)) {
-        push_solid_rect(
-            out,
-            atlas,
-            scale.scale_rect(line),
-            tone.rgb().map(|channel| f32::from(channel) / 255.0),
-            SHELL_PARENT_BACKGROUND_DEPTH - 0.00007,
-        );
-    }
-}
-
-/// One native list-tone rule, used for the caption separator.
-#[cfg(feature = "vmce")]
-fn push_vmce_rule(
-    out: &mut Vec<SpriteInstance>,
-    atlas: &crate::render::skirmish_shell_chrome::SkirmishShellChromeAtlas,
-    rect: RectPx,
-    scale: ShellScale,
-) {
-    push_solid_rect(
-        out,
-        atlas,
-        scale.scale_rect(rect),
-        crate::ui::shell::list::ListFrameTone::Dark
-            .rgb()
-            .map(|channel| f32::from(channel) / 255.0),
-        SHELL_PARENT_BACKGROUND_DEPTH - 0.00008,
-    );
-}
-
-/// Native art at its own grown size, centred in `cell`: no crop, no stretch.
-#[cfg(feature = "vmce")]
-fn push_native_centred(
-    out: &mut Vec<SpriteInstance>,
-    entry: crate::render::skirmish_shell_chrome::SkirmishShellChromeEntry,
-    cell: RectPx,
-    scale: ShellScale,
-) {
-    let [w, h] = scale.art_size(entry.pixel_size[0], entry.pixel_size[1]);
-    let (w, h) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32);
-    push_entry_sized(
-        out,
-        entry,
-        (cell.x + (cell.w - w) / 2) as f32,
-        (cell.y + (cell.h - h) / 2) as f32,
-        [w as f32, h as f32],
-        SHELL_CONTROL_DEPTH,
-    );
 }
 
 /// The board's flat color swatch, inset in its cell.

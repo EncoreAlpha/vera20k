@@ -288,6 +288,54 @@ pub(crate) fn vmce_lobby_status_present(state: &AppState) -> bool {
     conflict
 }
 
+/// One settlement row's authored identity: role/House owner and its country.
+#[cfg(feature = "vmce")]
+pub(crate) struct VmceResultRoleInfo {
+    pub(crate) owner: String,
+    pub(crate) country: String,
+    pub(crate) flag: Option<String>,
+}
+
+/// The four authored role identities the settlement page lists, from the same
+/// map/metadata owner the lobby board uses.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_result_roles(state: &AppState) -> Option<[VmceResultRoleInfo; 4]> {
+    let details = vmce_map_details(state);
+    let rules = state.rules();
+    let country_text = |country: &str| {
+        let Some(rules) = rules else {
+            return country.to_owned();
+        };
+        rules
+            .country_index(country)
+            .and_then(|index| {
+                let id = rules.country_name(index)?;
+                let (key, _) = rules.country_display_name_sources(id);
+                key.map(|key| label(state, key))
+            })
+            .unwrap_or_else(|| country.to_owned())
+    };
+    let country_flag = |country: &str| {
+        let rules = rules?;
+        let index = rules.country_index(country)?;
+        rules
+            .country_insignia_pcx(index.0)
+            .or_else(|| flag_pcx_for_side_item_data(i32::from(index.0)).map(str::to_owned))
+    };
+    let mut any = false;
+    let roles = std::array::from_fn(|role| {
+        let owner = details.owners[role].clone().unwrap_or_default();
+        any |= !owner.is_empty();
+        let country = details.countries[role].as_deref().unwrap_or_default();
+        VmceResultRoleInfo {
+            owner,
+            country: country_text(country),
+            flag: country_flag(country),
+        }
+    });
+    any.then_some(roles)
+}
+
 /// The VMCE board: the four authored role slots, their claimed participants
 /// and the local campaign-status warning. The map's role Houses are the role
 /// names; an unclaimed slot uses the native vacancy style.

@@ -479,6 +479,123 @@ pub struct CampaignScoreControlRect {
 /// 640x480, its upper 50 pixels at 800x600 and the right-panel anchors of
 /// `0x0060B1D0`/`0x0060B350`/`0x0060B550`. The `0x72B` art window is the
 /// `0x00608500` override, not the template rect.
+/// One VMCE settlement participant row, projected by `app::vmce_result`.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Default)]
+pub struct VmceResultRow {
+    /// Role cell: "P<n>" plus the authored role/House name.
+    pub role: String,
+    /// Localized country name, if the role has one.
+    pub country: String,
+    /// Native country emblem PCX.
+    pub flag: Option<String>,
+    /// This row's mission verdict (won when every viewpoint survived).
+    pub won: bool,
+    /// Continue-readiness; `None` on a defeat page, which has no ready gate.
+    pub ready: Option<bool>,
+    /// This row is the LAN host (raw slot 0).
+    pub host: bool,
+}
+
+/// The VMCE settlement board shown over the `0x103` layout: rows plus the
+/// truthful continuation caption for the current ending.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Default)]
+pub struct VmceResultBoard {
+    pub rows: Vec<VmceResultRow>,
+    pub victory: bool,
+    pub caption: String,
+}
+
+/// One VMCE settlement board caption.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceResultHeader {
+    pub key: &'static str,
+    pub rect: RectPx,
+    pub centred: bool,
+}
+
+/// One row's cells. Text is inset four pixels inside the flat panel fill.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceResultRowCells {
+    pub role: RectPx,
+    pub country_icon: RectPx,
+    pub country: RectPx,
+    pub verdict: RectPx,
+    pub ready: RectPx,
+    pub host: RectPx,
+}
+
+/// The VMCE settlement page's flat board and status strip.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceResultLayout {
+    pub frame: RectPx,
+    pub fill: RectPx,
+    pub header_rule: RectPx,
+    pub status_rule: RectPx,
+    pub headers: [VmceResultHeader; 4],
+    pub rows: [VmceResultRowCells; 4],
+    /// Two native lines with a little leading.
+    pub status: RectPx,
+}
+
+/// The settlement board sits in the `0x103` dialog's empty lower band, inside
+/// the native border: one flat fill, a caption rule and four rows, then the
+/// continuation caption as its own status strip.
+#[cfg(feature = "vmce")]
+fn vmce_result_layout() -> VmceResultLayout {
+    let frame = RectPx::new(124, 426, 396, 148);
+    let fill = RectPx::new(126, 428, 392, 144);
+    let x = 130;
+    let text_w = 384;
+    let header_y = 432;
+    let headers = [
+        VmceResultHeader {
+            key: "VERA:VmceRoleColumn",
+            rect: RectPx::new(x, header_y, 92, 15),
+            centred: false,
+        },
+        VmceResultHeader {
+            key: "VERA:VmceCountryColumn",
+            rect: RectPx::new(x + 92, header_y, 172, 15),
+            centred: false,
+        },
+        VmceResultHeader {
+            key: "VERA:VmceResultColumn",
+            rect: RectPx::new(x + 264, header_y, 60, 15),
+            centred: true,
+        },
+        VmceResultHeader {
+            key: "VERA:VmceReadyColumn",
+            rect: RectPx::new(x + 324, header_y, 60, 15),
+            centred: true,
+        },
+    ];
+    let rows = std::array::from_fn(|row| {
+        let y = 451 + row as i32 * 20;
+        VmceResultRowCells {
+            role: RectPx::new(x, y, 92, 17),
+            country_icon: RectPx::new(x + 92, y - 1, 50, 19),
+            country: RectPx::new(x + 142, y, 122, 17),
+            verdict: RectPx::new(x + 264, y, 60, 17),
+            ready: RectPx::new(x + 324, y - 1, 30, 19),
+            host: RectPx::new(x + 354, y - 1, 30, 19),
+        }
+    });
+    VmceResultLayout {
+        frame,
+        fill,
+        header_rule: RectPx::new(x, 448, text_w, 1),
+        status_rule: RectPx::new(x, 530, text_w, 1),
+        headers,
+        rows,
+        status: RectPx::new(x, 535, text_w, 36),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CampaignScoreLayout {
     pub scale: ShellScale,
@@ -495,10 +612,10 @@ pub struct CampaignScoreLayout {
     pub continue_button: RectPx,
     pub warning_monitor: RectPx,
     pub controls: Vec<CampaignScoreControlRect>,
-    /// VMCE settlement rows (up to four participants) below the par/time
-    /// values, above the status line. Stock pages leave this empty.
+    /// VMCE settlement board (up to four participants) and its status strip,
+    /// in the dialog's empty lower band. Stock pages leave this empty.
     #[cfg(feature = "vmce")]
-    pub vmce_rows: Vec<RectPx>,
+    pub vmce_result: Option<VmceResultLayout>,
 }
 
 /// Root window width the campaign score page was authored for.
@@ -589,12 +706,7 @@ impl CampaignScoreLayout {
             warning_monitor: page.warning_monitor,
             controls,
             #[cfg(feature = "vmce")]
-            vmce_rows: (0..4)
-                .map(|row| {
-                    let rect = child_window(85, 300 + row as i32 * 13, 257, 10);
-                    RectPx::new(rect.x, rect.y - text_shift, rect.w, rect.h)
-                })
-                .collect(),
+            vmce_result: Some(vmce_result_layout()),
         }
     }
 
@@ -642,8 +754,26 @@ impl CampaignScoreLayout {
             control.rect = scale.scale_rect(control.rect);
         }
         #[cfg(feature = "vmce")]
-        for rect in &mut self.vmce_rows {
-            *rect = scale.scale_rect(*rect);
+        if let Some(board) = self.vmce_result.as_mut() {
+            for rect in std::iter::once(&mut board.frame)
+                .chain(std::iter::once(&mut board.fill))
+                .chain(std::iter::once(&mut board.header_rule))
+                .chain(std::iter::once(&mut board.status_rule))
+                .chain(std::iter::once(&mut board.status))
+            {
+                *rect = scale.scale_rect(*rect);
+            }
+            for header in &mut board.headers {
+                header.rect = scale.scale_rect(header.rect);
+            }
+            for row in &mut board.rows {
+                row.role = scale.scale_rect(row.role);
+                row.country_icon = scale.scale_rect(row.country_icon);
+                row.country = scale.scale_rect(row.country);
+                row.verdict = scale.scale_rect(row.verdict);
+                row.ready = scale.scale_rect(row.ready);
+                row.host = scale.scale_rect(row.host);
+            }
         }
         self
     }
@@ -761,6 +891,9 @@ pub struct CampaignScorePage {
     /// kind-4 timer. False until then, including a page whose slide was
     /// unavailable.
     presentation_started: bool,
+    /// VMCE's settlement board, projected by `app::vmce_result` at open time.
+    #[cfg(feature = "vmce")]
+    vmce_board: Option<VmceResultBoard>,
 }
 
 /// The campaign `0x72B` SCRA static's kind-4 timer and frame. The timer is
@@ -808,6 +941,18 @@ impl CampaignScoreEmblemAnimation {
 }
 
 impl CampaignScorePage {
+    /// Attach the VMCE settlement board computed for this page's state.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn set_vmce_board(&mut self, board: Option<VmceResultBoard>) {
+        self.vmce_board = board;
+    }
+
+    /// The VMCE settlement board, if this page is one of VERA's results.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_board(&self) -> Option<&VmceResultBoard> {
+        self.vmce_board.as_ref()
+    }
+
     /// Install the app-resolved values into the native `0x103` controls.
     pub fn open(model: CampaignScoreScreenModel, texts: CampaignScoreTexts, now: Instant) -> Self {
         let mut statics = Vec::with_capacity(10);
@@ -838,6 +983,8 @@ impl CampaignScorePage {
             cells: Vec::new(),
             emblem_animation: None,
             presentation_started: false,
+            #[cfg(feature = "vmce")]
+            vmce_board: None,
         }
     }
 
@@ -912,6 +1059,8 @@ impl CampaignScorePage {
             cells,
             emblem_animation: None,
             presentation_started: false,
+            #[cfg(feature = "vmce")]
+            vmce_board: None,
         }
     }
 
@@ -1424,31 +1573,33 @@ mod tests {
     }
 
     #[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
-    fn vmce_settlement_lays_out_four_result_rows_inside_the_dialog() {
+    fn vmce_settlement_lays_out_the_four_row_board_and_status() {
         let layout = CampaignScoreLayout::compute_layout(800, 600);
-        assert_eq!(layout.vmce_rows.len(), 4, "VMCE shows up to four players");
-        for (index, rect) in layout.vmce_rows.iter().enumerate() {
-            assert_eq!(rect.x, layout.vmce_rows[0].x, "rows share one column");
+        let board = layout.vmce_result.expect("VMCE settlement board");
+        assert_eq!(board.rows.len(), 4);
+        assert_eq!(board.headers.len(), 4);
+        assert!(board.frame.y + board.frame.h <= layout.status_help.y);
+        assert!(board.fill.x > board.frame.x && board.fill.y > board.frame.y);
+        assert!(board.rows[3].role.y + board.rows[3].role.h < board.status_rule.y);
+        assert!(board.status_rule.y < board.status.y);
+        assert!(board.status.y + board.status.h <= board.frame.y + board.frame.h);
+        for (index, row) in board.rows.iter().enumerate() {
+            assert_eq!(row.role.x, board.rows[0].role.x);
             if index > 0 {
-                assert!(
-                    rect.y > layout.vmce_rows[index - 1].y,
-                    "rows are ordered top to bottom"
-                );
+                assert!(row.role.y > board.rows[index - 1].role.y);
             }
-            assert!(
-                rect.y + rect.h <= layout.status_help.y,
-                "each row stays above the native status line"
-            );
-            assert!(
-                rect.x >= layout.background.x
-                    && rect.x + rect.w <= layout.background.x + layout.background.w,
-                "rows stay inside the dialog background"
-            );
+            assert!(row.country_icon.x + 50 <= row.country.x + 1);
+            assert!(board.headers[0].rect.x == row.role.x);
         }
-        // The responsive path scales the same four rows with the page.
-        let responsive = CampaignScoreLayout::compute_responsive_layout(1024, 768);
-        assert_eq!(responsive.vmce_rows.len(), 4);
-        assert!(responsive.vmce_rows[0].w > layout.vmce_rows[0].w);
+        // The 0x103 Continue keeps its native rect and stays clear of the board.
+        assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
+        assert!(board.frame.x + board.frame.w < layout.continue_button.x);
+        // The responsive path scales the board with the page.
+        let responsive = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
+        let scaled = responsive.vmce_result.expect("scaled VMCE board");
+        assert!(scaled.fill.w > board.fill.w);
+        assert_eq!(scaled.rows.len(), 4);
     }
 }

@@ -326,6 +326,11 @@ impl SkirmishShellChromeAtlas {
     }
 
     /// BB5DAFE0 gives the host glyph precedence, then accepted, else no icon.
+    /// The native "not accepted / waiting" LAN row icon (`wolnob.pcx`).
+    pub fn lan_player_not_ready(&self) -> Option<SkirmishShellChromeEntry> {
+        self.lan_icons[0]
+    }
+
     pub fn lan_player_status(
         &self,
         host: bool,

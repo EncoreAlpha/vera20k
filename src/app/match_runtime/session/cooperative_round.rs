@@ -124,6 +124,12 @@ impl CooperativeRoundState {
         self.page_victory
     }
 
+    /// Authored VMCE: what this page's Continue starts.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vera_ending(&self) -> VmceRoundEnding {
+        self.vera_ending
+    }
+
     fn all_ready(&self) -> bool {
         self.ready.iter().all(|ready| *ready)
     }

@@ -178,6 +178,14 @@ const CHECKPOINT_SCORE_0X108_STEADY: &str = "score-0x108-steady";
 const CHECKPOINT_CAMPAIGN_SCORE_0X103_STEADY: &str = "campaign-score-0x103-steady";
 const CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE: &str =
     "campaign-score-0x103-animation-sequence";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT: &str = "vmce-result-host-victory-next";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_GUEST_READY: &str = "vmce-result-guest-ready";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY: &str = "vmce-result-defeat-retry";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_CAMPAIGN_END: &str = "vmce-result-campaign-end";
 const CHECKPOINT_SCORE_0X108_ENTRY_PREFIX: &str = "score-0x108-entry-tick-";
 const CHECKPOINT_SCORE_0X108_HOVER_CONTINUE: &str = "score-0x108-hover-continue";
 const CHECKPOINT_SCORE_0X108_LEAVE_CONTINUE: &str = "score-0x108-leave-continue";
@@ -372,6 +380,17 @@ pub enum ShellCaptureCheckpoint {
     /// frames, then exercising Continue close/reopen lifecycle. This is not
     /// native execution or parity evidence.
     CampaignScore0x103AnimationSequence,
+    /// Synthetic VMCE settlement page states on production `0x103`: the
+    /// victory-with-next all-ready gate, a ready guest, the host-only retry
+    /// and the campaign-end completion. Visual fixtures only.
+    #[cfg(feature = "vmce")]
+    VmceResultHostVictoryNext,
+    #[cfg(feature = "vmce")]
+    VmceResultGuestReady,
+    #[cfg(feature = "vmce")]
+    VmceResultDefeatRetry,
+    #[cfg(feature = "vmce")]
+    VmceResultCampaignEnd,
 }
 
 impl ShellCaptureCheckpoint {
@@ -609,6 +628,14 @@ impl ShellCaptureCheckpoint {
             CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE => {
                 Ok(Self::CampaignScore0x103AnimationSequence)
             }
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT => Ok(Self::VmceResultHostVictoryNext),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_GUEST_READY => Ok(Self::VmceResultGuestReady),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY => Ok(Self::VmceResultDefeatRetry),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_CAMPAIGN_END => Ok(Self::VmceResultCampaignEnd),
             CHECKPOINT_SCORE_0X108_HOVER_CONTINUE => Ok(Self::Score0x108HoverContinue),
             CHECKPOINT_SCORE_0X108_LEAVE_CONTINUE => Ok(Self::Score0x108LeaveContinue),
             CHECKPOINT_MOVIES_0X101_STEADY => Ok(Self::MoviesPage0x101Steady),
@@ -1010,7 +1037,15 @@ impl ShellCaptureCheckpoint {
             Self::SkirmishDiplomacy => CHECKPOINT_SKIRMISH_DIPLOMACY,
             Self::Score0x108Steady => CHECKPOINT_SCORE_0X108_STEADY,
             Self::CampaignScore0x103Steady => CHECKPOINT_CAMPAIGN_SCORE_0X103_STEADY,
-            Self::CampaignScore0x103AnimationSequence => {
+            #[cfg(feature = "vmce")]
+        Self::VmceResultHostVictoryNext => CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT,
+        #[cfg(feature = "vmce")]
+        Self::VmceResultGuestReady => CHECKPOINT_VMCE_RESULT_GUEST_READY,
+        #[cfg(feature = "vmce")]
+        Self::VmceResultDefeatRetry => CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
+        #[cfg(feature = "vmce")]
+        Self::VmceResultCampaignEnd => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
+        Self::CampaignScore0x103AnimationSequence => {
                 CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE
             }
             Self::Score0x108Entry(_) => "score-0x108-entry",
@@ -1775,15 +1810,30 @@ where
         && height >= 480;
     #[cfg(not(feature = "vmce"))]
     let scaled_vmce_lobby = false;
+    // The VMCE settlement review also captures a fitted-shell window, which
+    // proves the board and the native 0x103 layout scale together.
+    #[cfg(feature = "vmce")]
+    let scaled_vmce_result = matches!(
+        checkpoint,
+        ShellCaptureCheckpoint::VmceResultHostVictoryNext
+            | ShellCaptureCheckpoint::VmceResultGuestReady
+            | ShellCaptureCheckpoint::VmceResultDefeatRetry
+            | ShellCaptureCheckpoint::VmceResultCampaignEnd
+    ) && (width, height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
+        && width >= 640
+        && height >= 480;
+    #[cfg(not(feature = "vmce"))]
+    let scaled_vmce_result = false;
     ensure!(
         (width == EXPECTED_WIDTH && height == EXPECTED_HEIGHT)
             || (online_latency && width == 640 && height == 480)
             || scaled_main_menu
-            || scaled_vmce_lobby,
-        "checkpoint {} requires exactly {EXPECTED_WIDTH}x{EXPECTED_HEIGHT} (640x480 also allowed for --online-latency, a larger window for the main menu or the VMCE lobby), got {width}x{height}",
+            || scaled_vmce_lobby
+            || scaled_vmce_result,
+        "checkpoint {} requires exactly {EXPECTED_WIDTH}x{EXPECTED_HEIGHT} (640x480 also allowed for --online-latency, a larger window for the main menu, the VMCE lobby or the VMCE settlement), got {width}x{height}",
         checkpoint.as_str()
     );
-    let neutral = if scaled_main_menu || scaled_vmce_lobby {
+    let neutral = if scaled_main_menu || scaled_vmce_lobby || scaled_vmce_result {
         (width / 2, height / 2)
     } else {
         (EXPECTED_CURSOR_X, EXPECTED_CURSOR_Y)
@@ -2745,6 +2795,22 @@ impl ShellCaptureSession {
             ShellCaptureCheckpoint::CampaignScore0x103AnimationSequence => {
                 Some(score::CampaignScoreCapture::animation_sequence())
             }
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultHostVictoryNext => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::HostVictoryNext),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultGuestReady => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::GuestReady),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultDefeatRetry => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::DefeatRetry),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultCampaignEnd => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::CampaignEnd),
+            ),
             _ => None,
         };
         #[cfg(feature = "vmce")]
@@ -5411,6 +5477,47 @@ mod tests {
             .expect("override reaches readback");
         assert!(remaining > Duration::from_secs(2400));
         assert!(remaining <= Duration::from_secs(3500));
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_result_captures_select_the_synthetic_0x103_fixtures() {
+        let cases = [
+            (
+                CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT,
+                ShellCaptureCheckpoint::VmceResultHostVictoryNext,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_GUEST_READY,
+                ShellCaptureCheckpoint::VmceResultGuestReady,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
+                ShellCaptureCheckpoint::VmceResultDefeatRetry,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
+                ShellCaptureCheckpoint::VmceResultCampaignEnd,
+            ),
+        ];
+        for (name, checkpoint) in cases {
+            assert_eq!(
+                ShellCaptureCheckpoint::parse(name).expect("checkpoint"),
+                checkpoint
+            );
+            assert_eq!(checkpoint.as_str(), name);
+            let output = new_output_path("vmce-result");
+            let mut values = valid_args(&output);
+            values[1] = OsString::from(name);
+            let AppLaunchMode::ShellCapture(request) = parse_launch_args(values).expect("parse")
+            else {
+                panic!("expected capture");
+            };
+            assert_eq!(request.checkpoint(), checkpoint);
+            let session = ShellCaptureSession::new(request);
+            assert!(session.campaign_score.is_some(), "{name}");
+            assert_eq!(session.timeout(), Duration::from_secs(60));
+        }
     }
 
     #[test]
