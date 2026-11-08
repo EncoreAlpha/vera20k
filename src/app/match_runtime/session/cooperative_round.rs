@@ -1020,8 +1020,31 @@ mod tests {
         MatchSession,
         Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     ) {
+        frozen_vera_rows(local, 2)
+    }
+
+    /// A frozen VMCE LAN start with `rows` admitted human rows; `local` is
+    /// this process's index, mirroring one peer of a four-player session.
+    #[cfg(feature = "vmce")]
+    fn frozen_vera_rows(
+        local: usize,
+        rows: usize,
+    ) -> (
+        MatchSession,
+        Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
+    ) {
+        assert!((2..=4).contains(&rows) && local < rows);
         let mut launch = super::super::tests::network_fixture();
         launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        while launch.humans.len() < rows {
+            let mut guest = launch.humans[1].clone();
+            guest.name = format!("Guest{}", launch.humans.len());
+            guest.raw_slot_index = Some(launch.humans.len() as u8);
+            guest.slot.color_index = launch.humans.len() as u8;
+            launch.humans.push(guest);
+        }
+        launch.humans.truncate(rows);
+        launch.rebuild_house_roster();
         for (index, human) in launch.humans.iter_mut().enumerate() {
             human.role = crate::skirmish_launch::LaunchHumanRole::Player {
                 group: index as i32,
@@ -1059,6 +1082,10 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap();
+        session.set_network_player_ready(0, true).unwrap();
+        session.set_network_map_status(0, 2).unwrap();
+        session.set_network_start_seed(SEED).unwrap();
+        session.prepare_network_timing(2, || 0).unwrap();
         let assignments = crate::skirmish_launch::VmceHouseAssignments {
             participants: session
                 .network_setup()
@@ -1077,10 +1104,6 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        session.set_network_player_ready(0, true).unwrap();
-        session.set_network_map_status(0, 2).unwrap();
-        session.set_network_start_seed(SEED).unwrap();
-        session.prepare_network_timing(2, || 0).unwrap();
         let LoadingStartup::Network(startup) = session
             .freeze_network_start_with_vmce(SEED, Some(assignments))
             .unwrap()
@@ -1197,6 +1220,25 @@ mod tests {
                 "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
             ),
         }
+    }
+
+    /// The same resolved stage with a map INI that binds four roles, for the
+    /// four-player round's role re-resolution.
+    #[cfg(feature = "vmce")]
+    fn next_stage_players(
+        map_file: &str,
+        players: usize,
+    ) -> crate::app::match_bootstrap::VmceNextStage {
+        let mut next = next_stage(map_file);
+        let mut ini = String::from("[Basic]\n");
+        let mut houses = String::from("[Houses]\n");
+        for index in 0..players {
+            ini.push_str(&format!("Player{}=House{index}\n", index + 1));
+            houses.push_str(&format!("{index}=House{index}\n"));
+        }
+        ini.push_str(&houses);
+        next.map_ini = crate::rules::ini_parser::IniFile::from_str(&ini);
+        next
     }
 
     #[cfg(feature = "vmce")]
@@ -1339,6 +1381,49 @@ mod tests {
             host.take_network_loading_requests()
                 .contains(&NetworkLoadingRequest::CooperativeGo)
         );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_four_player_round_waits_for_three_guest_acks() {
+        let next = next_stage_players("mission02.map", 4);
+        let (mut host, _) = frozen_vera_rows(0, 4);
+        host.enter_vmce_round(Some(next.clone()), true, 4).unwrap();
+        host.take_network_loading_requests();
+        for source in 1..=3 {
+            assert_eq!(
+                host.cooperative_round_event(CooperativeRoundEvent::PeerReady { source }, 0)
+                    .unwrap(),
+                CooperativeRoundStep::None
+            );
+        }
+        assert_eq!(
+            host.continue_cooperative_round(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        host.cooperative_round_assigned(0).unwrap();
+        host.take_network_loading_requests();
+        for source in 1..=2 {
+            assert_eq!(
+                host.cooperative_round_event(CooperativeRoundEvent::Ack { source }, 0)
+                    .unwrap(),
+                CooperativeRoundStep::None,
+                "two of three guest acks must not leave"
+            );
+        }
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 3 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(true)
+        );
+        let round = host.cooperative_round().unwrap();
+        assert_eq!(round.rows, 4);
+        assert_eq!(host.network_connected_source_indices(), &[0, 1, 2, 3]);
+        let LoadingStartup::Network(startup) = host.freeze_cooperative_round(30, 2, None).unwrap()
+        else {
+            panic!("network start");
+        };
+        assert_eq!(startup.seed.value, super::next_stage_seed(SEED, &next));
     }
 
     #[cfg(feature = "vmce")]
