@@ -268,6 +268,20 @@ conditions for each role. There is no automatic "all roles failed" fallback.
   one copy per role when each role needs its own.
 - AI-only actions usually do nothing on a role House because VMCE marks role Houses as human.
 
+## Automated acceptance
+
+`tools/vmce_lan_acceptance.py` runs the real-process captures:
+
+- `--suite dev`: one short `2p-win` flow probe. It caps each capture at 120 s
+  and stops as soon as either peer exits non-zero, so a development probe
+  cannot idle for the release timeout.
+- `--suite fast|smoke|full`: the release scenarios (`4p-win`, `2p-win`) with
+  the full 300-frame checksum/hash comparison.
+- `VMCE_CAPTURE_TIMEOUT=<seconds>` overrides the per-capture cap (default
+  300 s outside `dev`).
+- `compare` runs offline over receipts; the `run` command only launches the
+  processes and keeps the bundles under `.scratch/`.
+
 ## Current limitations
 
 - LAN only; no WOL/CnCNet/online.
@@ -281,6 +295,9 @@ conditions for each role. There is no automatic "all roles failed" fallback.
   lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
   the next mission on every peer. Three players are not run separately; they share the same
   roster and round path.
+- `EndOfGame` campaign completion and defeat retry have production code and focused unit
+  tests; their real dual-process `2p-final`/`2p-retry` captures are not recorded yet, so the
+  next VMCE release still waits on those two runs.
 - `AltNextScenario` and `SkipMapSelect` execution are not implemented. Cross-mission money
   is not implemented either.
 - Pause follows native multiplayer: ESC opens a local menu, the modal pump keeps
