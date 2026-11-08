@@ -5148,7 +5148,7 @@ impl Simulation {
                                                     .id
                                                     .clone()
                                             });
-                                        log::info!(
+                                        log::debug!(
                                             "Trigger enable action: source {:?} enabled {:?} on native frame {}",
                                             source_id,
                                             target_id,
@@ -5573,7 +5573,7 @@ impl Simulation {
                 };
                 // Outcome actions are the trace boundary for the real-trigger
                 // acceptance capture: record which authored TriggerType fired
-                // and on which native frame. Logging only, never hashed.
+                // and on which native frame. Debug logging only, never hashed.
                 let trigger_id = context
                     .live_index
                     .and_then(|live| self.trigger_runtime.trigger(live))
@@ -5582,7 +5582,7 @@ impl Simulation {
                             .id
                             .clone()
                     });
-                log::info!(
+                log::debug!(
                     "Trigger outcome action {} from trigger {:?} on native frame {}",
                     action.kind,
                     trigger_id,
