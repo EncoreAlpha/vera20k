@@ -251,7 +251,17 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             };
             match record.encode(&name) {
                 Ok(message) => send_sources(state, message.as_bytes(), peers),
-                Err(error) => log::warn!("VMCE stage identity was not sent: {error}"),
+                Err(error) => {
+                    // A record that cannot be sent must not silently skip the
+                    // next-stage agreement: reject the round instead of letting
+                    // the peers load different maps.
+                    log::error!(
+                        "VMCE stage identity could not be encoded ({error}); rejecting the round"
+                    );
+                    if let Ok(bytes) = CooperativeSignal::StageRejected.encode(&name) {
+                        send_sources(state, &bytes, peers);
+                    }
+                }
             }
             return;
         }

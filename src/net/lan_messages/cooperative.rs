@@ -101,7 +101,7 @@ pub const STAGE_KIND: u32 = 0x36;
 #[cfg(feature = "vmce")]
 const STAGE_OFFSET: usize = 0x2f;
 #[cfg(feature = "vmce")]
-const STAGE_MAP_CAPACITY: usize = 0x80;
+const STAGE_MAP_CAPACITY: usize = 0xd7;
 #[cfg(feature = "vmce")]
 const STAGE_SOURCE_OFFSET: usize = STAGE_OFFSET + 1 + STAGE_MAP_CAPACITY;
 #[cfg(feature = "vmce")]
@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(CooperativeOptionsRecord::decode(&message), Some(record));
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_stage_record_round_trips_and_rejects_malformed_payloads() {
         let record = VmceStageRecord {
@@ -344,6 +344,18 @@ mod tests {
         let mut too_long = record.clone();
         too_long.map_file = "m".repeat(STAGE_MAP_CAPACITY + 1);
         assert!(too_long.encode("Host").is_err());
+        // Regression: the old 128-byte record silently dropped legal
+        // `VMCE/<series>/<entry>` identities. A capacity-sized path now
+        // round-trips; anything longer is rejected so the send path can
+        // fail closed instead of skipping the agreement.
+        let prefix = "VMCE/";
+        let suffix = "/stage01/all01umd.map";
+        let fill = STAGE_MAP_CAPACITY - prefix.len() - suffix.len();
+        let mut boundary = record.clone();
+        boundary.map_file = format!("{prefix}{}{suffix}", "s".repeat(fill));
+        assert_eq!(boundary.map_file.len(), STAGE_MAP_CAPACITY);
+        let message = boundary.encode("Host").unwrap();
+        assert_eq!(VmceStageRecord::decode(&message), Some(boundary));
         let mut bad_digest = record;
         bad_digest.source_sha256 = String::from("not-a-digest");
         assert!(bad_digest.encode("Host").is_err());
