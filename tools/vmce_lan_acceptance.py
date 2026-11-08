@@ -79,6 +79,8 @@ CAPTURE_CURSOR_X = 400
 CAPTURE_CURSOR_Y = 300
 
 CHECKPOINT_HOST = "lan-live-vera-campaign-host"
+CAPTURE_TIMEOUT_SECONDS = int(os.environ.get("VMCE_CAPTURE_TIMEOUT", "300"))
+
 CHECKPOINT_GUEST = "lan-live-vera-campaign-guest"
 
 # A host room is normally advertised within a few render frames.  The current
@@ -923,6 +925,10 @@ def build_capture_command(
         command.extend(("--lan-map", map_name))
     if lobby_name:
         command.extend(("--lan-name", lobby_name))
+    # Long full-prefix runs stay the default; dev probes can shorten this
+    # with VMCE_CAPTURE_TIMEOUT (seconds) instead of waiting out the
+    # capture binary's own 600 s watchdog.
+    command.extend(("--shell-capture-timeout-seconds", str(CAPTURE_TIMEOUT_SECONDS)))
     command.extend(("--vera-outcome", "real"))
     return command
 
