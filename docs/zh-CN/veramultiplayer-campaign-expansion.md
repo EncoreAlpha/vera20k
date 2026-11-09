@@ -57,6 +57,8 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 
 不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`；VMCE 专属的会话状态、LAN 轮次/选项字段与大厅辅助逻辑同样按开关裁剪，非 VMCE 构建不包含它们。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
 
+本 fork 版本为 `0.2.9-vmce.N`（当前 `0.2.9-vmce.5`，已合并上游 `v0.2.9`）；LAN 双方应运行同一 VMCE 构建。
+
 ### 战役目录
 
 VMCE 的战役放在 VERA20k 的设置目录下。**每个直接子目录是一个系列战役**，`campaign.ini`、地图和（可选的）系列 CSF 都放在该子目录内：
@@ -123,7 +125,7 @@ EndOfGame=yes
 4. 每名玩家确认角色、准备；房主开始。
 5. 装载完成后，双方进入同一张地图、同一个确定性模拟。双方看到的开局、剧本和结果应当一致。
 
-如果客人缺少地图、`campaign.ini` 或系列 CSF，他会在准备阶段被拒绝；VMCE 不会自动把文件发给客人。
+如果客人缺少地图或 `campaign.ini`，他会在准备阶段被拒绝；VMCE 不校验系列 CSF，也不会自动把文件发给客人。
 
 ### 如何阅读本页的代码片段
 
@@ -170,17 +172,17 @@ LAN 大厅里的难度滑条对 VMCE 可见，并且由房主统一控制：
 VMCE 的胜利、失败和末关使用同一个结算页（原生战役计分页 `0x103` 的布局与输入，结果状态和 Continue 语义归 VMCE）：
 
 - 页面显示 par time、your time、rank、commendation 和击杀数。Rank/Commendation 读取地图 `[Ranking]` 的 `UnderParTitle/Message` 或 `OverParTitle/Message`，难度取大厅冻结的 VMCE 战役难度。
-- 页面右侧列出最多 4 名参战玩家：等待下一关时每行显示 Ready/Waiting，失败或末关只显示名字。状态行在等待阶段显示 ready 人数。
+- 页面右侧列出最多 4 名参战玩家：等待下一关时每行显示 Ready/Waiting；失败或末关目前仍会画 Ready 状态，但实际只有下一关门使用它（已知缺口 B04）。
 - 胜利且战役给出下一关时，客人按 Continue 表示 ready；全员 ready 后只有房主按 Continue 才能进入下一关。
-- 失败时 Continue 是重试：所有在线 guest 打开失败页后（15 秒宽限，超时则剩余玩家），房主的 Continue 用同一冻结关卡、同一 seed、同一角色重开；guest 跟随 begin/ack，不要求再点 Continue；错过窗口的 guest 留在原局/回大厅。
-- 战役末关（`EndOfGame=yes`）时 Continue 是全员 Ready 闸门：全员 ready（或 30 秒超时直接开始并带入未 ready 的 guest）后，各端本地播放战役完成流程并回主菜单。
+- 失败时 Continue 是重试：房主的 Continue 用同一冻结关卡、同一 seed、同一角色重开，guest 跟随 begin/ack，不要求再点 Continue。**当前限制：** 15 秒进页宽限与重试加载路径尚未完成（待办 B01/B02）；在这之前重试可能加载失败并返回大厅。
+- 战役末关（`EndOfGame=yes`）时 Continue 是全员 Ready 闸门；各端本地播放战役完成流程并回主菜单。**当前限制：** 没有 30 秒强制开始（B02），一个未 Ready 的 guest 会一直卡住页面。
 - 既没有 `NextScenario` 也没有 `EndOfGame=yes` 的关卡视为非法战役，VMCE 主机开局时拒绝，不再猜测为结束。
 - 胜利进入下一关前，双方交换各自解析出的下一关身份（地图路径 + 源文件/生效/配置摘要）；不一致时双方一起回大厅，不会一边加载一边等待。
 - 下一关加载时，角色按下一关自己的 `[Basic] PlayerN` / `[Houses]` 重新解析，不沿用上一关的 House 名；下一关 seed 由上一关 seed 与下一关身份确定性派生（两端本地计算一致），冻结难度沿用本局大厅。
 - 结果页期间有玩家离开时，双方一起回大厅；此页没有原版的 Quit 按钮。
 - 结果页不写 `coopsave.ini`，也不写跨关进度。
 
-失败重试与 `EndOfGame` 完成页已接入；跨关资金、`AltNextScenario`/`SkipMapSelect` 仍未实现，见「当前限制」。
+失败重试与 `EndOfGame` 完成页的代码已接入，但重试加载与计时仍是发版阻塞项（B01/B02）；跨关资金、`AltNextScenario`/`SkipMapSelect` 仍未实现。所有已知缺口见 [VMCE 待办](../vmce-backlog.md)。
 
 ### 当前不支持的玩家行为
 
@@ -519,7 +521,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 |---|---|
 | 联机范围 | LAN；WOL/CnCNet 不支持 |
 | 玩家数 | 结构支持最多 4 个角色；4 人 LAN 已用 4 个真实进程端到端验收（大厅/角色、300 帧校验和一致、胜利→4 行结算→全员 Continue 进下一关）；2 人胜利/失败/末关等路径同样已验收；3 人未单独跑（与 4 人同一协议路径） |
-| 结果页 | 胜利、失败与末关统一走 VMCE 结算页（原生 `0x103` 布局/输入，最多显示 4 名参战角色）；有 `NextScenario` 时全员 Continue 进下一关；失败 Continue 由房主重开同一关；末关 `EndOfGame=yes` 全员 Continue 后本地完成并回主菜单 |
+| 结果页 | 胜利、失败与末关统一走 VMCE 结算页（原生 `0x103` 布局/输入，最多显示 4 名参战角色）；有 `NextScenario` 时全员 Continue 进下一关；失败 Continue 由房主重开同一关；末关 `EndOfGame=yes` 全员 Continue 后本地完成并回主菜单。当前重试加载与 15/30 秒计时仍未完成（B01/B02） |
 | 战役进度 | 不保存；不写 `coopsave.ini` |
 | 任务内多人选项 | VERA 按战役语义关闭随机箱和 ShortGame（大厅对应开关禁用）；Special House/Secret Lab 的多人专属步骤不执行 |
 | 跨关角色/资金/seed | 角色按下一关地图重新解析，不沿用上一关 House 名；资金不继承；下一关 seed 由上一关 seed + 下一关身份确定性派生 |
@@ -536,7 +538,8 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 | 地图新增 `[Sides]` | 不合并；请用规则已有侧 |
 | 随机地图 | 不支持；必须是松散 authored `.map` |
 | 3–4 人真机 | 4 人已验收；3 人未单独跑（与 4 人同一协议路径） |
-| 末关/失败重试真实采集 | 代码与单测已具备；`2p-final`/`2p-retry` 真实双进程采集尚未记录，下一版继续补 |
+| 末关/失败重试真实采集 | 代码与单测已具备；`2p-final`/`2p-retry` 真实双进程采集尚未记录，且重试加载/计时仍是阻塞项（B01/B02） |
+| 上游基线 | 已合并 upstream `0.2.9`；旧 2p/4p 收据作废，新基线见 `docs/vmce-baseline.md`；i18n 除 en/zh-CN 外为英文占位（B08） |
 
 ### 故障排查
 

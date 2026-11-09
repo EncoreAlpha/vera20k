@@ -68,7 +68,8 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.7-vmce.N` (currently `0.2.7-vmce.4`); LAN peers should run the same VMCE build.
+`0.2.9-vmce.N` (currently `0.2.9-vmce.5`, merged with upstream `v0.2.9`); LAN peers should
+run the same VMCE build.
 
 ### Campaign directories
 
@@ -171,21 +172,21 @@ by VMCE.
 - The page shows par time, your time, rank, commendation and kills. Rank and commendation come
   from the map `[Ranking]` under/over-par fields; difficulty is the lobby-frozen VMCE row.
 - The page lists up to four participating players. While a next mission is being agreed, each
-  row shows Ready or Waiting; on a defeat or the last mission rows show names only, and the
-  status line shows the ready count only while a stage is pending.
+  row shows Ready or Waiting. On a defeat or the last mission the ready glyphs are still drawn
+  today even though only the host/next-stage gate reads them (known gap B04).
 - On a win with a next mission, a guest's Continue is its ready action; after everyone is
   ready only the host's Continue starts the next mission.
-- On a defeat, a guest's Continue is its ready action but the host decides: once every
-  online guest has opened the defeat page (15 s grace, then the remaining players),
-  the host's Continue restarts the same frozen stage with the same seed, roles and map.
-  Guests follow without pressing Continue; a guest that misses the window is left in
-  the lobby.
-- On the campaign's last mission (`EndOfGame=yes`), Continue is the all-ready gate: after
-  everyone is ready (or 30 s, which starts anyway and pulls unready guests into the
-  completion tail), every peer plays the campaign completion locally and returns to the
-  main menu.
+- On a defeat, a guest's Continue is its ready action but the host decides: the host's
+  Continue restarts the same frozen stage with the same seed, roles and map, and guests follow
+  without pressing Continue. **Current caveat:** the advertised 15 s page-arrival grace and the
+  retry loading path are not finished (backlog B01/B02); until they land, Retry can fail to
+  load and returns both peers to the lobby.
+- On the campaign's last mission (`EndOfGame=yes`), Continue is the all-ready gate; every peer
+  plays the campaign completion locally and returns to the main menu. **Current caveat:** there
+  is no 30 s forced start yet (B02), so one unready guest stalls the page.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
-  rejects it at host setup instead of guessing that the campaign ended.
+  rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
+  validated at setup; a malformed later stage fails at the transition (B05).
 - Before a next mission loads, both peers exchange the identity they resolved (map path plus
   source, effective-map and config digests). A mismatch returns both peers to the lobby instead
   of one side loading while the other waits.
@@ -292,14 +293,20 @@ real-process captures:
 - No cross-mission money/role reselection or persistent progress.
 - The two-player LAN path has been exercised end-to-end with real dual-process captures:
   win → next mission, defeat, last mission, shared-House no-auto-defeat, and a mismatched next
-  stage returning both peers to the lobby.
+  stage returning both peers to the lobby. After the upstream sync these receipts are a new
+  baseline; old captures are no longer comparable.
 - The four-player path has been exercised end-to-end with four real processes on one host:
   lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
   the next mission on every peer. Three players are not run separately; they share the same
   roster and round path.
 - `EndOfGame` campaign completion and defeat retry have production code and focused unit
-  tests; their real dual-process `2p-final`/`2p-retry` captures are not recorded yet, so the
-  next VMCE release still waits on those two runs.
+  tests; their real dual-process `2p-final`/`2p-retry` captures are not recorded yet, and
+  retry loading/timers are still release blockers (B01/B02).
+- The VMCE lobby has a role board (Role/Country/Ready/Host/Color) and the settlement page a
+  four-row board with the three continuations; HUD and loading/transition UI are deferred.
+- i18n after the upstream sync: English and zh-CN have real VMCE copy; the other eight
+  shipped languages carry English placeholders until a translation pass (B08).
+- Known gaps and their evidence live in [the VMCE backlog](vmce-backlog.md).
 - `AltNextScenario` and `SkipMapSelect` execution are not implemented. Cross-mission money
   is not implemented either.
 - Pause follows native multiplayer: ESC opens a local menu, the modal pump keeps
@@ -316,12 +323,14 @@ real-process captures:
   `ignoring invalid VMCE series`.
 - **Campaign is missing `[Scenario:...]`:** the section does not name the selected map path.
   `/` and `\` are interchangeable and ASCII case is ignored, but the map must exist on disk.
-- **Guest cannot Ready:** the guest lacks the same series directory, `campaign.ini`, series CSF
-  or selected map bytes. VMCE does not transfer files.
+- **Guest cannot Ready:** the guest lacks the same series directory, `campaign.ini` or selected
+  map bytes. The identity check hashes the campaign and map bytes, not the series CSF. VMCE does
+  not transfer files.
 - **Role House not found:** `PlayerN` must match a House name in the map `[Houses]`.
 - **Triggers never fire for the second role:** give each role House a distinct `Country` and
   write separate triggers.
-- **Mission keeps running after a role is wiped out:** expected; VMCE does not auto-defeat a
-  role House. Add a `67`/`68` trigger.
+- **Mission keeps running after a role is wiped out:** expected; one role House being defeated
+  does not end a VMCE mission. Local side effects from that House's defeat (EVA, reveal, UI
+  gating) are still under review (B06). Add a `67`/`68` trigger when the mission should end.
 - **No base at mission start:** VMCE does not spawn an MCV or construction yard; place or
   trigger it.
