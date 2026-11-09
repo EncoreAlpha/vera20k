@@ -13,11 +13,13 @@ use super::*;
 use crate::app::match_runtime::session::{
     CooperativeRoundEvent, CooperativeRoundOptions, NetworkAiOptions, NetworkLoadingRequest,
 };
-#[cfg(feature = "vmce")]
-use crate::net::lan_messages::cooperative::VmceStageRecord;
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
     OPTIONS_KIND,
+};
+#[cfg(feature = "vmce")]
+use crate::net::lan_messages::cooperative::{
+    RetryLoadFailureReason, VmceStageRecord, encode_retry_load_failure,
 };
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
@@ -276,6 +278,24 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
         _ => return,
     };
     if let Ok(bytes) = signal.encode(&name) {
+        send_sources(state, &bytes, peers);
+    }
+}
+
+/// Retry-load failure from one peer: one record to every other node. Called
+/// by the loading failure owner before the transport is retired.
+#[cfg(feature = "vmce")]
+pub(super) fn send_retry_load_failure(state: &mut AppState, reason: RetryLoadFailureReason) {
+    if state.match_state.session_mode() != SessionMode::Lan {
+        return;
+    }
+    let name = local_name(state);
+    let peers: Vec<_> =
+        super::super::match_runtime::network_match::nodes(&state.match_state.session)
+            .into_iter()
+            .skip(1)
+            .collect();
+    if let Ok(bytes) = encode_retry_load_failure(&name, reason) {
         send_sources(state, &bytes, peers);
     }
 }

@@ -3361,7 +3361,115 @@ fn apply_network_loading_disconnects(
 }
 
 fn fail_loading(state: &mut AppState, policy: LoadingFailurePolicy, err: anyhow::Error) {
+    fail_loading_with(state, policy, err, None);
+}
+
+/// VERA VMCE retry/start loading stores the admitted VMCE map identity on the
+/// frozen startup. A failure here is reported to every peer with one native
+/// box and both return to the LAN lobby.
+#[cfg(feature = "vmce")]
+fn vmce_network_loading(state: &AppState) -> bool {
+    network_loading_active(state)
+        && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
+        && state
+            .frontend
+            .loading_session
+            .as_ref()
+            .is_some_and(|loading| {
+                matches!(
+                    loading.stage.startup(),
+                    LoadingStartup::Network(startup) if startup.vmce_map_config().is_some()
+                )
+            })
+}
+
+#[cfg(feature = "vmce")]
+fn vmce_load_failure_reason(
+    err: &anyhow::Error,
+) -> crate::net::lan_messages::cooperative::RetryLoadFailureReason {
+    use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
+    let text = format!("{err:#}");
+    if text.contains("frozen VMCE startup has no map config")
+        || text.contains("frozen VMCE startup has no House assignments")
+    {
+        RetryLoadFailureReason::ConfigMismatch
+    } else if text.contains("VMCE map has no physical identity")
+        || text.contains("VMCE network startup changed before terminal transfer")
+    {
+        RetryLoadFailureReason::IdentityMismatch
+    } else if text.contains("frozen VMCE startup has no selected map")
+        || text.contains("VMCE startup has no selected map")
+        || text.contains("selected map")
+        || text.contains("No such file")
+        || text.contains("os error 2")
+    {
+        RetryLoadFailureReason::MissingMap
+    } else {
+        RetryLoadFailureReason::LoadFailed
+    }
+}
+
+#[cfg(feature = "vmce")]
+fn vmce_load_failure_message(
+    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+) -> String {
+    use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
+    crate::i18n::tr(match reason {
+        RetryLoadFailureReason::MissingMap => "VERA:VmceLoadMapMissing",
+        RetryLoadFailureReason::ConfigMismatch => "VERA:VmceLoadConfigMismatch",
+        RetryLoadFailureReason::IdentityMismatch => "VERA:VmceLoadIdentityMismatch",
+        RetryLoadFailureReason::LoadFailed => "VERA:VmceLoadFailed",
+    })
+}
+
+/// A peer's retry load stopped: abort this loader at its safe boundary, show
+/// the same native box, and return to the LAN lobby. Never leave this peer on
+/// the loading page.
+#[cfg(feature = "vmce")]
+pub(crate) fn peer_vmce_retry_load_failed(
+    state: &mut AppState,
+    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+) {
+    let message = vmce_load_failure_message(reason);
+    if network_loading_active(state) {
+        fail_loading_with(
+            state,
+            LoadingFailurePolicy::RetryNetworkShell,
+            anyhow::anyhow!("{message}"),
+            Some((reason.code(), false)),
+        );
+    } else if state.frontend.native_shell_ui || state.frontend.external_launch {
+        log::warn!("VMCE retry load failed on a peer: {message}");
+    } else {
+        crate::app::shell_network_setup::show_blocking_notice(state, message);
+    }
+}
+
+fn fail_loading_with(
+    state: &mut AppState,
+    policy: LoadingFailurePolicy,
+    err: anyhow::Error,
+    peer_vmce_failure: Option<(u8, bool)>,
+) {
     log::warn!("Could not load map: {err:#}");
+    // Local VMCE network loads notify the peers before the transport retires;
+    // a peer's notice is not echoed back.
+    #[cfg(feature = "vmce")]
+    let vmce_failure = peer_vmce_failure.or_else(|| {
+        (policy == LoadingFailurePolicy::RetryNetworkShell && vmce_network_loading(state))
+            .then(|| (vmce_load_failure_reason(&err).code(), true))
+    });
+    #[cfg(not(feature = "vmce"))]
+    let vmce_failure: Option<(u8, bool)> = None;
+    #[cfg(feature = "vmce")]
+    if let Some((reason, notify)) = vmce_failure {
+        if notify
+            && let Some(reason) =
+                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+        {
+            crate::app::lan_service::notify_vmce_retry_load_failed(state, reason);
+        }
+    }
     let policy = retire_failed_loading_attempt(
         &mut state.frontend.loading_session,
         &mut state.match_state.startup,
@@ -3383,6 +3491,18 @@ fn fail_loading(state: &mut AppState, policy: LoadingFailurePolicy, err: anyhow:
         // network StartScenario call52E745 follows the same retry at52E75F;
         // GameMode3 re-enters LAN at52DAEF/52E356, so retain its lobby context.
         crate::app::App::return_to_main_menu(state);
+        #[cfg(feature = "vmce")]
+        if let Some((reason, _)) = vmce_failure
+            && let Some(reason) =
+                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+        {
+            let message = vmce_load_failure_message(reason);
+            if state.frontend.multiplayer_setup.is_some() {
+                crate::app::shell_network_setup::show_blocking_notice(state, message);
+            } else {
+                log::warn!("VMCE retry load failed but no lobby notice owner: {message}");
+            }
+        }
     } else if policy == LoadingFailurePolicy::ReportNativeFailure {
         state.frontend.screen = GameScreen::MissionResult {
             title: crate::i18n::tr("VERA:LoadingFailed"),

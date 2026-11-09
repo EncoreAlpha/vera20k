@@ -1814,6 +1814,14 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
     {
         return options::receive_extended(state, incoming.source, &incoming.payload, now);
     }
+    #[cfg(feature = "vmce")]
+    if let Some(reason) =
+        crate::net::lan_messages::cooperative::decode_retry_load_failure(&incoming.payload)
+        && state.match_state.session_mode() == SessionMode::Lan
+    {
+        crate::app::loading::pump::peer_vmce_retry_load_failed(state, reason);
+        return Ok(());
+    }
     // A VMCE peer can send its round's records while this peer is still
     // retiring the mission and before the round phase exists. Hold them; the
     // round's service pass applies them in arrival order once it opens.
@@ -3621,6 +3629,17 @@ fn send_sources(state: &mut AppState, bytes: &[u8], sources: impl IntoIterator<I
             send_bytes(state, bytes, direct(endpoint), true);
         }
     }
+}
+
+/// Tell every peer why this peer stopped a retry load. Uses the same LAN
+/// transport as the round records; the receiving loader shows one box and
+/// returns to the lobby too.
+#[cfg(feature = "vmce")]
+pub(crate) fn notify_vmce_retry_load_failed(
+    state: &mut AppState,
+    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+) {
+    cooperative::send_retry_load_failure(state, reason);
 }
 
 fn drain_match_requests(state: &mut AppState) {
