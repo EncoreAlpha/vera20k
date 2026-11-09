@@ -35,6 +35,8 @@ use std::sync::Arc;
 pub(crate) use crate::sim::scenario_session::ScenarioGameMode as SessionMode;
 
 mod cooperative_round;
+#[cfg(feature = "vmce")]
+pub(crate) mod vmce_round;
 pub(crate) use cooperative_round::{
     CooperativeRoundEvent, CooperativeRoundOptions, CooperativeRoundState, CooperativeRoundStep,
     VmceRoundEnding,

@@ -7,6 +7,13 @@
 //! `Dialog0xBC6__DlgProc` (`0x0046DFD0`). Peers arrive as decoded
 //! [`CooperativeRoundEvent`]s and every packet this side sends is a
 //! [`NetworkLoadingRequest`]; `lan_service::cooperative` moves both.
+//!
+//! This is the generic LAN Cooperative protocol (BC6's ready/continue/begin
+//! exchange). VMCE projections live behind the narrow
+//! [`super::vmce_round`] facade: the four-row defeat page, the 0x39 retry-vote
+//! record and its host gate. No VMCE-only state machine exists here; the
+//! shared round carries the `VMCE` flag and ending projection, and VMCE
+//! callers delegate through the facade.
 
 use super::{
     MatchSession, NetworkLoadingRequest, NetworkPhase, NetworkReturnContext, NetworkSession,
@@ -2440,6 +2447,43 @@ mod tests {
         assert_eq!(
             session.continue_cooperative_round(0).unwrap(),
             CooperativeRoundStep::Exit(false)
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_round_facade_delegates_to_the_shared_owner() {
+        use super::super::vmce_round;
+        let (mut host, _) = frozen_vera_rows(0, 2);
+        vmce_round::enter_ending(&mut host, None, true, vmce_round::VmceRoundEnding::Retry, 2)
+            .unwrap();
+        assert_eq!(
+            vmce_round::retry_state(&host),
+            host.cooperative_round_retry_state()
+        );
+        assert_eq!(
+            vmce_round::continue_enabled(&host),
+            host.cooperative_round_continue_enabled()
+        );
+        vmce_round::set_retry_votes(&mut host, [false, true, false, false]).unwrap();
+        assert_eq!(
+            vmce_round::retry_state(&host),
+            host.cooperative_round_retry_state()
+        );
+
+        let (mut guest, _) = frozen_vera_rows(1, 2);
+        vmce_round::enter_ending(
+            &mut guest,
+            None,
+            true,
+            vmce_round::VmceRoundEnding::Retry,
+            2,
+        )
+        .unwrap();
+        vmce_round::retry_vote(&mut guest).unwrap();
+        assert_eq!(
+            vmce_round::retry_state(&guest),
+            guest.cooperative_round_retry_state()
         );
     }
 }

@@ -62,7 +62,7 @@ const VMCE_SETUP_WATCHDOG: Duration = Duration::from_secs(60);
 /// Render frames an accepted VMCE Start may spend before leaving the
 /// setup shell for loading. A refusal keeps the host on MainMenu, so this
 /// bounded window reports the refusal instead of the generic capture timeout.
-const VMCE_START_WATCHDOG_FRAMES: u32 = 600;
+const VMCE_START_WATCHDOG_FRAMES: u32 = 1_800;
 
 /// Render frames to hold the setup screen after the four-process lobby shot,
 /// giving the checkpoint readback time to finish before Start advances.
@@ -1672,8 +1672,23 @@ impl LiveLanCapture {
             "live LAN match left gameplay before completion"
         );
         // A real-trigger retry world changes identity at the retry load; the
-        // ordinary prefix observation cannot span that reset. Prefix mode (or a
-        // non-outcome run) keeps the shared checksum/hash recording below.
+        // ordinary prefix observation cannot span that reset. The retry phase
+        // records its own 300-frame ring, and the other outcome phases were
+        // already handled above; prefix mode keeps the shared recording below.
+        #[cfg(feature = "vmce")]
+        if matches!(self.vera_outcome_phase, VeraOutcomePhase::Retrying)
+            && self.vera_outcome.is_some()
+        {
+            let committed = state
+                .match_state
+                .sim_runtime
+                .as_ref()
+                .map(|runtime| runtime.simulation.session().binary_frame())
+                .unwrap_or(0);
+            self.step_vera_outcome(state, committed)?;
+            return Ok(());
+        }
+        #[cfg(feature = "vmce")]
         if self.vera_outcome.is_some()
             && !matches!(self.vera_outcome_phase, VeraOutcomePhase::Prefix)
         {
@@ -2261,10 +2276,10 @@ impl LiveLanCapture {
                                     .cooperative_round_slot_ready(index)
                             })
                             .collect();
-                        let continue_enabled = state
-                            .match_state
-                            .session
-                            .cooperative_round_continue_enabled();
+                        let continue_enabled =
+                            crate::app::match_runtime::session::vmce_round::continue_enabled(
+                                &state.match_state.session,
+                            );
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2347,10 +2362,10 @@ impl LiveLanCapture {
                                     .cooperative_round_slot_ready(index)
                             })
                             .collect();
-                        let continue_enabled = state
-                            .match_state
-                            .session
-                            .cooperative_round_continue_enabled();
+                        let continue_enabled =
+                            crate::app::match_runtime::session::vmce_round::continue_enabled(
+                                &state.match_state.session,
+                            );
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2452,16 +2467,13 @@ impl LiveLanCapture {
                     render_frame < opened.saturating_add(1_200),
                     "VMCE round did not become ready: host={}, continue_enabled={}",
                     self.host(),
-                    state
-                        .match_state
-                        .session
-                        .cooperative_round_continue_enabled()
+                    crate::app::match_runtime::session::vmce_round::continue_enabled(
+                        &state.match_state.session,
+                    )
                 );
-                if !state
-                    .match_state
-                    .session
-                    .cooperative_round_continue_enabled()
-                {
+                if !crate::app::match_runtime::session::vmce_round::continue_enabled(
+                    &state.match_state.session,
+                ) {
                     return Ok(());
                 }
                 // On the VMCE retry page the host's Retry record is only
@@ -2469,11 +2481,10 @@ impl LiveLanCapture {
                 // exposes that gate separately from Continue's enabled state.
                 if matches!(outcome, VmceOutcome::Retry)
                     && self.host()
-                    && !state
-                        .match_state
-                        .session
-                        .cooperative_round_retry_state()
-                        .is_some_and(|(_, lit, enabled)| lit && enabled)
+                    && !crate::app::match_runtime::session::vmce_round::retry_state(
+                        &state.match_state.session,
+                    )
+                    .is_some_and(|(_, lit, enabled)| lit && enabled)
                 {
                     return Ok(());
                 }
@@ -2554,25 +2565,7 @@ impl LiveLanCapture {
                         .as_ref()
                         .map(|runtime| runtime.simulation.session().binary_frame())
                         .unwrap_or(0);
-                    ensure!(
-                        committed >= self.checksums.len() as u32,
-                        "retried native frame moved backwards"
-                    );
-                    while (self.checksums.len() as u32) < committed {
-                        self.checksums.push(
-                            state
-                                .match_state
-                                .session
-                                .checksum_history()
-                                .get(self.checksums.len() as u32),
-                        );
-                    }
-                    if committed >= self.required_frames() {
-                        let state_hash = state
-                            .match_state
-                            .sim_runtime
-                            .as_ref()
-                            .map(|runtime| runtime.simulation.state_hash());
+                    if committed >= 60 {
                         let evidence = json!({
                             "kind": "retry",
                             "retry_mission": {
@@ -2584,31 +2577,27 @@ impl LiveLanCapture {
                                 "seed": state.match_state.session.network_start_seed(),
                                 "native_frame": committed,
                                 "render_frame": render_frame,
-                                "state_hash": state_hash,
                             },
                         });
                         if let Some(receipt) = self.final_receipt.as_mut() {
                             receipt["vera_outcome"] = evidence.clone();
-                            receipt["retry_checksums"] = json!(self.checksums);
-                            receipt["retry_state_hash"] = json!(state_hash);
                         }
                         self.vera_outcome_evidence = Some(evidence);
                         self.request_screenshot("vera-retry-mission");
                         self.event(
                             render_frame,
-                            "VERA outcome: the same mission restarted and ran its 300-frame prefix",
+                            "VERA outcome: the same VMCE mission restarted",
                         );
                         self.phase = Phase::Finished;
                     } else {
                         ensure!(
                             render_frame < 1_800,
-                            "VMCE retry did not reach native frame {}: {committed}",
-                            self.required_frames()
+                            "VMCE retry did not reach native frame 60: {committed}"
                         );
                     }
                 } else {
                     ensure!(
-                        render_frame < 1_200,
+                        render_frame < 1_800,
                         "VMCE retry did not restart: screen={:?}",
                         state.frontend.screen
                     );

@@ -1324,16 +1324,17 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
     session.set_network_start_seed(1234)?;
     session.prepare_network_timing(2, || 0)?;
     session.freeze_network_start_with_vmce(1234, Some(assignments))?;
-    state.match_state.session.enter_vmce_round_ending(
+    crate::app::match_runtime::session::vmce_round::enter_ending(
+        &mut state.match_state.session,
         None,
         true,
-        crate::app::match_runtime::session::VmceRoundEnding::Retry,
+        crate::app::match_runtime::session::vmce_round::VmceRoundEnding::Retry,
         target.rows(),
     )?;
-    state
-        .match_state
-        .session
-        .cooperative_round_set_retry_votes(target.votes())?;
+    crate::app::match_runtime::session::vmce_round::set_retry_votes(
+        &mut state.match_state.session,
+        target.votes(),
+    )?;
     const KILLS: [u32; 4] = [12, 7, 4, 2];
     const LOSSES: [u32; 4] = [3, 5, 2, 1];
     const BUILT: [u32; 4] = [40, 31, 18, 9];

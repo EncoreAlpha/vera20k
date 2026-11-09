@@ -680,12 +680,12 @@ fn retry_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep> {
         .multiplayer_shell_runtime
         .cooperative_difficulty();
     if state.match_state.session.host() {
-        state
-            .match_state
-            .session
-            .cooperative_round_retry_start(difficulty)
+        crate::app::match_runtime::session::vmce_round::retry_start(
+            &mut state.match_state.session,
+            difficulty,
+        )
     } else {
-        state.match_state.session.cooperative_round_retry_vote()
+        crate::app::match_runtime::session::vmce_round::retry_vote(&mut state.match_state.session)
     }
 }
 

@@ -78,10 +78,11 @@ pub(crate) fn open_defeat(state: &mut AppState) {
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) = state.match_state.session.enter_vmce_round_ending(
+    if let Err(error) = crate::app::match_runtime::session::vmce_round::enter_ending(
+        &mut state.match_state.session,
         None,
         true,
-        crate::app::match_runtime::session::VmceRoundEnding::Retry,
+        crate::app::match_runtime::session::vmce_round::VmceRoundEnding::Retry,
         rows,
     ) {
         log::error!("Could not open the VMCE defeat round: {error:#}");
@@ -161,10 +162,7 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
         App::leave_mission_result_screen(state);
         return true;
     }
-    if !state
-        .match_state
-        .session
-        .cooperative_round_continue_enabled()
+    if !crate::app::match_runtime::session::vmce_round::continue_enabled(&state.match_state.session)
     {
         state.platform.window.request_redraw();
         return true;
@@ -347,12 +345,13 @@ fn open_page(
     state.frontend.coop_score_page = None;
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) =
-        state
-            .match_state
-            .session
-            .enter_vmce_round_ending(next, can_continue, ending, rows)
-    {
+    if let Err(error) = crate::app::match_runtime::session::vmce_round::enter_ending(
+        &mut state.match_state.session,
+        next,
+        can_continue,
+        ending,
+        rows,
+    ) {
         log::error!("Could not open the VMCE {what} result: {error:#}");
         crate::app::cooperative_round::return_to_shell(state);
         return;
