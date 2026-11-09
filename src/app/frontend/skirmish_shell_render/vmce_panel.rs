@@ -40,6 +40,20 @@ pub(crate) fn push_solid_rect(
     );
 }
 
+/// A translucent flat strip, used behind settlement row text.
+pub(crate) fn push_solid_rect_alpha(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &SkirmishShellChromeAtlas,
+    rect: RectPx,
+    rgb: [f32; 3],
+    depth: f32,
+    alpha: f32,
+) {
+    crate::app::frontend::skirmish_shell_render::chrome::push_solid_rect_alpha(
+        out, atlas, rect, rgb, depth, alpha,
+    );
+}
+
 /// One flat native dialog-palette fill inside the list frame.
 pub(crate) fn push_fill(
     out: &mut Vec<SpriteInstance>,

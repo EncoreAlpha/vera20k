@@ -495,6 +495,8 @@ pub struct VmceResultRow {
     pub ready: Option<bool>,
     /// This row is the LAN host (raw slot 0).
     pub host: bool,
+    /// The authored House colour the row's text uses, if the role has one.
+    pub rgb: Option<[u8; 3]>,
 }
 
 /// The VMCE settlement board shown over the `0x103` layout: rows plus the
@@ -504,9 +506,11 @@ pub struct VmceResultRow {
 pub struct VmceResultBoard {
     pub rows: Vec<VmceResultRow>,
     pub victory: bool,
-    /// Exactly two lines; the hard break belongs to the caption owner so a
-    /// number and its unit never split across a natural wrap.
-    pub caption_lines: [String; 2],
+    /// This peer is the LAN host: no guest Ready button, Continue + Leave.
+    pub local_host: bool,
+    /// This guest already pressed Ready: the button keeps its lit/pressed
+    /// state and is not clickable again.
+    pub local_ready: bool,
 }
 
 /// One VMCE settlement board caption.
@@ -526,8 +530,8 @@ pub struct VmceResultRowCells {
     pub country_icon: RectPx,
     pub country: RectPx,
     pub verdict: RectPx,
+    /// One glyph cell: host H-in-star, ready guest star, or blank.
     pub ready: RectPx,
-    pub host: RectPx,
 }
 
 /// The VMCE settlement page's flat board and status strip.
@@ -537,23 +541,21 @@ pub struct VmceResultLayout {
     pub frame: RectPx,
     pub fill: RectPx,
     pub header_rule: RectPx,
-    pub status_rule: RectPx,
     pub headers: [VmceResultHeader; 4],
     pub rows: [VmceResultRowCells; 4],
-    /// Two native lines with a little leading.
-    pub status: RectPx,
 }
 
 /// The settlement board sits in the `0x103` dialog's empty lower band, inside
-/// the native border: one flat fill, a caption rule and four rows, then the
-/// continuation caption as its own status strip.
+/// the native border: one flat fill, a caption rule and four rows. The page's
+/// continuation caption is gone, so the board ends right below the last row and
+/// clears the native stats, eagle, time panels and the right-panel buttons.
 #[cfg(feature = "vmce")]
 fn vmce_result_layout() -> VmceResultLayout {
-    let frame = RectPx::new(124, 426, 396, 148);
-    let fill = RectPx::new(126, 428, 392, 144);
+    let frame = RectPx::new(124, 420, 396, 104);
+    let fill = RectPx::new(126, 422, 392, 100);
     let x = 130;
     let text_w = 384;
-    let header_y = 432;
+    let header_y = 424;
     let headers = [
         VmceResultHeader {
             key: "VERA:VmceRoleColumn",
@@ -571,31 +573,143 @@ fn vmce_result_layout() -> VmceResultLayout {
             centred: true,
         },
         VmceResultHeader {
-            key: "VERA:VmceReadyColumn",
+            key: "VERA:VmceReady",
             rect: RectPx::new(x + 324, header_y, 60, 15),
             centred: true,
         },
     ];
     let rows = std::array::from_fn(|row| {
-        let y = 451 + row as i32 * 20;
+        let y = 443 + row as i32 * 20;
         VmceResultRowCells {
             role: RectPx::new(x, y, 92, 17),
             country_icon: RectPx::new(x + 92, y - 1, 50, 19),
             country: RectPx::new(x + 142, y, 122, 17),
             verdict: RectPx::new(x + 264, y, 60, 17),
-            ready: RectPx::new(x + 324, y - 1, 30, 19),
-            host: RectPx::new(x + 354, y - 1, 30, 19),
+            ready: RectPx::new(x + 324, y - 1, 60, 19),
         }
     });
     VmceResultLayout {
         frame,
         fill,
-        header_rule: RectPx::new(x, 448, text_w, 1),
-        status_rule: RectPx::new(x, 530, text_w, 1),
+        header_rule: RectPx::new(x, 440, text_w, 1),
         headers,
         rows,
-        status: RectPx::new(x, 535, text_w, 36),
     }
+}
+
+/// VERA-only control ids outside the native `0x103`/`0xBC7` id ranges.
+#[cfg(feature = "vmce")]
+pub const VMCE_READY_CONTROL: u16 = 0x7001;
+#[cfg(feature = "vmce")]
+pub const VMCE_LEAVE_CONTROL: u16 = 0x7002;
+
+/// Authored 800x600 right-panel slots the VMCE result buttons reuse: the
+/// lobby's Start-Mission slot, the native Continue slot, and the slot above it.
+#[cfg(feature = "vmce")]
+const VMCE_READY_RECT: RectPx = RectPx::new(644, 241, 156, 42);
+#[cfg(feature = "vmce")]
+const VMCE_LEAVE_RECT: RectPx = RectPx::new(644, 535, 156, 42);
+#[cfg(feature = "vmce")]
+const VMCE_CONTINUE_RECT: RectPx = RectPx::new(644, 493, 156, 42);
+
+/// One right-panel button on a VMCE victory/campaign-end page.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmceResultButton {
+    pub kind: VmceResultButtonKind,
+    /// The controller id the input feed uses: a native Continue id or one of
+    /// the VERA-only ids.
+    pub id: u16,
+    pub rect: RectPx,
+    /// Native SDBTNANM frame 4: the guest's Ready keeps this after the click.
+    pub pressed: bool,
+    pub enabled: bool,
+    pub key: &'static str,
+}
+
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmceResultButtonKind {
+    Ready,
+    Continue,
+    Leave,
+}
+
+/// The VMCE page's right-panel buttons. The host gets Continue stacked above
+/// Leave Room; a guest gets Ready (until it pressed it) and Leave Room, with no
+/// bottom Continue. `continue_id` is the dialog's native result control, so the
+/// host's Continue keeps the native input action while its cell uses the slot
+/// above the native Continue slot.
+#[cfg(feature = "vmce")]
+pub fn vmce_result_buttons(
+    board: &VmceResultBoard,
+    layout: &CampaignScoreLayout,
+    continue_id: u16,
+) -> Vec<VmceResultButton> {
+    if !board.victory {
+        // The defeat/retry page keeps its native single Continue until the
+        // dedicated defeat revision (B26).
+        return vec![VmceResultButton {
+            kind: VmceResultButtonKind::Continue,
+            id: continue_id,
+            rect: layout.continue_button,
+            pressed: false,
+            enabled: true,
+            key: "GUI:Continue",
+        }];
+    }
+    let leave = VmceResultButton {
+        kind: VmceResultButtonKind::Leave,
+        id: VMCE_LEAVE_CONTROL,
+        rect: layout.vmce_leave_button,
+        pressed: false,
+        enabled: true,
+        key: "VERA:VmceLeaveRoom",
+    };
+    if board.local_host {
+        return vec![
+            VmceResultButton {
+                kind: VmceResultButtonKind::Continue,
+                id: continue_id,
+                rect: layout.vmce_continue_button,
+                pressed: false,
+                enabled: true,
+                key: "GUI:Continue",
+            },
+            leave,
+        ];
+    }
+    vec![
+        VmceResultButton {
+            kind: VmceResultButtonKind::Ready,
+            id: VMCE_READY_CONTROL,
+            rect: layout.vmce_ready_button,
+            pressed: board.local_ready,
+            enabled: !board.local_ready,
+            key: "VERA:VmceReady",
+        },
+        leave,
+    ]
+}
+
+/// The caption colour of a VMCE result-page button. The native SDBTNANM frame 4
+/// is the lit/bright yellow state (`0x006192FC`'s pressed frame), so its caption
+/// switches to the packed owner-draw button text colour `0x00000C05`; releasing
+/// (or an ordinary enabled button) keeps the native yellow.
+#[cfg(feature = "vmce")]
+pub fn vmce_result_button_text_rgb(pressed: bool) -> [f32; 3] {
+    if pressed {
+        [5.0 / 255.0, 12.0 / 255.0, 0.0]
+    } else {
+        [1.0, 1.0, 0.0]
+    }
+}
+
+/// The row text colour: the row's authored House colour, or the native yellow
+/// when the role authored none. Headers keep the native yellow separately.
+#[cfg(feature = "vmce")]
+pub fn vmce_result_text_rgb(row: &VmceResultRow) -> [u8; 3] {
+    row.rgb.unwrap_or([255, 255, 0])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -612,6 +726,15 @@ pub struct CampaignScoreLayout {
     pub title: RectPx,
     pub status_help: RectPx,
     pub continue_button: RectPx,
+    /// VMCE guest Ready in the lobby's Start-Mission slot (right panel top).
+    #[cfg(feature = "vmce")]
+    pub vmce_ready_button: RectPx,
+    /// VMCE Leave Room in the right panel's bottom slot.
+    #[cfg(feature = "vmce")]
+    pub vmce_leave_button: RectPx,
+    /// VMCE host Continue, stacked above Leave Room (same native Continue id).
+    #[cfg(feature = "vmce")]
+    pub vmce_continue_button: RectPx,
     pub warning_monitor: RectPx,
     pub controls: Vec<CampaignScoreControlRect>,
     /// VMCE settlement board (up to four participants) and its status strip,
@@ -705,6 +828,12 @@ impl CampaignScoreLayout {
             title: page.title,
             status_help,
             continue_button,
+            #[cfg(feature = "vmce")]
+            vmce_ready_button: page.scale.scale_rect(VMCE_READY_RECT),
+            #[cfg(feature = "vmce")]
+            vmce_leave_button: page.scale.scale_rect(VMCE_LEAVE_RECT),
+            #[cfg(feature = "vmce")]
+            vmce_continue_button: page.scale.scale_rect(VMCE_CONTINUE_RECT),
             warning_monitor: page.warning_monitor,
             controls,
             #[cfg(feature = "vmce")]
@@ -747,6 +876,12 @@ impl CampaignScoreLayout {
         self.title = scale.scale_rect(self.title);
         self.status_help = scale.scale_rect(self.status_help);
         self.continue_button = scale.scale_rect(self.continue_button);
+        #[cfg(feature = "vmce")]
+        {
+            self.vmce_ready_button = scale.scale_rect(self.vmce_ready_button);
+            self.vmce_leave_button = scale.scale_rect(self.vmce_leave_button);
+            self.vmce_continue_button = scale.scale_rect(self.vmce_continue_button);
+        }
         self.warning_monitor = scale.scale_rect(self.warning_monitor);
         self.background = scale.scale_rect(self.background);
         self.panel = scale.scale_rect(self.panel);
@@ -760,8 +895,6 @@ impl CampaignScoreLayout {
             for rect in std::iter::once(&mut board.frame)
                 .chain(std::iter::once(&mut board.fill))
                 .chain(std::iter::once(&mut board.header_rule))
-                .chain(std::iter::once(&mut board.status_rule))
-                .chain(std::iter::once(&mut board.status))
             {
                 *rect = scale.scale_rect(*rect);
             }
@@ -774,7 +907,6 @@ impl CampaignScoreLayout {
                 row.country = scale.scale_rect(row.country);
                 row.verdict = scale.scale_rect(row.verdict);
                 row.ready = scale.scale_rect(row.ready);
-                row.host = scale.scale_rect(row.host);
             }
         }
         self
@@ -1575,33 +1707,147 @@ mod tests {
     }
 
     #[cfg(feature = "vmce")]
-    #[cfg(feature = "vmce")]
     #[test]
-    fn vmce_settlement_lays_out_the_four_row_board_and_status() {
+    fn vmce_settlement_lays_out_the_compact_four_row_board() {
         let layout = CampaignScoreLayout::compute_layout(800, 600);
         let board = layout.vmce_result.expect("VMCE settlement board");
         assert_eq!(board.rows.len(), 4);
         assert_eq!(board.headers.len(), 4);
-        assert!(board.frame.y + board.frame.h <= layout.status_help.y);
-        assert!(board.fill.x > board.frame.x && board.fill.y > board.frame.y);
-        assert!(board.rows[3].role.y + board.rows[3].role.h < board.status_rule.y);
-        assert!(board.status_rule.y < board.status.y);
-        assert!(board.status.y + board.status.h <= board.frame.y + board.frame.h);
+        assert_eq!(board.frame, RectPx::new(124, 420, 396, 104));
+        assert_eq!(board.fill, RectPx::new(126, 422, 392, 100));
+        assert_eq!(board.header_rule, RectPx::new(130, 440, 384, 1));
+        assert_eq!(
+            board.headers.map(|header| header.key),
+            [
+                "VERA:VmceRoleColumn",
+                "VERA:VmceCountryColumn",
+                "VERA:VmceResultColumn",
+                "VERA:VmceReady"
+            ]
+        );
         for (index, row) in board.rows.iter().enumerate() {
-            assert_eq!(row.role.x, board.rows[0].role.x);
-            if index > 0 {
-                assert!(row.role.y > board.rows[index - 1].role.y);
-            }
-            assert!(row.country_icon.x + 50 <= row.country.x + 1);
-            assert!(board.headers[0].rect.x == row.role.x);
+            let y = 443 + index as i32 * 20;
+            assert_eq!(row.role, RectPx::new(130, y, 92, 17));
+            assert_eq!(row.country_icon, RectPx::new(222, y - 1, 50, 19));
+            assert_eq!(row.country, RectPx::new(272, y, 122, 17));
+            assert_eq!(row.verdict, RectPx::new(394, y, 60, 17));
+            assert_eq!(row.ready, RectPx::new(454, y - 1, 60, 19));
+            // No caption strip: the board ends right below the last row.
+            assert!(row.role.y + row.role.h <= board.frame.y + board.frame.h);
         }
-        // The 0x103 Continue keeps its native rect and stays clear of the board.
-        assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
+        assert_eq!(board.rows[3].role.y, 503);
+        assert!(board.frame.y >= 420, "board moves up into the lower band");
+        assert!(board.rows[3].ready.y + board.rows[3].ready.h <= board.frame.y + board.frame.h);
+        // The compact board clears the native statics/time panels above it and
+        // the right-panel column (Continue slot at x 644).
+        assert!(board.frame.y + board.frame.h <= layout.status_help.y);
         assert!(board.frame.x + board.frame.w < layout.continue_button.x);
-        // The responsive path scales the board with the page.
+        assert!(board.frame.y >= 417, "time panels end at y 417");
+        // The right-panel slots reuse the lobby's native button rows.
+        assert_eq!(layout.vmce_ready_button, RectPx::new(644, 241, 156, 42));
+        assert_eq!(layout.vmce_continue_button, RectPx::new(644, 493, 156, 42));
+        assert_eq!(layout.vmce_leave_button, RectPx::new(644, 535, 156, 42));
+        // The native Continue keeps its own rect/id; the VMCE host cell is the
+        // slot above it and never touches it.
+        assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
+        assert!(
+            layout.vmce_continue_button.y + layout.vmce_continue_button.h
+                <= layout.vmce_leave_button.y
+        );
+        // The responsive path scales the board and its buttons with the page.
         let responsive = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
         let scaled = responsive.vmce_result.expect("scaled VMCE board");
         assert!(scaled.fill.w > board.fill.w);
         assert_eq!(scaled.rows.len(), 4);
+        assert!(responsive.vmce_ready_button.w > layout.vmce_ready_button.w);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_result_row_text_colour_falls_back_to_native_yellow() {
+        let mut row = VmceResultRow {
+            role: "P1 Americans House".into(),
+            country: "America".into(),
+            flag: None,
+            won: true,
+            ready: Some(true),
+            host: true,
+            rgb: Some([32, 160, 64]),
+        };
+        assert_eq!(vmce_result_text_rgb(&row), [32, 160, 64]);
+        row.rgb = None;
+        assert_eq!(vmce_result_text_rgb(&row), [255, 255, 0]);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_result_buttons_follow_the_viewer_and_native_slots() {
+        use CampaignScoreDialog::Victory;
+        let layout = CampaignScoreLayout::compute_layout(800, 600);
+        let continue_id = Victory.continue_button();
+        let board = |local_host: bool, local_ready: bool| VmceResultBoard {
+            rows: Vec::new(),
+            victory: true,
+            local_host,
+            local_ready,
+        };
+        let host = vmce_result_buttons(&board(true, false), &layout, continue_id);
+        assert_eq!(host.len(), 2);
+        assert_eq!(host[0].kind, VmceResultButtonKind::Continue);
+        assert_eq!(host[0].id, continue_id, "native Continue id is unchanged");
+        assert_eq!(host[0].rect, RectPx::new(644, 493, 156, 42));
+        assert_eq!(host[1].kind, VmceResultButtonKind::Leave);
+        assert_eq!(host[1].id, VMCE_LEAVE_CONTROL);
+        assert_eq!(host[1].rect, RectPx::new(644, 535, 156, 42));
+        let guest = vmce_result_buttons(&board(false, false), &layout, continue_id);
+        assert_eq!(guest.len(), 2);
+        assert_eq!(guest[0].kind, VmceResultButtonKind::Ready);
+        assert_eq!(guest[0].id, VMCE_READY_CONTROL);
+        assert_eq!(guest[0].rect, RectPx::new(644, 241, 156, 42));
+        assert!(
+            !guest[0].pressed && guest[0].enabled,
+            "unready guest may click"
+        );
+        assert_eq!(guest[1].kind, VmceResultButtonKind::Leave);
+        assert!(
+            !guest
+                .iter()
+                .any(|button| button.kind == VmceResultButtonKind::Continue),
+            "guests get no bottom Continue"
+        );
+        let ready = vmce_result_buttons(&board(false, true), &layout, continue_id);
+        assert_eq!(ready[0].kind, VmceResultButtonKind::Ready);
+        assert!(ready[0].pressed, "lit/pressed native frame after the click");
+        assert!(!ready[0].enabled, "not clickable again");
+        assert_eq!(
+            vmce_result_button_text_rgb(true),
+            [5.0 / 255.0, 12.0 / 255.0, 0.0],
+            "the lit frame keeps a readable dark caption"
+        );
+        assert_eq!(
+            vmce_result_button_text_rgb(false),
+            [1.0, 1.0, 0.0],
+            "ordinary buttons keep the native yellow caption"
+        );
+        assert_eq!(ready[1].kind, VmceResultButtonKind::Leave);
+        // The campaign-end Continue id keeps the same host slot.
+        let end = CampaignScoreDialog::CampaignEnd.continue_button();
+        let host_end = vmce_result_buttons(&board(true, false), &layout, end);
+        assert_eq!(host_end[0].id, end);
+        assert_eq!(host_end[0].rect, RectPx::new(644, 493, 156, 42));
+        // Defeat keeps the native single Continue at its native rect.
+        let defeat = vmce_result_buttons(
+            &VmceResultBoard {
+                rows: Vec::new(),
+                victory: false,
+                local_host: true,
+                local_ready: false,
+            },
+            &layout,
+            continue_id,
+        );
+        assert_eq!(defeat.len(), 1);
+        assert_eq!(defeat[0].kind, VmceResultButtonKind::Continue);
+        assert_eq!(defeat[0].rect, RectPx::new(644, 535, 156, 42));
     }
 }

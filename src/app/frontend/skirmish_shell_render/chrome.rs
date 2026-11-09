@@ -504,6 +504,32 @@ pub(super) fn push_solid_rect(
     push_solid_rect_px(out, atlas.white_pixel, rect, tint, depth);
 }
 
+/// [`push_solid_rect`] behind a translucent tint: the settlement rows use a
+/// dark 1 px-inset strip so authored dark House colours stay readable while the
+/// native art below keeps showing through.
+pub(super) fn push_solid_rect_alpha(
+    out: &mut Vec<SpriteInstance>,
+    atlas: &SkirmishShellChromeAtlas,
+    rect: RectPx,
+    tint: [f32; 3],
+    depth: f32,
+    alpha: f32,
+) {
+    let Some(pixel) = atlas.white_pixel else {
+        return;
+    };
+    out.push(SpriteInstance {
+        position: [rect.x as f32, rect.y as f32],
+        size: [rect.w as f32, rect.h as f32],
+        uv_origin: pixel.uv_origin,
+        uv_size: pixel.uv_size,
+        depth,
+        tint,
+        alpha,
+        ..Default::default()
+    });
+}
+
 pub(super) fn push_rect_outline(
     out: &mut Vec<SpriteInstance>,
     atlas: &SkirmishShellChromeAtlas,

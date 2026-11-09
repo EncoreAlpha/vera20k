@@ -181,6 +181,8 @@ const CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE: &str =
 #[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT: &str = "vmce-result-host-victory-next";
 #[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_GUEST_UNREADY: &str = "vmce-result-guest-unready";
+#[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_GUEST_READY: &str = "vmce-result-guest-ready";
 #[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY: &str = "vmce-result-defeat-retry";
@@ -385,6 +387,8 @@ pub enum ShellCaptureCheckpoint {
     /// and the campaign-end completion. Visual fixtures only.
     #[cfg(feature = "vmce")]
     VmceResultHostVictoryNext,
+    #[cfg(feature = "vmce")]
+    VmceResultGuestUnready,
     #[cfg(feature = "vmce")]
     VmceResultGuestReady,
     #[cfg(feature = "vmce")]
@@ -630,6 +634,8 @@ impl ShellCaptureCheckpoint {
             }
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT => Ok(Self::VmceResultHostVictoryNext),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_GUEST_UNREADY => Ok(Self::VmceResultGuestUnready),
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_GUEST_READY => Ok(Self::VmceResultGuestReady),
             #[cfg(feature = "vmce")]
@@ -1038,14 +1044,16 @@ impl ShellCaptureCheckpoint {
             Self::Score0x108Steady => CHECKPOINT_SCORE_0X108_STEADY,
             Self::CampaignScore0x103Steady => CHECKPOINT_CAMPAIGN_SCORE_0X103_STEADY,
             #[cfg(feature = "vmce")]
-        Self::VmceResultHostVictoryNext => CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT,
-        #[cfg(feature = "vmce")]
-        Self::VmceResultGuestReady => CHECKPOINT_VMCE_RESULT_GUEST_READY,
-        #[cfg(feature = "vmce")]
-        Self::VmceResultDefeatRetry => CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
-        #[cfg(feature = "vmce")]
-        Self::VmceResultCampaignEnd => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
-        Self::CampaignScore0x103AnimationSequence => {
+            Self::VmceResultHostVictoryNext => CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultGuestUnready => CHECKPOINT_VMCE_RESULT_GUEST_UNREADY,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultGuestReady => CHECKPOINT_VMCE_RESULT_GUEST_READY,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultDefeatRetry => CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultCampaignEnd => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
+            Self::CampaignScore0x103AnimationSequence => {
                 CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE
             }
             Self::Score0x108Entry(_) => "score-0x108-entry",
@@ -1818,6 +1826,7 @@ where
     let scaled_vmce_result = matches!(
         checkpoint,
         ShellCaptureCheckpoint::VmceResultHostVictoryNext
+            | ShellCaptureCheckpoint::VmceResultGuestUnready
             | ShellCaptureCheckpoint::VmceResultGuestReady
             | ShellCaptureCheckpoint::VmceResultDefeatRetry
             | ShellCaptureCheckpoint::VmceResultCampaignEnd
@@ -2800,6 +2809,10 @@ impl ShellCaptureSession {
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceResultHostVictoryNext => Some(
                 score::CampaignScoreCapture::vmce(score::VmceResultTarget::HostVictoryNext),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultGuestUnready => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::GuestUnready),
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceResultGuestReady => Some(
@@ -5488,6 +5501,10 @@ mod tests {
             (
                 CHECKPOINT_VMCE_RESULT_HOST_VICTORY_NEXT,
                 ShellCaptureCheckpoint::VmceResultHostVictoryNext,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_GUEST_UNREADY,
+                ShellCaptureCheckpoint::VmceResultGuestUnready,
             ),
             (
                 CHECKPOINT_VMCE_RESULT_GUEST_READY,

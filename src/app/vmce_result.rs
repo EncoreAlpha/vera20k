@@ -138,7 +138,22 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
     true
 }
 
-/// The settlement board the `0x103` page shows: one row per connected human
+/// Run a VMCE result page's Leave Room: the round's own leave record goes to
+/// every peer (`0x0046E28C`'s `0x24`), the page closes and the LAN lobby
+/// returns. The host's leave disbands the room; a guest's leave is its local
+/// exit and the host's own peer-left path returns the room to the lobby.
+pub(crate) fn leave_room_pressed(state: &mut AppState) -> bool {
+    if !owns_page(state) {
+        return false;
+    }
+    if let Err(error) = state.match_state.session.quit_cooperative_round() {
+        log::warn!("VMCE result Leave Room refused: {error:#}");
+    }
+    crate::app::cooperative_round::return_to_shell(state);
+    true
+}
+
+/// The settlement board the `0x103` page shows: one row per connected human/// The settlement board the `0x103` page shows: one row per connected human
 /// with its authored role, country and verdict, plus the truthful caption for
 /// the continuation this page gates. Read-only projection of the round and
 /// launch the page already owns; no second result state.
@@ -197,58 +212,23 @@ pub(crate) fn result_board(
                     .cooperative_round_slot_ready(index)
             }),
             host: human.raw_slot_index == Some(0),
+            rgb: info.color,
         });
         if rows.len() == 4 {
             break;
         }
     }
-    let (ready, total, _) = state
+    let local_ready = state
         .match_state
         .session
         .cooperative_round_ready_progress()
-        .unwrap_or((0, rows.len(), false));
-    let host = state.match_state.session.host();
-    let caption_lines = continuation_caption_lines(round.vera_ending(), host, ready, total);
+        .is_some_and(|(_, _, local)| local);
     (!rows.is_empty()).then_some(VmceResultBoard {
         rows,
         victory,
-        caption_lines,
+        local_host: state.match_state.session.host(),
+        local_ready,
     })
-}
-
-/// The truthful status caption for one continuation, as two explicit lines.
-/// The hard break belongs here (not to a natural wrap) so a number and its
-/// unit stay together in every language. The three continuations keep their
-/// own gates in the round; this only states what the page does.
-#[cfg(feature = "vmce")]
-pub(crate) fn continuation_caption_lines(
-    ending: crate::app::match_runtime::session::VmceRoundEnding,
-    host: bool,
-    ready: usize,
-    total: usize,
-) -> [String; 2] {
-    use crate::app::match_runtime::session::VmceRoundEnding;
-    // The ready glyphs in the rows are the progress; the caption states the
-    // gate itself, with no numeric placeholder to wrap.
-    let _ = (ready, total);
-    match ending {
-        VmceRoundEnding::Next => [
-            crate::i18n::tr("VERA:VmceResultNextLine1"),
-            crate::i18n::tr("VERA:VmceResultNextLine2"),
-        ],
-        VmceRoundEnding::Retry => [
-            if host {
-                crate::i18n::tr("VERA:VmceResultRetryHostLine1")
-            } else {
-                crate::i18n::tr("VERA:VmceResultRetryGuestLine1")
-            },
-            crate::i18n::tr("VERA:VmceResultRetryLine2"),
-        ],
-        VmceRoundEnding::CampaignEnd => [
-            crate::i18n::tr("VERA:VmceResultEndLine1"),
-            crate::i18n::tr("VERA:VmceResultEndLine2"),
-        ],
-    }
 }
 
 /// The defeat page's rank and message. Retail `0x103` is opened only by
@@ -393,31 +373,26 @@ mod tests {
     use crate::app::match_runtime::session::VmceRoundEnding;
 
     #[test]
-    fn the_three_continuations_get_their_own_two_line_captions() {
-        let next = continuation_caption_lines(VmceRoundEnding::Next, true, 2, 4);
-        let retry_host = continuation_caption_lines(VmceRoundEnding::Retry, true, 0, 4);
-        let retry_guest = continuation_caption_lines(VmceRoundEnding::Retry, false, 0, 4);
-        let end = continuation_caption_lines(VmceRoundEnding::CampaignEnd, true, 4, 4);
-        assert!(
-            next[1].contains("ready") || next[1].contains("就绪"),
-            "next line states the all-ready gate: {next:?}"
+    fn the_result_row_text_uses_the_authored_house_colour() {
+        let mut row = crate::ui::campaign_score_shell::VmceResultRow {
+            role: "P1 Americans House".into(),
+            country: "America".into(),
+            flag: None,
+            won: true,
+            ready: Some(true),
+            host: true,
+            rgb: Some([32, 160, 64]),
+        };
+        assert_eq!(
+            crate::ui::campaign_score_shell::vmce_result_text_rgb(&row),
+            [32, 160, 64]
         );
-        assert!(
-            end[1].contains("30") && (end[1].contains("s") || end[1].contains("秒")),
-            "end line states the 30 s grace: {end:?}"
+        row.rgb = None;
+        assert_eq!(
+            crate::ui::campaign_score_shell::vmce_result_text_rgb(&row),
+            [255, 255, 0],
+            "a role without an authored colour keeps the native yellow"
         );
-        assert!(
-            retry_host[1].contains("15")
-                && retry_guest[1] == retry_host[1],
-            "retry line keeps the 15 s unit together on line two: {retry_host:?} / {retry_guest:?}"
-        );
-        assert!(
-            retry_host[1].contains("15 s") || retry_host[1].contains("15 秒"),
-            "number and unit share one line: {retry_host:?}"
-        );
-        assert_ne!(next, end);
-        assert_ne!(retry_host[0], retry_guest[0]);
-        assert_ne!(next[0], retry_host[0]);
     }
 
     #[test]

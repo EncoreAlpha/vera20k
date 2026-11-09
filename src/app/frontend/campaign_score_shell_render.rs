@@ -216,15 +216,48 @@ pub(crate) fn render_campaign_score_page(
             &wave.button_draws(),
         ));
     }
+    // VMCE's result page owns its right-panel buttons: the host gets Continue
+    // stacked above Leave Room, a guest gets Ready (until pressed) and Leave
+    // Room with no bottom Continue. Stock pages keep the single Continue.
+    #[cfg(feature = "vmce")]
+    let vmce_buttons = state
+        .frontend
+        .campaign_score_page
+        .as_ref()
+        .and_then(|page| page.vmce_board())
+        .map(|board| {
+            crate::ui::campaign_score_shell::vmce_result_buttons(board, &layout, continue_id)
+        });
     let buttons: Vec<PaintButton> = if wave.is_some() {
         Vec::new()
     } else {
-        vec![PaintButton {
-            rect: layout.continue_button,
-            pressed: pressed == Some(continue_id),
-            hovered: false,
-            enabled: true,
-        }]
+        #[cfg(feature = "vmce")]
+        if let Some(vmce) = vmce_buttons.as_ref() {
+            vmce.iter()
+                .map(|button| PaintButton {
+                    rect: button.rect,
+                    pressed: button.pressed || pressed == Some(button.id),
+                    hovered: hovered == Some(button.id),
+                    enabled: button.enabled,
+                })
+                .collect()
+        } else {
+            vec![PaintButton {
+                rect: layout.continue_button,
+                pressed: pressed == Some(continue_id),
+                hovered: false,
+                enabled: true,
+            }]
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            vec![PaintButton {
+                rect: layout.continue_button,
+                pressed: pressed == Some(continue_id),
+                hovered: false,
+                enabled: true,
+            }]
+        }
     };
     let button_sprites = shell_paint::paint_buttons(
         chrome,
@@ -234,6 +267,31 @@ pub(crate) fn render_campaign_score_page(
         None,
     );
     if wave.is_none() {
+        #[cfg(feature = "vmce")]
+        if let Some(vmce) = vmce_buttons.as_ref() {
+            for button in vmce {
+                let is_pressed = button.pressed || pressed == Some(button.id);
+                labels.push(PaintLabel {
+                    text: resolve_csf(state, button.key).into_owned().into(),
+                    rect: owner_draw_button_label_rect(button.rect, is_pressed),
+                    align: ShellAlign::BUTTON_CAPTION,
+                    rgb: crate::ui::campaign_score_shell::vmce_result_button_text_rgb(is_pressed),
+                    path_a_reveal: None,
+                });
+            }
+        } else {
+            labels.push(PaintLabel {
+                text: resolve_csf(state, "GUI:Continue").into_owned().into(),
+                rect: owner_draw_button_label_rect(
+                    layout.continue_button,
+                    pressed == Some(continue_id),
+                ),
+                align: ShellAlign::BUTTON_CAPTION,
+                rgb: SHELL_TEXT_RGB_ENABLED,
+                path_a_reveal: None,
+            });
+        }
+        #[cfg(not(feature = "vmce"))]
         labels.push(PaintLabel {
             text: resolve_csf(state, "GUI:Continue").into_owned().into(),
             rect: owner_draw_button_label_rect(
@@ -352,9 +410,11 @@ fn rgb_f32(rgb: [u8; 3]) -> [f32; 3] {
 }
 
 /// VMCE's settlement board: one flat native dialog fill and the native list
-/// frame behind four role rows, their ready/host glyphs and the truthful
-/// continuation caption. The board never touches the native `0x103` statics
-/// (rank, commendation, times, kills) or the Continue cell.
+/// frame behind four role rows and their single Ready glyph. Every row's text
+/// uses its authored House colour over a dark 1 px-inset translucent strip so a
+/// dark House stays readable; captions and icons keep the native yellow/art.
+/// The board never touches the native `0x103` statics (rank, commendation,
+/// times, kills) or the Continue cell.
 #[cfg(feature = "vmce")]
 #[allow(clippy::too_many_arguments)]
 fn paint_vmce_result_board(
@@ -374,18 +434,11 @@ fn paint_vmce_result_board(
     vmce_panel::push_fill(sprites, chrome, board_layout.fill, depth);
     vmce_panel::push_list_frame(sprites, chrome, board_layout.frame, scale, depth);
     vmce_panel::push_rule(sprites, chrome, board_layout.header_rule, scale, depth);
-    vmce_panel::push_rule(sprites, chrome, board_layout.status_rule, scale, depth);
-    let no_ready_gate = board.rows.iter().all(|row| row.ready.is_none());
-    for (index, header) in board_layout.headers.into_iter().enumerate() {
-        let key = if index == 3 && no_ready_gate {
-            "VERA:VmceHostColumn"
-        } else {
-            header.key
-        };
+    for header in board_layout.headers {
         labels.push(PaintLabel {
-            text: crate::i18n::tr(key).into(),
+            text: crate::i18n::tr(header.key).into(),
             rect: header.rect,
-            align: if header.centred || (index == 3 && no_ready_gate) {
+            align: if header.centred {
                 ShellAlign::H_CENTER
             } else {
                 ShellAlign::NONE
@@ -395,20 +448,31 @@ fn paint_vmce_result_board(
         });
     }
     let font = &state.renderer.bit_font;
-    let mut push = |text: String, rect, align| {
+    let mut push = |text: String, rect, align, rgb: [f32; 3]| {
         labels.push(PaintLabel {
             text: text.into(),
             rect,
             align,
-            rgb: SHELL_TEXT_RGB_ENABLED,
+            rgb,
             path_a_reveal: None,
         });
     };
     for (row, cells) in board.rows.iter().zip(board_layout.rows.iter()) {
+        // 1 px-inset dark strip behind all four text cells of this row.
+        let strip = crate::ui::shell::geom::RectPx::new(
+            cells.role.x + 1,
+            cells.role.y + 1,
+            (cells.ready.x + cells.ready.w - 1) - (cells.role.x + 1),
+            cells.role.h - 2,
+        );
+        vmce_panel::push_solid_rect_alpha(sprites, chrome, strip, [0.0, 0.0, 0.0], depth, 0.55);
+        let rgb = crate::ui::campaign_score_shell::vmce_result_text_rgb(row)
+            .map(|channel| f32::from(channel) / 255.0);
         push(
             vmce_panel::ellipsize_native(font, &row.role, scale.base_rect(cells.role).w),
             cells.role,
             ShellAlign::NONE,
+            rgb,
         );
         if let Some(flag) = row
             .flag
@@ -422,6 +486,7 @@ fn paint_vmce_result_board(
                 vmce_panel::ellipsize_native(font, &row.country, scale.base_rect(cells.country).w),
                 cells.country,
                 ShellAlign::NONE,
+                rgb,
             );
         }
         push(
@@ -432,37 +497,17 @@ fn paint_vmce_result_board(
             }),
             cells.verdict,
             ShellAlign::H_CENTER,
+            rgb,
         );
-        if let Some(ready) = row.ready {
-            let icon = if ready {
-                chrome.lan_player_status(false, true)
-            } else {
-                chrome.lan_player_not_ready()
-            };
-            if let Some(icon) = icon {
-                vmce_panel::push_native_centred(sprites, icon, cells.ready, scale);
-            }
+        let icon = if row.host {
+            chrome.lan_player_status(true, false)
+        } else if row.ready == Some(true) {
+            chrome.lan_player_status(false, true)
+        } else {
+            None
+        };
+        if let Some(icon) = icon {
+            vmce_panel::push_native_centred(sprites, icon, cells.ready, scale);
         }
-        if row.host
-            && let Some(icon) = chrome.lan_player_status(true, false)
-        {
-            vmce_panel::push_native_centred(sprites, icon, cells.host, scale);
-        }
-    }
-    // The caption owner supplies the hard break; keep both lines verbatim so a
-    // number and its unit never split.
-    let line_h = (17.0 * scale.factor()).round().max(1.0) as i32;
-    let leading = (2.0 * scale.factor()).round() as i32;
-    for (index, line) in board.caption_lines.iter().enumerate() {
-        push(
-            line.clone(),
-            crate::ui::shell::geom::RectPx::new(
-                board_layout.status.x,
-                board_layout.status.y + index as i32 * (line_h + leading),
-                board_layout.status.w,
-                line_h,
-            ),
-            ShellAlign::NONE,
-        );
     }
 }

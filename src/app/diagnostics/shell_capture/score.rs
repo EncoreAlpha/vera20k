@@ -135,6 +135,7 @@ fn synthetic_campaign_score_model() -> CampaignScoreScreenModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum VmceResultTarget {
     HostVictoryNext,
+    GuestUnready,
     GuestReady,
     DefeatRetry,
     CampaignEnd,
@@ -146,6 +147,7 @@ impl VmceResultTarget {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::HostVictoryNext => "vmce-result-host-victory-next",
+            Self::GuestUnready => "vmce-result-guest-unready",
             Self::GuestReady => "vmce-result-guest-ready",
             Self::DefeatRetry => "vmce-result-defeat-retry",
             Self::CampaignEnd => "vmce-result-campaign-end",
@@ -1010,10 +1012,14 @@ impl ScoreCapture {
 fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -> Result<()> {
     use crate::ui::campaign_score_shell::CampaignScoreScreenModel;
     use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
+    let local_host = !matches!(
+        target,
+        VmceResultTarget::GuestUnready | VmceResultTarget::GuestReady
+    );
     crate::app::shell_network_setup::install_vmce_lobby_fixture(
         state,
         &crate::app::shell_network_setup::VmceLobbyFixture {
-            host: true,
+            host: local_host,
             claimed_roles: 4,
             peer_ready: true,
             status: None,
@@ -1023,25 +1029,12 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
         .ok_or_else(|| anyhow::anyhow!("VMCE result fixture needs authored role metadata"))?;
     let ready = match target {
-        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => {
-            [Some(true), Some(true), Some(false), Some(false)]
-        }
+        VmceResultTarget::HostVictoryNext | VmceResultTarget::CampaignEnd => [Some(true); 4],
+        VmceResultTarget::GuestUnready => [Some(false); 4],
+        VmceResultTarget::GuestReady => [Some(false), Some(true), Some(false), Some(false)],
         VmceResultTarget::DefeatRetry => [None, None, None, None],
-        VmceResultTarget::CampaignEnd => [Some(true); 4],
     };
-    let (ready_count, total) = match target {
-        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => (2, 4),
-        VmceResultTarget::CampaignEnd => (4, 4),
-        VmceResultTarget::DefeatRetry => (0, 4),
-    };
-    use crate::app::match_runtime::session::VmceRoundEnding;
-    let ending = match target {
-        VmceResultTarget::HostVictoryNext | VmceResultTarget::GuestReady => VmceRoundEnding::Next,
-        VmceResultTarget::DefeatRetry => VmceRoundEnding::Retry,
-        VmceResultTarget::CampaignEnd => VmceRoundEnding::CampaignEnd,
-    };
-    let caption_lines =
-        crate::app::vmce_result::continuation_caption_lines(ending, true, ready_count, total);
+    let local_ready = matches!(target, VmceResultTarget::GuestReady);
     let board = VmceResultBoard {
         rows: (0..4)
             .map(|role| VmceResultRow {
@@ -1054,10 +1047,12 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
                 won: target.victory(),
                 ready: ready[role],
                 host: role == 0,
+                rgb: roles[role].color,
             })
             .collect(),
         victory: target.victory(),
-        caption_lines,
+        local_host,
+        local_ready,
     };
     let mut model = synthetic_campaign_score_model();
     model.par_time = "00:12:00".into();

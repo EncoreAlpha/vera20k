@@ -886,7 +886,7 @@ impl App {
         let layout = Self::campaign_score_layout(state);
         // Hover tracks the value statics' help strings. Keep the separate
         // button-only press feed so those static ids are never pressed.
-        let hover_feed = dialog
+        let hover_feed: Vec<crate::ui::shell::layout::LaidOutControl> = dialog
             .controls()
             .iter()
             .filter(|control| control.action.is_some() || control.tooltip_key.is_some())
@@ -899,10 +899,42 @@ impl App {
                 })
             })
             .collect();
-        let press_feed = vec![crate::ui::shell::layout::LaidOutControl {
+        let mut press_feed = vec![crate::ui::shell::layout::LaidOutControl {
             id: dialog.continue_button(),
             rect: layout.continue_button,
         }];
+        let mut hover_feed = hover_feed;
+        // VMCE's result page owns its right-panel buttons: Ready/Continue/Leave
+        // replace the single native Continue and the native control's help.
+        #[cfg(feature = "vmce")]
+        if let Some(board) = state
+            .frontend
+            .campaign_score_page
+            .as_ref()
+            .and_then(|page| page.vmce_board())
+            .cloned()
+        {
+            hover_feed.retain(|control| control.id != dialog.continue_button());
+            let buttons = crate::ui::campaign_score_shell::vmce_result_buttons(
+                &board,
+                &layout,
+                dialog.continue_button(),
+            );
+            press_feed = buttons
+                .iter()
+                .filter(|button| button.enabled)
+                .map(|button| crate::ui::shell::layout::LaidOutControl {
+                    id: button.id,
+                    rect: button.rect,
+                })
+                .collect();
+            for button in &buttons {
+                hover_feed.push(crate::ui::shell::layout::LaidOutControl {
+                    id: button.id,
+                    rect: button.rect,
+                });
+            }
+        }
         state
             .frontend
             .shell_controller
@@ -925,9 +957,16 @@ impl App {
             .frontend
             .shell_controller
             .on_pointer_down(x, y, &press_feed);
-        if state.frontend.shell_controller.pressed()
-            == Some(Self::campaign_score_dialog(state).continue_button())
-        {
+        let pressed = state.frontend.shell_controller.pressed();
+        let continue_id = Self::campaign_score_dialog(state).continue_button();
+        #[cfg(feature = "vmce")]
+        let vmce_button = pressed.is_some_and(|id| {
+            id == crate::ui::campaign_score_shell::VMCE_READY_CONTROL
+                || id == crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL
+        });
+        #[cfg(not(feature = "vmce"))]
+        let vmce_button = false;
+        if pressed == Some(continue_id) || vmce_button {
             Self::play_main_menu_button_sound(state);
         }
     }
@@ -950,12 +989,35 @@ impl App {
         use crate::ui::campaign_score_shell::CampaignScoreDialog;
         let dialog = Self::campaign_score_dialog(state);
         let (_, _, press_feed, (x, y)) = Self::campaign_score_input(state);
-        if state
+        let released = state
             .frontend
             .shell_controller
-            .on_pointer_up(x, y, &press_feed)
-            != Some(dialog.continue_button())
+            .on_pointer_up(x, y, &press_feed);
+        // VMCE's own right-panel buttons: Leave Room closes the page, a guest's
+        // Ready runs the existing ready action; neither is the native Continue.
+        #[cfg(feature = "vmce")]
+        if let Some(board) = state
+            .frontend
+            .campaign_score_page
+            .as_ref()
+            .and_then(|page| page.vmce_board())
+            .cloned()
         {
+            match released {
+                Some(crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL) => {
+                    crate::app::vmce_result::leave_room_pressed(state);
+                    return;
+                }
+                Some(crate::ui::campaign_score_shell::VMCE_READY_CONTROL) => {
+                    if !board.local_host && !board.local_ready {
+                        crate::app::vmce_result::continue_pressed(state);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if released != Some(dialog.continue_button()) {
             return;
         }
         match dialog {

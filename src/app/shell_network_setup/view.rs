@@ -299,6 +299,8 @@ pub(crate) struct VmceResultRoleInfo {
     pub(crate) owner: String,
     pub(crate) country: String,
     pub(crate) flag: Option<String>,
+    /// The authored House colour the settlement row's text uses.
+    pub(crate) color: Option<[u8; 3]>,
 }
 
 /// The four authored role identities the settlement page lists, from the same
@@ -336,6 +338,7 @@ pub(crate) fn vmce_result_roles(state: &AppState) -> Option<[VmceResultRoleInfo;
             owner,
             country: country_text(country),
             flag: country_flag(country),
+            color: details.colors[role],
         }
     });
     any.then_some(roles)
