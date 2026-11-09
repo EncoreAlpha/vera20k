@@ -235,10 +235,8 @@ pub(crate) fn result_board(
         }
         let info = &roles[role];
         rows.push(VmceResultRow {
-            role: crate::i18n::tr_fill(
-                "VERA:VmceResultRole",
-                &[("number", &(role + 1)), ("house", &info.owner)],
-            ),
+            player: human.name.clone(),
+            role: info.owner.clone(),
             country: info.country.clone(),
             flag: info.flag.clone(),
             won: survived
@@ -402,7 +400,8 @@ mod tests {
     #[test]
     fn the_result_row_text_uses_the_authored_house_colour() {
         let mut row = crate::ui::campaign_score_shell::VmceResultRow {
-            role: "P1 Americans House".into(),
+            player: "LiveHost".into(),
+            role: "Americans House".into(),
             country: "America".into(),
             flag: None,
             won: true,

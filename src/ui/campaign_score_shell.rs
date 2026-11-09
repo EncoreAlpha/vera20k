@@ -483,7 +483,9 @@ pub struct CampaignScoreControlRect {
 #[cfg(feature = "vmce")]
 #[derive(Debug, Clone, Default)]
 pub struct VmceResultRow {
-    /// Role cell: "P<n>" plus the authored role/House name.
+    /// Lobby player name for the separate Player column (LiveHost, ...).
+    pub player: String,
+    /// Owner cell: the authored role/House name only, no "P<n>" prefix.
     pub role: String,
     /// Localized country name, if the role has one.
     pub country: String,
@@ -526,6 +528,7 @@ pub struct VmceResultHeader {
 #[cfg(feature = "vmce")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VmceResultRowCells {
+    pub player: RectPx,
     pub role: RectPx,
     pub country_icon: RectPx,
     pub country: RectPx,
@@ -541,7 +544,7 @@ pub struct VmceResultLayout {
     pub frame: RectPx,
     pub fill: RectPx,
     pub header_rule: RectPx,
-    pub headers: [VmceResultHeader; 4],
+    pub headers: [VmceResultHeader; 5],
     pub rows: [VmceResultRowCells; 4],
 }
 
@@ -551,47 +554,55 @@ pub struct VmceResultLayout {
 /// clears the native stats, eagle, time panels and the right-panel buttons.
 #[cfg(feature = "vmce")]
 fn vmce_result_layout() -> VmceResultLayout {
-    let frame = RectPx::new(124, 420, 396, 104);
-    let fill = RectPx::new(126, 422, 392, 100);
+    let frame = RectPx::new(124, 432, 396, 104);
+    let fill = RectPx::new(126, 434, 392, 100);
     let x = 130;
     let text_w = 384;
-    let header_y = 424;
+    let header_y = 436;
+    // Player / Owner / Country / Result / Ready, rebalanced inside the same
+    // 384 px content width so player and House names keep whole at 800.
     let headers = [
         VmceResultHeader {
-            key: "VERA:VmceRoleColumn",
+            key: "VERA:VmcePlayers",
             rect: RectPx::new(x, header_y, 92, 15),
             centred: false,
         },
         VmceResultHeader {
+            key: "VERA:VmceOwner",
+            rect: RectPx::new(x + 92, header_y, 86, 15),
+            centred: false,
+        },
+        VmceResultHeader {
             key: "VERA:VmceCountryColumn",
-            rect: RectPx::new(x + 92, header_y, 172, 15),
+            rect: RectPx::new(x + 182, header_y, 112, 15),
             centred: false,
         },
         VmceResultHeader {
             key: "VERA:VmceResultColumn",
-            rect: RectPx::new(x + 264, header_y, 60, 15),
+            rect: RectPx::new(x + 290, header_y, 52, 15),
             centred: true,
         },
         VmceResultHeader {
             key: "VERA:VmceReady",
-            rect: RectPx::new(x + 324, header_y, 60, 15),
+            rect: RectPx::new(x + 342, header_y, 42, 15),
             centred: true,
         },
     ];
     let rows = std::array::from_fn(|row| {
-        let y = 443 + row as i32 * 20;
+        let y = 455 + row as i32 * 20;
         VmceResultRowCells {
-            role: RectPx::new(x, y, 92, 17),
-            country_icon: RectPx::new(x + 92, y - 1, 50, 19),
-            country: RectPx::new(x + 142, y, 122, 17),
-            verdict: RectPx::new(x + 264, y, 60, 17),
-            ready: RectPx::new(x + 324, y - 1, 60, 19),
+            player: RectPx::new(x, y, 92, 17),
+            role: RectPx::new(x + 92, y, 86, 17),
+            country_icon: RectPx::new(x + 182, y - 1, 50, 19),
+            country: RectPx::new(x + 234, y, 56, 17),
+            verdict: RectPx::new(x + 290, y, 52, 17),
+            ready: RectPx::new(x + 342, y - 1, 42, 19),
         }
     });
     VmceResultLayout {
         frame,
         fill,
-        header_rule: RectPx::new(x, 440, text_w, 1),
+        header_rule: RectPx::new(x, 452, text_w, 1),
         headers,
         rows,
     }
@@ -902,6 +913,7 @@ impl CampaignScoreLayout {
                 header.rect = scale.scale_rect(header.rect);
             }
             for row in &mut board.rows {
+                row.player = scale.scale_rect(row.player);
                 row.role = scale.scale_rect(row.role);
                 row.country_icon = scale.scale_rect(row.country_icon);
                 row.country = scale.scale_rect(row.country);
@@ -1708,52 +1720,58 @@ mod tests {
 
     #[cfg(feature = "vmce")]
     #[test]
-    fn vmce_settlement_lays_out_the_compact_four_row_board() {
+    fn vmce_settlement_lays_out_the_five_column_board() {
         let layout = CampaignScoreLayout::compute_layout(800, 600);
         let board = layout.vmce_result.expect("VMCE settlement board");
         assert_eq!(board.rows.len(), 4);
-        assert_eq!(board.headers.len(), 4);
-        assert_eq!(board.frame, RectPx::new(124, 420, 396, 104));
-        assert_eq!(board.fill, RectPx::new(126, 422, 392, 100));
-        assert_eq!(board.header_rule, RectPx::new(130, 440, 384, 1));
+        assert_eq!(board.headers.len(), 5);
+        // The whole board shifts down 12 px but keeps its compact height.
+        assert_eq!(board.frame, RectPx::new(124, 432, 396, 104));
+        assert_eq!(board.fill, RectPx::new(126, 434, 392, 100));
+        assert_eq!(board.header_rule, RectPx::new(130, 452, 384, 1));
         assert_eq!(
             board.headers.map(|header| header.key),
             [
-                "VERA:VmceRoleColumn",
+                "VERA:VmcePlayers",
+                "VERA:VmceOwner",
                 "VERA:VmceCountryColumn",
                 "VERA:VmceResultColumn",
                 "VERA:VmceReady"
             ]
         );
         for (index, row) in board.rows.iter().enumerate() {
-            let y = 443 + index as i32 * 20;
-            assert_eq!(row.role, RectPx::new(130, y, 92, 17));
-            assert_eq!(row.country_icon, RectPx::new(222, y - 1, 50, 19));
-            assert_eq!(row.country, RectPx::new(272, y, 122, 17));
-            assert_eq!(row.verdict, RectPx::new(394, y, 60, 17));
-            assert_eq!(row.ready, RectPx::new(454, y - 1, 60, 19));
-            // No caption strip: the board ends right below the last row.
-            assert!(row.role.y + row.role.h <= board.frame.y + board.frame.h);
+            let y = 455 + index as i32 * 20;
+            assert_eq!(row.player, RectPx::new(130, y, 92, 17));
+            assert_eq!(row.role, RectPx::new(222, y, 86, 17));
+            assert_eq!(row.country_icon, RectPx::new(312, y - 1, 50, 19));
+            assert_eq!(row.country, RectPx::new(364, y, 56, 17));
+            assert_eq!(row.verdict, RectPx::new(420, y, 52, 17));
+            assert_eq!(row.ready, RectPx::new(472, y - 1, 42, 19));
+            // Every column sits inside its neighbour without overlap or gaps.
+            assert_eq!(row.player.x + row.player.w, row.role.x);
+            assert!(row.role.x + row.role.w <= row.country_icon.x);
+            assert_eq!(row.country_icon.x + row.country_icon.w, row.country.x.saturating_sub(2));
+            assert!(row.country.x + row.country.w <= row.verdict.x);
+            assert_eq!(row.verdict.x + row.verdict.w, row.ready.x);
+            assert_eq!(row.ready.x + row.ready.w, board.header_rule.x + board.header_rule.w);
+            // No caption strip: the last row ends inside the compact board.
+            assert!(row.player.y + row.player.h <= board.frame.y + board.frame.h);
         }
-        assert_eq!(board.rows[3].role.y, 503);
-        assert!(board.frame.y >= 420, "board moves up into the lower band");
-        assert!(board.rows[3].ready.y + board.rows[3].ready.h <= board.frame.y + board.frame.h);
-        // The compact board clears the native statics/time panels above it and
-        // the right-panel column (Continue slot at x 644).
+        assert_eq!(board.rows[3].player.y, 515);
+        // Board clearance after the down-shift: time panels above, status/help
+        // below, right-panel buttons on the right.
+        assert!(board.frame.y >= 430, "board moved down to clear the time panels");
+        assert!(board.frame.y > 417, "time panels end at y 417");
         assert!(board.frame.y + board.frame.h <= layout.status_help.y);
+        assert!(board.rows[3].ready.y + board.rows[3].ready.h < board.frame.y + board.frame.h);
         assert!(board.frame.x + board.frame.w < layout.continue_button.x);
-        assert!(board.frame.y >= 417, "time panels end at y 417");
+        assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
         // The right-panel slots reuse the lobby's native button rows.
         assert_eq!(layout.vmce_ready_button, RectPx::new(644, 241, 156, 42));
         assert_eq!(layout.vmce_continue_button, RectPx::new(644, 493, 156, 42));
         assert_eq!(layout.vmce_leave_button, RectPx::new(644, 535, 156, 42));
-        // The native Continue keeps its own rect/id; the VMCE host cell is the
-        // slot above it and never touches it.
-        assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
-        assert!(
-            layout.vmce_continue_button.y + layout.vmce_continue_button.h
-                <= layout.vmce_leave_button.y
-        );
+        assert!(layout.vmce_continue_button.y + layout.vmce_continue_button.h
+            <= layout.vmce_leave_button.y);
         // The responsive path scales the board and its buttons with the page.
         let responsive = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
         let scaled = responsive.vmce_result.expect("scaled VMCE board");
@@ -1766,7 +1784,8 @@ mod tests {
     #[test]
     fn vmce_result_row_text_colour_falls_back_to_native_yellow() {
         let mut row = VmceResultRow {
-            role: "P1 Americans House".into(),
+            player: "LiveHost".into(),
+            role: "Americans House".into(),
             country: "America".into(),
             flag: None,
             won: true,

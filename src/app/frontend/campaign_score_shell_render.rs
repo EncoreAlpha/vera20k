@@ -460,14 +460,20 @@ fn paint_vmce_result_board(
     for (row, cells) in board.rows.iter().zip(board_layout.rows.iter()) {
         // 1 px-inset dark strip behind all four text cells of this row.
         let strip = crate::ui::shell::geom::RectPx::new(
-            cells.role.x + 1,
-            cells.role.y + 1,
-            (cells.ready.x + cells.ready.w - 1) - (cells.role.x + 1),
-            cells.role.h - 2,
+            cells.player.x + 1,
+            cells.player.y + 1,
+            (cells.ready.x + cells.ready.w - 1) - (cells.player.x + 1),
+            cells.player.h - 2,
         );
         vmce_panel::push_solid_rect_alpha(sprites, chrome, strip, [0.0, 0.0, 0.0], depth, 0.55);
         let rgb = crate::ui::campaign_score_shell::vmce_result_text_rgb(row)
             .map(|channel| f32::from(channel) / 255.0);
+        push(
+            vmce_panel::ellipsize_native(font, &row.player, scale.base_rect(cells.player).w),
+            cells.player,
+            ShellAlign::NONE,
+            rgb,
+        );
         push(
             vmce_panel::ellipsize_native(font, &row.role, scale.base_rect(cells.role).w),
             cells.role,

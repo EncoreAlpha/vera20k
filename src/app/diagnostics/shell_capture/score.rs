@@ -1153,10 +1153,12 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     let board = VmceResultBoard {
         rows: (0..4)
             .map(|role| VmceResultRow {
-                role: crate::i18n::tr_fill(
-                    "VERA:VmceResultRole",
-                    &[("number", &(role + 1)), ("house", &roles[role].owner)],
-                ),
+                player: if role == 0 {
+                    "LiveHost".into()
+                } else {
+                    format!("LiveGuest{role}")
+                },
+                role: roles[role].owner.clone(),
                 country: roles[role].country.clone(),
                 flag: roles[role].flag.clone(),
                 won: target.victory(),
