@@ -629,12 +629,12 @@ pub const VMCE_READY_CONTROL: u16 = 0x7001;
 pub const VMCE_LEAVE_CONTROL: u16 = 0x7002;
 
 /// Authored 800x600 right-panel slots the VMCE result buttons reuse: the
-/// lobby's Start-Mission slot (Continue/Ready), the next lobby slot
-/// (`统计数据`) and the bottom native slot (Leave Room).
+/// lobby's topmost action slot (Continue/Ready), the slot below it
+/// (`统计数据`) and the bottom native slot (Leave Room / stats Back).
 #[cfg(feature = "vmce")]
-const VMCE_READY_RECT: RectPx = RectPx::new(644, 241, 156, 42);
+const VMCE_READY_RECT: RectPx = RectPx::new(644, 199, 156, 42);
 #[cfg(feature = "vmce")]
-const VMCE_STATS_RECT: RectPx = RectPx::new(644, 283, 156, 42);
+const VMCE_STATS_RECT: RectPx = RectPx::new(644, 241, 156, 42);
 #[cfg(feature = "vmce")]
 const VMCE_LEAVE_RECT: RectPx = RectPx::new(644, 535, 156, 42);
 
@@ -738,13 +738,13 @@ pub fn vmce_statistics_button(layout: &CampaignScoreLayout) -> VmceResultButton 
 }
 
 /// The statistics page's only right-panel button: a normal (never lit) Back
-/// in the first native slot.
+/// in the bottom native slot, where Leave Room usually sits.
 #[cfg(feature = "vmce")]
 pub fn vmce_statistics_back_button(layout: &CampaignScoreLayout) -> VmceResultButton {
     VmceResultButton {
         kind: VmceResultButtonKind::Back,
         id: VMCE_STATS_BACK_CONTROL,
-        rect: layout.vmce_ready_button,
+        rect: layout.vmce_leave_button,
         pressed: false,
         enabled: true,
         key: "VERA:VmceBack",
@@ -2019,8 +2019,8 @@ mod tests {
         assert_eq!(layout.continue_button, RectPx::new(644, 535, 156, 42));
         // The right-panel slots reuse the lobby's native button rows: row one
         // Continue/Ready, row two 统计数据, bottom Leave Room.
-        assert_eq!(layout.vmce_ready_button, RectPx::new(644, 241, 156, 42));
-        assert_eq!(layout.vmce_stats_button, RectPx::new(644, 283, 156, 42));
+        assert_eq!(layout.vmce_ready_button, RectPx::new(644, 199, 156, 42));
+        assert_eq!(layout.vmce_stats_button, RectPx::new(644, 241, 156, 42));
         assert_eq!(layout.vmce_leave_button, RectPx::new(644, 535, 156, 42));
         assert_eq!(
             layout.vmce_ready_button.y + layout.vmce_ready_button.h,
@@ -2073,14 +2073,14 @@ mod tests {
         assert_eq!(host.len(), 3);
         assert_eq!(host[0].kind, VmceResultButtonKind::Continue);
         assert_eq!(host[0].id, continue_id, "native Continue id is unchanged");
-        assert_eq!(host[0].rect, RectPx::new(644, 241, 156, 42));
+        assert_eq!(host[0].rect, RectPx::new(644, 199, 156, 42));
         assert!(
             !host[0].pressed && !host[0].enabled,
             "host Continue waits in the native disabled state"
         );
         assert_eq!(host[1].kind, VmceResultButtonKind::Statistics);
         assert_eq!(host[1].id, VMCE_STATS_CONTROL);
-        assert_eq!(host[1].rect, RectPx::new(644, 283, 156, 42));
+        assert_eq!(host[1].rect, RectPx::new(644, 241, 156, 42));
         assert_eq!(host[2].kind, VmceResultButtonKind::Leave);
         assert_eq!(host[2].id, VMCE_LEAVE_CONTROL);
         assert_eq!(host[2].rect, RectPx::new(644, 535, 156, 42));
@@ -2094,7 +2094,7 @@ mod tests {
         assert_eq!(guest.len(), 3);
         assert_eq!(guest[0].kind, VmceResultButtonKind::Ready);
         assert_eq!(guest[0].id, VMCE_READY_CONTROL);
-        assert_eq!(guest[0].rect, RectPx::new(644, 241, 156, 42));
+        assert_eq!(guest[0].rect, RectPx::new(644, 199, 156, 42));
         assert!(
             !guest[0].pressed && guest[0].enabled,
             "unready guest may click"
@@ -2125,7 +2125,7 @@ mod tests {
         let end = CampaignScoreDialog::CampaignEnd.continue_button();
         let host_end = vmce_result_buttons(&board(true, false, true), &layout, end, true);
         assert_eq!(host_end[0].id, end);
-        assert_eq!(host_end[0].rect, RectPx::new(644, 241, 156, 42));
+        assert_eq!(host_end[0].rect, RectPx::new(644, 199, 156, 42));
         // Defeat keeps the native single Continue at its native rect.
         let defeat = vmce_result_buttons(
             &VmceResultBoard {
@@ -2146,7 +2146,7 @@ mod tests {
         let back = vmce_statistics_back_button(&layout);
         assert_eq!(back.kind, VmceResultButtonKind::Back);
         assert_eq!(back.id, VMCE_STATS_BACK_CONTROL);
-        assert_eq!(back.rect, RectPx::new(644, 241, 156, 42));
+        assert_eq!(back.rect, RectPx::new(644, 535, 156, 42));
         assert!(!back.pressed && back.enabled);
         assert_eq!(back.key, "VERA:VmceBack");
     }
@@ -2155,8 +2155,8 @@ mod tests {
     #[test]
     fn vmce_button_captions_are_centred_for_lit_and_disabled_states() {
         for rect in [
+            RectPx::new(644, 199, 156, 42),
             RectPx::new(644, 241, 156, 42),
-            RectPx::new(644, 283, 156, 42),
             RectPx::new(644, 535, 156, 42),
         ] {
             let caption = vmce_button_caption_rect(rect);
@@ -2176,11 +2176,11 @@ mod tests {
         let stats = layout.vmce_statistics;
         // The right panel: row one Continue/Ready, row two Statistics, bottom
         // Leave; the stats page's only control is the row-one Back.
-        assert_eq!(layout.vmce_ready_button, RectPx::new(644, 241, 156, 42));
-        assert_eq!(layout.vmce_stats_button, RectPx::new(644, 283, 156, 42));
+        assert_eq!(layout.vmce_ready_button, RectPx::new(644, 199, 156, 42));
+        assert_eq!(layout.vmce_stats_button, RectPx::new(644, 241, 156, 42));
         assert_eq!(layout.vmce_leave_button, RectPx::new(644, 535, 156, 42));
         let back = vmce_statistics_back_button(&layout);
-        assert_eq!(back.rect, layout.vmce_ready_button);
+        assert_eq!(back.rect, layout.vmce_leave_button);
         // Shared six-column, four-row table with time header.
         assert_eq!(stats.headers.len(), 6);
         assert_eq!(stats.rows.len(), 4);
@@ -2209,14 +2209,21 @@ mod tests {
         }
         // The stats page right panel has no Leave and no empty buttons.
         assert!(!stats.rows.is_empty());
-        assert_ne!(back.rect, layout.vmce_leave_button);
+        assert_eq!(
+            back.rect, layout.vmce_leave_button,
+            "stats Back takes the bottom slot where Leave normally sits"
+        );
+        assert_ne!(
+            back.rect, layout.vmce_ready_button,
+            "no row-one stats button"
+        );
         for row in stats.rows {
             assert!(row.cells[5].x + row.cells[5].w < layout.vmce_ready_button.x);
         }
         let page_buttons = vmce_stats_page_buttons(&layout);
         assert_eq!(page_buttons.len(), 1, "only the row-one Back");
         assert_eq!(page_buttons[0].kind, VmceResultButtonKind::Back);
-        assert_eq!(page_buttons[0].rect, RectPx::new(644, 241, 156, 42));
+        assert_eq!(page_buttons[0].rect, RectPx::new(644, 535, 156, 42));
         // Scaled path: the table scales with the shell.
         let scaled = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
         assert!(scaled.vmce_statistics.rows[0].cells[0].w > stats.rows[0].cells[0].w);

@@ -393,7 +393,10 @@ pub(crate) fn render_campaign_score_page(
         instances: chrome_sprites,
     });
     if let Some(art) = state.frontend.campaign_score_art.as_ref() {
-        if let (Some(strip), Some(frame)) = (art.scrt.as_ref(), scrt_frame)
+        // BC6-style stats backdrop: the failure page draws SCRBK alone; the
+        // 0x103 SCRT panel (the armoured-eagle dialog art) is skipped.
+        if !stats_open
+            && let (Some(strip), Some(frame)) = (art.scrt.as_ref(), scrt_frame)
             && let Some(entry) = strip.frames.get(frame).copied()
         {
             // `WM_PAINT_Handler 0x00621E90` draws the right-panel chrome
@@ -572,7 +575,7 @@ fn paint_vmce_stats_labels(
             push(value.clone(), rect, align, rgb);
         }
     }
-    let back = crate::ui::campaign_score_shell::vmce_button_caption_rect(layout.vmce_ready_button);
+    let back = crate::ui::campaign_score_shell::vmce_button_caption_rect(layout.vmce_leave_button);
     push(
         crate::i18n::tr("VERA:VmceBack"),
         back,
