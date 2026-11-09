@@ -139,6 +139,8 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
             CooperativeSignal::StageRejected => CooperativeRoundEvent::StageRejected,
             #[cfg(feature = "vmce")]
             CooperativeSignal::StageAbsent => CooperativeRoundEvent::StageAbsent,
+            #[cfg(feature = "vmce")]
+            CooperativeSignal::RetryVote => CooperativeRoundEvent::RetryVote { source },
         }
     } else {
         let message = LanMessage::decode(&incoming.payload)?;
@@ -232,6 +234,8 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
     let signal = match request {
         NetworkLoadingRequest::CooperativeReady => CooperativeSignal::Ready,
         NetworkLoadingRequest::CooperativeLeave => CooperativeSignal::Left,
+        #[cfg(feature = "vmce")]
+        NetworkLoadingRequest::CooperativeRetryVote => CooperativeSignal::RetryVote,
         NetworkLoadingRequest::CooperativeBegin => CooperativeSignal::Begin,
         NetworkLoadingRequest::CooperativeAck => CooperativeSignal::Ack,
         NetworkLoadingRequest::CooperativeGo => CooperativeSignal::Go,

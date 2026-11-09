@@ -54,34 +54,74 @@ pub(crate) fn open_victory(state: &mut AppState) {
     );
 }
 
-/// Open the result page for a lost mission. Continue retries the same
-/// frozen mission on every peer; no next stage is carried.
+/// Open the defeat page on the native BC6 shell (`0xBC6`), not `0x103`. The
+/// page is the statistics view itself: four role rows, no chat and no player
+/// setup columns. Its Continue is the retry vote/start gate; its Quit is
+/// Leave Room.
 pub(crate) fn open_defeat(state: &mut AppState) {
     let elapsed = state
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let Some(rows) = score_rows(state) else {
+    let Some(model) = crate::app::cooperative_round::build_vmce_defeat_model(state, elapsed) else {
         App::leave_mission_result_screen(state);
         return;
     };
-    let mut model =
-        crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    // The ranking strings are time buckets, not a verdict; a lost mission must
-    // not read "Mission completed ahead of schedule" (0x6C9231). Keep the
-    // native par/your-time and kills statics, replace only the verdict text.
-    (model.rank, model.commendation) = defeat_headline();
-    open_page(
-        state,
-        model,
+    let rows = model.rows.len();
+    let side = model.side;
+    crate::app::lan_service::cooperative::hold_transport(state);
+    App::retire_finished_scenario(state);
+    if let Err(error) = state.match_state.session.enter_vmce_round_ending(
         None,
         true,
         crate::app::match_runtime::session::VmceRoundEnding::Retry,
         rows,
-        false,
-        "defeat",
-        false,
-    );
+    ) {
+        log::error!("Could not open the VMCE defeat round: {error:#}");
+        crate::app::cooperative_round::return_to_shell(state);
+        return;
+    }
+    let _ = side;
+    open_defeat_page(state, model);
+}
+
+/// Present an already-built VMCE defeat model on the native BC6 shell. Both
+/// the real defeat path and the synthetic captures use this one page owner.
+#[cfg(feature = "vmce")]
+pub(crate) fn open_defeat_page(
+    state: &mut AppState,
+    model: crate::ui::coop_score_shell::CoopScoreModel,
+) {
+    let side = model.side;
+    // The shared BC6 backdrop is the native campaign score SCRBK.
+    state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
+        crate::render::main_menu_shell_chrome::build_campaign_score_art(
+            &state.renderer.gpu,
+            &state.renderer.batch_renderer,
+            assets,
+            side,
+            crate::app::frontend::shell_layout::art_key_screen_width(state),
+            state.process_assets.side_score_art(side),
+        )
+    });
+    state.frontend.score_page = None;
+    state.frontend.score_art = None;
+    state.frontend.campaign_score_page = None;
+    state.frontend.coop_score_page = Some(crate::ui::coop_score_shell::CoopScorePage {
+        model,
+        ui: Default::default(),
+        victory: false,
+        saved: None,
+        campaign_end: None,
+    });
+    state.frontend.screen = crate::app::GameScreen::MissionResult {
+        title: String::new(),
+        detail: String::new(),
+    };
+    state
+        .frontend
+        .shell_controller
+        .reset_to(crate::ui::coop_score_shell::COOP_SCORE_DIALOG, false);
 }
 
 /// Whether the open `0x103` page is VMCE's. Stock modes keep their own
@@ -229,19 +269,6 @@ pub(crate) fn result_board(
         local_host: state.match_state.session.host(),
         local_ready,
     })
-}
-
-/// The defeat page's rank and message. Retail `0x103` is opened only by
-/// `GameExit::Victory` (`0x006C8E80`); a lost campaign mission takes the
-/// `GameExit::Defeat` (`0x00685DC0`) tail instead, so the shared dialog has no
-/// native defeat headline. VMCE authors defeat onto `0x103`, so it must not
-/// inherit the victory/ranking headline (`0x6C9231` under/over-par strings).
-#[cfg(feature = "vmce")]
-pub(crate) fn defeat_headline() -> (String, String) {
-    (
-        crate::i18n::tr("VERA:VmceResultDefeatRank"),
-        crate::i18n::tr("VERA:VmceResultDefeatMessage"),
-    )
 }
 
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
@@ -393,13 +420,5 @@ mod tests {
             [255, 255, 0],
             "a role without an authored colour keeps the native yellow"
         );
-    }
-
-    #[test]
-    fn the_defeat_headline_is_not_the_victory_commendation() {
-        let (rank, message) = defeat_headline();
-        assert!(!rank.is_empty() && !message.is_empty());
-        assert!(!message.contains("ahead of schedule"));
-        assert!(!message.contains("提前"));
     }
 }

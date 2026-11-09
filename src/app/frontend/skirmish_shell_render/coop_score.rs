@@ -42,11 +42,11 @@ pub(crate) fn render_coop_score(
     let (width, height) = (state.render_width(), state.render_height());
     let fills = crate::app::frontend::shell_layout::fills_window(state);
     let now = Instant::now();
-    let (can_continue, map_index) = {
+    let (can_continue, map_index, stats) = {
         let model = &state.frontend.coop_score_page.as_ref().expect("view").model;
-        (model.can_continue, model.map_index)
+        (model.can_continue, model.map_index, model.vmce_stats)
     };
-    match map_index.filter(|_| can_continue) {
+    match map_index.filter(|_| can_continue && !stats) {
         Some(index) => ensure_map_preview_texture(
             state,
             index,
@@ -146,7 +146,13 @@ pub(crate) fn render_coop_score(
         ShellAlign::V_CENTER,
         SHELL_LABEL_TEXT_RGB,
     ));
-    for spec in COOP_SCORE_CONTROLS.iter().filter(|spec| shown(spec.id)) {
+    // VMCE's statistics page keeps only the score table, time, title and the
+    // two buttons: no next-mission/difficulty/description prompts.
+    let stats_hidden = |id: u16| stats && vmce_stats_hidden(id);
+    for spec in COOP_SCORE_CONTROLS
+        .iter()
+        .filter(|spec| shown(spec.id) && !stats_hidden(spec.id))
+    {
         let Some(rect) = layout.control_rect(spec.id) else {
             continue;
         };
@@ -168,7 +174,8 @@ pub(crate) fn render_coop_score(
         (&model.mode_label, MODE_LABEL),
         (&model.map_label, MAP_LABEL),
     ] {
-        if shown(id)
+        if !stats
+            && shown(id)
             && let Some(rect) = layout.control_rect(id)
         {
             texts.push(text(
@@ -180,7 +187,11 @@ pub(crate) fn render_coop_score(
         }
     }
     // The tail's cells: name, then "%d" for each count, in the row colour.
-    for (row, cells) in model.rows.iter().zip(ROW_CELLS) {
+    // VMCE's defeat page extends this to the four authored role rows.
+    for (index, row) in model.rows.iter().enumerate() {
+        let Some(cells) = layout.row_cells(index) else {
+            continue;
+        };
         let values = [
             row.name.clone(),
             row.kills.to_string(),
@@ -188,77 +199,95 @@ pub(crate) fn render_coop_score(
             row.built.to_string(),
             row.score.to_string(),
         ];
-        for (value, id) in values.iter().zip(cells) {
-            let spec = COOP_SCORE_CONTROLS
-                .iter()
-                .find(|spec| spec.id == id)
-                .expect("row cell spec");
+        for (column, (value, id)) in values.iter().zip(cells).enumerate() {
+            let row_align = match column {
+                0 => CoopScoreAlign::Left,
+                _ => CoopScoreAlign::Right,
+            };
             if let Some(rect) = layout.control_rect(id) {
-                texts.push(text(value, rect, align(spec.align), rgb(row.rgb)));
+                texts.push(text(value, rect, align(row_align), rgb(row.rgb)));
             }
         }
     }
     let chrome = atlas.control_chrome();
-    for (row, slot) in view.slots.iter().enumerate() {
-        let Some(slot) = slot else {
-            continue;
-        };
-        // 0x0046FA20: wolhost.pcx on slot 0 and wolacpt.pcx on slot 1 while
-        // ready, on human slots only.
-        if let Some(icon) = atlas.lan_player_status(row == 0 && slot.ready, row == 1 && slot.ready)
-            && let Some(rect) = layout.control_rect(READY_ICONS[row])
-        {
-            push_flag_entry_clipped_centered(&mut controls, icon, rect, scale, SHELL_CONTROL_DEPTH);
-        }
-        if !can_continue {
-            continue;
-        }
-        if let Some(flag) = slot
-            .flag
-            .as_deref()
-            .and_then(|name| atlas.lan_player_side(name))
-            && let Some(rect) = layout.control_rect(FLAGS[row])
-        {
-            push_flag_entry_clipped_centered(&mut controls, flag, rect, scale, SHELL_CONTROL_DEPTH);
-        }
-        let name = crate::ui::multiplayer_setup::SetupChoice {
-            value: 0,
-            text: slot.name.clone(),
-            swatch: None,
-        };
-        // 0x0046DCC0 disables the other human's combos; the name combo has
-        // no handler and stays disabled for both.
-        for (id, item, enabled) in [
-            (NAMES[row], &name, false),
-            (COUNTRIES[row], &slot.country, slot.enabled),
-            (COLORS[row], &slot.color, slot.enabled),
-            (STARTS[row], &slot.start, slot.enabled),
-        ] {
-            let Some(rect) = layout.control_rect(id) else {
+    if !stats {
+        for (row, slot) in view.slots.iter().enumerate() {
+            let Some(slot) = slot else {
                 continue;
             };
-            paint_control(
-                &mut controls,
-                &chrome,
-                ControlPaint::Combo {
+            // 0x0046FA20: wolhost.pcx on slot 0 and wolacpt.pcx on slot 1 while
+            // ready, on human slots only.
+            if let Some(icon) =
+                atlas.lan_player_status(row == 0 && slot.ready, row == 1 && slot.ready)
+                && let Some(rect) = layout.control_rect(READY_ICONS[row])
+            {
+                push_flag_entry_clipped_centered(
+                    &mut controls,
+                    icon,
                     rect,
-                    swatch: item.swatch.map(|index| house_color_tint(&[], index)),
-                    open: false,
-                    disabled: !enabled,
-                },
-                scale,
-            );
-            if item.swatch.is_none() {
-                texts.push(text(
-                    &item.text,
-                    crate::ui::skirmish_shell::combo_text_rect(rect, scale),
-                    ShellAlign::V_CENTER,
-                    super::text::combo_face_text_color(!enabled),
-                ));
+                    scale,
+                    SHELL_CONTROL_DEPTH,
+                );
+            }
+            if !can_continue {
+                continue;
+            }
+            if let Some(flag) = slot
+                .flag
+                .as_deref()
+                .and_then(|name| atlas.lan_player_side(name))
+                && let Some(rect) = layout.control_rect(FLAGS[row])
+            {
+                push_flag_entry_clipped_centered(
+                    &mut controls,
+                    flag,
+                    rect,
+                    scale,
+                    SHELL_CONTROL_DEPTH,
+                );
+            }
+            let name = crate::ui::multiplayer_setup::SetupChoice {
+                value: 0,
+                text: slot.name.clone(),
+                swatch: None,
+            };
+            // 0x0046DCC0 disables the other human's combos; the name combo has
+            // no handler and stays disabled for both.
+            for (id, item, enabled) in [
+                (NAMES[row], &name, false),
+                (COUNTRIES[row], &slot.country, slot.enabled),
+                (COLORS[row], &slot.color, slot.enabled),
+                (STARTS[row], &slot.start, slot.enabled),
+            ] {
+                let Some(rect) = layout.control_rect(id) else {
+                    continue;
+                };
+                paint_control(
+                    &mut controls,
+                    &chrome,
+                    ControlPaint::Combo {
+                        rect,
+                        swatch: item.swatch.map(|index| house_color_tint(&[], index)),
+                        open: false,
+                        disabled: !enabled,
+                    },
+                    scale,
+                );
+                if item.swatch.is_none() {
+                    texts.push(text(
+                        &item.text,
+                        crate::ui::skirmish_shell::combo_text_rect(rect, scale),
+                        ShellAlign::V_CENTER,
+                        super::text::combo_face_text_color(!enabled),
+                    ));
+                }
             }
         }
     }
-    if can_continue && let Some(rect) = layout.control_rect(DIFFICULTY) {
+    if can_continue
+        && !stats
+        && let Some(rect) = layout.control_rect(DIFFICULTY)
+    {
         // 0x0046DE20's slider: range 0..2 at [0xA8EB68], no value plaque.
         let bar = crate::ui::multiplayer_setup::SetupTrackbar {
             id: crate::ui::multiplayer_setup::DIFFICULTY,
@@ -280,72 +309,74 @@ pub(crate) fn render_coop_score(
             scale,
         );
     }
-    let (Some(chat_rect), Some(chat_log_rect)) =
-        (layout.control_rect(CHAT), layout.control_rect(CHAT_LOG))
-    else {
-        return Ok(false);
-    };
-    // The NewEdit paints inside its one-pixel resource frame.
-    let chat_rect = scale.derive_rect(chat_rect, |rect| {
-        RectPx::new(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
-    });
-    let edit = &ui.chat.edit;
-    let field = scale.derive_rect(chat_rect, |rect| {
-        RectPx::new(rect.x + 2, rect.y, rect.w - 1, rect.h + 1)
-    });
-    push_new_edit_instances(
-        &mut controls,
-        atlas,
-        font,
-        edit,
-        NewEditPaint {
-            frame: scale.derive_rect(chat_rect, |rect| {
-                RectPx::new(rect.x - 2, rect.y - 2, rect.w + 5, rect.h + 5)
-            }),
-            text: field,
-            background: None,
-            frame_depth: SHELL_EDIT_FRAME_DEPTH,
-            caret_depth: SHELL_EDIT_CARET_DEPTH,
-            caret_visible: edit.focused && (now.elapsed().as_millis() / 500) % 2 == 0,
-        },
-        scale,
-    );
-    texts.push(text(
-        &String::from_utf16_lossy(&edit.units[edit.first_visible_unit.min(edit.units.len())..]),
-        field,
-        ShellAlign::V_CENTER,
-        SHELL_LABEL_TEXT_RGB,
-    ));
-    let chat = ui
-        .chat
-        .list
-        .geometry(chat_log_rect, ui.chat.lines.len(), scale);
-    list_controls(&mut controls, atlas, chat, &ui.chat.list, false, scale);
-    for (visible, line) in ui
-        .chat
-        .lines
-        .iter()
-        .skip(ui.chat.list.top_index)
-        .take(chat.visible_rows)
-        .enumerate()
-    {
-        let color = if line.color == u32::MAX {
-            SHELL_LABEL_TEXT_RGB
-        } else {
-            rgb([
-                line.color as u8,
-                (line.color >> 8) as u8,
-                (line.color >> 16) as u8,
-            ])
+    if !stats {
+        let (Some(chat_rect), Some(chat_log_rect)) =
+            (layout.control_rect(CHAT), layout.control_rect(CHAT_LOG))
+        else {
+            return Ok(false);
         };
+        // The NewEdit paints inside its one-pixel resource frame.
+        let chat_rect = scale.derive_rect(chat_rect, |rect| {
+            RectPx::new(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
+        });
+        let edit = &ui.chat.edit;
+        let field = scale.derive_rect(chat_rect, |rect| {
+            RectPx::new(rect.x + 2, rect.y, rect.w - 1, rect.h + 1)
+        });
+        push_new_edit_instances(
+            &mut controls,
+            atlas,
+            font,
+            edit,
+            NewEditPaint {
+                frame: scale.derive_rect(chat_rect, |rect| {
+                    RectPx::new(rect.x - 2, rect.y - 2, rect.w + 5, rect.h + 5)
+                }),
+                text: field,
+                background: None,
+                frame_depth: SHELL_EDIT_FRAME_DEPTH,
+                caret_depth: SHELL_EDIT_CARET_DEPTH,
+                caret_visible: edit.focused && (now.elapsed().as_millis() / 500) % 2 == 0,
+            },
+            scale,
+        );
         texts.push(text(
-            &String::from_utf16_lossy(&line.text),
-            scale.derive_rect(chat.row(visible), |rect| {
-                RectPx::new(rect.x + 2, rect.y, rect.w - 4, rect.h)
-            }),
+            &String::from_utf16_lossy(&edit.units[edit.first_visible_unit.min(edit.units.len())..]),
+            field,
             ShellAlign::V_CENTER,
-            color,
+            SHELL_LABEL_TEXT_RGB,
         ));
+        let chat = ui
+            .chat
+            .list
+            .geometry(chat_log_rect, ui.chat.lines.len(), scale);
+        list_controls(&mut controls, atlas, chat, &ui.chat.list, false, scale);
+        for (visible, line) in ui
+            .chat
+            .lines
+            .iter()
+            .skip(ui.chat.list.top_index)
+            .take(chat.visible_rows)
+            .enumerate()
+        {
+            let color = if line.color == u32::MAX {
+                SHELL_LABEL_TEXT_RGB
+            } else {
+                rgb([
+                    line.color as u8,
+                    (line.color >> 8) as u8,
+                    (line.color >> 16) as u8,
+                ])
+            };
+            texts.push(text(
+                &String::from_utf16_lossy(&line.text),
+                scale.derive_rect(chat.row(visible), |rect| {
+                    RectPx::new(rect.x + 2, rect.y, rect.w - 4, rect.h)
+                }),
+                ShellAlign::V_CENTER,
+                color,
+            ));
+        }
     }
     let mut overlay = ShellFrameOverlay {
         score_backdrop,
@@ -361,11 +392,34 @@ pub(crate) fn render_coop_score(
         if !shown(button.id) {
             continue;
         }
-        let pressed = ui.buttons.is_pressed(button.id);
-        let enabled = match button.id {
-            CONTINUE => view.continue_enabled,
-            _ => view.quit_enabled,
+        // VMCE's defeat page relabels Continue/Quit and lights Retry only
+        // when the retry gate is open (host: all guests voted) or the guest
+        // already voted; Leave Room stays the native Quit action.
+        let (label_key, lit, enabled) = if stats {
+            match button.id {
+                CONTINUE => {
+                    #[cfg(feature = "vmce")]
+                    let retry = view.retry.unwrap_or((false, false, false));
+                    #[cfg(not(feature = "vmce"))]
+                    let retry = (false, false, false);
+                    ("VERA:VmceRetry", retry.1, retry.2)
+                }
+                QUIT => ("VERA:VmceLeaveRoom", false, view.quit_enabled),
+                _ => continue,
+            }
+        } else {
+            let enabled = match button.id {
+                CONTINUE => view.continue_enabled,
+                _ => view.quit_enabled,
+            };
+            let key = COOP_SCORE_PAGE
+                .buttons()
+                .find(|spec| spec.id == button.id)
+                .map(|spec| spec.csf_key)
+                .unwrap_or("GUI:Continue");
+            (key, false, enabled)
         };
+        let pressed = lit || ui.buttons.is_pressed(button.id);
         push_right_panel_button_shp(
             &mut art,
             atlas,
@@ -374,21 +428,33 @@ pub(crate) fn render_coop_score(
                 pressed,
                 highlighted: false,
             },
-            false,
+            // The lit frame must stay frame 4 even when the button is no
+            // longer clickable (a guest's cast vote); input removes it.
+            !enabled && !lit,
             SHELL_CONTROL_DEPTH,
         );
-        if let Some(spec) = COOP_SCORE_PAGE.buttons().find(|spec| spec.id == button.id) {
-            texts.push(shell_text::draw_in_rect_scaled(
-                font,
-                &localized_label(state, spec.csf_key, spec.csf_key),
-                button_text_rect(button.rect, pressed, scale),
-                super::text::button_label_color_for_disabled(!enabled),
-                ShellAlign::BUTTON_CAPTION,
-                [0.0; 2],
-                SHELL_CONTROL_TEXT_DEPTH,
-                scale.factor(),
-            ));
-        }
+        let rgb = if lit {
+            #[cfg(feature = "vmce")]
+            {
+                crate::ui::campaign_score_shell::vmce_result_button_text_rgb(true)
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                super::text::button_label_color_for_disabled(!enabled)
+            }
+        } else {
+            super::text::button_label_color_for_disabled(!enabled)
+        };
+        texts.push(shell_text::draw_in_rect_scaled(
+            font,
+            &localized_label(state, label_key, label_key),
+            button_text_rect(button.rect, pressed, scale),
+            rgb,
+            ShellAlign::BUTTON_CAPTION,
+            [0.0; 2],
+            SHELL_CONTROL_TEXT_DEPTH,
+            scale.factor(),
+        ));
     }
     in_game_shell::render_shell_frame(
         state,

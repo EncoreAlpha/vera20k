@@ -63,6 +63,11 @@ pub(crate) struct CooperativeRoundState {
     /// stage, `CampaignEnd` plays the campaign's completion tail, and
     /// `Retry` re-enters the same frozen stage.
     vera_ending: VmceRoundEnding,
+    /// Authored VMCE defeat page: per raw slot, that guest voted Retry. The
+    /// host starts only once every online guest has voted; the host itself
+    /// never votes. Disconnect clears the slot's vote.
+    #[cfg(feature = "vmce")]
+    retry_votes: [bool; 4],
 }
 
 /// VMCE's result-page continuation. Kept in the round so every peer's
@@ -126,6 +131,12 @@ impl CooperativeRoundState {
         self.vera_ending
     }
 
+    /// Authored VMCE defeat: this slot's Retry vote.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn retry_voted(&self, row: usize) -> bool {
+        self.retry_votes.get(row).copied().unwrap_or(false)
+    }
+
     fn all_ready(&self) -> bool {
         self.ready.iter().all(|ready| *ready)
     }
@@ -161,6 +172,9 @@ pub(crate) enum CooperativeRoundEvent {
     Ack { source: usize },
     /// `0x31`, the master's go.
     Go,
+    /// `0x39`, VERA-only: a guest's retry vote on the BC6 defeat page.
+    #[cfg(feature = "vmce")]
+    RetryVote { source: usize },
     /// `0x0C` of this game (its `+0x114` hash matched), with the line
     /// colour at `+0x110`.
     Chat {
@@ -330,6 +344,8 @@ impl MatchSession {
             #[cfg(feature = "vmce")]
             page_victory: false,
             vera_ending: VmceRoundEnding::Next,
+            #[cfg(feature = "vmce")]
+            retry_votes: [false; 4],
             outcome: None,
         };
         let host = self.host;
@@ -638,6 +654,112 @@ impl MatchSession {
         Ok(())
     }
 
+    /// VERA-only BC6 defeat Continue, guest side: cast this guest's one
+    /// retry vote. A repeated vote is a no-op (the lit button is not
+    /// clickable again); the host starts only once every online guest voted.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn cooperative_round_retry_vote(&mut self) -> anyhow::Result<CooperativeRoundStep> {
+        anyhow::ensure!(!self.host, "the host does not cast a retry vote");
+        let RoundParts {
+            requests,
+            launch,
+            round,
+            ..
+        } = round_parts(self)?;
+        anyhow::ensure!(
+            round.vera && round.vera_ending == VmceRoundEnding::Retry,
+            "not the VMCE retry page"
+        );
+        if round.outcome.is_some() {
+            return Ok(CooperativeRoundStep::None);
+        }
+        let Some(row) = launch
+            .humans
+            .get(launch.local_player_index)
+            .and_then(|human| human.raw_slot_index)
+            .map(usize::from)
+            .filter(|row| *row < 4)
+        else {
+            anyhow::bail!("the local guest has no raw slot");
+        };
+        if round.retry_votes[row] {
+            return Ok(CooperativeRoundStep::None);
+        }
+        round.retry_votes[row] = true;
+        requests.push(NetworkLoadingRequest::CooperativeRetryVote);
+        Ok(CooperativeRoundStep::None)
+    }
+
+    /// VERA-only BC6 defeat Continue, host side: start the retry once every
+    /// connected guest voted. The host never votes itself; a solo host is
+    /// trivially all-voted. The existing retry step is used unchanged.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn cooperative_round_retry_start(
+        &mut self,
+        difficulty: i32,
+    ) -> anyhow::Result<CooperativeRoundStep> {
+        anyhow::ensure!(self.host, "only the host starts the retry");
+        {
+            let RoundParts {
+                connected,
+                launch,
+                round,
+                ..
+            } = round_parts(self)?;
+            anyhow::ensure!(
+                round.vera && round.vera_ending == VmceRoundEnding::Retry,
+                "not the VMCE retry page"
+            );
+            anyhow::ensure!(
+                retry_guests_voted(launch, connected, round),
+                "the host retry waits for every online guest"
+            );
+        }
+        self.continue_cooperative_round(difficulty)
+    }
+
+    /// Capture/test fixture: install the per-slot retry votes on the open
+    /// round. Never called by gameplay; the vote events own production data.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn cooperative_round_set_retry_votes(
+        &mut self,
+        votes: [bool; 4],
+    ) -> anyhow::Result<()> {
+        let RoundParts { round, .. } = round_parts(self)?;
+        round.retry_votes = votes;
+        Ok(())
+    }
+
+    /// VERA-only BC6 defeat page: `(is_host, lit, enabled)` for the Retry
+    /// button. A guest lights and disables on its own vote; the host lights
+    /// and enables only after every online guest voted.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn cooperative_round_retry_state(&self) -> Option<(bool, bool, bool)> {
+        let NetworkPhase::CooperativeRound {
+            connected,
+            launch,
+            round,
+            ..
+        } = &self.network.as_ref()?.phase
+        else {
+            return None;
+        };
+        if !round.vera || round.vera_ending != VmceRoundEnding::Retry || round.outcome.is_some() {
+            return None;
+        }
+        if self.host {
+            let voted = retry_guests_voted(launch, connected, round);
+            Some((true, voted, voted))
+        } else {
+            let voted = launch
+                .humans
+                .get(launch.local_player_index)
+                .and_then(|human| human.raw_slot_index)
+                .is_some_and(|row| round.retry_voted(usize::from(row)));
+            Some((false, voted, !voted))
+        }
+    }
+
     /// One packet through the loop's dispatch (`0x0047009F`).
     /// `difficulty` is the current `[0xA8EB68]`, which `0x32` compares.
     pub(crate) fn cooperative_round_event(
@@ -683,6 +805,13 @@ impl MatchSession {
                 requests.push(NetworkLoadingRequest::CooperativeLeave);
                 Ok(CooperativeRoundStep::Exit(false))
             }
+            #[cfg(feature = "vmce")]
+            CooperativeRoundEvent::RetryVote { source } => {
+                if let Some(row) = slot_of(launch, source) {
+                    round.retry_votes[row] = true;
+                }
+                Ok(CooperativeRoundStep::None)
+            }
             CooperativeRoundEvent::PeerReady { source } => {
                 if let Some(row) = slot_of(launch, source) {
                     round.ready[row] = true;
@@ -707,6 +836,10 @@ impl MatchSession {
             CooperativeRoundEvent::PeerLeft { source } => {
                 if let Some(row) = slot_of(launch, source) {
                     round.ready[row] = false;
+                    #[cfg(feature = "vmce")]
+                    if row < 4 {
+                        round.retry_votes[row] = false;
+                    }
                 }
                 connected.retain(|index| *index != source);
                 round.quit_enabled = true;
@@ -975,6 +1108,27 @@ fn reject_vera_stage(
     round.outcome = Some(false);
     requests.push(NetworkLoadingRequest::CooperativeStageRejected);
     CooperativeRoundStep::Exit(false)
+}
+
+/// Every connected, non-observer guest row (not raw slot 0) has voted Retry.
+#[cfg(feature = "vmce")]
+fn retry_guests_voted(
+    launch: &SkirmishLaunchSession,
+    connected: &[usize],
+    round: &CooperativeRoundState,
+) -> bool {
+    connected.iter().all(|index| {
+        let Some(human) = launch.humans.get(*index) else {
+            return true;
+        };
+        if human.is_observer() {
+            return true;
+        }
+        match human.raw_slot_index {
+            Some(0) | None => true,
+            Some(row) => round.retry_voted(usize::from(row)),
+        }
+    })
 }
 
 fn clear_human_readiness(launch: &SkirmishLaunchSession, round: &mut CooperativeRoundState) {
@@ -1304,6 +1458,134 @@ mod tests {
         ini.push_str(&houses);
         next.map_ini = crate::rules::ini_parser::IniFile::from_str(&ini);
         next
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_retry_vote_waits_for_every_guest_and_starts_once() {
+        let (mut host, _) = frozen_vera_rows(0, 4);
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 4)
+            .unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_retry_state(),
+            Some((true, false, false))
+        );
+
+        let (mut guest1, _) = frozen_vera_rows(1, 4);
+        guest1
+            .enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 4)
+            .unwrap();
+        guest1.take_network_loading_requests();
+        assert_eq!(
+            guest1.cooperative_round_retry_state(),
+            Some((false, false, true))
+        );
+        assert_eq!(
+            guest1.cooperative_round_retry_vote().unwrap(),
+            CooperativeRoundStep::None
+        );
+        assert!(
+            guest1
+                .take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeRetryVote)
+        );
+        assert_eq!(
+            guest1.cooperative_round_retry_state(),
+            Some((false, true, false))
+        );
+        // A second click is a no-op: the lit button is not clickable again.
+        assert_eq!(
+            guest1.cooperative_round_retry_vote().unwrap(),
+            CooperativeRoundStep::None
+        );
+        assert!(guest1.take_network_loading_requests().is_empty());
+
+        // One guest is not enough for the host; each vote arrives as 0x39.
+        host.cooperative_round_event(CooperativeRoundEvent::RetryVote { source: 1 }, 0)
+            .unwrap();
+        assert_eq!(
+            host.cooperative_round_retry_state(),
+            Some((true, false, false))
+        );
+        host.cooperative_round_event(CooperativeRoundEvent::RetryVote { source: 2 }, 0)
+            .unwrap();
+        // A duplicate vote for the same slot is idempotent.
+        host.cooperative_round_event(CooperativeRoundEvent::RetryVote { source: 2 }, 0)
+            .unwrap();
+        assert_eq!(
+            host.cooperative_round_retry_state(),
+            Some((true, false, false))
+        );
+        host.cooperative_round_event(CooperativeRoundEvent::RetryVote { source: 3 }, 0)
+            .unwrap();
+        assert_eq!(
+            host.cooperative_round_retry_state(),
+            Some((true, true, true))
+        );
+
+        assert_eq!(
+            host.cooperative_round_retry_start(0).unwrap(),
+            CooperativeRoundStep::Assign
+        );
+        // The app's Assign step sends the native begin/options tail.
+        host.cooperative_round_assigned(0).unwrap();
+        let requests = host.take_network_loading_requests();
+        assert!(requests.contains(&NetworkLoadingRequest::CooperativeBegin));
+        assert!(
+            requests
+                .iter()
+                .any(|request| matches!(request, NetworkLoadingRequest::CooperativeOptions(_)))
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_retry_vote_clears_when_its_guest_disconnects() {
+        let (mut host, _) = frozen_vera_rows(0, 2);
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+            .unwrap();
+        host.take_network_loading_requests();
+        host.cooperative_round_event(CooperativeRoundEvent::RetryVote { source: 1 }, 0)
+            .unwrap();
+        assert_eq!(
+            host.cooperative_round_retry_state(),
+            Some((true, true, true))
+        );
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::PeerLeft { source: 1 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::Exit(false)
+        );
+        assert!(
+            !host.cooperative_round().expect("round").retry_voted(1),
+            "a departed guest's vote is cleared"
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn stock_cooperative_round_has_no_retry_vote() {
+        let (mut guest, _) = frozen(1);
+        guest.enter_cooperative_round(None, true, 2).unwrap();
+        assert_eq!(guest.cooperative_round_retry_state(), None);
+        assert!(guest.cooperative_round_retry_vote().is_err());
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_retry_page_leave_sends_the_native_left_record() {
+        let (mut guest, _) = frozen_vera_rows(1, 2);
+        guest
+            .enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+            .unwrap();
+        guest.take_network_loading_requests();
+        guest.quit_cooperative_round().unwrap();
+        assert!(
+            guest
+                .take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeLeave)
+        );
     }
 
     #[cfg(feature = "vmce")]

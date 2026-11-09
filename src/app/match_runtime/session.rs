@@ -314,6 +314,9 @@ pub(crate) enum NetworkLoadingRequest {
     /// the other peer must not continue with one.
     #[cfg(feature = "vmce")]
     CooperativeStageAbsent,
+    /// VERA-only: one guest's retry vote on the BC6 defeat page.
+    #[cfg(feature = "vmce")]
+    CooperativeRetryVote,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

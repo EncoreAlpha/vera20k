@@ -48,6 +48,27 @@ pub const ROW_CELLS: [[u16; 5]; 2] = [
     [0x0782, 0x0784, 0x0786, 0x0788, 0x078A],
 ];
 
+/// VMCE's defeat page extends BC6's native two player rows to four; the
+/// stock path always uses [`DEFAULT_SCORE_ROWS`]. The extra rows reuse the
+/// native row pitch and the same five columns.
+pub const DEFAULT_SCORE_ROWS: usize = 2;
+pub const VMCE_SCORE_ROWS: usize = 4;
+/// The two additional rows' cell ids, outside the native `0xBC6` range.
+pub const VMCE_ROW_CELLS: [[u16; 5]; 2] = [
+    [0x7B81, 0x7B83, 0x7B85, 0x7B87, 0x7B89],
+    [0x7B82, 0x7B84, 0x7B86, 0x7B88, 0x7B8A],
+];
+/// Native row cell columns (Player/Kills/Losses/Built/Score) and the native
+/// 14-DLU row pitch; rows 0/1 are the template's own 50/64 DLU rows.
+const ROW_CELL_DLU: [RectPx; 5] = [
+    RectPx::new(37, 0, 62, 10),
+    RectPx::new(103, 0, 38, 10),
+    RectPx::new(161, 0, 38, 10),
+    RectPx::new(219, 0, 38, 10),
+    RectPx::new(277, 0, 40, 10),
+];
+const ROW_Y_DLU: [i32; 4] = [50, 64, 78, 92];
+
 /// The right-panel heading and the two buttons (`0x0060B000` Continue,
 /// `0x0060B350` Quit).
 pub const COOP_SCORE_PAGE: MenuPageSpec = MenuPageSpec {
@@ -357,6 +378,23 @@ pub fn hidden_on_final_mission(id: u16) -> bool {
         || STARTS.contains(&id)
 }
 
+/// BC6 statics VMCE's statistics-only defeat page hides: no next mission,
+/// description, difficulty prompt or previous-mission/next caption. Chat and
+/// the player-setup columns are hidden by the page renderer.
+pub fn vmce_stats_hidden(id: u16) -> bool {
+    matches!(
+        id,
+        NEXT_MISSION
+            | DESCRIPTION
+            | DIFFICULTY
+            | 0x0798
+            | 0x0799
+            | 0x079A
+            | 0x079B
+            | PREVIOUS_MISSION
+    )
+}
+
 /// `0x0046DE20`'s slider range: Easy, Normal, Hard.
 pub const DIFFICULTY_RANGE: TrackbarRange = TrackbarRange {
     min: 0,
@@ -371,10 +409,19 @@ const COMBO_FACE_H: i32 = 24;
 pub struct CoopScoreLayout {
     pub page: MenuPageLayout,
     controls: Vec<(u16, RectPx)>,
+    rows: usize,
 }
 
 impl CoopScoreLayout {
+    /// The stock two-row entry; unchanged retail geometry.
     pub fn new(width: i32, height: i32, responsive: bool) -> Self {
+        Self::new_rows(width, height, responsive, DEFAULT_SCORE_ROWS)
+    }
+
+    /// Row-count-aware entry: `rows == 2` is the stock path; VMCE's defeat
+    /// page passes 4 and gets two more rows on the native pitch. RESIDUAL:
+    /// BC6 natively lays out only two player rows.
+    pub fn new_rows(width: i32, height: i32, responsive: bool, rows: usize) -> Self {
         let mut page = if responsive {
             menu_page::compute_responsive_layout(&COOP_SCORE_PAGE, width as u32, height as u32)
         } else {
@@ -437,7 +484,39 @@ impl CoopScoreLayout {
                 ah,
             )),
         ));
-        Self { page, controls }
+        for row in 2..rows {
+            let y = ROW_Y_DLU[row];
+            for (column, cell) in ROW_CELL_DLU.iter().enumerate() {
+                controls.push((
+                    VMCE_ROW_CELLS[row - 2][column],
+                    scale.scale_rect(child_window(cell.x, y, cell.w, cell.h)),
+                ));
+            }
+        }
+        Self {
+            page,
+            controls,
+            rows,
+        }
+    }
+
+    /// The row count this layout was built for (2 stock, 4 VMCE defeat).
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// The cell ids of one score row: Player/Kills/Losses/Built/Score.
+    pub fn row_cells(&self, row: usize) -> Option<[u16; 5]> {
+        if row >= self.rows {
+            return None;
+        }
+        match row {
+            0 => Some(ROW_CELLS[0]),
+            1 => Some(ROW_CELLS[1]),
+            2 => Some(VMCE_ROW_CELLS[0]),
+            3 => Some(VMCE_ROW_CELLS[1]),
+            _ => None,
+        }
     }
 
     pub fn control_rect(&self, id: u16) -> Option<RectPx> {
@@ -522,6 +601,9 @@ pub struct CoopScoreModel {
     /// The next mission's shell map, for the preview `0x468`.
     pub map_index: Option<usize>,
     pub can_continue: bool,
+    /// VMCE's defeat page: BC6 is the statistics view itself (no Ready
+    /// column, no statistics entry), four role rows, and no chat.
+    pub vmce_stats: bool,
 }
 
 /// The open dialog: its fixed texts, its interaction, and what the
@@ -634,5 +716,83 @@ mod tests {
         assert!(hidden_on_final_mission(COUNTRIES[1]));
         assert!(!hidden_on_final_mission(QUIT));
         assert!(!hidden_on_final_mission(ROW_CELLS[0][4]));
+    }
+
+    #[test]
+    fn stock_two_row_entry_is_unchanged() {
+        let stock = CoopScoreLayout::new(800, 600, false);
+        let explicit = CoopScoreLayout::new_rows(800, 600, false, DEFAULT_SCORE_ROWS);
+        assert_eq!(stock.rows(), 2);
+        assert_eq!(explicit.rows(), 2);
+        for row in 0..2 {
+            for cell in 0..5 {
+                let id = stock.row_cells(row).unwrap()[cell];
+                assert_eq!(stock.control_rect(id), explicit.control_rect(id));
+            }
+        }
+        assert_eq!(stock.row_cells(2), None);
+    }
+
+    #[test]
+    fn vmce_four_row_layout_extends_on_the_native_pitch() {
+        let stock = CoopScoreLayout::new(800, 600, false);
+        let four = CoopScoreLayout::new_rows(800, 600, false, 4);
+        assert_eq!(four.rows(), 4);
+        assert_eq!(stock.rows(), DEFAULT_SCORE_ROWS);
+        for row in 0..2 {
+            for cell in 0..5 {
+                let id = stock.row_cells(row).unwrap()[cell];
+                let wide = four.row_cells(row).unwrap()[cell];
+                assert_eq!(four.control_rect(id), four.control_rect(wide));
+            }
+        }
+        // Columns keep their native x/width; only y changes.
+        for row in [2, 3] {
+            let cells = four.row_cells(row).expect("extra row cells");
+            for (column, id) in cells.iter().enumerate() {
+                let native = four
+                    .control_rect(stock.row_cells(column.min(1)).unwrap()[column])
+                    .unwrap();
+                let extra = four.control_rect(*id).expect("extra cell rect");
+                assert_eq!(
+                    (extra.x, extra.w),
+                    (native.x, native.w),
+                    "row {row} column {column}"
+                );
+            }
+            let previous = four
+                .control_rect(four.row_cells(row - 1).unwrap()[0])
+                .unwrap();
+            let current = four.control_rect(cells[0]).unwrap();
+            let pitch = (current.y - previous.y).abs();
+            assert!((pitch - 23).abs() <= 1, "native 14-DLU pitch: {pitch}");
+        }
+        // The four rows clear the lower decorative area and the right panel.
+        let last = four.control_rect(four.row_cells(3).unwrap()[0]).unwrap();
+        let status = four.page.status_help;
+        assert!(last.y + last.h < status.y);
+        let continue_button = four.page.button_rect(CONTINUE).expect("Continue");
+        assert!(last.y + last.h < continue_button.y);
+        // Every row is visible in the page's upper body.
+        assert!(last.y + last.h < 400);
+    }
+
+    #[test]
+    fn vmce_stats_page_hides_final_mission_prompts() {
+        for id in [
+            NEXT_MISSION,
+            DESCRIPTION,
+            DIFFICULTY,
+            0x0798,
+            0x0799,
+            0x079A,
+            0x079B,
+            PREVIOUS_MISSION,
+        ] {
+            assert!(vmce_stats_hidden(id), "{id:#x} belongs to the stock page");
+        }
+        for id in [ROW_CELLS[0][0], ROW_CELLS[1][4], TIME, CONTINUE, QUIT] {
+            assert!(!vmce_stats_hidden(id), "{id:#x} stays on the defeat page");
+        }
     }
 }

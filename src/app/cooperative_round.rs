@@ -297,6 +297,23 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
 /// mission and map names (`A8B322`, the scenario `+0xA0` selected), the
 /// game type and `NAME:COOPDESC<campaign+1><map+1>`.
 fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<CoopScoreModel> {
+    build_model_rows(state, can_continue, elapsed, false)
+}
+
+/// VMCE's defeat page: the same BC6 model over all four role rows in campaign
+/// order (never sorted), no next mission/preview, and the statistics-only
+/// flag that hides chat and the native player setup columns.
+#[cfg(feature = "vmce")]
+pub(crate) fn build_vmce_defeat_model(state: &AppState, elapsed: i32) -> Option<CoopScoreModel> {
+    build_model_rows(state, true, elapsed, true)
+}
+
+fn build_model_rows(
+    state: &AppState,
+    can_continue: bool,
+    elapsed: i32,
+    vmce_stats: bool,
+) -> Option<CoopScoreModel> {
     use crate::app::frontend::shell_pass::resolve_csf;
     let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
     let computer = resolve_csf(state, "TXT_COMPUTER");
@@ -314,7 +331,9 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
             score: row.score,
         })
         .collect();
-    crate::ui::score_shell::sort_rows(&mut rows);
+    if !vmce_stats {
+        crate::ui::score_shell::sort_rows(&mut rows);
+    }
     // s = T/60 signed, then the 99:59:59 clamp (0x0046EE34..0x0046EEE4).
     let time_model = crate::ui::score_shell::ScoreScreenModel {
         elapsed_seconds: (elapsed / 60) as u32,
@@ -375,17 +394,23 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
             .into_owned()
         })
         .unwrap_or_default();
+    let (next_mission, map_index, previous_mission) = if vmce_stats {
+        (String::new(), None, map_name.clone())
+    } else {
+        (map_name.clone(), map_index, String::new())
+    };
     Some(CoopScoreModel {
         rows,
         time,
-        next_mission: map_name.clone(),
+        next_mission,
         mode_label,
         map_label: map_name,
-        previous_mission: String::new(),
+        previous_mission,
         description,
         side,
         map_index,
         can_continue,
+        vmce_stats,
     })
 }
 
@@ -515,6 +540,17 @@ pub(crate) struct CoopScoreView {
     pub(crate) continue_enabled: bool,
     pub(crate) quit_enabled: bool,
     pub(crate) difficulty: i32,
+    /// VMCE defeat BC6 Retry: `(host, lit, enabled)`. `None` on stock BC6.
+    #[cfg(feature = "vmce")]
+    pub(crate) retry: Option<(bool, bool, bool)>,
+}
+
+impl CoopScoreView {
+    /// VMCE defeat BC6 Retry enablement; `None` on the stock page.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn retry_continue_enabled(&self) -> Option<bool> {
+        self.retry.map(|(_, _, enabled)| enabled)
+    }
 }
 
 pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
@@ -585,6 +621,8 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
         slots,
         continue_enabled: session.cooperative_round_continue_enabled(),
         quit_enabled: round.quit_enabled(),
+        #[cfg(feature = "vmce")]
+        retry: session.cooperative_round_retry_state(),
         difficulty: state
             .frontend
             .multiplayer_shell_runtime
@@ -595,7 +633,24 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
 /// A BC6 control's intent.
 pub(crate) fn apply_action(state: &mut AppState, action: CoopScoreAction) {
     let result = match action {
-        CoopScoreAction::Continue => continue_pressed(state),
+        CoopScoreAction::Continue => {
+            let vmce_defeat = state
+                .frontend
+                .coop_score_page
+                .as_ref()
+                .is_some_and(|page| page.model.vmce_stats);
+            #[cfg(feature = "vmce")]
+            if vmce_defeat {
+                retry_pressed(state)
+            } else {
+                continue_pressed(state)
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                let _ = vmce_defeat;
+                continue_pressed(state)
+            }
+        }
         // 0x0046E28C: 0x24 to every node, result 0.
         CoopScoreAction::Quit => state
             .match_state
@@ -612,6 +667,24 @@ pub(crate) fn apply_action(state: &mut AppState, action: CoopScoreAction) {
         Err(error) => log::warn!("co-op result command refused: {error:#}"),
     }
     state.platform.window.request_redraw();
+}
+
+/// VMCE's defeat Continue: a guest casts its one retry vote; the host starts
+/// the existing retry step once every online guest voted.
+#[cfg(feature = "vmce")]
+fn retry_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep> {
+    let difficulty = state
+        .frontend
+        .multiplayer_shell_runtime
+        .cooperative_difficulty();
+    if state.match_state.session.host() {
+        state
+            .match_state
+            .session
+            .cooperative_round_retry_start(difficulty)
+    } else {
+        state.match_state.session.cooperative_round_retry_vote()
+    }
 }
 
 fn continue_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep> {

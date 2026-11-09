@@ -44,6 +44,10 @@ pub enum CooperativeSignal {
     /// campaign's last mission). Stock BC6 has no such record either.
     #[cfg(feature = "vmce")]
     StageAbsent,
+    /// `0x39`, VERA-only: a guest's one retry vote on the BC6 defeat page.
+    /// Stock BC6 has no such record; the native page's Continue is local.
+    #[cfg(feature = "vmce")]
+    RetryVote,
 }
 
 impl CooperativeSignal {
@@ -59,6 +63,8 @@ impl CooperativeSignal {
             Self::StageRejected => 0x37,
             #[cfg(feature = "vmce")]
             Self::StageAbsent => 0x38,
+            #[cfg(feature = "vmce")]
+            Self::RetryVote => 0x39,
         }
     }
 
@@ -86,6 +92,8 @@ impl CooperativeSignal {
                 0x37 => Self::StageRejected,
                 #[cfg(feature = "vmce")]
                 0x38 => Self::StageAbsent,
+                #[cfg(feature = "vmce")]
+                0x39 => Self::RetryVote,
                 _ => return None,
             },
         )

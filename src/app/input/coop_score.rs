@@ -12,7 +12,24 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 pub(crate) fn layout(state: &AppState) -> CoopScoreLayout {
     let (w, h) = shell_layout::shell_screen_size(state);
-    CoopScoreLayout::new(w as i32, h as i32, shell_layout::fills_window(state))
+    // VMCE's defeat BC6 lays out four role rows; every stock page keeps two.
+    let rows = state
+        .frontend
+        .coop_score_page
+        .as_ref()
+        .map_or(DEFAULT_SCORE_ROWS, |page| {
+            page.model.rows.len().max(DEFAULT_SCORE_ROWS)
+        });
+    CoopScoreLayout::new_rows(w as i32, h as i32, shell_layout::fills_window(state), rows)
+}
+
+/// The open page is VMCE's statistics-only defeat BC6.
+pub(crate) fn stats_only(state: &AppState) -> bool {
+    state
+        .frontend
+        .coop_score_page
+        .as_ref()
+        .is_some_and(|page| page.model.vmce_stats)
 }
 
 /// BC6 owns the result screen while its page is open.
@@ -24,6 +41,9 @@ pub(crate) fn active(state: &AppState) -> bool {
 }
 
 pub(crate) fn update_geometry(state: &mut AppState) {
+    if stats_only(state) {
+        return;
+    }
     let layout = layout(state);
     let (Some(chat_log), Some(chat)) = (layout.control_rect(CHAT_LOG), layout.control_rect(CHAT))
     else {
@@ -46,15 +66,26 @@ pub(crate) fn update_geometry(state: &mut AppState) {
 fn enabled(
     view: &crate::app::cooperative_round::CoopScoreView,
     can_continue: bool,
+    stats: bool,
     id: u16,
 ) -> bool {
     if !can_continue && hidden_on_final_mission(id) {
         return false;
     }
     match id {
-        CONTINUE => view.continue_enabled,
+        CONTINUE => {
+            #[cfg(feature = "vmce")]
+            {
+                view.retry_continue_enabled()
+                    .unwrap_or(view.continue_enabled)
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                view.continue_enabled
+            }
+        }
         QUIT => view.quit_enabled,
-        CHAT | CHAT_LOG => true,
+        CHAT | CHAT_LOG => !stats,
         _ => false,
     }
 }
@@ -72,6 +103,10 @@ pub(crate) fn key(state: &mut AppState, event: &KeyEvent) {
 }
 
 pub(crate) fn key_press(state: &mut AppState, code: Option<KeyCode>, text: Option<&str>) {
+    if stats_only(state) {
+        // The defeat page is the statistics view: no chat input.
+        return;
+    }
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
         return;
     };
@@ -105,13 +140,17 @@ pub(crate) fn key_press(state: &mut AppState, code: Option<KeyCode>, text: Optio
 pub(crate) fn cursor_moved(state: &mut AppState) {
     let layout = layout(state);
     let (x, y) = state.match_state.input.cursor_px();
-    let Some(chat_log) = layout.control_rect(CHAT_LOG) else {
-        return;
-    };
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
         return;
     };
     page.ui.buttons.hovered = layout.control_at(x, y);
+    if page.model.vmce_stats {
+        state.platform.window.request_redraw();
+        return;
+    }
+    let Some(chat_log) = layout.control_rect(CHAT_LOG) else {
+        return;
+    };
     let ui = &mut page.ui;
     let geometry = ui
         .chat
@@ -133,13 +172,14 @@ pub(crate) fn mouse(state: &mut AppState, button: MouseButton, pressed: bool) {
     };
     let layout = layout(state);
     let (x, y) = state.match_state.input.cursor_px();
+    let stats = stats_only(state);
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
         return;
     };
     let can_continue = page.model.can_continue;
     let over = layout
         .control_at(x, y)
-        .filter(|id| enabled(&view, can_continue, *id));
+        .filter(|id| enabled(&view, can_continue, stats, *id));
     let ui = &mut page.ui;
     let mut action = None;
     let mut cue = None;
@@ -189,6 +229,9 @@ pub(crate) fn mouse(state: &mut AppState, button: MouseButton, pressed: bool) {
 
 /// The chat list's scrollbar repeat timer.
 pub(crate) fn poll(state: &mut AppState) -> Option<Instant> {
+    if stats_only(state) {
+        return None;
+    }
     let layout = layout(state);
     let (x, y) = state.match_state.input.cursor_px();
     let rect = layout.control_rect(CHAT_LOG)?;

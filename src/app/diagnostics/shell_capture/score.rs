@@ -137,7 +137,6 @@ pub(super) enum VmceResultTarget {
     HostVictoryNext,
     GuestUnready,
     GuestReady,
-    DefeatRetry,
     CampaignEnd,
 }
 
@@ -149,13 +148,54 @@ impl VmceResultTarget {
             Self::HostVictoryNext => "vmce-result-host-victory-next",
             Self::GuestUnready => "vmce-result-guest-unready",
             Self::GuestReady => "vmce-result-guest-ready",
-            Self::DefeatRetry => "vmce-result-defeat-retry",
             Self::CampaignEnd => "vmce-result-campaign-end",
         }
     }
 
     fn victory(self) -> bool {
-        !matches!(self, Self::DefeatRetry)
+        true
+    }
+}
+
+/// One synthetic VMCE defeat page on the native BC6 shell: the retry vote
+/// state the reviewed screenshot needs, not a real outcome.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum VmceDefeatTarget {
+    HostDisabled2p,
+    HostDisabled4p,
+    GuestVoted4p,
+    HostLit4p,
+}
+
+#[cfg(feature = "vmce")]
+impl VmceDefeatTarget {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::HostDisabled2p => "vmce-defeat-host-disabled-2p",
+            Self::HostDisabled4p => "vmce-defeat-host-disabled-4p",
+            Self::GuestVoted4p => "vmce-defeat-guest-voted",
+            Self::HostLit4p => "vmce-defeat-host-lit",
+        }
+    }
+
+    fn host(self) -> bool {
+        !matches!(self, Self::GuestVoted4p)
+    }
+
+    fn rows(self) -> usize {
+        match self {
+            Self::HostDisabled2p => 2,
+            _ => 4,
+        }
+    }
+
+    fn votes(self) -> [bool; 4] {
+        match self {
+            Self::HostDisabled2p | Self::HostDisabled4p => [false; 4],
+            Self::GuestVoted4p => [false, true, false, false],
+            Self::HostLit4p => [false, true, true, true],
+        }
     }
 }
 
@@ -165,6 +205,8 @@ pub(super) struct CampaignScoreCapture {
     animation: Option<CampaignAnimationSequence>,
     #[cfg(feature = "vmce")]
     vmce: Option<VmceResultTarget>,
+    #[cfg(feature = "vmce")]
+    defeat: Option<VmceDefeatTarget>,
     /// One checkpoint screenshot requested after the page settles.
     pending_shot: Option<&'static str>,
 }
@@ -177,6 +219,21 @@ impl CampaignScoreCapture {
             animation: None,
             #[cfg(feature = "vmce")]
             vmce: None,
+            #[cfg(feature = "vmce")]
+            defeat: None,
+            pending_shot: None,
+        }
+    }
+
+    /// A synthetic VMCE BC6 defeat page state for visual review.
+    #[cfg(feature = "vmce")]
+    pub(super) fn vmce_defeat(target: VmceDefeatTarget) -> Self {
+        Self {
+            phase: CampaignScorePhase::MainMenu,
+            route: Vec::new(),
+            animation: None,
+            vmce: None,
+            defeat: Some(target),
             pending_shot: None,
         }
     }
@@ -189,6 +246,7 @@ impl CampaignScoreCapture {
             route: Vec::new(),
             animation: None,
             vmce: Some(target),
+            defeat: None,
             pending_shot: None,
         }
     }
@@ -207,6 +265,8 @@ impl CampaignScoreCapture {
             animation: Some(CampaignAnimationSequence::default()),
             #[cfg(feature = "vmce")]
             vmce: None,
+            #[cfg(feature = "vmce")]
+            defeat: None,
             pending_shot: None,
         }
     }
@@ -230,7 +290,7 @@ impl CampaignScoreCapture {
             // leave the 800x600 reference surface: its page scales with it.
             let mut menu_snapshot = MainMenuCaptureSnapshot::from_state(state);
             #[cfg(feature = "vmce")]
-            if self.vmce.is_some()
+            if (self.vmce.is_some() || self.defeat.is_some())
                 && (menu_snapshot.width, menu_snapshot.height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
             {
                 menu_snapshot.width = EXPECTED_WIDTH;
@@ -241,6 +301,20 @@ impl CampaignScoreCapture {
             if rendered == PresentedShell::MainMenu
                 && steady_main_menu_capture_ready(menu_snapshot)?
             {
+                #[cfg(feature = "vmce")]
+                if let Some(target) = self.defeat {
+                    install_vmce_defeat_fixture(state, target)?;
+                    self.route.push(json!({
+                        "dialog": 0xBC6,
+                        "frame": frame,
+                        "action": "open synthetic VMCE defeat fixture on the production BC6 page",
+                        "fixture": "synthetic UI example; page-state only",
+                        "vmce_defeat": target.label(),
+                    }));
+                    self.pending_shot = Some(target.label());
+                    self.phase = CampaignScorePhase::Settling(SETTLE_FRAMES);
+                    return Ok(());
+                }
                 #[cfg(feature = "vmce")]
                 if let Some(target) = self.vmce {
                     install_vmce_result_fixture(state, target)?;
@@ -272,6 +346,17 @@ impl CampaignScoreCapture {
             return Ok(());
         }
 
+        #[cfg(feature = "vmce")]
+        if self.defeat.is_some() {
+            ensure!(
+                state.frontend.coop_score_page.is_some(),
+                "VMCE defeat capture left the BC6 page"
+            );
+            if let CampaignScorePhase::Settling(remaining) = self.phase {
+                self.phase = CampaignScorePhase::Settling(remaining.saturating_sub(1));
+            }
+            return Ok(());
+        }
         ensure!(
             rendered == PresentedShell::Score,
             "campaign capture did not render the production score page"
@@ -662,6 +747,16 @@ impl CampaignScoreCapture {
         if self.phase != CampaignScorePhase::Settling(0) {
             return Ok(false);
         }
+        #[cfg(feature = "vmce")]
+        if self.defeat.is_some() {
+            ensure!(
+                state.frontend.coop_score_page.is_some()
+                    && state.frontend.shell_controller.top_id()
+                        == Some(crate::ui::coop_score_shell::COOP_SCORE_DIALOG),
+                "VMCE defeat capture lost the BC6 page"
+            );
+            return Ok(true);
+        }
         ensure!(
             App::campaign_score_shell_active(state),
             "campaign score capture left the 0x103 page"
@@ -685,6 +780,27 @@ impl CampaignScoreCapture {
         pixels: &[u8],
         frame: u32,
     ) -> Value {
+        #[cfg(feature = "vmce")]
+        if let Some(target) = self.defeat {
+            return json!({
+                "schema_version": "vera20k.vmce-defeat-bc6-capture.v1",
+                "checkpoint": request.checkpoint.as_str(),
+                "dialog_resource_id": 0xBC6,
+                "fixture_kind": "synthetic VMCE defeat BC6; no match",
+                "vmce_defeat": target.label(),
+                "retry": {"rows": target.rows(), "votes": target.votes(),
+                    "host": target.host()},
+                "parity_certification": "NONE",
+                "presenter_domain": "final-swapchain-after-rgb565",
+                "surface": {"width": request.width, "height": request.height,
+                    "format": format!("{format:?}"), "pixel_layout": "BGRA8",
+                    "row_order": "top-left", "row_stride": request.width * 4},
+                "route": self.route,
+                "capture_frame": frame,
+                "frame": {"path": FRAME_FILE_NAME, "byte_length": pixels.len(),
+                    "sha256": crate::util::sha256::sha256_hex(pixels)}
+            });
+        }
         let fixture = synthetic_campaign_score_model();
         json!({
             "schema_version": "vera20k.campaign-score-shell-capture.v1",
@@ -1032,7 +1148,6 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         VmceResultTarget::HostVictoryNext | VmceResultTarget::CampaignEnd => [Some(true); 4],
         VmceResultTarget::GuestUnready => [Some(false); 4],
         VmceResultTarget::GuestReady => [Some(false), Some(true), Some(false), Some(false)],
-        VmceResultTarget::DefeatRetry => [None, None, None, None],
     };
     let local_ready = matches!(target, VmceResultTarget::GuestReady);
     let board = VmceResultBoard {
@@ -1056,20 +1171,10 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     };
     let mut model = synthetic_campaign_score_model();
     model.par_time = "00:12:00".into();
-    model.your_time = if target.victory() {
-        "00:09:47".into()
-    } else {
-        "00:14:26".into()
-    };
+    model.your_time = "00:09:47".into();
     model.enemies_destroyed = "23".into();
-    model.rank = if target.victory() {
-        "Colonel".into()
-    } else {
-        crate::app::vmce_result::defeat_headline().0
-    };
-    if !target.victory() {
-        model.commendation = crate::app::vmce_result::defeat_headline().1;
-    }
+    model.rank = "Colonel".into();
+    let _ = target.victory();
     App::open_campaign_score_page(
         state,
         CampaignScoreScreenModel {
@@ -1086,5 +1191,132 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("VMCE result fixture did not open the 0x103 page"))?
         .set_vmce_board(Some(board));
+    Ok(())
+}
+
+/// Install one synthetic VMCE defeat page on the production BC6 shell: a VMCE
+/// LAN room supplies the role rows, the round supplies the retry-vote state,
+/// and the model carries display-only score numbers. No match, no transport.
+#[cfg(feature = "vmce")]
+fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -> Result<()> {
+    use crate::ui::coop_score_shell::CoopScoreModel;
+    use crate::ui::score_shell::ScoreRow;
+    crate::app::shell_network_setup::install_vmce_lobby_fixture(
+        state,
+        &crate::app::shell_network_setup::VmceLobbyFixture {
+            host: target.host(),
+            claimed_roles: target.rows(),
+            peer_ready: true,
+            status: None,
+            blocking: false,
+        },
+    )?;
+    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
+        .ok_or_else(|| anyhow::anyhow!("VMCE defeat fixture needs authored role metadata"))?;
+    // A BC6 page follows a frozen start: freeze the synthetic lobby launch the
+    // same way the real VMCE start does, then enter the retry round.
+    let launch = state
+        .match_state
+        .session
+        .network_setup()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("VMCE defeat fixture has no lobby launch"))?;
+    let mutations = |human: &crate::skirmish_launch::SkirmishHumanSlot| human.name.clone();
+    let mut used_roles = [false; 4];
+    for human in &launch.humans {
+        let role = human.role.native_value();
+        if role >= 0 && role < 4 {
+            used_roles[role as usize] = true;
+        }
+    }
+    let assignments = crate::skirmish_launch::VmceHouseAssignments {
+        participants: launch
+            .humans
+            .iter()
+            .enumerate()
+            .map(|(index, human)| {
+                let authored = human.role.native_value();
+                let player_index = if (0..4).contains(&authored) {
+                    authored as u8
+                } else {
+                    let free = used_roles
+                        .iter()
+                        .position(|used| !used)
+                        .expect("a free VMCE role slot");
+                    used_roles[free] = true;
+                    free as u8
+                };
+                crate::skirmish_launch::VmceHouseAssignment {
+                    participant_name: mutations(human),
+                    raw_slot_index: human.raw_slot_index.expect("fixture lobby row"),
+                    player_index,
+                    owner_name: format!("VeraHouse{index}"),
+                }
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let map_file = launch
+        .selected_map_file
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("VMCE defeat fixture has no map"))?;
+    state
+        .match_state
+        .session
+        .accept_network_vmce_map_config(Some(
+            crate::app::match_bootstrap::NetworkVmceMapConfig::new(
+                map_file,
+                "a".repeat(64),
+                crate::map::vmce_config::VmceMapConfig::default(),
+            )
+            .map_err(|error| anyhow::anyhow!("VMCE fixture map config: {error:?}"))?,
+        ))?;
+    let session = &mut state.match_state.session;
+    for index in 0..launch.humans.len() {
+        session.set_network_player_ready(index, true)?;
+    }
+    session.set_network_map_status(0, 2)?;
+    session.set_network_start_seed(1234)?;
+    session.prepare_network_timing(2, || 0)?;
+    session.freeze_network_start_with_vmce(1234, Some(assignments))?;
+    state.match_state.session.enter_vmce_round_ending(
+        None,
+        true,
+        crate::app::match_runtime::session::VmceRoundEnding::Retry,
+        target.rows(),
+    )?;
+    state
+        .match_state
+        .session
+        .cooperative_round_set_retry_votes(target.votes())?;
+    const KILLS: [u32; 4] = [12, 7, 4, 2];
+    const LOSSES: [u32; 4] = [3, 5, 2, 1];
+    const BUILT: [u32; 4] = [40, 31, 18, 9];
+    const SCORE: [i32; 4] = [900, 640, 410, 220];
+    let rows = (0..target.rows())
+        .map(|role| ScoreRow {
+            name: roles[role].owner.clone(),
+            rgb: roles[role].color.unwrap_or([255, 255, 0]),
+            kills: KILLS[role],
+            losses: LOSSES[role],
+            built: BUILT[role],
+            score: SCORE[role],
+        })
+        .collect();
+    let model = CoopScoreModel {
+        rows,
+        time: "00:12:00".into(),
+        next_mission: String::new(),
+        mode_label: "VMCE".into(),
+        map_label: String::new(),
+        previous_mission: "VMCE campaign stage".into(),
+        description: String::new(),
+        side: 0,
+        map_index: None,
+        can_continue: true,
+        vmce_stats: true,
+    };
+    crate::app::vmce_result::open_defeat_page(state, model);
+    let _ = App::ensure_skirmish_shell_chrome(state);
     Ok(())
 }

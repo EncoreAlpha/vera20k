@@ -185,9 +185,15 @@ const CHECKPOINT_VMCE_RESULT_GUEST_UNREADY: &str = "vmce-result-guest-unready";
 #[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_GUEST_READY: &str = "vmce-result-guest-ready";
 #[cfg(feature = "vmce")]
-const CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY: &str = "vmce-result-defeat-retry";
-#[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_CAMPAIGN_END: &str = "vmce-result-campaign-end";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P: &str = "vmce-defeat-host-disabled-2p";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_4P: &str = "vmce-defeat-host-disabled-4p";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_DEFEAT_GUEST_VOTED: &str = "vmce-defeat-guest-voted";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_DEFEAT_HOST_LIT: &str = "vmce-defeat-host-lit";
 const CHECKPOINT_SCORE_0X108_ENTRY_PREFIX: &str = "score-0x108-entry-tick-";
 const CHECKPOINT_SCORE_0X108_HOVER_CONTINUE: &str = "score-0x108-hover-continue";
 const CHECKPOINT_SCORE_0X108_LEAVE_CONTINUE: &str = "score-0x108-leave-continue";
@@ -392,9 +398,15 @@ pub enum ShellCaptureCheckpoint {
     #[cfg(feature = "vmce")]
     VmceResultGuestReady,
     #[cfg(feature = "vmce")]
-    VmceResultDefeatRetry,
-    #[cfg(feature = "vmce")]
     VmceResultCampaignEnd,
+    #[cfg(feature = "vmce")]
+    VmceDefeatHostDisabled2p,
+    #[cfg(feature = "vmce")]
+    VmceDefeatHostDisabled4p,
+    #[cfg(feature = "vmce")]
+    VmceDefeatGuestVoted,
+    #[cfg(feature = "vmce")]
+    VmceDefeatHostLit,
 }
 
 impl ShellCaptureCheckpoint {
@@ -639,9 +651,15 @@ impl ShellCaptureCheckpoint {
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_GUEST_READY => Ok(Self::VmceResultGuestReady),
             #[cfg(feature = "vmce")]
-            CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY => Ok(Self::VmceResultDefeatRetry),
-            #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_CAMPAIGN_END => Ok(Self::VmceResultCampaignEnd),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P => Ok(Self::VmceDefeatHostDisabled2p),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_4P => Ok(Self::VmceDefeatHostDisabled4p),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_DEFEAT_GUEST_VOTED => Ok(Self::VmceDefeatGuestVoted),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_DEFEAT_HOST_LIT => Ok(Self::VmceDefeatHostLit),
             CHECKPOINT_SCORE_0X108_HOVER_CONTINUE => Ok(Self::Score0x108HoverContinue),
             CHECKPOINT_SCORE_0X108_LEAVE_CONTINUE => Ok(Self::Score0x108LeaveContinue),
             CHECKPOINT_MOVIES_0X101_STEADY => Ok(Self::MoviesPage0x101Steady),
@@ -1050,9 +1068,16 @@ impl ShellCaptureCheckpoint {
             #[cfg(feature = "vmce")]
             Self::VmceResultGuestReady => CHECKPOINT_VMCE_RESULT_GUEST_READY,
             #[cfg(feature = "vmce")]
-            Self::VmceResultDefeatRetry => CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
             #[cfg(feature = "vmce")]
             Self::VmceResultCampaignEnd => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
+            #[cfg(feature = "vmce")]
+            Self::VmceDefeatHostDisabled2p => CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P,
+            #[cfg(feature = "vmce")]
+            Self::VmceDefeatHostDisabled4p => CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_4P,
+            #[cfg(feature = "vmce")]
+            Self::VmceDefeatGuestVoted => CHECKPOINT_VMCE_DEFEAT_GUEST_VOTED,
+            #[cfg(feature = "vmce")]
+            Self::VmceDefeatHostLit => CHECKPOINT_VMCE_DEFEAT_HOST_LIT,
             Self::CampaignScore0x103AnimationSequence => {
                 CHECKPOINT_CAMPAIGN_SCORE_0X103_ANIMATION_SEQUENCE
             }
@@ -1828,8 +1853,11 @@ where
         ShellCaptureCheckpoint::VmceResultHostVictoryNext
             | ShellCaptureCheckpoint::VmceResultGuestUnready
             | ShellCaptureCheckpoint::VmceResultGuestReady
-            | ShellCaptureCheckpoint::VmceResultDefeatRetry
             | ShellCaptureCheckpoint::VmceResultCampaignEnd
+            | ShellCaptureCheckpoint::VmceDefeatHostDisabled2p
+            | ShellCaptureCheckpoint::VmceDefeatHostDisabled4p
+            | ShellCaptureCheckpoint::VmceDefeatGuestVoted
+            | ShellCaptureCheckpoint::VmceDefeatHostLit
     ) && (width, height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT)
         && width >= 640
         && height >= 480;
@@ -2819,12 +2847,32 @@ impl ShellCaptureSession {
                 score::CampaignScoreCapture::vmce(score::VmceResultTarget::GuestReady),
             ),
             #[cfg(feature = "vmce")]
-            ShellCaptureCheckpoint::VmceResultDefeatRetry => Some(
-                score::CampaignScoreCapture::vmce(score::VmceResultTarget::DefeatRetry),
-            ),
-            #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceResultCampaignEnd => Some(
                 score::CampaignScoreCapture::vmce(score::VmceResultTarget::CampaignEnd),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceDefeatHostDisabled2p => Some(
+                score::CampaignScoreCapture::vmce_defeat(
+                    score::VmceDefeatTarget::HostDisabled2p,
+                ),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceDefeatHostDisabled4p => Some(
+                score::CampaignScoreCapture::vmce_defeat(
+                    score::VmceDefeatTarget::HostDisabled4p,
+                ),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceDefeatGuestVoted => Some(
+                score::CampaignScoreCapture::vmce_defeat(
+                    score::VmceDefeatTarget::GuestVoted4p,
+                ),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceDefeatHostLit => Some(
+                score::CampaignScoreCapture::vmce_defeat(
+                    score::VmceDefeatTarget::HostLit4p,
+                ),
             ),
             _ => None,
         };
@@ -5511,12 +5559,24 @@ mod tests {
                 ShellCaptureCheckpoint::VmceResultGuestReady,
             ),
             (
-                CHECKPOINT_VMCE_RESULT_DEFEAT_RETRY,
-                ShellCaptureCheckpoint::VmceResultDefeatRetry,
-            ),
-            (
                 CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
                 ShellCaptureCheckpoint::VmceResultCampaignEnd,
+            ),
+            (
+                CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P,
+                ShellCaptureCheckpoint::VmceDefeatHostDisabled2p,
+            ),
+            (
+                CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_4P,
+                ShellCaptureCheckpoint::VmceDefeatHostDisabled4p,
+            ),
+            (
+                CHECKPOINT_VMCE_DEFEAT_GUEST_VOTED,
+                ShellCaptureCheckpoint::VmceDefeatGuestVoted,
+            ),
+            (
+                CHECKPOINT_VMCE_DEFEAT_HOST_LIT,
+                ShellCaptureCheckpoint::VmceDefeatHostLit,
             ),
         ];
         for (name, checkpoint) in cases {
