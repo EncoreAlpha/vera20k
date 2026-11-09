@@ -63,10 +63,17 @@ pub(crate) fn open_defeat(state: &mut AppState) {
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let Some(model) = crate::app::cooperative_round::build_vmce_defeat_model(state, elapsed) else {
+    let Some(mut model) = crate::app::cooperative_round::build_vmce_defeat_model(state, elapsed)
+    else {
         App::leave_mission_result_screen(state);
         return;
     };
+    // The failure page shows the same statistics table as the victory stats
+    // page: score rows plus the gross-income accumulator and the stage's par
+    // time. Project it while the finished world is still resident.
+    let ranking_model =
+        crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
+    model.vmce_statistics = statistics_page(state, &ranking_model);
     let rows = model.rows.len();
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
@@ -266,6 +273,7 @@ pub(crate) fn result_board(
         victory,
         local_host: state.match_state.session.host(),
         local_ready,
+        can_continue: state.match_state.session.cooperative_round_can_continue(),
     })
 }
 
@@ -399,7 +407,7 @@ fn open_page(
 /// rows plus the terminal score cells and the mission income statistic. Read
 /// only; no second result state.
 #[cfg(feature = "vmce")]
-fn statistics_page(
+pub(crate) fn statistics_page(
     state: &AppState,
     model: &crate::ui::campaign_score_shell::CampaignScoreScreenModel,
 ) -> Option<crate::ui::campaign_score_shell::VmceStatistics> {

@@ -904,62 +904,56 @@ impl App {
             rect: layout.continue_button,
         }];
         let mut hover_feed = hover_feed;
-        // VMCE's result page owns its right-panel buttons: Ready/Continue/Leave
-        // replace the single native Continue and the native control's help.
+        // VMCE's result page owns its right-panel buttons: row one is
+        // Continue/Ready, row two is 统计数据 and the bottom slot is Leave Room.
+        // On the statistics page only row one is a normal Back button.
         #[cfg(feature = "vmce")]
-        if let Some(board) = state
-            .frontend
-            .campaign_score_page
-            .as_ref()
-            .and_then(|page| page.vmce_board())
-            .cloned()
+        if let Some(page) = state.frontend.campaign_score_page.as_ref()
+            && let Some(board) = page.vmce_board().cloned()
         {
             hover_feed.retain(|control| control.id != dialog.continue_button());
-            let buttons = crate::ui::campaign_score_shell::vmce_result_buttons(
-                &board,
-                &layout,
-                dialog.continue_button(),
-            );
-            press_feed = buttons
-                .iter()
-                .filter(|button| button.enabled)
-                .map(|button| crate::ui::shell::layout::LaidOutControl {
-                    id: button.id,
-                    rect: button.rect,
-                })
-                .collect();
-            for button in &buttons {
-                hover_feed.push(crate::ui::shell::layout::LaidOutControl {
-                    id: button.id,
-                    rect: button.rect,
-                });
-            }
-            // The statistics tab lives on VERA's victory/campaign-end page and
-            // is the only control on the full-screen stats page besides Back.
-            if board.victory {
-                let stats_open = state
-                    .frontend
-                    .campaign_score_page
-                    .as_ref()
-                    .is_some_and(|page| page.vmce_stats_open());
-                let tab = crate::ui::shell::layout::LaidOutControl {
-                    id: crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL,
-                    rect: layout.vmce_stats_tab,
-                };
-                if stats_open {
-                    let back = crate::ui::shell::layout::LaidOutControl {
-                        id: crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL,
-                        rect: layout.vmce_statistics.back,
-                    };
-                    press_feed = vec![tab, back];
+            let stats_page =
+                board.victory && page.vmce_stats_open() && page.vmce_statistics().is_some();
+            if stats_page {
+                let buttons = crate::ui::campaign_score_shell::vmce_stats_page_buttons(&layout);
+                press_feed = buttons
+                    .iter()
+                    .map(|button| crate::ui::shell::layout::LaidOutControl {
+                        id: button.id,
+                        rect: button.rect,
+                    })
+                    .collect();
+                for button in &buttons {
                     hover_feed.push(crate::ui::shell::layout::LaidOutControl {
-                        id: tab.id,
-                        rect: tab.rect,
+                        id: button.id,
+                        rect: button.rect,
                     });
-                    hover_feed.push(back);
+                }
+            } else {
+                let can_continue = if state.match_state.session.cooperative_round().is_some() {
+                    state.match_state.session.cooperative_round_can_continue()
                 } else {
-                    press_feed.push(tab);
-                    hover_feed.push(tab);
+                    board.can_continue
+                };
+                let buttons = crate::ui::campaign_score_shell::vmce_result_buttons(
+                    &board,
+                    &layout,
+                    dialog.continue_button(),
+                    can_continue,
+                );
+                press_feed = buttons
+                    .iter()
+                    .filter(|button| button.enabled)
+                    .map(|button| crate::ui::shell::layout::LaidOutControl {
+                        id: button.id,
+                        rect: button.rect,
+                    })
+                    .collect();
+                for button in &buttons {
+                    hover_feed.push(crate::ui::shell::layout::LaidOutControl {
+                        id: button.id,
+                        rect: button.rect,
+                    });
                 }
             }
         }
@@ -991,7 +985,7 @@ impl App {
         let vmce_button = pressed.is_some_and(|id| {
             id == crate::ui::campaign_score_shell::VMCE_READY_CONTROL
                 || id == crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL
-                || id == crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL
+                || id == crate::ui::campaign_score_shell::VMCE_STATS_CONTROL
                 || id == crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL
         });
         #[cfg(not(feature = "vmce"))]
@@ -1023,12 +1017,13 @@ impl App {
             .frontend
             .shell_controller
             .on_pointer_up(x, y, &press_feed);
-        // VERA's stats tab and Back toggle the full-screen page.
+        // VERA's row-two 统计数据 button opens the full-screen page; the page's
+        // only right-panel control (row-one Back) closes it.
         #[cfg(feature = "vmce")]
         if let Some(page) = state.frontend.campaign_score_page.as_mut()
             && page.vmce_board().is_some_and(|board| board.victory)
         {
-            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL) {
+            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_CONTROL) {
                 page.toggle_vmce_stats();
                 state.platform.window.request_redraw();
                 return;

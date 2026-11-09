@@ -411,6 +411,8 @@ fn build_model_rows(
         map_index,
         can_continue,
         vmce_stats,
+        #[cfg(feature = "vmce")]
+        vmce_statistics: None,
     })
 }
 

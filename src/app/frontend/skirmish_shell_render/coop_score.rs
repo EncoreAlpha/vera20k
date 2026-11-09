@@ -149,26 +149,30 @@ pub(crate) fn render_coop_score(
     // VMCE's statistics page keeps only the score table, time, title and the
     // two buttons: no next-mission/difficulty/description prompts.
     let stats_hidden = |id: u16| stats && vmce_stats_hidden(id);
-    for spec in COOP_SCORE_CONTROLS
-        .iter()
-        .filter(|spec| shown(spec.id) && !stats_hidden(spec.id))
-    {
-        let Some(rect) = layout.control_rect(spec.id) else {
-            continue;
-        };
-        let value = match spec.id {
-            TIME => model.time.clone(),
-            NEXT_MISSION => model.next_mission.clone(),
-            DESCRIPTION => model.description.clone(),
-            id => match spec.caption_key {
-                Some(key) => localized_label(state, key, key),
-                None => {
-                    let _ = id;
-                    continue;
-                }
-            },
-        };
-        texts.push(text(&value, rect, align(spec.align), SHELL_LABEL_TEXT_RGB));
+    // The failure page replaces the native five-column table with VERA's
+    // shared six-column statistics table; all its own statics are skipped.
+    if !stats {
+        for spec in COOP_SCORE_CONTROLS
+            .iter()
+            .filter(|spec| shown(spec.id) && !stats_hidden(spec.id))
+        {
+            let Some(rect) = layout.control_rect(spec.id) else {
+                continue;
+            };
+            let value = match spec.id {
+                TIME => model.time.clone(),
+                NEXT_MISSION => model.next_mission.clone(),
+                DESCRIPTION => model.description.clone(),
+                id => match spec.caption_key {
+                    Some(key) => localized_label(state, key, key),
+                    None => {
+                        let _ = id;
+                        continue;
+                    }
+                },
+            };
+            texts.push(text(&value, rect, align(spec.align), SHELL_LABEL_TEXT_RGB));
+        }
     }
     for (label, id) in [
         (&model.mode_label, MODE_LABEL),
@@ -187,25 +191,93 @@ pub(crate) fn render_coop_score(
         }
     }
     // The tail's cells: name, then "%d" for each count, in the row colour.
-    // VMCE's defeat page extends this to the four authored role rows.
-    for (index, row) in model.rows.iter().enumerate() {
-        let Some(cells) = layout.row_cells(index) else {
-            continue;
-        };
-        let values = [
-            row.name.clone(),
-            row.kills.to_string(),
-            row.losses.to_string(),
-            row.built.to_string(),
-            row.score.to_string(),
-        ];
-        for (column, (value, id)) in values.iter().zip(cells).enumerate() {
-            let row_align = match column {
-                0 => CoopScoreAlign::Left,
-                _ => CoopScoreAlign::Right,
+    // VMCE's failure page instead shows the same six-column statistics table
+    // as the victory stats page (time header, native headings, four role rows).
+    if stats {
+        #[cfg(feature = "vmce")]
+        if let Some(statistics) = model.vmce_statistics.as_ref() {
+            let table = crate::ui::campaign_score_shell::vmce_statistics_layout(scale);
+            texts.push(text(
+                &format!(
+                    "{} {}",
+                    localized_label(state, "GUI:YourTime", "Your Time"),
+                    statistics.total_time
+                ),
+                table.total_time,
+                ShellAlign::NONE,
+                SHELL_LABEL_TEXT_RGB,
+            ));
+            texts.push(text(
+                &format!(
+                    "{} {}",
+                    localized_label(state, "GUI:ParTime", "Par Time"),
+                    statistics.par_time
+                ),
+                table.par_time,
+                ShellAlign::NONE,
+                SHELL_LABEL_TEXT_RGB,
+            ));
+            for header in table.headers {
+                let label = if let Some(key) = header.key.strip_prefix("VERA:") {
+                    crate::i18n::tr(&format!("VERA:{key}"))
+                } else {
+                    localized_label(state, header.key, header.key)
+                };
+                texts.push(text(
+                    &label,
+                    header.rect,
+                    if header.centred {
+                        ShellAlign::H_CENTER
+                    } else {
+                        ShellAlign::NONE
+                    },
+                    SHELL_LABEL_TEXT_RGB,
+                ));
+            }
+            for (row, cells) in statistics.rows.iter().zip(table.rows.iter()) {
+                let values = [
+                    row.player.clone(),
+                    row.kills.to_string(),
+                    row.losses.to_string(),
+                    row.built.to_string(),
+                    row.score.to_string(),
+                    row.income.to_string(),
+                ];
+                for (column, value) in values.iter().enumerate() {
+                    let row_align = if column == 0 {
+                        ShellAlign::NONE
+                    } else {
+                        ShellAlign::H_CENTER
+                    };
+                    texts.push(text(
+                        value,
+                        cells.cells[column],
+                        row_align,
+                        rgb(row.rgb.unwrap_or([255, 255, 0])),
+                    ));
+                }
+            }
+        }
+    } else {
+        for (index, row) in model.rows.iter().enumerate() {
+            let Some(cells) = layout.row_cells(index) else {
+                continue;
             };
-            if let Some(rect) = layout.control_rect(id) {
-                texts.push(text(value, rect, align(row_align), rgb(row.rgb)));
+            let values = [
+                row.name.clone(),
+                row.kills.to_string(),
+                row.losses.to_string(),
+                row.built.to_string(),
+                row.score.to_string(),
+            ];
+            for (column, (value, id)) in values.iter().zip(cells).enumerate() {
+                let row_align = match column {
+                    0 => CoopScoreAlign::Left,
+                    _ => CoopScoreAlign::Right,
+                };
+                if let Some(rect) = layout.control_rect(id) {
+                    texts.push(text(value, rect, align(row_align), rgb(row.rgb)));
+                }
             }
         }
     }
@@ -448,7 +520,8 @@ pub(crate) fn render_coop_score(
         texts.push(shell_text::draw_in_rect_scaled(
             font,
             &localized_label(state, label_key, label_key),
-            button_text_rect(button.rect, pressed, scale),
+            // Lit and disabled captions share the unpressed, centred frame.
+            button_text_rect(button.rect, false, scale),
             rgb,
             ShellAlign::BUTTON_CAPTION,
             [0.0; 2],

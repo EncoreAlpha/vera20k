@@ -1181,6 +1181,7 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         victory: target.victory(),
         local_host,
         local_ready,
+        can_continue: ready.iter().all(|ready| *ready == Some(true)),
     };
     let mut model = synthetic_campaign_score_model();
     model.par_time = "00:12:00".into();
@@ -1347,6 +1348,26 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
             score: SCORE[role],
         })
         .collect();
+    let statistics = crate::ui::campaign_score_shell::VmceStatistics {
+        rows: (0..target.rows())
+            .map(|role| crate::ui::campaign_score_shell::VmceStatisticsRow {
+                player: if role == 0 {
+                    "LiveHost".into()
+                } else {
+                    format!("LiveGuest{role}")
+                },
+                owner: roles[role].owner.clone(),
+                rgb: roles[role].color,
+                kills: KILLS[role],
+                losses: LOSSES[role],
+                built: BUILT[role],
+                score: SCORE[role],
+                income: [5_000, 3_200, 2_100, 1_200][role],
+            })
+            .collect(),
+        total_time: "00:12:00".into(),
+        par_time: "00:15:00".into(),
+    };
     let model = CoopScoreModel {
         rows,
         time: "00:12:00".into(),
@@ -1359,6 +1380,7 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
         map_index: None,
         can_continue: true,
         vmce_stats: true,
+        vmce_statistics: Some(statistics),
     };
     crate::app::vmce_result::open_defeat_page(state, model);
     let _ = App::ensure_skirmish_shell_chrome(state);

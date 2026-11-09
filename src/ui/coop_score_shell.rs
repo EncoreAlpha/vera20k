@@ -604,6 +604,10 @@ pub struct CoopScoreModel {
     /// VMCE's defeat page: BC6 is the statistics view itself (no Ready
     /// column, no statistics entry), four role rows, and no chat.
     pub vmce_stats: bool,
+    /// VERA's shared six-column statistics table (victory stats page and the
+    /// BC6 defeat page); `None` on the stock BC6 page.
+    #[cfg(feature = "vmce")]
+    pub vmce_statistics: Option<crate::ui::campaign_score_shell::VmceStatistics>,
 }
 
 /// The open dialog: its fixed texts, its interaction, and what the

@@ -220,18 +220,16 @@ pub(crate) fn render_campaign_score_page(
     #[cfg(feature = "vmce")]
     let mut vmce_board_sprites: Vec<crate::render::batch::SpriteInstance> = Vec::new();
     #[cfg(feature = "vmce")]
-    let mut vmce_stats_sprites: Vec<crate::render::batch::SpriteInstance> = Vec::new();
-    #[cfg(feature = "vmce")]
-    let mut vmce_stats_buttons: Vec<crate::render::batch::SpriteInstance> = Vec::new();
-    #[cfg(feature = "vmce")]
-    if let (Some(board_layout), Some(board)) = (
-        layout.vmce_result,
-        state
-            .frontend
-            .campaign_score_page
-            .as_ref()
-            .and_then(|page| page.vmce_board()),
-    ) {
+    if !stats_open
+        && let (Some(board_layout), Some(board)) = (
+            layout.vmce_result,
+            state
+                .frontend
+                .campaign_score_page
+                .as_ref()
+                .and_then(|page| page.vmce_board()),
+        )
+    {
         let board = board.clone();
         paint_vmce_result_board(
             state,
@@ -260,9 +258,24 @@ pub(crate) fn render_campaign_score_page(
         .frontend
         .campaign_score_page
         .as_ref()
-        .and_then(|page| page.vmce_board())
-        .map(|board| {
-            crate::ui::campaign_score_shell::vmce_result_buttons(board, &layout, continue_id)
+        .and_then(|page| {
+            let board = page.vmce_board()?;
+            let buttons = if stats_open && board.victory && page.vmce_statistics().is_some() {
+                crate::ui::campaign_score_shell::vmce_stats_page_buttons(&layout)
+            } else {
+                let can_continue = if state.match_state.session.cooperative_round().is_some() {
+                    state.match_state.session.cooperative_round_can_continue()
+                } else {
+                    board.can_continue
+                };
+                crate::ui::campaign_score_shell::vmce_result_buttons(
+                    &board,
+                    &layout,
+                    continue_id,
+                    can_continue,
+                )
+            };
+            Some(buttons)
         });
     let buttons: Vec<PaintButton> = if wave.is_some() {
         Vec::new()
@@ -309,9 +322,15 @@ pub(crate) fn render_campaign_score_page(
                 let is_pressed = button.pressed || pressed == Some(button.id);
                 labels.push(PaintLabel {
                     text: resolve_csf(state, button.key).into_owned().into(),
-                    rect: owner_draw_button_label_rect(button.rect, is_pressed),
+                    rect: crate::ui::campaign_score_shell::vmce_button_caption_rect(button.rect),
                     align: ShellAlign::BUTTON_CAPTION,
-                    rgb: crate::ui::campaign_score_shell::vmce_result_button_text_rgb(is_pressed),
+                    rgb: if is_pressed {
+                        crate::ui::campaign_score_shell::vmce_result_button_text_rgb(true)
+                    } else if !button.enabled {
+                        shell_paint::SHELL_TEXT_RGB_DISABLED
+                    } else {
+                        crate::ui::campaign_score_shell::vmce_result_button_text_rgb(false)
+                    },
                     path_a_reveal: None,
                 });
             }
@@ -340,21 +359,9 @@ pub(crate) fn render_campaign_score_page(
         });
     }
     #[cfg(feature = "vmce")]
-    if vmce_page {
-        if stats_open {
-            labels.clear();
-        }
-        paint_vmce_stats_labels(
-            state,
-            &layout,
-            vmce_statistics.as_ref(),
-            stats_open,
-            &mut labels,
-            &mut vmce_stats_sprites,
-            &mut vmce_stats_buttons,
-            chrome,
-            now,
-        );
+    if vmce_page && stats_open {
+        labels.clear();
+        paint_vmce_stats_labels(state, &layout, vmce_statistics.as_ref(), &mut labels);
     }
     let text =
         shell_paint::paint_labels_scaled(&state.renderer.bit_font, &labels, layout.scale.factor());
@@ -407,7 +414,8 @@ pub(crate) fn render_campaign_score_page(
                 instances: panel_sprites,
             });
         }
-        if let (Some(strip), Some(frame)) = (art.scra.as_ref(), emblem_frame)
+        if !stats_open
+            && let (Some(strip), Some(frame)) = (art.scra.as_ref(), emblem_frame)
             && let (Some(entry), Some(window)) = (
                 strip.frames.get(frame).copied(),
                 layout.control_rect(SCORE_ART_REGION_STATIC),
@@ -431,22 +439,6 @@ pub(crate) fn render_campaign_score_page(
         draws.push(TexturedDraw {
             texture: &skirmish.texture,
             instances: vmce_board_sprites,
-        });
-    }
-    #[cfg(feature = "vmce")]
-    if !vmce_stats_sprites.is_empty()
-        && let Some(skirmish) = state.frontend.skirmish_shell_chrome.as_ref()
-    {
-        draws.push(TexturedDraw {
-            texture: &skirmish.texture,
-            instances: vmce_stats_sprites,
-        });
-    }
-    #[cfg(feature = "vmce")]
-    if !vmce_stats_buttons.is_empty() {
-        draws.push(TexturedDraw {
-            texture: &chrome.texture,
-            instances: vmce_stats_buttons,
         });
     }
     encode_shell_pass(
@@ -478,83 +470,21 @@ fn rgb_f32(rgb: [u8; 3]) -> [f32; 3] {
     rgb.map(|channel| f32::from(channel) / 255.0)
 }
 
-/// The vertical `统计数据` tab on the victory page's left edge.
+/// The full-screen statistics page's text: time header, six native headings,
+/// four role rows in House colours and the right-panel Back caption. The page
+/// reuses the native BC6-style backdrop, so there is no panel fill and no row
+/// strip; only the right panel's first slot carries a normal Back button.
 #[cfg(feature = "vmce")]
-fn paint_vmce_stats_tab(
-    state: &AppState,
-    layout: &crate::ui::campaign_score_shell::CampaignScoreLayout,
-    highlighted: bool,
-    sprites: &mut Vec<crate::render::batch::SpriteInstance>,
-    labels: &mut Vec<PaintLabel<'static>>,
-) {
-    use crate::app::frontend::skirmish_shell_render::vmce_panel;
-    let Some(atlas) = state.frontend.skirmish_shell_chrome.as_ref() else {
-        return;
-    };
-    let tab = layout.vmce_stats_tab;
-    let depth = shell_paint::DIALOG_BACKGROUND_DEPTH + 0.0001;
-    let rgb = if highlighted {
-        [0.28, 0.21, 0.11]
-    } else {
-        vmce_panel::FILL_RGB
-    };
-    vmce_panel::push_solid_rect(sprites, atlas, tab, rgb, depth);
-    vmce_panel::push_list_frame(sprites, atlas, tab, layout.scale, depth);
-    let font = &state.renderer.bit_font;
-    let text = crate::i18n::tr("VERA:VmceStatistics");
-    let chars: Vec<char> = text.chars().collect();
-    let line_h = (17.0 * layout.scale.factor()).round().max(1.0) as i32;
-    let total_h = line_h * chars.len() as i32;
-    let start_y = tab.y + ((tab.h - total_h) / 2).max(0);
-    let _ = font;
-    for (index, ch) in chars.iter().enumerate() {
-        labels.push(PaintLabel {
-            text: ch.to_string().into(),
-            rect: crate::ui::shell::geom::RectPx::new(
-                tab.x,
-                start_y + index as i32 * line_h,
-                tab.w,
-                line_h,
-            ),
-            align: ShellAlign::H_CENTER,
-            rgb: if highlighted {
-                [1.0, 1.0, 1.0]
-            } else {
-                SHELL_TEXT_RGB_ENABLED
-            },
-            path_a_reveal: None,
-        });
-    }
-}
-
-/// The full-screen statistics page and the tab, drawn after the native art.
-#[cfg(feature = "vmce")]
-#[allow(clippy::too_many_arguments)]
 fn paint_vmce_stats_labels(
     state: &AppState,
     layout: &crate::ui::campaign_score_shell::CampaignScoreLayout,
     statistics: Option<&crate::ui::campaign_score_shell::VmceStatistics>,
-    stats_open: bool,
     labels: &mut Vec<PaintLabel<'static>>,
-    sprites: &mut Vec<crate::render::batch::SpriteInstance>,
-    buttons: &mut Vec<crate::render::batch::SpriteInstance>,
-    chrome: &crate::render::main_menu_shell_chrome::MainMenuShellChromeAtlas,
-    now: Instant,
 ) {
-    use crate::app::frontend::skirmish_shell_render::vmce_panel;
-    let Some(atlas) = state.frontend.skirmish_shell_chrome.as_ref() else {
-        return;
-    };
-    let Some(statistics) = statistics.filter(|_| stats_open) else {
-        paint_vmce_stats_tab(state, layout, stats_open, sprites, labels);
+    let Some(statistics) = statistics else {
         return;
     };
     let stats_layout = layout.vmce_statistics;
-    let depth = shell_paint::DIALOG_BACKGROUND_DEPTH + 0.0001;
-    vmce_panel::push_fill(sprites, atlas, stats_layout.fill, depth);
-    vmce_panel::push_list_frame(sprites, atlas, stats_layout.frame, layout.scale, depth);
-    // The tab stays highlighted above the page it opened.
-    paint_vmce_stats_tab(state, layout, stats_open, sprites, labels);
     let mut push = |text: String, rect, align, rgb| {
         labels.push(PaintLabel {
             text: text.into(),
@@ -624,13 +554,6 @@ fn paint_vmce_stats_labels(
     };
     for (row, cells) in statistics.rows.iter().zip(stats_layout.rows.iter()) {
         let rgb = row_rgb(row);
-        let strip = crate::ui::shell::geom::RectPx::new(
-            cells.cells[0].x + 1,
-            cells.cells[0].y + 1,
-            (cells.cells[5].x + cells.cells[5].w - 1) - (cells.cells[0].x + 1),
-            cells.cells[0].h - 2,
-        );
-        vmce_panel::push_solid_rect_alpha(sprites, atlas, strip, [0.0, 0.0, 0.0], depth, 0.55);
         let values = [
             row.player.clone(),
             row.kills.to_string(),
@@ -649,22 +572,10 @@ fn paint_vmce_stats_labels(
             push(value.clone(), rect, align, rgb);
         }
     }
-    let back = layout.vmce_statistics.back;
-    *buttons = shell_paint::paint_buttons(
-        chrome,
-        &[PaintButton {
-            rect: back,
-            pressed: false,
-            hovered: false,
-            enabled: true,
-        }],
-        crate::app::frontend::menu_page_render::MENU_PAGE_BUTTON_POLICY,
-        now,
-        None,
-    );
+    let back = crate::ui::campaign_score_shell::vmce_button_caption_rect(layout.vmce_ready_button);
     push(
         crate::i18n::tr("VERA:VmceBack"),
-        owner_draw_button_label_rect(back, false),
+        back,
         ShellAlign::BUTTON_CAPTION,
         SHELL_TEXT_RGB_ENABLED,
     );
@@ -672,8 +583,8 @@ fn paint_vmce_stats_labels(
 
 /// VMCE's settlement board: one flat native dialog fill and the native list
 /// frame behind four role rows and their single Ready glyph. Every row's text
-/// uses its authored House colour over a dark 1 px-inset translucent strip so a
-/// dark House stays readable; captions and icons keep the native yellow/art.
+/// uses its authored House colour directly on the native panel; captions and
+/// icons keep the native yellow/art.
 /// The board never touches the native `0x103` statics (rank, commendation,
 /// times, kills) or the Continue cell.
 #[cfg(feature = "vmce")]
@@ -719,14 +630,6 @@ fn paint_vmce_result_board(
         });
     };
     for (row, cells) in board.rows.iter().zip(board_layout.rows.iter()) {
-        // 1 px-inset dark strip behind all four text cells of this row.
-        let strip = crate::ui::shell::geom::RectPx::new(
-            cells.player.x + 1,
-            cells.player.y + 1,
-            (cells.ready.x + cells.ready.w - 1) - (cells.player.x + 1),
-            cells.player.h - 2,
-        );
-        vmce_panel::push_solid_rect_alpha(sprites, chrome, strip, [0.0, 0.0, 0.0], depth, 0.55);
         let rgb = crate::ui::campaign_score_shell::vmce_result_text_rgb(row)
             .map(|channel| f32::from(channel) / 255.0);
         push(
