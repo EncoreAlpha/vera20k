@@ -960,6 +960,19 @@ impl MatchSession {
         let mode = previous.mode();
         #[cfg(feature = "vmce")]
         let previous_vera_houses = previous.vmce_houses().cloned();
+        // A defeat retry reopens the SAME frozen stage. Capture the admitted
+        // map identity before any network field is mutated: the rebuilt
+        // startup must carry the same config, physical source and effective
+        // digest as the previous frozen startup (no next-stage resolution,
+        // re-randomisation or campaign.ini re-read).
+        #[cfg(feature = "vmce")]
+        let retry_map_identity = vera_next.is_none().then(|| {
+            (
+                previous.vmce_map_config().cloned(),
+                previous.local_map_source().cloned(),
+                previous.effective_map_digest().map(str::to_owned),
+            )
+        });
         #[cfg(feature = "vmce")]
         let vera_next = vera_next.clone();
         #[cfg(feature = "vmce")]
@@ -969,10 +982,15 @@ impl MatchSession {
                 network.map_metadata = Some(next.metadata.clone());
                 network.local_map_source = Some(next.local_map_source.clone());
                 network.local_map_effective_digest = Some(next.effective_digest.clone());
-            } else if let Some(config) = previous.vmce_map_config() {
-                // Retry keeps the current mission: restore the admitted map
-                // config the retired startup held.
-                network.vmce_map_config = Some(config.clone());
+            } else if let Some((config, source, digest)) = retry_map_identity.as_ref() {
+                // Retry keeps the current mission: restore the exact admitted
+                // map identity the retired startup held. The startup below is
+                // rebuilt from this same snapshot.
+                if let Some(config) = config {
+                    network.vmce_map_config = Some(config.clone());
+                }
+                network.local_map_source = source.clone();
+                network.local_map_effective_digest = digest.clone();
             }
             // The next map owns its own `[Basic] PlayerN`/`[Houses]` binding,
             // so re-resolve each role against it instead of carrying the
@@ -1028,6 +1046,13 @@ impl MatchSession {
                 prepared = prepared
                     .with_local_map_source(Some(next.local_map_source), Some(next.effective_digest))
                     .with_vmce_map_config(next.config);
+            } else if let Some((config, source, digest)) = retry_map_identity {
+                // Retry must not fall back to a map-less startup: inherit the
+                // frozen config/source/digest exactly.
+                if let Some(config) = config {
+                    prepared = prepared.with_vmce_map_config(config);
+                }
+                prepared = prepared.with_local_map_source(source, digest);
             }
         }
         let startup = Arc::new(prepared);
@@ -1301,6 +1326,21 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap();
+        session.network.as_mut().unwrap().local_map_source =
+            Some(crate::map::source::LoadedMapSource::Loose {
+                path: std::path::PathBuf::from(
+                    session
+                        .network_setup()
+                        .unwrap()
+                        .selected_map_file
+                        .clone()
+                        .unwrap(),
+                ),
+                payload_len: 100,
+                source_sha256: "a".repeat(64),
+                cache_lease: Default::default(),
+            });
+        session.network.as_mut().unwrap().local_map_effective_digest = Some("b".repeat(64));
         session.set_network_player_ready(0, true).unwrap();
         session.set_network_map_status(0, 2).unwrap();
         session.set_network_start_seed(SEED).unwrap();
@@ -1537,6 +1577,76 @@ mod tests {
                 .iter()
                 .any(|request| matches!(request, NetworkLoadingRequest::CooperativeOptions(_)))
         );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_retry_freeze_inherits_the_frozen_startup() {
+        use crate::app::match_bootstrap::LoadingStartup;
+        let (mut session, first) = frozen_vera_rows(0, 2);
+        let first_config = first.vmce_map_config().cloned();
+        let first_source = first.local_map_source().cloned();
+        let first_digest = first.effective_map_digest().map(str::to_owned);
+        let first_houses = first.vmce_houses().cloned();
+        let first_seed = first.seed;
+        let first_launch = first.launch_session().clone();
+        assert!(
+            first_config.is_some(),
+            "fixture startup carries the map config"
+        );
+        assert!(
+            first_source.is_some(),
+            "fixture startup carries the map source"
+        );
+        assert_eq!(first_digest.as_deref().map(str::len), Some(64));
+
+        session
+            .enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+            .unwrap();
+        session
+            .cooperative_round_set_retry_votes([false, true, false, false])
+            .unwrap();
+        assert!(matches!(
+            session.cooperative_round_retry_start(0).unwrap(),
+            CooperativeRoundStep::Assign
+        ));
+        session.cooperative_round_assigned(0).unwrap();
+        session
+            .cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
+            .unwrap();
+        // The retry must come from the previous frozen startup, not from
+        // whatever the networking fields hold now (a campaign.ini re-read or a
+        // cleared config would otherwise produce a map-less startup).
+        let network = session.network.as_mut().unwrap();
+        network.vmce_map_config = None;
+        network.local_map_source = None;
+        network.local_map_effective_digest = None;
+        network.map_metadata = None;
+        let LoadingStartup::Network(next) = session.freeze_cooperative_round(30, 2, None).unwrap()
+        else {
+            panic!("retry freezes a network startup");
+        };
+        assert_eq!(next.vmce_map_config().cloned(), first_config);
+        assert_eq!(next.local_map_source().cloned(), first_source);
+        assert_eq!(next.effective_map_digest().map(str::to_owned), first_digest);
+        assert_eq!(next.vmce_houses().cloned(), first_houses);
+        assert_eq!(next.seed, first_seed, "retry reuses the frozen seed");
+        // Roles, countries and colours are the frozen roster; start positions
+        // and derived pre-fill order may be resolved by the finished mission.
+        let next_launch = next.launch_session();
+        assert_eq!(next_launch.mode, first_launch.mode);
+        assert_eq!(
+            next_launch.local_player_index,
+            first_launch.local_player_index
+        );
+        assert_eq!(next_launch.humans.len(), first_launch.humans.len());
+        for (next_human, first_human) in next_launch.humans.iter().zip(&first_launch.humans) {
+            assert_eq!(next_human.role, first_human.role);
+            assert_eq!(next_human.raw_slot_index, first_human.raw_slot_index);
+            assert_eq!(next_human.slot.country, first_human.slot.country);
+            assert_eq!(next_human.slot.color_index, first_human.slot.color_index);
+        }
+        assert_eq!(next_launch.options, first_launch.options);
     }
 
     #[cfg(feature = "vmce")]
