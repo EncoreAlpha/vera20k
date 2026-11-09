@@ -270,7 +270,9 @@ conditions for each role. There is no automatic "all roles failed" fallback.
 
 ## Automated acceptance
 
-`tools/vmce_lan_acceptance.py` runs the real-process captures:
+After an upstream sync, see [VMCE fork baseline](vmce-baseline.md) for the
+merge/version/validation state. `tools/vmce_lan_acceptance.py` runs the
+real-process captures:
 
 - `--suite dev`: one short `2p-win` flow probe. It caps each capture at 120 s
   and stops as soon as either peer exits non-zero, so a development probe
