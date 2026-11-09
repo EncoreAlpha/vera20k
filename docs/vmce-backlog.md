@@ -39,6 +39,20 @@ recorded here for residuals only.
   `收入`/`Income`, `返回`/`Back`.
 
 
+## UI review follow-up (pending, not implemented)
+
+- **B28 Review feedback superseding parts of B25/B26/B27.** B25: host `继续` and guest `准备` both
+  move to the right panel's first native button slot; the bottom slot is `离开房间` only for both
+  roles; remove every row backdrop strip and the extra black strip under the last row; centre the
+  lit/disabled `准备`/`重试` captions in the native frame. B26: the defeat BC6 page uses the same
+  statistics table as victory — header total/par time, four rows, six columns
+  `玩家 | 击毁 | 损失 | 建造 | 分数 | 收入` — replacing the five-column BC6 table. B27: remove the
+  left vertical `统计数据` tab; the entry becomes a right-panel button on the **second button row**
+  (first row is Continue/Ready) for host and guests on victory/campaign-end only. On the
+  full-screen stats page the right panel keeps only a normal (not lit) `返回` button on the **first
+  row**; no left tab, bottom Back, bottom Leave or other right-panel buttons. Stats page background
+  uses the BC6-style version; remove the black row strips from the table. Keep native `分数` label.
+
 ## Locked decisions (after the B24–B27 UI batch)
 
 - Version after this batch: `0.2.9-vmce.5`. Push `feature/vmce` only after the screenshot review
