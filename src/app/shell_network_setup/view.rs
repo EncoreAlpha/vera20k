@@ -191,6 +191,14 @@ fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
     })
 }
 
+/// The Owner combo's face and choice text: the campaign `PlayerN`-bound map
+/// `[Houses]` House name alone. No player/role number and no `P1..P4` prefix;
+/// the row itself is the player, so the cell names the House it controls.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_owner_choice_text(owner: &str) -> String {
+    owner.to_owned()
+}
+
 #[cfg(feature = "vmce")]
 fn vmce_role_choices(
     state: &AppState,
@@ -228,10 +236,7 @@ fn vmce_role_choices(
         }
         choices.push(SetupChoice {
             value,
-            text: crate::i18n::tr_fill(
-                "VERA:VmceRoleChoiceShort",
-                &[("number", &(index + 1)), ("house", &owner)],
-            ),
+            text: vmce_owner_choice_text(owner),
             swatch: None,
         });
     }
@@ -1090,6 +1095,20 @@ fn profile_is_wol(state: &AppState) -> bool {
 mod tests {
     use super::*;
     use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn the_owner_combo_names_only_the_authored_house() {
+        // The row is the player; the cell names the House the role binds to.
+        assert_eq!(vmce_owner_choice_text("Americans House"), "Americans House");
+        assert_eq!(
+            vmce_owner_choice_text("YuriCountry House"),
+            "YuriCountry House"
+        );
+        let text = vmce_owner_choice_text("Alliance House");
+        assert!(!text.starts_with('P'), "no P1..P4 prefix: {text}");
+        assert!(!text.chars().any(|ch| ch.is_ascii_digit()));
+    }
 
     #[cfg(feature = "vmce")]
     #[test]

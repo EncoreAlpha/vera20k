@@ -1,11 +1,11 @@
 //! VMCE controls on the existing network setup page geometry.
 //!
 //! The original page owns the chrome anchors. Only the player columns are
-//! rearranged: a map role already determines its House and country. A
-//! display-only role board (role / country / ready / host / color) sits right
-//! of the participant columns on a native panel/list background; it reuses the
-//! native roster pitch, bit font, country flags and color swatches and owns no
-//! interaction.
+//! rearranged: the owner combo on each row selects the campaign role, and a
+//! map role already determines its House and country. A display-only owner
+//! board (country / ready / color) sits right of the participant columns on a
+//! native panel/list background; it reuses the native roster pitch, bit font,
+//! country flags, ready glyph and color swatches and owns no interaction.
 
 use crate::ui::multiplayer_setup::{
     DIFFICULTY, MultiplayerSetupLayout, SPEED, SetupDialog, VmceLobbyHeader, VmceLobbySidebar,
@@ -13,23 +13,33 @@ use crate::ui::multiplayer_setup::{
 };
 use crate::ui::shell::geom::{RectPx, ShellScale};
 
-/// Authored 800x600 x of the player-name combo. The VMCE role combo takes the
+/// Authored 800x600 x of the player-name combo. The VMCE owner combo takes the
 /// rest of the participant column group.
 const PLAYER_COMBO_X: i32 = 74;
 const PLAYER_COMBO_W: i32 = 96;
-const ROLE_COMBO_X: i32 = 174;
-const ROLE_COMBO_W: i32 = 80;
-/// Authored 800x600 metrics of the role board. The board frame starts after
-/// the 4 px gutter behind the role combo and ends flush against the native
+const OWNER_COMBO_X: i32 = 174;
+const OWNER_COMBO_W: i32 = 80;
+/// Authored 800x600 metrics of the owner board. The board frame starts after
+/// the 4 px gutter behind the owner combo and ends flush against the native
 /// right panel's bevel at x 632; the content keeps a 4 px inner padding. The
-/// base columns are the approved 92/92/33/33/32 split (Ready and Host share
-/// the old Ready+Host width) distributed over the available content width.
+/// separate role column is gone: country starts at the content edge, the
+/// country text uses the freed width, one Ready glyph cell follows, and the
+/// color swatch keeps its native 586..628 slot.
 const SIDEBAR_X: i32 = 258;
 const SIDEBAR_RIGHT: i32 = 632;
 const SIDEBAR_TOP: i32 = 10;
 const INNER_PAD: i32 = 4;
-const SIDEBAR_BASE_COLUMNS: [i32; 5] = [92, 92, 33, 33, 32];
-const SIDEBAR_BASE_W: i32 = 282;
+/// Content starts at x 262; the country emblem keeps the native 50 px cell.
+const CONTENT_X: i32 = SIDEBAR_X + INNER_PAD;
+const COUNTRY_ICON_W: i32 = 50;
+const COUNTRY_TEXT_X: i32 = CONTENT_X + 54;
+const COUNTRY_TEXT_W: i32 = 186;
+/// One Ready cell for the host H-in-star / guest accepted star.
+const READY_X: i32 = 506;
+const READY_W: i32 = 72;
+/// The color column keeps its approved 586..628 region.
+const COLOR_X: i32 = 586;
+const COLOR_W: i32 = SIDEBAR_RIGHT - INNER_PAD - COLOR_X;
 /// The native roster row pitch, its combo height, and the board's 2 px
 /// vertical padding inside each row.
 const ROW_PITCH: i32 = 26;
@@ -84,15 +94,12 @@ pub(crate) fn apply(
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
     layout.labels = vec![
         ("GUI:Players", rect(PLAYER_COMBO_X, 11, PLAYER_COMBO_W, 17)),
-        (
-            "VERA:VmceRoleSelect",
-            rect(ROLE_COMBO_X, 11, ROLE_COMBO_W, 17),
-        ),
+        ("VERA:VmceOwner", rect(OWNER_COMBO_X, 11, OWNER_COMBO_W, 17)),
     ];
     for (row, columns) in layout.combos.iter_mut().enumerate() {
         let y = ROW_Y + row as i32 * ROW_PITCH;
         columns[0] = rect(PLAYER_COMBO_X, y, PLAYER_COMBO_W, ROW_H);
-        columns[4] = rect(ROLE_COMBO_X, y, ROLE_COMBO_W, ROW_H);
+        columns[4] = rect(OWNER_COMBO_X, y, OWNER_COMBO_W, ROW_H);
         // The board owns the emblems now; keep the retained rect on its
         // country slot so no stale native flag column paints left of it.
         layout.flags[row] = rect(SIDEBAR_X + INNER_PAD + 2, y + ROW_PAD, 18, 20);
@@ -156,68 +163,49 @@ pub(crate) fn apply(
 
 fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
-    // Distribute the approved proportions over the inner width so the
-    // columns meet exactly; the last edge is the frame's inner right edge.
-    let inner_w = SIDEBAR_RIGHT - SIDEBAR_X - 2 * INNER_PAD;
-    let edge = |index: usize| {
-        let cumulative: i32 = SIDEBAR_BASE_COLUMNS[..=index].iter().sum();
-        SIDEBAR_X + INNER_PAD + ((inner_w * cumulative + SIDEBAR_BASE_W / 2) / SIDEBAR_BASE_W)
-    };
-    let lefts = [
-        SIDEBAR_X + INNER_PAD,
-        edge(0),
-        edge(1),
-        edge(2),
-        edge(3),
-        SIDEBAR_RIGHT - INNER_PAD,
-    ];
-    let columns: [(i32, i32); 5] =
-        std::array::from_fn(|column| (lefts[column], lefts[column + 1] - lefts[column]));
     let header_y = SIDEBAR_TOP + INNER_PAD;
     let headers = [
         VmceLobbyHeader {
-            key: "VERA:VmceRoleColumn",
-            // 4 px inside the flat panel fill.
-            rect: rect(columns[0].0 + 2, header_y, columns[0].1 - 4, HEADER_H),
-            centred: false,
-        },
-        VmceLobbyHeader {
             key: "VERA:VmceCountryColumn",
-            rect: rect(columns[1].0 + 2, header_y, columns[1].1 - 4, HEADER_H),
-            centred: false,
-        },
-        VmceLobbyHeader {
-            key: "VERA:VmceReadyColumn",
+            // 4 px inside the flat panel fill, over the country icon and text.
             rect: rect(
-                columns[2].0,
+                CONTENT_X + 2,
                 header_y,
-                columns[3].0 + columns[3].1 - columns[2].0,
+                COUNTRY_TEXT_X + COUNTRY_TEXT_W - (CONTENT_X + 2),
                 HEADER_H,
             ),
+            centred: false,
+        },
+        VmceLobbyHeader {
+            key: "VERA:VmceReady",
+            rect: rect(READY_X, header_y, READY_W, HEADER_H),
             centred: true,
         },
         VmceLobbyHeader {
             key: "VERA:VmceColorColumn",
-            rect: rect(columns[4].0, header_y, columns[4].1, HEADER_H),
+            rect: rect(COLOR_X, header_y, COLOR_W, HEADER_H),
             centred: true,
         },
     ];
     // The one caption row's dark rule, then four rows on the native pitch.
-    let header_rule = rect(SIDEBAR_X + INNER_PAD, header_y + HEADER_H + 1, inner_w, 1);
+    let header_rule = rect(
+        CONTENT_X,
+        header_y + HEADER_H + 1,
+        SIDEBAR_RIGHT - INNER_PAD - CONTENT_X,
+        1,
+    );
     let rows = std::array::from_fn(|row| {
         let y = ROW_Y + row as i32 * ROW_PITCH;
         let content = y + ROW_PAD;
         let content_h = ROW_H - 2 * ROW_PAD;
         VmceLobbySidebarRow {
-            role: rect(columns[0].0 + 2, content, columns[0].1 - 4, content_h),
             // The native flag PCX carries its country emblem beside the flag
             // (the roster draws it in a 49x21 cell); give it the full native
             // frame plus air, and centre it without clipping.
-            country_icon: rect(columns[1].0 + 1, y, 50, ROW_H),
-            country: rect(columns[1].0 + 54, content, columns[1].1 - 56, content_h),
-            ready: rect(columns[2].0 + 1, content, columns[2].1 - 2, content_h),
-            host: rect(columns[3].0 + 1, content, columns[3].1 - 2, content_h),
-            color: rect(columns[4].0 + 2, content, columns[4].1 - 4, content_h),
+            country_icon: rect(CONTENT_X, y, COUNTRY_ICON_W, ROW_H),
+            country: rect(COUNTRY_TEXT_X, content, COUNTRY_TEXT_W, content_h),
+            ready: rect(READY_X, content, READY_W, content_h),
+            color: rect(COLOR_X + 2, content, COLOR_W - 4, content_h),
         }
     });
     let frame = rect(
@@ -244,6 +232,8 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
 mod tests {
     use super::*;
     use crate::ui::multiplayer_setup::{ACCEPT, BACK, CHOOSE_MAP, START, SetupFlavor};
+    #[cfg(feature = "vmce")]
+    use crate::ui::multiplayer_setup::{VmceReadyGlyph, vmce_ready_glyph};
 
     fn coop_layout(
         host: bool,
@@ -289,46 +279,49 @@ mod tests {
             let scale = coop.page.scale;
             let base = |rect| scale.base_rect(rect);
             let player = base(coop.combos[0][0]);
-            let role = base(coop.combos[0][4]);
-            assert_eq!(player.x + player.w + 4, role.x);
-            let board = coop.vmce_sidebar.expect("VMCE role board");
-            // 4 px gutter behind the role combo, then the native panel frame.
-            assert_eq!(base(board.frame).x, role.x + role.w + 4);
+            let owner = base(coop.combos[0][4]);
+            assert_eq!(player.x + player.w + 4, owner.x);
+            let board = coop.vmce_sidebar.expect("VMCE owner board");
+            // 4 px gutter behind the owner combo, then the native panel frame.
+            assert_eq!(base(board.frame).x, owner.x + owner.w + 4);
             assert_eq!(base(board.frame).x, SIDEBAR_X);
             assert!((base(board.frame).x + base(board.frame).w - SIDEBAR_RIGHT).abs() <= 1);
+            // Country / Ready / Color, no separate role or host column.
+            assert_eq!(board.headers.len(), 3);
+            assert_eq!(board.headers[0].key, "VERA:VmceCountryColumn");
+            assert_eq!(board.headers[1].key, "VERA:VmceReady");
+            assert_eq!(board.headers[2].key, "VERA:VmceColorColumn");
             for (index, header) in board.headers.iter().enumerate() {
                 assert!((base(header.rect).y - 14).abs() <= 1);
                 assert_eq!(base(header.rect).h, HEADER_H);
                 let cell = match index {
-                    0 => base(board.rows[0].role),
-                    1 => base(board.rows[0].country_icon),
-                    2 => base(board.rows[0].ready),
+                    0 => base(board.rows[0].country_icon),
+                    1 => base(board.rows[0].ready),
                     _ => base(board.rows[0].color),
                 };
                 assert!((base(header.rect).x - cell.x).abs() <= 2, "header {index}");
             }
             for row in &board.rows {
-                let role_text = base(row.role);
-                let country_icon = base(row.country_icon);
-                let country_text = base(row.country);
+                let icon = base(row.country_icon);
+                let country = base(row.country);
                 let ready = base(row.ready);
-                let host = base(row.host);
                 let color = base(row.color);
-                assert!((role_text.y - country_icon.y).abs() <= 2);
-                assert!((country_icon.y - ready.y).abs() <= 2);
-                assert!((ready.y - host.y).abs() <= 2);
-                assert!((host.y - color.y).abs() <= 2);
-                assert!(role_text.x + role_text.w <= country_icon.x);
-                assert!(country_icon.x + country_icon.w <= country_text.x);
-                assert!(country_text.x + country_text.w <= ready.x);
-                assert!(ready.x + ready.w <= host.x);
-                assert!(host.x + host.w <= color.x);
+                assert!((icon.y - country.y).abs() <= 2);
+                assert!((country.y - ready.y).abs() <= 2);
+                assert!((ready.y - color.y).abs() <= 2);
+                assert!(icon.x + icon.w <= country.x);
+                assert!(country.x + country.w <= ready.x);
+                assert!(ready.x + ready.w <= color.x);
                 assert!((color.x + color.w - (SIDEBAR_RIGHT - INNER_PAD - 2)).abs() <= 1);
+                assert!(color.x + color.w <= SIDEBAR_RIGHT - INNER_PAD);
                 // Rows keep the native pitch and 2 px vertical padding.
-                assert!((base(row.role).h - (ROW_H - 2 * ROW_PAD)).abs() <= 1);
+                assert!((country.h - (ROW_H - 2 * ROW_PAD)).abs() <= 1);
             }
             assert!(
-                (base(board.rows[1].role).y - (base(board.rows[0].role).y + ROW_PITCH)).abs() <= 1
+                (base(board.rows[1].country_icon).y
+                    - (base(board.rows[0].country_icon).y + ROW_PITCH))
+                    .abs()
+                    <= 1
             );
             let status = coop.vmce_status_bar.expect("status").frame;
             assert!(base(board.frame).y + base(board.frame).h <= base(status).y);
@@ -378,62 +371,70 @@ mod tests {
             let board = coop.vmce_sidebar.expect("board");
             assert!(coop.vmce_status_bar.is_none());
             let briefing = base(coop.cooperative_description);
-            assert!(base(board.rows[3].role).y + base(board.rows[3].role).h <= briefing.y);
+            let last_row = base(board.rows[3].color);
+            assert!(last_row.y + last_row.h <= briefing.y);
             let speed = base(coop.control_rect(SPEED).unwrap());
             assert!(briefing.y + briefing.h <= speed.y);
         }
     }
 
     #[test]
-    fn board_columns_meet_exactly_and_keep_the_approved_proportions() {
+    fn owner_board_columns_cover_the_content_width_without_overlap() {
         let coop = coop_layout(true, SetupFlavor::Lan, 800, 600, false);
-        let board = coop.vmce_sidebar.expect("VMCE role board");
+        let board = coop.vmce_sidebar.expect("VMCE owner board");
         let base = |rect| coop.page.scale.base_rect(rect);
         let row = board.rows[0];
-        assert_eq!(base(row.role).x, 264);
-        assert_eq!(base(row.role).w, 115);
-        assert_eq!(base(row.country_icon).w, 50);
-        assert_eq!(base(row.country).w, 64);
-        assert_eq!(base(row.ready).x, 502);
-        assert_eq!(base(row.ready).w, 41);
-        assert_eq!(base(row.host).x, 545);
-        assert_eq!(base(row.host).w, 40);
-        assert_eq!(base(row.color).x, 588);
-        assert_eq!(base(row.color).w, 38);
-        for row in &board.rows {
-            assert_eq!(base(row.role).h, 22);
-        }
-        for (row, y) in board.rows.iter().zip([37, 63, 89, 115]) {
-            assert_eq!(base(row.role).y, y);
-        }
-        assert_eq!(base(board.headers[0].rect).x, 264);
+        assert_eq!(base(row.country_icon), RectPx::new(262, 36, 50, 24));
+        assert_eq!(base(row.country), RectPx::new(316, 37, 186, 22));
+        assert_eq!(base(row.ready), RectPx::new(506, 37, 72, 22));
+        assert_eq!(base(row.color), RectPx::new(588, 37, 38, 22));
+        assert_eq!(base(board.headers[0].rect), RectPx::new(264, 14, 238, 17));
+        assert_eq!(base(board.headers[1].rect), RectPx::new(506, 14, 72, 17));
+        assert_eq!(base(board.headers[2].rect), RectPx::new(586, 14, 42, 17));
         let rule = base(board.header_rule);
-        assert_eq!(rule.y, 32);
-        assert_eq!(rule.w, 366);
+        assert_eq!((rule.x, rule.y, rule.w, rule.h), (262, 32, 366, 1));
         let frame = base(board.frame);
         assert_eq!((frame.x, frame.y, frame.w, frame.h), (258, 10, 374, 130));
-        assert_eq!(
-            (base(board.headers[2].rect).x, base(board.headers[2].rect).w),
-            (501, 85)
-        );
-        assert_eq!(
-            (base(board.headers[3].rect).x, base(board.headers[3].rect).w),
-            (586, 42)
-        );
+        for (index, row) in board.rows.iter().enumerate() {
+            let y = 36 + index as i32 * 26;
+            assert_eq!(base(row.country_icon), RectPx::new(262, y, 50, 24));
+            assert_eq!(base(row.country), RectPx::new(316, y + 1, 186, 22));
+            assert_eq!(base(row.ready), RectPx::new(506, y + 1, 72, 22));
+            assert_eq!(base(row.color), RectPx::new(588, y + 1, 38, 22));
+        }
+        for row in &board.rows {
+            let icon = base(row.country_icon);
+            let country = base(row.country);
+            let ready = base(row.ready);
+            let color = base(row.color);
+            assert!(icon.x + icon.w <= country.x, "country icon clips the text");
+            assert!(
+                country.x + country.w <= ready.x,
+                "country text reaches Ready"
+            );
+            assert!(
+                ready.x + ready.w <= color.x,
+                "Ready reaches the color column"
+            );
+            assert_eq!(color.x + color.w, 626);
+            assert!(color.x + color.w <= SIDEBAR_RIGHT - INNER_PAD);
+        }
     }
 
     #[test]
-    fn role_combo_keeps_its_own_rect_and_hit_target() {
+    fn owner_combo_keeps_its_own_rect_and_hit_target() {
         let coop = coop_layout(true, SetupFlavor::Lan, 800, 600, false);
         let player = coop.control_rect(0x411).unwrap();
-        let role = coop.control_rect(0x76D).unwrap();
+        let owner = coop.control_rect(0x76D).unwrap();
         assert_eq!(player, RectPx::new(74, 36, 96, 24));
-        assert_eq!(role, RectPx::new(174, 36, 80, 24));
-        assert_eq!(player.x + player.w + 4, role.x);
-        // The interactive column is Role Select; the display board header
-        // stays the plain role word.
+        assert_eq!(owner, RectPx::new(174, 36, 80, 24));
+        assert_eq!(player.x + player.w + 4, owner.x);
+        // The interactive column is Owner; the board's separate role captions
+        // are gone.
+        assert!(coop.labels.iter().any(|(key, _)| *key == "VERA:VmceOwner"));
         assert!(
-            coop.labels
+            !coop
+                .labels
                 .iter()
                 .any(|(key, _)| *key == "VERA:VmceRoleSelect")
         );
@@ -443,11 +444,28 @@ mod tests {
                 .iter()
                 .any(|(key, _)| *key == "VERA:VmceCoopRole")
         );
-        // The board keeps a further 4 px gutter behind the role combo.
+        assert!(
+            !coop
+                .vmce_sidebar
+                .expect("board")
+                .headers
+                .iter()
+                .any(|header| header.key == "VERA:VmceRoleColumn")
+        );
+        // The board keeps a further 4 px gutter behind the owner combo.
         assert_eq!(
             coop.vmce_sidebar.expect("board").frame.x,
-            role.x + role.w + 4
+            owner.x + owner.w + 4
         );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn ready_cell_gives_the_host_the_star_and_leaves_a_waiting_guest_blank() {
+        assert_eq!(vmce_ready_glyph(true, false), VmceReadyGlyph::Host);
+        assert_eq!(vmce_ready_glyph(true, true), VmceReadyGlyph::Host);
+        assert_eq!(vmce_ready_glyph(false, false), VmceReadyGlyph::Blank);
+        assert_eq!(vmce_ready_glyph(false, true), VmceReadyGlyph::Ready);
     }
 
     #[test]

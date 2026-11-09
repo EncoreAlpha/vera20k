@@ -444,6 +444,28 @@ pub(crate) struct VmceLobbyRole {
     pub(crate) ready: bool,
 }
 
+/// The native glyph a VMCE row shows in its Ready cell. The host keeps the
+/// H-in-star whether or not it is ready; a guest shows the accepted star only
+/// after Ready and stays blank before it.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VmceReadyGlyph {
+    Blank,
+    Ready,
+    Host,
+}
+
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_ready_glyph(host: bool, ready: bool) -> VmceReadyGlyph {
+    if host {
+        VmceReadyGlyph::Host
+    } else if ready {
+        VmceReadyGlyph::Ready
+    } else {
+        VmceReadyGlyph::Blank
+    }
+}
+
 /// A board slot: an authored role with its claimant, or a native vacancy.
 #[cfg(feature = "vmce")]
 #[derive(Debug, Clone)]
@@ -758,8 +780,8 @@ pub(crate) struct VmceLobbySidebar {
     pub(crate) fill: RectPx,
     /// The dark rule under the one caption row.
     pub(crate) header_rule: RectPx,
-    /// Role / Country / Ready+Host / Color captions, in that order.
-    pub(crate) headers: [VmceLobbyHeader; 4],
+    /// Country / Ready / Color captions, in that order.
+    pub(crate) headers: [VmceLobbyHeader; 3],
     /// The four role slots, in campaign order.
     pub(crate) rows: [VmceLobbySidebarRow; 4],
 }
@@ -771,18 +793,16 @@ pub(crate) struct VmceLobbyHeader {
     pub(crate) centred: bool,
 }
 
-/// One board row. `role` is the left-aligned role label; `country_icon` is
-/// the full native-size slot the country emblem is centred in and `country`
-/// the text after it; `ready` and `host` are the two Ready+Host subcells;
-/// `color` is the swatch cell. Every text/icon rect already carries the 2 px
-/// vertical padding the board gives each row.
+/// One board row. `country_icon` is the full native-size slot the country
+/// emblem is centred in and `country` the text after it; `ready` is the single
+/// glyph cell (host H-in-star, ready guest star, or blank); `color` is the
+/// swatch cell. Every text/icon rect already carries the 2 px vertical padding
+/// the board gives each row.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VmceLobbySidebarRow {
-    pub(crate) role: RectPx,
     pub(crate) country_icon: RectPx,
     pub(crate) country: RectPx,
     pub(crate) ready: RectPx,
-    pub(crate) host: RectPx,
     pub(crate) color: RectPx,
 }
 

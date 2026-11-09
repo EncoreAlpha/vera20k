@@ -243,7 +243,7 @@ pub(crate) fn render_multiplayer_setup(
                 &if vmce {
                     match *key {
                         "GUI:Players" => crate::i18n::tr("VERA:VmcePlayers"),
-                        "GUI:Team" => crate::i18n::tr("VERA:VmceRoleSelect"),
+                        "GUI:Team" => crate::i18n::tr("VERA:VmceOwner"),
                         _ => crate::i18n::tr(key),
                     }
                 } else {
@@ -343,8 +343,8 @@ pub(crate) fn render_multiplayer_setup(
                 },
                 scale,
             );
-            // A VMCE role combo's locked 80 px cell shows only the role's
-            // player number; the board carries the full role and House.
+            // A VMCE owner combo's locked 80 px cell names only the campaign
+            // House the row is bound to; no player/role number.
             let role_face: Option<String> = {
                 #[cfg(feature = "vmce")]
                 {
@@ -355,7 +355,12 @@ pub(crate) fn render_multiplayer_setup(
                             })
                             .and_then(|_| selected)
                             .and_then(|item| {
-                                (item.value >= 0).then(|| format!("P{}", item.value + 1))
+                                (item.value >= 0).then(|| {
+                                    let face =
+                                        crate::ui::skirmish_shell::combo_text_rect(rect, scale);
+                                    let max_w = scale.base_rect(face).w.max(1);
+                                    vmce_panel::ellipsize_native(font, &item.text, max_w)
+                                })
                             })
                     })
                     .flatten()
@@ -1044,27 +1049,11 @@ fn paint_vmce_lobby_board(
     for (slot, cells) in view.vmce_roles.iter().zip(board.rows.iter()) {
         match slot {
             VmceLobbyRoleSlot::Waiting => {
-                // Native vacancy style: the localized waiting label inside the
-                // Role cell only; Country/Ready/Host stay blank and the swatch
-                // is the disabled variant.
-                let waiting = localized_label(state, "GUI:Waiting", "Waiting");
-                texts.push(text(
-                    &vmce_panel::ellipsize_native(font, &waiting, cells.role.w),
-                    cells.role,
-                    ShellAlign::V_CENTER,
-                    SHELL_LABEL_TEXT_RGB,
-                    SHELL_CONTROL_TEXT_DEPTH,
-                ));
+                // Native vacancy style: Country/Ready stay blank and the
+                // swatch is the disabled variant; no separate role column.
                 push_vmce_swatch(controls, atlas, cells.color, disabled_rgb, outline_rgb);
             }
             VmceLobbyRoleSlot::Claimed(role) => {
-                texts.push(text(
-                    &vmce_panel::ellipsize_native(font, &role.role, cells.role.w),
-                    cells.role,
-                    ShellAlign::V_CENTER,
-                    SHELL_LABEL_TEXT_RGB,
-                    SHELL_CONTROL_TEXT_DEPTH,
-                ));
                 if let Some(flag) = role
                     .flag
                     .as_deref()
@@ -1083,11 +1072,18 @@ fn paint_vmce_lobby_board(
                         SHELL_CONTROL_TEXT_DEPTH,
                     ));
                 }
-                if let Some(ready) = atlas.lan_player_status(false, role.ready) {
-                    vmce_panel::push_native_centred(controls, ready, cells.ready, scale);
-                }
-                if let Some(host) = atlas.lan_player_status(role.host, false) {
-                    vmce_panel::push_native_centred(controls, host, cells.host, scale);
+                match crate::ui::multiplayer_setup::vmce_ready_glyph(role.host, role.ready) {
+                    crate::ui::multiplayer_setup::VmceReadyGlyph::Host => {
+                        if let Some(host) = atlas.lan_player_status(true, false) {
+                            vmce_panel::push_native_centred(controls, host, cells.ready, scale);
+                        }
+                    }
+                    crate::ui::multiplayer_setup::VmceReadyGlyph::Ready => {
+                        if let Some(ready) = atlas.lan_player_status(false, true) {
+                            vmce_panel::push_native_centred(controls, ready, cells.ready, scale);
+                        }
+                    }
+                    crate::ui::multiplayer_setup::VmceReadyGlyph::Blank => {}
                 }
                 push_vmce_swatch(
                     controls,
