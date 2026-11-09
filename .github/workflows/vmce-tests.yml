@@ -5,12 +5,14 @@ name: VMCE tests
 # could stay green there; this workflow makes the capability compile and its
 # focused tests block the fork's own pushes and PRs. It is intentionally a
 # separate file so syncing upstream never has to resolve a conflict in
-# `capability-tests.yml`; drop it when the fork merges upstream.
+# `capability-tests.yml`. It uses upstream's toolchain/action pins and adds the
+# fork's upstream-sync branch to the triggers, so a merge candidate is gated
+# before it lands on `feature/vmce`.
 on:
   push:
-    branches: [feature/vmce]
+    branches: [feature/vmce, 'feature/vmce-*']
   pull_request:
-    branches: [feature/vmce]
+    branches: [feature/vmce, 'feature/vmce-*']
   workflow_dispatch:
 
 env:
@@ -21,7 +23,7 @@ jobs:
   vmce:
     name: vmce (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
