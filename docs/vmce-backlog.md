@@ -52,6 +52,18 @@ recorded here for residuals only.
   full-screen stats page the right panel keeps only a normal (not lit) `返回` button on the **first
   row**; no left tab, bottom Back, bottom Leave or other right-panel buttons. Stats page background
   uses the BC6-style version; remove the black row strips from the table. Keep native `分数` label.
+- **B29 Freeze the VMCE UI conventions into a reusable skill (TODO, not implemented).** Extract
+  the B24–B28 work into a project Agent Skill kept on a dedicated branch (suggested
+  `feature/vmce-ui-skill`, separate from product commits) so the next VMCE screen can reuse it
+  instead of rediscovering the rules. The skill should capture: native-asset policy (original
+  size/colour, no retint/new bitmap, native frame/fill/button art incl. disabled/lit states),
+  layout-owner rules (lobby/result/BC6 bounds, row pitch, first-slot/second-slot button rows,
+  Leave/Back placement), Ready/retry-vote projections, House-colour text rules and readability
+  limits, i18n policy (en/zh real, eight English placeholders, key completeness), capture
+  workflow (800×600 states + one 1920, synthetic fixtures, contact-sheet review), focused test
+  checklist, and known residuals (BC6 2→4 rows non-native, income accumulator scope). Acceptance:
+  skill file on the dedicated branch, a checklist another agent can follow for a new VMCE page,
+  and no product-code changes in that branch.
 
 ## Locked decisions (after the B24–B27 UI batch)
 
