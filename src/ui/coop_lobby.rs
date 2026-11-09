@@ -33,10 +33,10 @@ const INNER_PAD: i32 = 4;
 const CONTENT_X: i32 = SIDEBAR_X + INNER_PAD;
 const COUNTRY_ICON_W: i32 = 50;
 const COUNTRY_TEXT_X: i32 = CONTENT_X + 54;
-const COUNTRY_TEXT_W: i32 = 186;
+const COUNTRY_TEXT_W: i32 = 114;
 /// One Ready cell for the host H-in-star / guest accepted star.
-const READY_X: i32 = 506;
-const READY_W: i32 = 72;
+const READY_X: i32 = 440;
+const READY_W: i32 = 80;
 /// The color column keeps its approved 586..628 region.
 const COLOR_X: i32 = 586;
 const COLOR_W: i32 = SIDEBAR_RIGHT - INNER_PAD - COLOR_X;
@@ -385,11 +385,11 @@ mod tests {
         let base = |rect| coop.page.scale.base_rect(rect);
         let row = board.rows[0];
         assert_eq!(base(row.country_icon), RectPx::new(262, 36, 50, 24));
-        assert_eq!(base(row.country), RectPx::new(316, 37, 186, 22));
-        assert_eq!(base(row.ready), RectPx::new(506, 37, 72, 22));
+        assert_eq!(base(row.country), RectPx::new(316, 37, 114, 22));
+        assert_eq!(base(row.ready), RectPx::new(440, 37, 80, 22));
         assert_eq!(base(row.color), RectPx::new(588, 37, 38, 22));
-        assert_eq!(base(board.headers[0].rect), RectPx::new(264, 14, 238, 17));
-        assert_eq!(base(board.headers[1].rect), RectPx::new(506, 14, 72, 17));
+        assert_eq!(base(board.headers[0].rect), RectPx::new(264, 14, 166, 17));
+        assert_eq!(base(board.headers[1].rect), RectPx::new(440, 14, 80, 17));
         assert_eq!(base(board.headers[2].rect), RectPx::new(586, 14, 42, 17));
         let rule = base(board.header_rule);
         assert_eq!((rule.x, rule.y, rule.w, rule.h), (262, 32, 366, 1));
@@ -398,8 +398,8 @@ mod tests {
         for (index, row) in board.rows.iter().enumerate() {
             let y = 36 + index as i32 * 26;
             assert_eq!(base(row.country_icon), RectPx::new(262, y, 50, 24));
-            assert_eq!(base(row.country), RectPx::new(316, y + 1, 186, 22));
-            assert_eq!(base(row.ready), RectPx::new(506, y + 1, 72, 22));
+            assert_eq!(base(row.country), RectPx::new(316, y + 1, 114, 22));
+            assert_eq!(base(row.ready), RectPx::new(440, y + 1, 80, 22));
             assert_eq!(base(row.color), RectPx::new(588, y + 1, 38, 22));
         }
         for row in &board.rows {
