@@ -195,7 +195,7 @@ fn crate_land_type(sim: &Simulation, cell: (i16, i16)) -> u8 {
         })
 }
 
-/// `VocClass::PlayAt @ 0x007509E0` of one `[AudioVisual]` crate sound at the
+/// `VocClass::PlayAt @ 0x007509E0` of one configured crate sound at the
 /// crate centre. Every arm but Reveal plays it only when `HouseClass::
 /// IsControlledByCurrentPlayer @ 0x0050B6F0` admits the actor's house
 /// (`heard_by`): the sim cannot see the local player, so the event carries
@@ -460,7 +460,19 @@ pub(crate) fn pickup_crate(
     // `0x00481D86`: removal, then the replacement crate.
     let _ = remove_pickup_crate(sim, rules, registry, cell);
     if multiplayer && sim.session.game_options().crates {
-        let _ = place_one_random_crate(sim, rules, registry, ForcedPostPrecheckFailure::None);
+        if let Err(error) = place_one_random_crate(
+            sim,
+            rules,
+            registry,
+            ForcedPostPrecheckFailure::None,
+            frame_effects,
+        ) {
+            // The bool pickup receiver has no fallible continuation. Native
+            // would fault in the replacement's invalid Image/Mark chain;
+            // refuse the remaining pickup effect while keeping prior writes.
+            log::error!("crate pickup replacement at {cell:?} stopped: {error}");
+            return false;
+        }
     }
     if powerup == POWERUP_SQUAD {
         powerup = POWERUP_MONEY;
@@ -529,6 +541,7 @@ pub(crate) fn pickup_crate(
             POWERUP_MONEY => {
                 let amount = effects::money_crate_amount(
                     &mut sim.scenario_rng,
+                    rules,
                     selection.solo_money,
                     magnitude,
                 );
@@ -556,6 +569,9 @@ pub(crate) fn pickup_crate(
                     cell,
                     center,
                 );
+                // PickupCrate482C13 plays before the first healing receiver
+                // at482C8C, including that receiver's sound/RNG effects.
+                frame_effects.flush_sound(sim, rules);
                 effects::apply_heal_base_crate(sim, rules, Some(registry), actor_id, frame_effects);
             }
             POWERUP_DARKNESS => {
@@ -706,7 +722,14 @@ pub(crate) fn pickup_crate(
                 );
             }
             POWERUP_TIBERIUM => {
-                effects::apply_tiberium_crate(sim, rules, registry, cell, center);
+                if let Err(error) =
+                    effects::apply_tiberium_crate(sim, rules, registry, cell, center, frame_effects)
+                {
+                    // Native-invalid Image: stop this pickup arm after its
+                    // preceding writes, with no later placement/animation draw.
+                    log::error!("Tiberium crate failed: {error}");
+                    return false;
+                }
             }
             _ => {}
         }

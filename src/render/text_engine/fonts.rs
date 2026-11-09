@@ -23,10 +23,19 @@
 //!   15 px keeps.
 //! - Other scripts have no GAME.FNT reference; they take a size that reads
 //!   at the Latin text's height and weight 600.
+//!
+//! The browser build embeds only Noto Sans, which GAME.FNT's drawn-in letters
+//! need ([`super::fnt_fill`]); it fetches each of the others the first time
+//! text needs a character from it ([`super::web_fonts`]), as they would add
+//! some 28 MB to every player's download.
 
 /// One bundled font file.
 pub(crate) struct BundledFont {
-    pub(crate) data: &'static [u8],
+    /// Its name in `src/render/fonts`, and in the browser package's
+    /// `pkg/fonts`.
+    pub(crate) file: &'static str,
+    /// Its bytes; `None` in the browser build for a font it fetches.
+    pub(crate) data: Option<&'static [u8]>,
     /// Native pixels to move this font's glyphs down from the shared
     /// baseline, so its ink sits where GAME.FNT's does.
     pub(crate) baseline_shift: f32,
@@ -34,14 +43,15 @@ pub(crate) struct BundledFont {
 
 macro_rules! font {
     ($file:literal) => {
-        BundledFont {
-            data: include_bytes!(concat!("../fonts/", $file)),
-            baseline_shift: 0.0,
-        }
+        font!($file, 0.0)
     };
     ($file:literal, $shift:expr) => {
         BundledFont {
-            data: include_bytes!(concat!("../fonts/", $file)),
+            file: $file,
+            #[cfg(not(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")))]
+            data: Some(include_bytes!(concat!("../fonts/", $file))),
+            #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+            data: None,
             baseline_shift: $shift,
         }
     };
@@ -56,7 +66,8 @@ pub(crate) const NOTO_SANS: &[u8] = include_bytes!("../fonts/NotoSans-VF.ttf");
 pub(crate) fn bundled() -> [BundledFont; 21] {
     [
         BundledFont {
-            data: NOTO_SANS,
+            file: "NotoSans-VF.ttf",
+            data: Some(NOTO_SANS),
             baseline_shift: 0.0,
         },
         // GAME.FNT's hanzi fill rows 1..15 around its row-13 baseline, centred
@@ -113,7 +124,7 @@ pub(crate) enum TextClass {
 impl TextClass {
     pub(crate) fn of(c: char) -> Self {
         let cp = c as u32;
-        if is_cjk_sized(cp) {
+        if crate::i18n::is_cjk_sized(cp) {
             return Self::Cjk;
         }
         match cp {
@@ -148,23 +159,4 @@ impl TextClass {
             Self::Other(size) => size,
         }
     }
-}
-
-/// The characters GAME.FNT draws on its full-cell grid and Noto Sans CJK on
-/// its ideographic em: CJK ideographs, kana, Hangul, Bopomofo, CJK symbols and
-/// punctuation, and the fullwidth and halfwidth forms.
-pub(crate) fn is_cjk_sized(cp: u32) -> bool {
-    matches!(
-        cp,
-        0x1100..=0x11FF
-            | 0x2E80..=0x2FDF
-            | 0x2FF0..=0x31FF
-            | 0x3200..=0x9FFF
-            | 0xA960..=0xA97F
-            | 0xAC00..=0xD7FF
-            | 0xF900..=0xFAFF
-            | 0xFE30..=0xFE4F
-            | 0xFF00..=0xFFEF
-            | 0x20000..=0x3FFFF
-    )
 }

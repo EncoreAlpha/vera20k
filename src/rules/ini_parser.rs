@@ -14,9 +14,7 @@
 //! A fresh load retains duplicate nonempty section bodies, and later copies
 //! of a key for `SaveToPipe`. Fresh entry reads use the native CRC index;
 //! compatibility projections keep their explicit exact-key overlay policy.
-//! Ordinary parsing does not insert empty keys, values, or physical section
-//! bodies. An opt-in external-overlay parser retains empty-value presence only
-//! as metadata invisible to normal readers.
+//! Empty keys, values, and physical section bodies are not inserted.
 //! Native registry allocation and ordered RulesClass passes live in
 //! `rules::native_processing`; typed gameplay projection lives in `ruleset`.
 
@@ -33,6 +31,14 @@ pub mod ini_value;
 /// or deserialization. No directive means the physical INI is left unchanged.
 #[path = "ini_directives.rs"]
 pub mod directives;
+
+/// Ares's `+` keys, `[Child]:[Base]` sections and later-wins keys, which an
+/// Ares launch adds to every INI text load.
+#[cfg(feature = "ares")]
+#[path = "ini_ares_syntax.rs"]
+mod ares_syntax;
+
+use std::borrow::Cow;
 
 use self::ini_value::strtrim_ascii;
 
@@ -63,10 +69,11 @@ pub struct IniSection {
     entries: HashMap<String, String>,
     /// Exact keys in their first insertion order.
     key_order: Vec<String>,
-    /// Empty values retained only by the opt-in external-configuration parser.
-    /// They remain invisible to ordinary readers, matching the active INI
-    /// loader while allowing a higher-level overlay to represent an explicit
-    /// empty name.
+    /// Empty values retained only by the opt-in external-configuration parser
+    /// (VMCE's `campaign.ini` overlay). They stay invisible to ordinary
+    /// readers, matching the active INI loader while letting a higher-level
+    /// overlay represent an explicitly cleared name.
+    #[cfg(feature = "vmce")]
     #[serde(skip)]
     explicit_empty_values: Vec<String>,
     /// Values presented by successive `RulesClass::Process` passes.
@@ -100,9 +107,18 @@ impl PartialEq for IniSection {
         self.name == other.name
             && self.entries == other.entries
             && self.key_order == other.key_order
-            && self.explicit_empty_values == other.explicit_empty_values
             && self.projected_values == other.projected_values
             && self.duplicate_entries == other.duplicate_entries
+            && {
+                #[cfg(feature = "vmce")]
+                {
+                    self.explicit_empty_values == other.explicit_empty_values
+                }
+                #[cfg(not(feature = "vmce"))]
+                {
+                    true
+                }
+            }
     }
 }
 impl Eq for IniSection {}
@@ -134,6 +150,7 @@ impl<'de> serde::Deserialize<'de> for IniSection {
             name: saved.name,
             entries: saved.entries,
             key_order: saved.key_order,
+            #[cfg(feature = "vmce")]
             explicit_empty_values: Vec::new(),
             projected_values: saved.projected_values,
             duplicate_entries: Vec::new(),
@@ -148,6 +165,7 @@ impl IniSection {
             name,
             entries: HashMap::new(),
             key_order: Vec::new(),
+            #[cfg(feature = "vmce")]
             explicit_empty_values: Vec::new(),
             projected_values: HashMap::new(),
             duplicate_entries: Vec::new(),
@@ -165,6 +183,8 @@ impl IniSection {
 
     fn set_projected(&mut self, key: &str, value: &str) {
         self.fresh_index = None;
+        #[cfg(feature = "vmce")]
+        self.explicit_empty_values.retain(|stored| stored != key);
         if !self.entries.contains_key(key) {
             self.key_order.push(key.to_string());
         }
@@ -177,6 +197,8 @@ impl IniSection {
 
     /// Insert during a fresh file load, before building its lookup index.
     fn insert_initial(&mut self, key: &str, value: &str) {
+        #[cfg(feature = "vmce")]
+        self.explicit_empty_values.retain(|stored| stored != key);
         if self.entries.contains_key(key) {
             let index = self.key_order.len() + self.duplicate_entries.len();
             self.duplicate_entries
@@ -191,6 +213,8 @@ impl IniSection {
     /// keys retain layer source order.
     pub fn set(&mut self, key: &str, value: &str) {
         self.fresh_index = None;
+        #[cfg(feature = "vmce")]
+        self.explicit_empty_values.retain(|stored| stored != key);
         if !self.entries.contains_key(key) {
             self.key_order.push(key.to_string());
         }
@@ -280,11 +304,15 @@ impl IniSection {
         self.physical_entries().map(|(key, _)| key)
     }
 
+    /// Physical keys plus the opt-in external configuration's explicit-empty
+    /// names, which ordinary readers do not see.
+    #[cfg(feature = "vmce")]
     pub fn physical_keys_including_explicit_empty(&self) -> impl Iterator<Item = &str> {
         self.physical_keys()
             .chain(self.explicit_empty_values.iter().map(String::as_str))
     }
 
+    #[cfg(feature = "vmce")]
     pub fn has_explicit_empty_value(&self, key: &str) -> bool {
         self.explicit_empty_values.iter().any(|empty| empty == key)
     }
@@ -385,6 +413,11 @@ pub struct IniFile {
     /// None denotes a compatibility projection, including saved reader views.
     #[serde(skip)]
     fresh_section_index: Option<Vec<(i32, usize)>>,
+    /// The next Ares `+` key number. Only loads read it, so a saved INI,
+    /// which nothing loads into again, does not keep it.
+    #[cfg(feature = "ares")]
+    #[serde(skip)]
+    next_iterator_key: i32,
 }
 
 impl<'de> serde::Deserialize<'de> for IniFile {
@@ -402,6 +435,8 @@ impl<'de> serde::Deserialize<'de> for IniFile {
             sections: saved.sections,
             first_section,
             fresh_section_index: None,
+            #[cfg(feature = "ares")]
+            next_iterator_key: 0,
         })
     }
 }
@@ -412,6 +447,8 @@ impl IniFile {
             sections: Vec::new(),
             first_section: HashMap::new(),
             fresh_section_index: None,
+            #[cfg(feature = "ares")]
+            next_iterator_key: 0,
         }
     }
 
@@ -440,84 +477,73 @@ impl IniFile {
     /// reaches it without an LF, and `LoadFromStraw` discards the line read
     /// on that call: a last line without a line feed is not loaded.
     /// Executed controls: tools/storage_oracle/ini_crc (`unterminated_last_*`).
-    /// RESIDUAL: loading into an INI that already holds sections (the
-    /// `0x00525BFA` arm, e.g. loose `*.PKT` files at `0x00699B58`) puts that
-    /// last entry before testing the flag; VERA has no such merge load.
+    /// Loading into an INI that already holds sections (the `0x00525BFA` arm)
+    /// puts that last entry before testing the flag. An Ares build loads its
+    /// included files that way (`IniFile::merge_load`). RESIDUAL: loose
+    /// `*.PKT` map catalogs merge that way too (`0x00699B58`); VERA reads them
+    /// as fresh files.
     pub fn from_bytes(data: &[u8]) -> Result<Self, RulesError> {
-        Self::from_bytes_with_empty_values(data, false)
-    }
-
-    /// Parse an external overlay with the exact same byte widening and line
-    /// parser as [`Self::from_bytes`], while retaining which accepted keys
-    /// had an explicit empty value. Empty values remain absent to normal INI
-    /// readers; the overlay owner may use the marker to clear a prior value.
-    pub fn from_bytes_preserving_empty_values(data: &[u8]) -> Result<Self, RulesError> {
-        Self::from_bytes_with_empty_values(data, true)
-    }
-
-    fn from_bytes_with_empty_values(
-        data: &[u8],
-        preserve_empty_values: bool,
-    ) -> Result<Self, RulesError> {
-        let complete = if preserve_empty_values {
-            // External coop settings are a small user-authored document;
-            // unlike gamemd's straw reader, accept EOF as the final line end.
-            data
-        } else {
-            data.iter()
-                .rposition(|byte| *byte == b'\n')
-                .map_or(&[][..], |end| &data[..=end])
-        };
+        let complete = data
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(&[][..], |end| &data[..=end]);
         let text = crate::util::native_string::widen_bytes(complete);
-        Ok(Self::parse_text(&text, preserve_empty_values))
+        Ok(Self::from_str(&text))
     }
 
+    /// `LoadFromStraw` (`0x00525A60`) into an empty INI. An Ares launch
+    /// hooks this reader for every INI it loads, so an Ares build adds
+    /// Ares's syntax here.
     #[expect(
         clippy::should_implement_trait,
         reason = "infallible constructor; FromStr would force a Result on every caller"
     )]
     pub fn from_str(text: &str) -> Self {
-        Self::parse_text(text, false)
+        #[cfg(feature = "ares")]
+        let ini = ares_syntax::load_fresh(text);
+        #[cfg(not(feature = "ares"))]
+        let ini = Self::load_fresh_native(text, false);
+        ini
     }
 
-    fn parse_text(text: &str, preserve_empty_values: bool) -> Self {
+    /// VERA's external VMCE configuration parser: the native `LoadFromStraw`
+    /// reader, with explicit empty values retained as invisible markers for a
+    /// higher-level overlay. It intentionally stays on the native syntax even
+    /// in an Ares build: these documents are VERA-authored, not retail INIs.
+    #[cfg(feature = "vmce")]
+    pub fn from_bytes_preserving_empty_values(data: &[u8]) -> Result<Self, RulesError> {
+        // External coop settings are a small user-authored document; accept
+        // EOF as the final line end, unlike gamemd's straw reader.
+        let text = crate::util::native_string::widen_bytes(data);
+        Ok(Self::load_fresh_native(&text, true))
+    }
+
+    #[cfg(any(not(feature = "ares"), feature = "vmce"))]
+    fn load_fresh_native(text: &str, preserve_empty_values: bool) -> Self {
         let mut ini = Self::empty();
         let mut current_section = None;
-
-        for physical_line in text.split('\n') {
-            // Straw::ReadLine removes every CR byte while consuming the line.
-            // Most lines end in the one CR of a CRLF pair and hold no other.
-            let line = physical_line.strip_suffix('\r').unwrap_or(physical_line);
-            let without_carriage_returns = if line.contains('\r') {
-                std::borrow::Cow::Owned(line.replace('\r', ""))
-            } else {
-                std::borrow::Cow::Borrowed(line)
-            };
-            if without_carriage_returns.is_empty() {
-                continue;
+        for line in read_lines(text) {
+            match lex_line_with(&line, preserve_empty_values) {
+                Some(NativeLine::Header { name, .. }) => {
+                    let index = ini.sections.len();
+                    ini.sections.push(IniSection::new(name.to_string()));
+                    ini.first_section.entry(name.to_string()).or_insert(index);
+                    current_section = Some(index);
+                }
+                Some(NativeLine::Entry { key, value }) => {
+                    if let Some(index) = current_section {
+                        #[cfg(feature = "vmce")]
+                        if preserve_empty_values && value.is_empty() {
+                            ini.sections[index]
+                                .explicit_empty_values
+                                .push(key.to_owned());
+                            continue;
+                        }
+                        ini.sections[index].insert_initial(key, value);
+                    }
+                }
+                None => {}
             }
-
-            // Straw::ReadLine stores at most 511 payload bytes and consumes the
-            // remainder through LF. The discarded tail is never a second line.
-            // A character takes at least one byte, so shorter text is whole.
-            let chunk_end = if without_carriage_returns.len() <= READ_LINE_PAYLOAD {
-                without_carriage_returns.len()
-            } else {
-                without_carriage_returns
-                    .char_indices()
-                    .nth(READ_LINE_PAYLOAD)
-                    .map_or(without_carriage_returns.len(), |(index, _)| index)
-            };
-            let buffered = &without_carriage_returns[..chunk_end];
-            // NUL occupies a buffer byte, but subsequent C-string operations
-            // make the rest of that physical line invisible to the loader.
-            let visible = buffered.split_once('\0').map_or(buffered, |(head, _)| head);
-            Self::parse_line(
-                &mut ini,
-                &mut current_section,
-                visible,
-                preserve_empty_values,
-            );
         }
 
         // Retail provenance: INI lexical loading — `INIClass__LoadFromStraw` @ `0x00525A60`.
@@ -538,13 +564,49 @@ impl IniFile {
         ini
     }
 
+    /// `ReadCCFile` of an Ares `[#include]` or Phobos `$Include` file into
+    /// the INI that lists it: `LoadFromStraw`'s merge arm, with an Ares
+    /// launch's parser hooks. Returns the file's own entries of section `list`.
+    #[cfg(feature = "ares")]
+    fn merge_load(&mut self, data: &[u8], list: &str) -> IniSection {
+        ares_syntax::load_into(self, data, list)
+    }
+
+    #[cfg(any(not(feature = "ares"), feature = "vmce"))]
     fn discard_entryless_sections(&mut self, preserve_empty_values: bool) {
         self.fresh_section_index = None;
         self.sections.retain(|section| {
             section.entry_count() != 0
-                || (preserve_empty_values && !section.explicit_empty_values.is_empty())
+                || (preserve_empty_values && {
+                    #[cfg(feature = "vmce")]
+                    {
+                        !section.explicit_empty_values.is_empty()
+                    }
+                    #[cfg(not(feature = "vmce"))]
+                    {
+                        false
+                    }
+                })
         });
         self.rebuild_first_sections();
+    }
+
+    /// Whether the physical INI contains a repeated section name. VMCE's
+    /// external `campaign.ini` overlay rejects ambiguous source text.
+    #[cfg(feature = "vmce")]
+    pub fn has_duplicate_sections(&self) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        self.sections
+            .iter()
+            .any(|section| !seen.insert(section.name.as_str()))
+    }
+
+    /// Whether any physical section repeats a key.
+    #[cfg(feature = "vmce")]
+    pub fn has_duplicate_keys(&self) -> bool {
+        self.sections
+            .iter()
+            .any(|section| !section.duplicate_entries.is_empty())
     }
 
     fn rebuild_first_sections(&mut self) {
@@ -553,57 +615,6 @@ impl IniFile {
             self.first_section
                 .entry(section.name.clone())
                 .or_insert(index);
-        }
-    }
-
-    fn parse_line(
-        ini: &mut Self,
-        current_section: &mut Option<usize>,
-        raw_line: &str,
-        preserve_empty_values: bool,
-    ) {
-        let line = strtrim_ascii(raw_line);
-        if line.is_empty() {
-            return;
-        }
-
-        if line.starts_with('[')
-            && let Some(end) = line.find(']')
-        {
-            let name = &line[1..end];
-            let index = ini.sections.len();
-            ini.sections.push(IniSection::new(name.to_string()));
-            ini.first_section.entry(name.to_string()).or_insert(index);
-            *current_section = Some(index);
-            return;
-        }
-
-        // Semicolon truncation happens before the first-equals split, and
-        // only a cut line is trimmed whole (`0x00525F3A`): otherwise the key
-        // and value are trimmed alone, so `strtrim`'s trailing bound applies
-        // to the value's own leading run. `#` has no comment meaning in the
-        // active parser.
-        let payload = raw_line
-            .split_once(';')
-            .map_or(raw_line, |(head, _)| strtrim_ascii(head));
-        let Some((key, value)) = payload.split_once('=') else {
-            return;
-        };
-        let key = strtrim_ascii(key);
-        let value = strtrim_ascii(value);
-        if key.is_empty() {
-            return;
-        }
-        if let Some(index) = *current_section {
-            if value.is_empty() {
-                if preserve_empty_values {
-                    ini.sections[index]
-                        .explicit_empty_values
-                        .push(key.to_owned());
-                }
-                return;
-            }
-            ini.sections[index].insert_initial(key, value);
         }
     }
 
@@ -634,24 +645,10 @@ impl IniFile {
             .collect()
     }
 
-    /// Whether the physical INI contains a repeated section name.
-    pub fn has_duplicate_sections(&self) -> bool {
-        let mut seen = std::collections::HashSet::new();
-        self.sections
-            .iter()
-            .any(|section| !seen.insert(section.name.as_str()))
-    }
-
-    /// Whether any physical section repeats a key.
-    pub fn has_duplicate_keys(&self) -> bool {
-        self.sections
-            .iter()
-            .any(|section| !section.duplicate_entries.is_empty())
-    }
-
     /// Physical section bodies in source order, including repeated names.
-    /// Callers that validate an untrusted patch must inspect every body rather
-    /// than only the native lookup winner returned by [`Self::section`].
+    /// Callers that validate an untrusted VMCE patch must inspect every body
+    /// rather than only the native lookup winner returned by [`Self::section`].
+    #[cfg(feature = "vmce")]
     pub(crate) fn physical_sections(&self) -> impl Iterator<Item = &IniSection> {
         self.sections.iter()
     }
@@ -758,12 +755,14 @@ impl IniFile {
                 body.projected_values.remove(key);
             }
         }
-        ini.discard_entryless_sections(false);
+        ini.discard_entryless_sections();
         ini
     }
 
-    /// Compatibility overlay: later exact keys replace earlier ones. This is
-    /// also the include extension's policy, not native PutString528660 parity.
+    /// Compatibility overlay: later exact keys replace earlier ones. Without
+    /// Ares this is also the include extension's policy, not native
+    /// PutString528660 parity; an Ares build loads includes through
+    /// `IniFile::merge_load`.
     /// Residual: overlapping loose PKT files (699B58) can retain a cached
     /// duplicate pair across insertion, then change selection on a later sort.
     /// That separate map-catalog merge needs native index/capacity/cache history
@@ -799,11 +798,36 @@ impl IniFile {
         }
     }
 
+    /// Build the typed-reader compatibility view for one ordered rules pass.
+    ///
+    /// Retail provenance: sequential typed defaults — `RulesClass__Process` @ `0x00668BF0`.
+    pub(super) fn merge_rules_projection(&mut self, patch: &IniFile) {
+        self.fresh_section_index = None;
+        for (patch_index, physical) in patch.sections.iter().enumerate() {
+            if patch.first_section.get(&physical.name) != Some(&patch_index) {
+                continue;
+            }
+            // The typed pass must consume the same section as its native
+            // readers, even when the CRC index selects a later occurrence.
+            let patch_section = patch.section(&physical.name).unwrap();
+            if let Some(index) = self.first_section.get(&physical.name).copied() {
+                self.sections[index].overlay_rules_pass(patch_section);
+            } else {
+                let mut section = IniSection::new(physical.name.clone());
+                section.overlay_rules_pass(patch_section);
+                let index = self.sections.len();
+                self.first_section.insert(section.name.clone(), index);
+                self.sections.push(section);
+            }
+        }
+    }
+
     /// Apply exact source values while retaining this file's physical order,
     /// duplicate-entry history, and fresh lookup winners. This is the narrow
-    /// write path for validated projections that must not merge arbitrary INI
-    /// sections. Missing sections are appended only when `add_sections` is
+    /// write path for validated VMCE projections that must not merge arbitrary
+    /// INI sections. Missing sections are appended only when `add_sections` is
     /// true.
+    #[cfg(feature = "vmce")]
     pub(crate) fn merge_source_values<'a>(
         &mut self,
         values: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
@@ -828,6 +852,7 @@ impl IniFile {
     /// Remove exact source keys from every matching section occurrence before
     /// composing a validated replacement view. Rebuild the fresh lookup index
     /// because its slots refer to the physical key order.
+    #[cfg(feature = "vmce")]
     pub(crate) fn remove_source_values<'a>(
         &mut self,
         values: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -851,30 +876,6 @@ impl IniFile {
         }
         self.fresh_section_index = None;
         self.discard_entryless_sections(false);
-    }
-
-    /// Build the typed-reader compatibility view for one ordered rules pass.
-    ///
-    /// Retail provenance: sequential typed defaults — `RulesClass__Process` @ `0x00668BF0`.
-    pub(super) fn merge_rules_projection(&mut self, patch: &IniFile) {
-        self.fresh_section_index = None;
-        for (patch_index, physical) in patch.sections.iter().enumerate() {
-            if patch.first_section.get(&physical.name) != Some(&patch_index) {
-                continue;
-            }
-            // The typed pass must consume the same section as its native
-            // readers, even when the CRC index selects a later occurrence.
-            let patch_section = patch.section(&physical.name).unwrap();
-            if let Some(index) = self.first_section.get(&physical.name).copied() {
-                self.sections[index].overlay_rules_pass(patch_section);
-            } else {
-                let mut section = IniSection::new(physical.name.clone());
-                section.overlay_rules_pass(patch_section);
-                let index = self.sections.len();
-                self.first_section.insert(section.name.clone(), index);
-                self.sections.push(section);
-            }
-        }
     }
 
     fn overlay_section(&mut self, patch_section: &IniSection) -> usize {
@@ -996,16 +997,113 @@ fn ini_name_crc(name: &str) -> i32 {
     crate::assets::mix_hash::crc_engine(&bytes[..end]) as i32
 }
 
+/// One visible line as `LoadFromStraw` (`0x00525A60`) reads it.
+enum NativeLine<'a> {
+    /// `[name]`, and the text after that first `]`, where Ares reads a base.
+    Header {
+        name: &'a str,
+        #[cfg(feature = "ares")]
+        tail: &'a str,
+    },
+    Entry {
+        key: &'a str,
+        value: &'a str,
+    },
+}
+
+/// The visible text of each nonempty physical line, as `Straw::ReadLine`
+/// stores it for `LoadFromStraw`.
+fn read_lines(text: &str) -> impl Iterator<Item = Cow<'_, str>> {
+    text.split('\n').filter_map(|physical_line| {
+        // Straw::ReadLine removes every CR byte while consuming the line.
+        // Most lines end in the one CR of a CRLF pair and hold no other.
+        let line = physical_line.strip_suffix('\r').unwrap_or(physical_line);
+        let line = if line.contains('\r') {
+            Cow::Owned(line.replace('\r', ""))
+        } else {
+            Cow::Borrowed(line)
+        };
+        if line.is_empty() {
+            return None;
+        }
+        // Straw::ReadLine stores at most 511 payload bytes and consumes the
+        // remainder through LF. The discarded tail is never a second line.
+        // A character takes at least one byte, so shorter text is whole.
+        let chunk_end = if line.len() <= READ_LINE_PAYLOAD {
+            line.len()
+        } else {
+            line.char_indices()
+                .nth(READ_LINE_PAYLOAD)
+                .map_or(line.len(), |(index, _)| index)
+        };
+        // NUL occupies a buffer byte, but subsequent C-string operations
+        // make the rest of that physical line invisible to the loader.
+        let visible = line[..chunk_end].find('\0').unwrap_or(chunk_end);
+        Some(match line {
+            Cow::Borrowed(line) => Cow::Borrowed(&line[..visible]),
+            Cow::Owned(mut line) => {
+                line.truncate(visible);
+                Cow::Owned(line)
+            }
+        })
+    })
+}
+
+/// Both `LoadFromStraw` arms classify a line alike.
+fn lex_line(raw_line: &str) -> Option<NativeLine<'_>> {
+    lex_line_with(raw_line, false)
+}
+
+fn lex_line_with(raw_line: &str, keep_empty_value: bool) -> Option<NativeLine<'_>> {
+    let line = strtrim_ascii(raw_line);
+    if line.is_empty() {
+        return None;
+    }
+    if line.starts_with('[')
+        && let Some(end) = line.find(']')
+    {
+        return Some(NativeLine::Header {
+            name: &line[1..end],
+            #[cfg(feature = "ares")]
+            tail: &line[end + 1..],
+        });
+    }
+    // Semicolon truncation happens before the first-equals split, and
+    // only a cut line is trimmed whole (`0x00525F3A`): otherwise the key
+    // and value are trimmed alone, so `strtrim`'s trailing bound applies
+    // to the value's own leading run. `#` has no comment meaning in the
+    // active parser.
+    let payload = raw_line
+        .split_once(';')
+        .map_or(raw_line, |(head, _)| strtrim_ascii(head));
+    let (key, value) = payload.split_once('=')?;
+    let key = strtrim_ascii(key);
+    let value = strtrim_ascii(value);
+    if key.is_empty() || (value.is_empty() && !keep_empty_value) {
+        return None;
+    }
+    Some(NativeLine::Entry { key, value })
+}
+
 /// SectionIndex::FindPair52B620 and FindINIEntryIndexPair52B6D0 use the
 /// same signed midpoint search, returning the first equal pair visited.
 fn find_crc_index_value<T>(pairs: &[(i32, T)], crc: i32) -> Option<&T> {
+    find_crc_index_slot(pairs, crc).map(|slot| &pairs[slot].1)
+}
+
+/// The slot [`find_crc_index_value`] answers from.
+fn find_crc_index_slot<T>(pairs: &[(i32, T)], crc: i32) -> Option<usize> {
+    let mut start = 0;
     let mut remaining = pairs;
     while !remaining.is_empty() {
         let middle = remaining.len() / 2;
         match remaining[middle].0.cmp(&crc) {
-            std::cmp::Ordering::Equal => return Some(&remaining[middle].1),
+            std::cmp::Ordering::Equal => return Some(start + middle),
             std::cmp::Ordering::Greater => remaining = &remaining[..middle],
-            std::cmp::Ordering::Less => remaining = &remaining[middle + 1..],
+            std::cmp::Ordering::Less => {
+                start += middle + 1;
+                remaining = &remaining[middle + 1..];
+            }
         }
     }
     None

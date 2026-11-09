@@ -72,6 +72,9 @@ fn langrule_digest_verification_accepts_matching_sha1_and_rejects_changed_sha1()
     assert_eq!(short.verify_digest(8), DigestVerification::Indeterminate);
 }
 
+// Vanilla duplicate keys: Ares's `INIClass_Parse_Override` (`0x5260D9`) keeps
+// only the later one (rules::ini_parser::ares_syntax).
+#[cfg(not(feature = "ares"))]
 #[test]
 fn packed_reader_visits_duplicate_physical_keys_through_the_value_index() {
     // ReadUUBlock526FB0 uses the physical entry count at52708C and walks
@@ -257,6 +260,9 @@ fn omitted_fixture_key_preserves_source_order_case_and_reader_defaults() {
     assert_eq!(omitted.section("After").unwrap().get("Keep"), Some("after"));
 }
 
+// Vanilla duplicate keys: Ares's `INIClass_Parse_Override` (`0x5260D9`) keeps
+// only the later one (rules::ini_parser::ares_syntax).
+#[cfg(not(feature = "ares"))]
 #[test]
 fn fresh_duplicate_lookup_keeps_physical_bytes_and_projection_copy_separate() {
     // FindEntryByNames526B10 -> signed CRC qsort52B6A0 and midpoint52B6D0.
@@ -418,6 +424,11 @@ fn save_to_pipe_matches_the_native_streams() {
         if case["absent"].as_bool() == Some(true) {
             continue;
         }
+        // Ares's `INIClass_Parse_Override` (`0x5260D9`) keeps only the later
+        // of two equal keys; this control records the vanilla reader.
+        if cfg!(feature = "ares") && case["name"] == "duplicate_key" {
+            continue;
+        }
         let input = case["input"].as_str().unwrap();
         let ini = IniFile::from_bytes(&crate::util::native_string::narrow_widened(input)).unwrap();
         assert_eq!(
@@ -437,4 +448,28 @@ fn multiplayer_digest_ignores_comments_but_keeps_duplicate_value_order() {
     let reordered = IniFile::from_str("[General]\nBuildSpeed=.9\nBuildSpeed=.7\n");
     assert_eq!(base.multiplayer_digest(), padded.multiplayer_digest());
     assert_ne!(base.multiplayer_digest(), reordered.multiplayer_digest());
+}
+
+/// VMCE's external `campaign.ini` overlay is user-authored and may clear a
+/// prior value with `Key=`. Ordinary readers keep dropping empties and the
+/// section they leave behind, exactly like the native loader; only the opt-in
+/// parser records the marker.
+#[cfg(feature = "vmce")]
+#[test]
+fn external_config_parser_keeps_explicit_empty_values_out_of_reader_view() {
+    let text = "[A]\nName=\nValue=1\n[B]\nOnly=\n";
+    let preserving = IniFile::from_bytes_preserving_empty_values(text.as_bytes())
+        .expect("external config parses");
+    let a = preserving.section("A").expect("section A");
+    assert_eq!(a.get_for_test("Value"), Some("1"));
+    assert!(!a.is_present("Name"));
+    assert!(a.has_explicit_empty_value("Name"));
+    let b = preserving.section("B").expect("empty-only section survives");
+    assert!(b.has_explicit_empty_value("Only"));
+    assert_eq!(b.entry_count(), 0);
+
+    let ordinary = IniFile::from_str(text);
+    assert!(ordinary.section("B").is_none(), "native loader drops empty-only sections");
+    assert!(!ordinary.section("A").unwrap().is_present("Name"));
+    assert!(!ordinary.section("A").unwrap().has_explicit_empty_value("Name"));
 }

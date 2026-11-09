@@ -26,7 +26,6 @@ enum RoundPhase {
     HostAi,
     HostReady,
     GuestSetup,
-    Loading,
     Running,
     HoldFailureGuest,
     EndRound,
@@ -448,6 +447,7 @@ impl LiveRoundFlow {
                 WolPage::Message { .. } => "message",
                 WolPage::Lobby => "lobby",
                 WolPage::Options(_) => "options",
+                WolPage::ChatTranslation(_) => "chat_translation",
                 WolPage::AutoLoginQuery(_) => "auto_login",
                 WolPage::Locale(_) => "locale",
                 WolPage::MyInformation(_) => "my_information",
@@ -695,7 +695,7 @@ impl LiveRoundFlow {
         }
         if self.config.is_some()
             && !self.input_host(core)
-            && matches!(self.phase, RoundPhase::GuestSetup | RoundPhase::Loading)
+            && self.phase == RoundPhase::GuestSetup
             && lobby_ready(state, rendered)
         {
             ensure!(
@@ -1052,10 +1052,7 @@ impl LiveRoundFlow {
                     );
                 }
             }
-            RoundPhase::Loading
-            | RoundPhase::HostReady
-            | RoundPhase::GuestSetup
-            | RoundPhase::QuickMatch
+            RoundPhase::HostReady | RoundPhase::GuestSetup | RoundPhase::QuickMatch
                 if state.frontend.screen == GameScreen::InGame =>
             {
                 ensure!(

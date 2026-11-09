@@ -230,6 +230,10 @@ pub fn generate_map_observed(
         // (0..3); a final binary confirmation is still open.
         width: options.width,
         max_trees: settings.max_trees,
+        urban_types: &settings.urban_types,
+        urban_presence: options.urban_presence,
+        urban_enabled: options.urban_enabled,
+        seed: options.seed_u16(),
     };
 
     observe(GenerationPointView {
@@ -439,6 +443,33 @@ mod tests {
         assert_eq!(slots, (0..30).collect::<Vec<u8>>());
     }
 
+    /// VERA extension: thirty players' islands survive the start threshold,
+    /// so an archipelago seats every player at the default and largest size.
+    #[test]
+    #[ignore = "slow; run when changing what it covers"]
+    fn thirty_player_archipelagos_place_every_start() {
+        let Some((settings, resolved, blocks)) = retail_inputs() else {
+            return;
+        };
+        for size in [0, crate::map::rmg::MAX_SIZE_OPTION] {
+            let options = RmgOptions {
+                num_players: 30,
+                width: size,
+                height: size,
+                ..options(0, 0)
+            };
+            let generated = generate_map(&options, &settings, &resolved, &blocks, &[]);
+            assert_eq!(
+                (
+                    generated.unfilled_start_slots,
+                    generated.start_waypoints.len()
+                ),
+                (0, 30),
+                "size option {size}"
+            );
+        }
+    }
+
     /// VERA extension: the largest size option generates a 500x500 interior.
     #[test]
     #[ignore = "slow; run when changing what it covers"]
@@ -465,6 +496,133 @@ mod tests {
             ),
             (504, 512)
         );
+    }
+
+    /// VERA extension: the dialog's Urban and Desert theaters and
+    /// its Archipelago map type generate from retail data with every start
+    /// placed, and DESERT's empty waterfall sets are absent to the generator.
+    #[test]
+    #[ignore = "slow; run when changing what it covers"]
+    fn the_added_theaters_and_archipelago_generate_from_retail_data() {
+        for (theater, name) in [(2, "URBAN"), (3, "DESERT")] {
+            let Some((settings, resolved, blocks)) = retail_inputs_for(name) else {
+                return;
+            };
+            if name == "DESERT" {
+                assert_eq!(resolved.ids.cliffs.waterfall_bases(), [-1; 4]);
+            } else {
+                assert!(
+                    resolved
+                        .ids
+                        .cliffs
+                        .waterfall_bases()
+                        .iter()
+                        .all(|&b| b >= 0)
+                );
+            }
+            for map_type in [0, 1, 4] {
+                let options = RmgOptions {
+                    num_players: 8,
+                    ..options(map_type, theater)
+                };
+                let generated = generate_map(&options, &settings, &resolved, &blocks, &[]);
+                assert_eq!(
+                    (
+                        generated.unfilled_start_slots,
+                        generated.start_waypoints.len()
+                    ),
+                    (0, 8),
+                    "{name} map type {map_type}"
+                );
+            }
+        }
+    }
+
+    /// VERA extension: an opted-in Urban Presence adds towns of the theater's
+    /// civilian buildings on top of exactly the terrain, ore and starts the
+    /// seed makes without it, and traces every building so the load replays
+    /// it; the same presence without the opt-in adds nothing.
+    #[test]
+    #[ignore = "slow; run when changing what it covers"]
+    fn opted_in_urban_presence_adds_towns_without_touching_the_terrain() {
+        let Some((mut settings, resolved, blocks)) = retail_inputs() else {
+            return;
+        };
+        let (_, mut assets) = crate::rules::retail_ini_fixture::retail_assets().expect("retail");
+        crate::map::theater::load_theater(&mut assets, "TEMPERATE").expect("TEMPERATE");
+        let rules = crate::rules::retail_ini_fixture::retail_unlayered_rules_with_art()
+            .expect("retail rules");
+        let art = crate::rules::retail_ini_fixture::retail_ini("artmd.ini").expect("art");
+        settings.urban_types = crate::map::rmg::tech_catalog::resolve_urban(
+            &rules,
+            &art,
+            &[],
+            "tem",
+            "TEMPERATE",
+            |file| assets.contains(file),
+        );
+        assert!(
+            !settings.urban_types.is_empty(),
+            "TEMPERATE draws civilian buildings"
+        );
+
+        let base = RmgOptions {
+            num_players: 4,
+            urban_presence: 80,
+            urban_enabled: false,
+            ..options(1, 0)
+        };
+        let plain = generate_map(&base, &settings, &resolved, &blocks, &[]);
+        let towns = generate_map(
+            &RmgOptions {
+                urban_enabled: true,
+                ..base.clone()
+            },
+            &settings,
+            &resolved,
+            &blocks,
+            &[],
+        );
+        let terrain = |g: &GeneratedMap| {
+            let tiles: Vec<_> = g
+                .map_file
+                .cells
+                .iter()
+                .map(|c| (c.rx, c.ry, c.tile_index, c.sub_tile, c.z))
+                .collect();
+            let overlays: Vec<_> = g
+                .map_file
+                .overlays
+                .iter()
+                .map(|o| (o.rx, o.ry, o.overlay_id, o.frame))
+                .collect();
+            (tiles, overlays, g.start_waypoints.clone())
+        };
+        assert!(
+            terrain(&plain) == terrain(&towns),
+            "the towns change no terrain"
+        );
+        assert!(
+            towns.map_file.entities.len() > plain.map_file.entities.len() + 4,
+            "towns add buildings: {} vs {}",
+            towns.map_file.entities.len(),
+            plain.map_file.entities.len()
+        );
+        // Every entity has its emitted constructor, as the load validates.
+        for (index, entity) in towns.map_file.entities.iter().enumerate() {
+            let traced = towns.construction_trace.events.iter().any(|event| {
+                event.outcome
+                    == crate::map::rmg::RmgConstructionOutcome::Emitted {
+                        entity_index: index,
+                        cell: (entity.cell_x, entity.cell_y),
+                    }
+            });
+            assert!(
+                traced,
+                "entity {index} {} has no constructor",
+                entity.type_id
+            );
+        }
     }
 
     #[test]
@@ -619,10 +777,21 @@ mod tests {
         ResolvedTheaterInputs,
         crate::map::rmg::theater_blocks::TheaterTileBlocks,
     )> {
+        retail_inputs_for("TEMPERATE")
+    }
+
+    /// [`retail_inputs`] for the named retail theater.
+    fn retail_inputs_for(
+        theater_name: &str,
+    ) -> Option<(
+        RmgSettings,
+        ResolvedTheaterInputs,
+        crate::map::rmg::theater_blocks::TheaterTileBlocks,
+    )> {
         let (_, mut assets) = crate::rules::retail_ini_fixture::retail_assets()?;
         let rules = crate::rules::retail_ini_fixture::retail_ini("rulesmd.ini")?;
-        let theater = crate::map::theater::load_theater(&mut assets, "TEMPERATE")
-            .expect("retail TEMPERATE theater");
+        let theater = crate::map::theater::load_theater(&mut assets, theater_name)
+            .unwrap_or_else(|| panic!("retail {theater_name} theater"));
         let ruleset = crate::rules::ruleset::RuleSet::from_ini(&rules).expect("retail rules");
         let resolved = ResolvedTheaterInputs::from_theater(
             &theater,

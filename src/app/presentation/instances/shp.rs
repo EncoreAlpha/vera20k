@@ -1023,11 +1023,11 @@ pub(crate) fn embedded_shp_shadow_piece(
     instance.z_gradient = pack_z_gradient(ZGradient::Flat, false);
     instance.zshape_origin = [0.0, 0.0];
 
-    // RESIDUAL: Carryall child drawing raises this point another 14 pixels
-    // when Techno+424 is set (706481/706559, Aircraft pickup store417297).
-    // That rendering belongs to the existing unported Aircraft Carryall
-    // mechanism; retail Carryall is on VehicleType HIND. Ordinary ground
-    // Units use constructor6F2FF3's zero, without render-owned carryall state.
+    // RESIDUAL: a carried object (Techno+424, set by the Carryall pickup
+    // 417297) raises this point another 14 pixels (706481/706559). The
+    // Carryall's cargo draw (units.rs) covers voxel Units only, so an SHP
+    // cargo is not drawn and nothing here reads the flag. Trigger: a mod
+    // Carryall lifting an SHP vehicle.
     Some(ObjectPieceInstance {
         render_z: policy.render_z,
         target: ObjectTexture::SpriteAtlasEdit(
@@ -1814,8 +1814,13 @@ fn emit_building_anims(
         let Some(coord) = sim.anim_absolute_coord(anim_id) else {
             continue;
         };
-        let (screen_x, screen_y, _, _, _, lift_px) =
+        let (screen_x, mut screen_y, _, _, _, mut lift_px) =
             super::overlays::anim_world_render_coords(coord);
+        let correction = crate::render::locomotor_visual::building_terrain_correction(i32::from(
+            building.position.z() as i8,
+        ));
+        screen_y -= correction as f32;
+        lift_px += correction;
         // Original451988 copies the slot's ZAdjust even when it is zero;
         // the constructor's AnimType ZAdjust is not a zero-value fallback.
         let z_adjust_px = instance.z_adjust() + ANIM_DRAW_DEPTH_BIAS_PX;

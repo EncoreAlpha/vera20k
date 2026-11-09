@@ -588,9 +588,9 @@ impl ShpPalettes {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                // sRGB like the RGBA pages it replaces: reads decode the
-                // palette bytes to the same linear values.
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                // Unorm, unlike RGBA pages: `indexed_color` hands the palette
+                // bytes straight to the shared palette conversion.
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -1900,11 +1900,7 @@ fn register_projectile_frames(
         return;
     };
     for weapon in rules.weapons_iter() {
-        let Some(projectile) = weapon
-            .projectile
-            .as_deref()
-            .and_then(|id| rules.projectile(id))
-        else {
+        let Some(projectile) = rules.weapon_projectile(weapon) else {
             continue;
         };
         if projectile.inviso || projectile.voxel {

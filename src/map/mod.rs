@@ -27,6 +27,7 @@ pub mod vmce_config;
 #[cfg(not(feature = "vmce"))]
 #[path = "vmce_config_stub.rs"]
 pub mod vmce_config;
+pub mod corner_heights;
 pub mod entities;
 pub mod events;
 pub mod houses;

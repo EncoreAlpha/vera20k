@@ -54,6 +54,8 @@ pub(crate) mod campaign_defeat;
 pub(crate) mod campaign_victory;
 pub(crate) mod chrono_screen;
 mod cncnet;
+#[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+mod browser_lifecycle;
 pub(crate) use cncnet::SpawnAction;
 pub(crate) mod commander_feedback;
 mod cooperative_round;
@@ -99,6 +101,7 @@ mod shell_campaign;
 pub(crate) mod shell_lan;
 mod shell_load_saved_game;
 mod shell_main_menu;
+mod shell_menu;
 mod shell_movies_credits;
 pub(crate) mod shell_network_setup;
 mod shell_random_map;

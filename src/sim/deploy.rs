@@ -91,20 +91,11 @@ pub(crate) fn issue_order(
     }) {
         return false;
     }
-    // Event9 4C771C..4C7756 checks the current cell's slope before the
-    // Techno70C620 terrain projection query. It does not test health/dying.
-    // EMP504 has no active state producer in this engine yet.
-    if let Some(terrain) = sim.resolved_terrain.as_ref() {
-        let actor = sim.substrate.entities.get(id).expect("admitted actor");
-        if !actor.on_bridge() {
-            let cells = crate::map::resolved_terrain::NativeCellQuery::canonical(terrain);
-            let [x, y] = crate::sim::movement::ground_pose::position_world_xy(&actor.position);
-            if cells.ground_fields(cells.lookup_world(x, y)).1 == 0
-                && crate::sim::movement::ground_pose::terrain_projection_differs(&cells, [x, y])
-            {
-                return false;
-            }
-        }
+    // Event9 checks the current cell's slope before the Techno70C620 terrain
+    // projection query. It does not test health/dying. EMP504 has no active
+    // state producer in this engine yet.
+    if crate::sim::movement::ground_pose::event_hidden_flat_cell(sim, id) {
+        return false;
     }
     //4C7768..4C7774 follows the projection query and its map lookup effects.
     if matches!(
@@ -319,8 +310,12 @@ impl Simulation {
                 // both AI Hunt deploy and Guard→Unload through this owner.
                 // Active-retail EMP producer reachability is not established;
                 // default builds retain their current constructor-zero path.
+                // Ares 3.0 TechnoClass_CanDeploySlashUnload_Immobile
+                // (1005D1C0, hook 0x700E47) also refuses a falling or
+                // warping-in unit, falling first.
                 #[cfg(feature = "ares")]
-                if entity.emp_remaining() > 0 {
+                if entity.is_falling_down() || entity.emp_remaining() > 0 || entity.is_warping_in()
+                {
                     return false;
                 }
                 if entity.low_bridge_tube_state.is_some() {
@@ -345,6 +340,12 @@ impl Simulation {
                 }
                 if object.passengers <= 0 {
                     return true;
+                }
+                // Ares 3.0 10049E70 (hook 0x700EEC): a `NoManualUnload`
+                // transport outside a tank bunker refuses (0x700DCE).
+                #[cfg(feature = "ares")]
+                if object.techno_combat().movement().no_manual_unload() && !bunkered {
+                    return false;
                 }
                 if entity.on_bridge() {
                     return false;
@@ -560,6 +561,12 @@ impl Simulation {
             if object.undeploy_delay <= -1 {
                 self.infantry_do_action(id, 31, true, rules, effects)?;
             }
+            // Ares 3.0 InfantryClass_Mi_Unload_Undeploy (1005CD20, hook
+            // 0x51F716): this arm returns 1 after Guard instead of reaching
+            // FootUnload's 450.
+            if crate::rules::ARES_ENABLED {
+                delay = 1;
+            }
         } else {
             self.infantry_do_action(id, 27, true, rules, effects)?;
             //70E120 uses the SprayAttack selector70DD70, not GetCurrentWeapon
@@ -570,8 +577,13 @@ impl Simulation {
                 .and_then(|(weapon, _)| rules.weapon(weapon))
                 .is_some_and(|weapon| weapon.area_fire);
             if area_fire {
-                //5F3E50→410A40 compares native literal82557C "DESO".
-                if object.id.eq_ignore_ascii_case("DESO") {
+                //5F3E50→410A40 compares native literal82557C "DESO";
+                // Ares 3.0 10049790 (hook 0x51F76D) tests `IsDesolator`.
+                #[cfg(feature = "ares")]
+                let desolator = object.techno_combat().roles().is_desolator();
+                #[cfg(not(feature = "ares"))]
+                let desolator = object.id.eq_ignore_ascii_case("DESO");
+                if desolator {
                     delay = rules
                         .animation_sequence_in_category(
                             crate::rules::object_type::ObjectCategory::Infantry,

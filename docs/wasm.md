@@ -25,6 +25,12 @@ existing `fast` profile, and packages its bindings and an asset-free host into
 binding CLI matches the lockfile and sets an 8 MiB Wasm stack for the engine.
 Desktop artifact types, default features and build commands are unchanged.
 
+Of the interface's bundled fonts, the browser engine embeds only Noto Sans. The
+others (Noto Sans CJK and 19 script fonts, about 28 MB) are copied with their
+licences to `pkg/fonts/`, and the engine fetches each one from beside its own
+files the first time text needs a character only that font draws, such as a
+Thai name in a chat. A host that serves the package must serve that folder too.
+
 For the optional online build:
 
 ```sh
@@ -129,7 +135,7 @@ the desktop implementations. A browser build without `wasm` is rejected.
   uses an offscreen sRGB frame and a canvas presentation pass. Browser texture
   uploads do not block waiting for GPU completion.
 - Without a WebGPU adapter the browser build falls back to WebGL2. WebGL2 has
-  no storage buffers, compute, fragment atomics or reinterpreting texture views,
+  no storage buffers, compute or reinterpreting texture views,
   so the renderers that use them select render-target equivalents there
   (`render::webgl`, `gpu::webgl_fallback`); every other device keeps its path.
   A native test translates its shaders to GLSL ES 3.00, and
