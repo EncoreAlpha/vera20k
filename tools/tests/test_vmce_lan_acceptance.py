@@ -277,6 +277,26 @@ class SettingsTemplateTests(unittest.TestCase):
             )
 
 
+class ScenarioCheckpointGuardTests(unittest.TestCase):
+    def test_vmce_scenarios_are_accepted(self) -> None:
+        for name in ("2p-retry", "2p-win", "4p-win"):
+            acceptance.validate_scenario_checkpoints(acceptance.SCENARIOS[name])
+
+    def test_non_vmce_checkpoint_is_rejected_before_launch(self) -> None:
+        scenario = acceptance.Scenario(
+            name="2p-retry",
+            players=2,
+            expect_victory=False,
+            expect_can_continue=True,
+            expect_next_stage=False,
+            checkpoint_host="lan-live-coop-host",
+            checkpoint_guest="lan-live-coop-guest",
+            expect_retry=True,
+        )
+        with self.assertRaisesRegex(acceptance.UsageError, "non-VMCE host checkpoint"):
+            acceptance.validate_scenario_checkpoints(scenario)
+
+
 class CaptureCommandTests(unittest.TestCase):
     def test_four_player_host_passes_players_peers_map_and_name(self):
         command = acceptance.build_capture_command(

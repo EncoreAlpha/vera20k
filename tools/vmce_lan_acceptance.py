@@ -159,10 +159,8 @@ SCENARIOS = {
         expect_victory=False,
         expect_can_continue=True,
         expect_next_stage=False,
-        checkpoint_host="lan-live-coop-host",
-        checkpoint_guest="lan-live-coop-guest",
         expect_retry=True,
-        expect_screenshots=("vmce-retry-result", "vmce-retry-mission"),
+        expect_screenshots=("vera-result-real-lose", "vera-retry-mission"),
     ),
 }
 
@@ -172,6 +170,28 @@ SUITES = {
     "smoke": ("4p-win", "2p-win", "2p-retry"),
     "full": ("4p-win", "2p-win", "2p-retry"),
 }
+
+VMCE_CHECKPOINT_PREFIX = "lan-live-vera-"
+
+
+def validate_scenario_checkpoints(scenario: Scenario) -> None:
+    """Reject a scenario that points at a non-VMCE live checkpoint.
+
+    All acceptance scenarios are VMCE receipts: a classic Cooperative
+    checkpoint would run the stock two-row page and cannot prove the VMCE
+    BC6 four-row vote/retry path. Fail before any process is launched.
+    """
+    for role, checkpoint in (
+        ("host", scenario.checkpoint_host),
+        ("guest", scenario.checkpoint_guest),
+    ):
+        if not checkpoint.startswith(VMCE_CHECKPOINT_PREFIX):
+            raise UsageError(
+                f"scenario {scenario.name!r} uses the non-VMCE {role} checkpoint "
+                f"{checkpoint!r}; VMCE acceptance requires "
+                f"{VMCE_CHECKPOINT_PREFIX}* checkpoints"
+            )
+
 
 RESERVED_SCENARIOS = {
     "4p-lose": "defeat acceptance needs a loss-entry series and is not implemented in v1",
@@ -385,6 +405,7 @@ def selected_scenarios(args: argparse.Namespace) -> list[Scenario]:
         if name in seen:
             raise UsageError(f"scenario {name!r} was selected more than once")
         seen.add(name)
+        validate_scenario_checkpoints(scenario)
         chosen.append(scenario)
     if not chosen:
         raise UsageError("no scenarios selected")
@@ -1092,7 +1113,7 @@ def _process_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for key in [key for key in environment if key.upper().startswith("RA2_")]:
         del environment[key]
-    environment["RUST_LOG"] = "info"
+    environment["RUST_LOG"] = os.environ.get("VMCE_RUST_LOG", "info")
     return environment
 
 
@@ -1424,6 +1445,7 @@ def _force_remove(function: Any, path: str, error: BaseException) -> None:
 
 def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int) -> ScenarioResult:
     """Run one scenario to completion and return its checks."""
+    validate_scenario_checkpoints(scenario)
     players = validate_players(scenario.players if scenario.players is not None else context.players)
     print(f"== {scenario.name} ({players} players) ==", flush=True)
 
@@ -1458,9 +1480,13 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
             # The co-op campaign host only advertises its room after reading
             # the campaign; launching the guest immediately gives the slower
             # start enough overlap with the host's first admission wait.
-            marker_seen = (
-                False if scenario.expect_retry else wait_for_host_ready(host)
+            # The classic co-op host needs the guest early; the VMCE host only
+            # advertises its room after reading the campaign, so wait for it.
+            immediate_guest = (
+                scenario.expect_retry
+                and scenario.checkpoint_host == "lan-live-coop-host"
             )
+            marker_seen = False if immediate_guest else wait_for_host_ready(host)
             if host.popen.poll() is not None:
                 raise RunFailure(
                     f"host exited with code {host.popen.returncode} before the guests "
