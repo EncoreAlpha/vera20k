@@ -879,6 +879,7 @@ impl MatchSession {
                 if round.begin {
                     round.quit_enabled = false;
                     requests.push(NetworkLoadingRequest::CooperativeAck);
+                    log::info!("VMCE retry diagnostic: Options received host={host}; Ack queued");
                 }
                 Ok(CooperativeRoundStep::OptionsApplied {
                     difficulty: options.difficulty,
@@ -886,6 +887,9 @@ impl MatchSession {
                 })
             }
             CooperativeRoundEvent::Ack { source } => {
+                if let Some(row) = slot_of(launch, source) {
+                    round.acked[row] = true;
+                }
                 if let Some(row) = slot_of(launch, source) {
                     round.acked[row] = true;
                 }

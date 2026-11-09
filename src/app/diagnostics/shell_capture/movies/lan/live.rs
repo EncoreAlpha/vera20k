@@ -421,6 +421,12 @@ pub(super) struct LiveLanCapture {
     /// `--vera-outcome`: the mission outcome to inject after the prefix.
     #[cfg(feature = "vmce")]
     vera_outcome: Option<VmceOutcome>,
+    /// The VMCE retry capture saw the BC6 result page; the next InGame screen
+    /// is the retried mission and completes the acceptance capture.
+    #[cfg(feature = "vmce")]
+    vera_retry_result_seen: bool,
+    #[cfg(feature = "vmce")]
+    vera_result_shot_done: bool,
     #[cfg(feature = "vmce")]
     vera_outcome_phase: VeraOutcomePhase,
     #[cfg(feature = "vmce")]
@@ -572,6 +578,10 @@ impl LiveLanCapture {
             vera_probe: None,
             #[cfg(feature = "vmce")]
             vera_outcome,
+            #[cfg(feature = "vmce")]
+            vera_retry_result_seen: false,
+            #[cfg(feature = "vmce")]
+            vera_result_shot_done: false,
             #[cfg(feature = "vmce")]
             vera_outcome_phase: VeraOutcomePhase::Prefix,
             #[cfg(feature = "vmce")]
@@ -1298,6 +1308,61 @@ impl LiveLanCapture {
             }
             _ => {}
         }
+        #[cfg(feature = "vmce")]
+        if self.phase == Phase::Running && matches!(self.vera_outcome, Some(VmceOutcome::Retry)) {
+            if matches!(state.frontend.screen, GameScreen::MissionResult { .. }) {
+                self.vera_retry_result_seen = true;
+            }
+            if self.vera_retry_result_seen && state.frontend.screen == GameScreen::InGame {
+                let native_frame = state
+                    .match_state
+                    .sim_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.simulation.session().binary_frame())
+                    .unwrap_or(0);
+                let evidence = json!({
+                    "kind": "retry",
+                    "retry_mission": {
+                        "map": state
+                            .match_state
+                            .session
+                            .network_setup()
+                            .and_then(|launch| launch.selected_map_file.clone()),
+                        "seed": state.match_state.session.network_start_seed(),
+                        "native_frame": native_frame,
+                        "render_frame": frame,
+                    },
+                });
+                let retry_mission = evidence["retry_mission"].clone();
+                if let Some(receipt) = self.final_receipt.as_mut() {
+                    if let Some(object) = receipt
+                        .get_mut("vera_outcome")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        object.insert("retry_mission".to_owned(), retry_mission.clone());
+                    } else {
+                        receipt["vera_outcome"] = evidence.clone();
+                    }
+                } else {
+                    let mut receipt = self.vera_receipt(state)?;
+                    receipt["vera_outcome"] = evidence.clone();
+                    self.final_receipt = Some(receipt);
+                }
+                if let Some(object) = self
+                    .vera_outcome_evidence
+                    .as_mut()
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    object.insert("retry_mission".to_owned(), retry_mission);
+                } else {
+                    self.vera_outcome_evidence = Some(evidence);
+                }
+                self.request_screenshot("vera-retry-mission");
+                self.event(frame, "VERA outcome: the retried VMCE mission loaded");
+                self.phase = Phase::Finished;
+                return Ok(());
+            }
+        }
         if self.phase == Phase::Running {
             if let Some(run) = self.cooperative.as_mut() {
                 run.step(state, &mut self.route, frame, &mut self.screenshot_requests)?;
@@ -1656,6 +1721,7 @@ impl LiveLanCapture {
                 VeraOutcomePhase::Observe
                     | VeraOutcomePhase::Round
                     | VeraOutcomePhase::NextMission
+                    | VeraOutcomePhase::Retrying
                     | VeraOutcomePhase::Quit
             )
         {
@@ -2298,10 +2364,6 @@ impl LiveLanCapture {
                             "native_frame": native_frame,
                             "state_hash": state_hash,
                         }));
-                        self.request_screenshot(format!(
-                            "vera-result-real-{}",
-                            if victory { "win" } else { "lose" }
-                        ));
                         if let (Some(receipt), Some(evidence)) = (
                             self.final_receipt.as_mut(),
                             self.vera_outcome_evidence.as_ref(),
@@ -2385,11 +2447,6 @@ impl LiveLanCapture {
                             "native_frame": native_frame,
                             "state_hash": state_hash,
                         }));
-                        self.request_screenshot(if victory {
-                            "vera-result-real-win"
-                        } else {
-                            "vera-result-real-lose"
-                        });
                         if let (Some(receipt), Some(evidence)) = (
                             self.final_receipt.as_mut(),
                             self.vera_outcome_evidence.as_ref(),
@@ -2453,6 +2510,30 @@ impl LiveLanCapture {
                 let Some(opened) = self.vera_outcome_dialog_frame else {
                     anyhow::bail!("VERA result dialog frame missing");
                 };
+                if render_frame < opened.saturating_add(30) {
+                    return Ok(());
+                }
+                if !self.vera_result_shot_done {
+                    let victory = state
+                        .frontend
+                        .coop_score_page
+                        .as_ref()
+                        .map(|page| page.victory)
+                        .unwrap_or_else(|| {
+                            state
+                                .match_state
+                                .session
+                                .cooperative_round()
+                                .is_some_and(|round| round.page_victory())
+                        });
+                    self.request_screenshot(if victory {
+                        "vera-result-real-win"
+                    } else {
+                        "vera-result-real-lose"
+                    });
+                    self.vera_result_shot_done = true;
+                    return Ok(());
+                }
                 let native_victory_page = state.frontend.campaign_score_page.is_some()
                     && state
                         .match_state
@@ -2528,6 +2609,15 @@ impl LiveLanCapture {
                     _ => VeraOutcomePhase::NextMission,
                 };
             }
+            VeraOutcomePhase::Retrying => {
+                let committed = state
+                    .match_state
+                    .sim_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.simulation.session().binary_frame())
+                    .unwrap_or(0);
+                self.step_vera_outcome(state, committed)?;
+            }
             VeraOutcomePhase::Ending => {
                 if state.frontend.campaign_score_page.is_none()
                     && state.match_state.session.cooperative_round().is_none()
@@ -2565,7 +2655,7 @@ impl LiveLanCapture {
                         .as_ref()
                         .map(|runtime| runtime.simulation.session().binary_frame())
                         .unwrap_or(0);
-                    if committed >= 60 {
+                    if committed >= 1 {
                         let evidence = json!({
                             "kind": "retry",
                             "retry_mission": {
