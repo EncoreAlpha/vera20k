@@ -110,6 +110,32 @@ visible correctness/claim gap, S3 is polish/robustness. Evidence for each item i
   - Open items at implementation time: exact pixel split of the bottom slot, which native
     button art/state the Ready slot reuses, row-backdrop alpha, and the host-leave room
     teardown receipt.
+- **B26 Defeat page moves to the native BC6 result dialog (TODO, not implemented).** Only the
+  failure page uses `RT_DIALOG 0xBC6`; victory/campaign-end stay on 0x103. Use the native BC6
+  shell/art, extend its two player rows to four BC6 rows (`Player / Kills / Losses / Built /
+  Score`) and hide the chat area to make room; the failure page *is* the statistics view, so it
+  keeps no separate stats entry and no ready column. BC6 buttons are remapped: `Continue`
+  becomes `重试` — a guest click is one vote and lights the button; the host button starts
+  disabled, lights only after every guest has voted, and starts the retry on click (no timeout,
+  no host vote). BC6 `Quit` becomes Leave Room (LAN lobby; host leave disbands, guest leave is
+  local). Reuse the native disabled/lit button art; no new bitmap art. Extending 2 native rows
+  to 4 is a non-native layout extension and must be recorded as a residual. i18n: reuse
+  `重试`/Leave Room; en `Retry`/`Leave Room`, other languages English placeholders.
+  Acceptance: 800x600 four-row failure page for host (button disabled/ready), guest (voted),
+  and 2p/4p captures; no chat overlap.
+- **B27 Victory-page 0x103 statistics tab (TODO, not implemented).** Remove the top
+  “摧毁敌军数 / Kills” label and value from the victory/end page; keep the native top report
+  panel at its fixed height and do not move the eagle, time panels or Continue — the freed
+  area stays native report space (no custom fill). Add a vertical “统计数据” tab on the left
+  edge below the rank box/eagle area. Clicking it opens a full-screen statistics page that
+  reuses the 0x103 background; the tab stays highlighted and either clicking it again or a
+  bottom Back button returns to the victory page. The page header shows total time and par
+  time; the per-role table has six columns: `玩家 | 击毁 | 损失 | 建造 | 得分 | 收入` (income
+  only, no spent/net; time only in the header), four rows for the four roles. Statistics are
+  available only on victory/campaign-end pages; the defeat BC6 page is its own statistics.
+  i18n: `统计数据`/`Statistics`, reuse native Kills/Losses/Built/Score keys and add income;
+  other languages English placeholders. Acceptance: 800x600 victory page with tab and stats
+  page (4 rows), plus one 1920 shot; no overlap with report/eagle/time panels.
 - **B20 Game HUD:** waiting/sync status, campaign identity (stage/seed/series), disconnect/failure
   notices; pause semantics stay native "menu does not freeze".
 - **B21 Loading/transition:** campaign identity, stage/seed, 4-player readiness.
