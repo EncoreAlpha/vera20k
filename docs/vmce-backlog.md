@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: finish the VMCE `2p-retry` capture, then B03. B01 code is fixed; the real VMCE acceptance capture is blocked in the headless harness, so B01 is not claimed as accepted. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: B03, then the remaining S1/S2 items. B01 code is fixed and the genuine VMCE 2p-retry receipt passes (same VMCE stage, 300 equal checksums); its acceptance screenshot still needs the four-row board visibly rendered. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -102,12 +102,12 @@ recorded here for residuals only.
   send. The B26 all-online-guest vote gate is unchanged (no timeout, host never votes, a leaving
   guest's vote clears, duplicate clicks are safe). Tests: frozen-identity inheritance with the
   network fields deliberately cleared after the votes, reason classification, wire round-trip,
-  and the existing vote-gate tests. Real VMCE `2p-retry` capture attempt: the VMCE live
-  checkpoints reach the four-row BC6 page and both peers click; the host sends begin/options, but
-  the guest ack/Go exchange is not observed, so the retry load never starts and the native frame
-  stays 364 on `MissionResult`. This is a capture-harness blocker, not a product failure; no pass
-  is claimed. A classic Cooperative retry capture exists under `.scratch/vmce-retry` but is not a
-  B01 receipt (the acceptance guard now rejects non-VMCE checkpoints).
+  and the existing vote-gate tests. Real VMCE `2p-retry` capture passes (`.scratch/vmce-retry`, commit
+  `8f03b60ca`): both peers reach the VMCE BC6 page, the host gates on the guest vote, begin/options
+  and ack complete, Go starts the retry, both load the same `VMCE/LDA-Lose/stage01/all01umd.map`, and
+  both receipts carry the retried-stage evidence and 300 identical native checksums. Residual: the 800
+  result screenshot still paints the BC6 board area black (only Retry/Leave Room show), so the
+  four-row visual acceptance still needs a render fix/capture; the receipt itself passes.
   Evidence: result-round.md, sim-outcome.md; `session/cooperative_round.rs`, `loading/pump.rs`.
 - **B02 Timers — cancelled by design; no timers exist.** Retry is the B26 team-agreement vote gate:
   each guest's click is one vote and lights its button; the host's Retry stays disabled until every online guest
