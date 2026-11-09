@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: B03, then the remaining S1/S2 items. B01 Retry loading is fixed and its real `2p-retry` capture passed. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is committed on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: finish the VMCE `2p-retry` capture, then B03. B01 code is fixed; the real VMCE acceptance capture is blocked in the headless harness, so B01 is not claimed as accepted. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -66,13 +66,13 @@ recorded here for residuals only.
 
 - Version after the B01 fix: `0.2.9-vmce.6`. Push `feature/vmce` only after the screenshot review
   manifest is accepted; no formal Release.
-- Fix order: **B03 → B13 → B12**. Release gate: the real `2p-retry` capture (guest vote → host
-  reopens the same stage, 300 equal checksums) now passes; `2p-win` and `4p-win` remain.
-  Three-player, disconnect and RTL checks are not blocking.
-- No timers exist in the result pages (B02 cancelled). Retry is the B26 team-agreement vote gate;
+- Fix order: **finish VMCE 2p-retry capture → B03 → B13 → B12**. Release gate: a real VMCE
+  `2p-retry` capture (VMCE BC6 four-row page, guest votes, host retries, same stage, 300 equal
+  checksums) is still open; `2p-win` and `4p-win` remain. Three-player, disconnect and RTL
+  checks are not blocking.
   campaign end is the all-ready gate. One unready guest stalls the page; the only exit is Leave Room.
-- B01 is closed: retry reopens the same frozen map/seed/roles/Houses, and the real `2p-retry`
-  capture passes (`.scratch/vmce-retry/`).
+- B01 code is fixed (retry reopens the same frozen map/seed/roles/Houses), but its real VMCE
+  `2p-retry` acceptance capture is blocked in the headless harness and B01 stays open until it passes.
 - B03: a failed setup apply aborts clearly with rollback/error reporting; no automatic retry.
 - B04: closed by B26 — the BC6 defeat page no longer paints the old `0x103` ready gate.
 - B05: validate every `campaign.ini` stage at host map pick, not only `Entry`.
@@ -102,20 +102,19 @@ recorded here for residuals only.
   send. The B26 all-online-guest vote gate is unchanged (no timeout, host never votes, a leaving
   guest's vote clears, duplicate clicks are safe). Tests: frozen-identity inheritance with the
   network fields deliberately cleared after the votes, reason classification, wire round-trip,
-  and the existing vote-gate tests. Real `2p-retry` capture: both processes enter defeat, both
-  press Continue, the host starts, both load the same stage `C2S01MD.MAP`, and the retried
-  mission's 300 checksums are equal (`.scratch/vmce-retry/`, script scenario `2p-retry`).
-  The recorded capture drives the classic Cooperative retry page (both Continue, host starts, same
-  stage reloaded, 300 equal checksums). The VMCE BC6 vote page itself is covered by the B26
-  vote-gate unit tests; an automated VMCE `--vera-outcome retry` capture is still blocked by the
-  capture harness (fast-defeat frame reset and guest-vote timing), so it is not claimed here.
+  and the existing vote-gate tests. Real VMCE `2p-retry` capture attempt: the VMCE live
+  checkpoints reach the four-row BC6 page and both peers click; the host sends begin/options, but
+  the guest ack/Go exchange is not observed, so the retry load never starts and the native frame
+  stays 364 on `MissionResult`. This is a capture-harness blocker, not a product failure; no pass
+  is claimed. A classic Cooperative retry capture exists under `.scratch/vmce-retry` but is not a
+  B01 receipt (the acceptance guard now rejects non-VMCE checkpoints).
   Evidence: result-round.md, sim-outcome.md; `session/cooperative_round.rs`, `loading/pump.rs`.
 - **B02 Timers — cancelled by design; no timers exist.** Retry is the B26 team-agreement vote gate:
   each guest's click is one vote and lights its button; the host's Retry stays disabled until every online guest
   voted and then starts, with no timeout; the host never votes. Campaign end uses the existing all-ready gate:
   guests press Ready and the host's Continue starts only when every connected guest is ready; there is no 30 s
   forced start or host pull. One unready guest stalls the page, and the only exit is Leave Room.
-  Retry loading is covered by the completed B01 fix and its real `2p-retry` capture.
+  Retry loading code is fixed; its real VMCE `2p-retry` capture is still blocked (see B01).
 
 ## S2 — correctness / claims
 
@@ -181,8 +180,8 @@ recorded here for residuals only.
 - EndOfGame/defeat production skeleton, strict Entry-stage validation, invalid-campaign modal.
 - Pause: native "menu does not freeze" verified and documented.
 - VMCE lobby/result UI batch and upstream 0.2.9 sync.
-- Release gate after this batch: real `2p-retry` (vote→reopen) passed; `2p-win` and `4p-win`
-  remain. Version `0.2.9-vmce.6`. No formal Release; push only after the review manifest is accepted.
+- Release gate after this batch: a real VMCE `2p-retry` (vote→reopen) capture is still
+  open; `2p-win` and `4p-win` remain. Version `0.2.9-vmce.6`. No formal Release; push only after review.
 - B24–B27 UI batch: lobby/result columns, settlement board/Ready/Leave, BC6 defeat retry-vote page, and the
   victory/campaign-end `0x103` statistics tab/page. Residuals: BC6 four-row extension is non-native;
   `credits_earned` is gross positive income only (display-only, serde-defaulted, zero-preserving hash).
