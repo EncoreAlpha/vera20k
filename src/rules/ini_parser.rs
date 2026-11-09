@@ -572,7 +572,12 @@ impl IniFile {
         ares_syntax::load_into(self, data, list)
     }
 
-    #[cfg(any(not(feature = "ares"), feature = "vmce"))]
+    #[cfg(any(
+        not(feature = "ares"),
+        feature = "vmce",
+        test,
+        feature = "test-support"
+    ))]
     fn discard_entryless_sections(&mut self, preserve_empty_values: bool) {
         self.fresh_section_index = None;
         self.sections.retain(|section| {
@@ -755,7 +760,7 @@ impl IniFile {
                 body.projected_values.remove(key);
             }
         }
-        ini.discard_entryless_sections();
+        ini.discard_entryless_sections(false);
         ini
     }
 
