@@ -82,6 +82,34 @@ visible correctness/claim gap, S3 is polish/robustness. Evidence for each item i
   1920 shot; typography/inset rules from the existing lobby; no protocol/sim changes.
   Open items at implementation time: exact column widths, whether a combined H-star native
   icon exists, and the defeat-page `准备` header wording.
+- **B25 Result-page color/röle/Ready/Leave revision (TODO, not implemented).** Approved copy:
+  - Every data row colours all text cells (Owner, Country, Result, Ready) with that role's
+    lobby House colour; headers stay native yellow; country/star/H icons keep native colours.
+    Each row gets a 1 px-inset dark translucent backdrop strip (native palette, no borders) so
+    dark House colours stay readable.
+  - Delete the two continuation caption lines (“下一关…”, “全员就绪后…” and their localised
+    equivalents) completely; no replacement text. Shrink the board height and move it up,
+    staying inside the dialog’s empty lower band, clear of the native stats/eagle/Continue.
+  - Guest Ready: right panel’s first native button slot below “任务摘要” (the lobby
+    Start-Mission slot), on victory/next and campaign-end pages. Label is localised “Ready”;
+    clicking runs the existing guest-ready action. After the click the button keeps its label
+    and switches to the native lit/pressed enabled state, never clickable again. Host never
+    sees this button; the defeat page never shows it.
+  - Bottom native Continue slot is split into two stacked native buttons: host gets Continue
+    on top and Leave Room below; guests get Leave Room only on every page (no bottom
+    Continue). Leave Room returns to the LAN lobby; a guest leaving does not affect the host,
+    while a host leaving disbands the room and sends the other guests to the lobby. Reuse the
+    existing `VERA:VmceLeaveRoom` copy/style.
+  - The board keeps its Ready column: host always the H red star, guests the normal red star
+    after ready; defeat page guests blank, host H star only.
+  - i18n: en `Ready` / `Leave Room`, zh-CN `准备` / `离开房间`; other 8 languages use English
+    placeholders per the current policy.
+  - Acceptance: 800x600 host/guest victory-next, defeat, campaign-end plus one 1920 shot;
+    verify no text overlap on the native stats/art, row contrast for dark colours, Ready
+    button states, and host/guest Leave behaviour.
+  - Open items at implementation time: exact pixel split of the bottom slot, which native
+    button art/state the Ready slot reuses, row-backdrop alpha, and the host-leave room
+    teardown receipt.
 - **B20 Game HUD:** waiting/sync status, campaign identity (stage/seed/series), disconnect/failure
   notices; pause semantics stay native "menu does not freeze".
 - **B21 Loading/transition:** campaign identity, stage/seed, 4-player readiness.
