@@ -64,6 +64,24 @@ visible correctness/claim gap, S3 is polish/robustness. Evidence for each item i
 
 ## UI / deferred
 
+- **B24 Lobby/result label and column revision (TODO, not implemented).** Approved copy:
+  lobby becomes `玩家 | 所属方 | 国家 | 准备 | 颜色`; the interactive column header is
+  `所属方` and its selected face shows only the map House name (no `P1..P4`, no role number);
+  the separate `角色`/Role display column and its header are removed. The `所属方` value is
+  the map `[Houses]` House bound by `campaign.ini PlayerN` (not Country/Side). `准备` replaces
+  `就绪/主机`: host always shows the native H-in-red-star glyph; a guest is blank until ready
+  and then shows the normal red star; the `主机` subcolumn/header is removed. The result page
+  follows the same columns: `玩家` (lobby player name) | `所属方` (map House) | `国家` |
+  `结果` | `准备`; on defeat only the host shows the H star and guests stay blank. Reuse the
+  native H + red-star art (compose/align existing glyphs if there is no combined native
+  icon); no new bitmap art. Remove the 119 px role column and redistribute widths by actual
+  layout needs (no large blank area or overlap; right edge stays 632); the interactive combo
+  keeps its rect and role-assignment behavior. i18n: en `Owner`/`Ready`, zh-CN `所属方`/`准备`;
+  other 8 languages use English placeholders per the current policy; drop only keys that
+  become unused. Acceptance: 800x600 lobby/result screenshots for host/guest/defeat plus one
+  1920 shot; typography/inset rules from the existing lobby; no protocol/sim changes.
+  Open items at implementation time: exact column widths, whether a combined H-star native
+  icon exists, and the defeat-page `准备` header wording.
 - **B20 Game HUD:** waiting/sync status, campaign identity (stage/seed/series), disconnect/failure
   notices; pause semantics stay native "menu does not freeze".
 - **B21 Loading/transition:** campaign identity, stage/seed, 4-player readiness.
