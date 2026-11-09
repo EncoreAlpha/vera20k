@@ -68,7 +68,7 @@ cargo build --release --no-default-features --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.9-vmce.N` (currently `0.2.9-vmce.5`, merged with upstream `v0.2.9`); LAN peers should
+`0.2.9-vmce.N` (currently `0.2.9-vmce.6`, merged with upstream `v0.2.9`); LAN peers should
 run the same VMCE build.
 
 ### Campaign directories
@@ -189,7 +189,8 @@ The result state, Continue and retry semantics belong to VMCE.
   the native button; the host's `重试` starts disabled and lights only after every online guest
   voted, then restarts the same frozen stage with the same seed, roles and map — no timeout and
   no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
-  Retry loading itself is still the B01 blocker, so a real-LAN vote validation is deferred.
+  Retry loading is fixed (B01): both peers reopen the same frozen stage, and a real-LAN
+  `2p-retry` capture passed (guest votes, host starts, 300 equal checksums).
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).

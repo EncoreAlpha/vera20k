@@ -8,7 +8,7 @@ the upstream sync, not a native-parity certification.
 | --- | --- |
 | Upstream baseline | `38630a77b` (`Fetch the browser build's fonts other than Noto Sans when text needs them`, #4131) |
 | Merge commit | `66e7a1b6b` (`Merge upstream/main into the VMCE fork`) |
-| Fork version | `0.2.9-vmce.5` (all three workspace manifests and `Cargo.lock`) |
+| Fork version | `0.2.9-vmce.6` (all three workspace manifests and `Cargo.lock`) |
 | Capability | `vmce` (off by default; shipping builds do not enable it) |
 
 ## Resolution policy
