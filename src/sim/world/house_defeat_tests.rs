@@ -1489,6 +1489,8 @@ fn vmce_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
         assert!(!sim.houses[owner].has_won());
     }
     assert!(!sim.houses[&shared].has_lost());
+}
+
 /// Ares 3.0 `10024150` (hook `0x004FC731`): with `ReturnStructures=yes`, a
 /// tech building captured from a passive house goes back to it, without its
 /// engineer and disabled, instead of dying with its holder's Blowup_All;

@@ -1121,8 +1121,9 @@ mod tests {
             ],
         );
         let roster = HouseRoster::default();
-        let output =
-            sim.finalize_scenario_post_map(generic_post_map_input(&rules, &overlays, &roster));
+        let output = sim
+            .finalize_scenario_post_map(generic_post_map_input(&rules, &overlays, &roster))
+            .unwrap();
         let alliances = sim.house_alliances.as_map();
         for other in ["A", "B"] {
             assert!(
