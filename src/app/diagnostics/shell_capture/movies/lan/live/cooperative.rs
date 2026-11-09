@@ -22,8 +22,9 @@ use crate::app::diagnostics::shell_capture::movies::abort_return::AbortReturnInp
 /// Both players open the menu at this committed frame, so each B6 still
 /// counts two live humans and offers Observe.
 const OBSERVE_FRAME: u32 = 150;
-/// Native frames the mission after BC6 must run.
-const RETRY_FRAMES: u32 = 90;
+/// Native frames the mission after BC6 must run. The retry capture needs the
+/// same 300-frame checksum prefix as the other acceptance scenarios.
+const RETRY_FRAMES: u32 = 300;
 /// Render frames BC6 stays open before Continue, as a player's reaction:
 /// a peer still finishing the match reads round records as in-match
 /// packets and drops them, as `0x0048D1E0` does.
@@ -79,6 +80,11 @@ pub(super) struct CooperativeRun {
     next_startup: Option<Value>,
     next_first_frame: u32,
     result_frame: Option<u32>,
+    /// The retried mission's checksum ring, indexed from its own frame zero.
+    retry_checksums: Vec<u32>,
+    retry_state_hash: Option<u64>,
+    /// Screenshot labels queued by this run; the live capture owns the files.
+    screenshots: Vec<String>,
 }
 
 impl CooperativeRun {
@@ -97,6 +103,9 @@ impl CooperativeRun {
             next_startup: None,
             next_first_frame: 0,
             result_frame: None,
+            retry_checksums: Vec::new(),
+            retry_state_hash: None,
+            screenshots: Vec::new(),
         }
     }
 
@@ -262,6 +271,7 @@ impl CooperativeRun {
         state: &mut AppState,
         route: &mut Vec<Value>,
         frame: u32,
+        screenshots: &mut Vec<String>,
     ) -> Result<()> {
         match self.phase {
             CoopPhase::Playing => {
@@ -369,6 +379,7 @@ impl CooperativeRun {
                         );
                         self.result = Some(json!({"render_frame":frame,"victory":page.victory,
                             "rows":rows,"next_map":next}));
+                        screenshots.push("vmce-retry-result".to_owned());
                         press_score_button(state, crate::ui::coop_score_shell::CONTINUE)?;
                         ensure!(
                             state
@@ -408,6 +419,9 @@ impl CooperativeRun {
                 }
                 self.next_startup = Some(startup_receipt(state)?);
                 self.next_first_frame = committed_frame(state)?;
+                if !advance {
+                    screenshots.push("vmce-retry-mission".to_owned());
+                }
                 route.push(json!({"render_frame":frame,"action":if advance {
                     "the kept room's next stage loaded over the relay"
                 } else {
@@ -484,7 +498,22 @@ impl CooperativeRun {
                     state.frontend.screen == GameScreen::InGame,
                     "the mission after BC6 left gameplay"
                 );
-                if committed_frame(state)? >= self.next_first_frame + RETRY_FRAMES {
+                let committed = committed_frame(state)?;
+                while (self.retry_checksums.len() as u32) < committed {
+                    self.retry_checksums.push(
+                        state
+                            .match_state
+                            .session
+                            .checksum_history()
+                            .get(self.retry_checksums.len() as u32),
+                    );
+                }
+                if committed >= RETRY_FRAMES {
+                    self.retry_state_hash = state
+                        .match_state
+                        .sim_runtime
+                        .as_ref()
+                        .map(|runtime| runtime.simulation.state_hash());
                     route.push(json!({"render_frame":frame,"action":
                         if self.ending == CoopEnding::Advance { "next stage ran" } else { "retried mission ran" }}));
                     self.phase = CoopPhase::Done;
@@ -517,6 +546,8 @@ impl CooperativeRun {
         } else {
             receipt["retry_startup"] = json!(self.next_startup);
             receipt["retry_first_native_frame"] = json!(self.next_first_frame);
+            receipt["retry_checksums"] = json!(self.retry_checksums);
+            receipt["retry_state_hash"] = json!(self.retry_state_hash);
         }
         Ok(receipt)
     }

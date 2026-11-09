@@ -1125,7 +1125,8 @@ impl LiveRoundFlow {
                     };
                     return Ok(());
                 }
-                run.step(state, &mut self.route, frame)?;
+                let mut screenshots = Vec::new();
+                run.step(state, &mut self.route, frame, &mut screenshots)?;
                 if run.done() {
                     core.phase = Phase::Finished;
                     self.record(frame, "The kept room's next stage ran");

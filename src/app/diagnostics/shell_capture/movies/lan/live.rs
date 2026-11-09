@@ -1300,7 +1300,7 @@ impl LiveLanCapture {
         }
         if self.phase == Phase::Running {
             if let Some(run) = self.cooperative.as_mut() {
-                run.step(state, &mut self.route, frame)?;
+                run.step(state, &mut self.route, frame, &mut self.screenshot_requests)?;
                 if run.done() {
                     self.phase = Phase::Finished;
                 }
@@ -1671,6 +1671,14 @@ impl LiveLanCapture {
             state.frontend.screen == GameScreen::InGame || self.vera_outcome_pending(),
             "live LAN match left gameplay before completion"
         );
+        // A real-trigger retry world changes identity at the retry load; the
+        // ordinary prefix observation cannot span that reset. Prefix mode (or a
+        // non-outcome run) keeps the shared checksum/hash recording below.
+        if self.vera_outcome.is_some()
+            && !matches!(self.vera_outcome_phase, VeraOutcomePhase::Prefix)
+        {
+            return Ok(());
+        }
         if self.battle.is_none() && self.mass.is_none() && self.latency.is_none() {
             let simulation = &state
                 .match_state
@@ -2046,10 +2054,12 @@ impl LiveLanCapture {
             // The receipt/exit validators consume the regular 300-frame
             // checksum/hash prefix, so arm once that prefix exists rather than
             // on an arbitrary early frame.
+            let result_open = state.frontend.coop_score_page.is_some()
+                || state.frontend.campaign_score_page.is_some();
             if self.vera_outcome_phase == VeraOutcomePhase::Prefix
-                && committed >= self.required_frames()
-                && !self.simulation_hashes.is_empty()
                 && state.frontend.screen == GameScreen::InGame
+                && (result_open
+                    || (committed >= self.required_frames() && !self.simulation_hashes.is_empty()))
             {
                 self.final_receipt = Some(self.vera_receipt(state)?);
                 self.vera_outcome_phase = VeraOutcomePhase::Observe;
@@ -2454,6 +2464,19 @@ impl LiveLanCapture {
                 {
                     return Ok(());
                 }
+                // On the VMCE retry page the host's Retry record is only
+                // accepted after every online guest voted; the button/projection
+                // exposes that gate separately from Continue's enabled state.
+                if matches!(outcome, VmceOutcome::Retry)
+                    && self.host()
+                    && !state
+                        .match_state
+                        .session
+                        .cooperative_round_retry_state()
+                        .is_some_and(|(_, lit, enabled)| lit && enabled)
+                {
+                    return Ok(());
+                }
                 #[cfg(feature = "vmce")]
                 let native_page_handled = {
                     if native_victory_page {
@@ -2525,12 +2548,31 @@ impl LiveLanCapture {
             }
             VeraOutcomePhase::Retrying => {
                 if state.frontend.screen == GameScreen::InGame {
-                    let native_frame = state
+                    let committed = state
                         .match_state
                         .sim_runtime
                         .as_ref()
-                        .map(|runtime| runtime.simulation.session().binary_frame());
-                    if native_frame == Some(60) {
+                        .map(|runtime| runtime.simulation.session().binary_frame())
+                        .unwrap_or(0);
+                    ensure!(
+                        committed >= self.checksums.len() as u32,
+                        "retried native frame moved backwards"
+                    );
+                    while (self.checksums.len() as u32) < committed {
+                        self.checksums.push(
+                            state
+                                .match_state
+                                .session
+                                .checksum_history()
+                                .get(self.checksums.len() as u32),
+                        );
+                    }
+                    if committed >= self.required_frames() {
+                        let state_hash = state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.simulation.state_hash());
                         let evidence = json!({
                             "kind": "retry",
                             "retry_mission": {
@@ -2540,21 +2582,28 @@ impl LiveLanCapture {
                                     .network_setup()
                                     .and_then(|launch| launch.selected_map_file.clone()),
                                 "seed": state.match_state.session.network_start_seed(),
-                                "native_frame": native_frame,
+                                "native_frame": committed,
                                 "render_frame": render_frame,
+                                "state_hash": state_hash,
                             },
                         });
                         if let Some(receipt) = self.final_receipt.as_mut() {
                             receipt["vera_outcome"] = evidence.clone();
+                            receipt["retry_checksums"] = json!(self.checksums);
+                            receipt["retry_state_hash"] = json!(state_hash);
                         }
                         self.vera_outcome_evidence = Some(evidence);
                         self.request_screenshot("vera-retry-mission");
-                        self.event(render_frame, "VERA outcome: the same mission restarted");
+                        self.event(
+                            render_frame,
+                            "VERA outcome: the same mission restarted and ran its 300-frame prefix",
+                        );
                         self.phase = Phase::Finished;
                     } else {
                         ensure!(
-                            render_frame < 1_200,
-                            "VMCE retry did not reach native frame 60: {native_frame:?}"
+                            render_frame < 1_800,
+                            "VMCE retry did not reach native frame {}: {committed}",
+                            self.required_frames()
                         );
                     }
                 } else {

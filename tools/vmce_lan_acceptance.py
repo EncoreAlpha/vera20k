@@ -129,6 +129,10 @@ class Scenario:
     expect_victory: bool
     expect_can_continue: bool
     expect_next_stage: bool
+    checkpoint_host: str = CHECKPOINT_HOST
+    checkpoint_guest: str = CHECKPOINT_GUEST
+    expect_retry: bool = False
+    expect_screenshots: tuple[str, ...] = ()
 
 
 SCENARIOS = {
@@ -146,13 +150,27 @@ SCENARIOS = {
         expect_can_continue=True,
         expect_next_stage=True,
     ),
+    # Real two-process defeat/retry: both observe, BC6 opens on both, both
+    # press Continue (guests vote, host starts once every online guest voted),
+    # and the retried mission reloads the same stage with 300 equal checksums.
+    "2p-retry": Scenario(
+        name="2p-retry",
+        players=2,
+        expect_victory=False,
+        expect_can_continue=True,
+        expect_next_stage=False,
+        checkpoint_host="lan-live-coop-host",
+        checkpoint_guest="lan-live-coop-guest",
+        expect_retry=True,
+        expect_screenshots=("vmce-retry-result", "vmce-retry-mission"),
+    ),
 }
 
 SUITES = {
-    "dev": ("2p-win",),
+    "dev": ("2p-retry",),
     "fast": ("4p-win",),
-    "smoke": ("4p-win", "2p-win"),
-    "full": ("4p-win", "2p-win"),
+    "smoke": ("4p-win", "2p-win", "2p-retry"),
+    "full": ("4p-win", "2p-win", "2p-retry"),
 }
 
 RESERVED_SCENARIOS = {
@@ -733,6 +751,176 @@ def _series_sha_check(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> Chec
     return Check("series_sha256", True, f"{path} = {format_value(baseline)}")
 
 
+def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Check]:
+    """Both retry receipts loaded the same stage and ran 300 equal checksums."""
+    checks: list[Check] = []
+    baseline_label, baseline = receipts[0]
+    # The classic co-op path carries its retried-mission ring; the VMCE
+    # outcome path records the retry evidence under vera_outcome and keeps the
+    # 300-frame native checksum prefix in the shared receipt.
+    vmce = False
+    try:
+        receipt_field(baseline, "lan.vera_outcome.kind")
+        vmce = True
+    except KeyError:
+        pass
+    if vmce:
+        try:
+            baseline_kind = receipt_field(baseline, "lan.vera_outcome.kind")
+            baseline_checksums = receipt_field(baseline, "lan.native_checksums")
+            baseline_map = receipt_field(
+                baseline, "lan.vera_outcome.retry_mission.map"
+            )
+        except KeyError as exc:
+            return [Check("retry receipt", False, f"{baseline_label} missing {exc}")]
+        if baseline_kind != "retry":
+            return [
+                Check(
+                    "retry receipt",
+                    False,
+                    f"{baseline_label} vera_outcome.kind={format_value(baseline_kind)}",
+                )
+            ]
+    else:
+        try:
+            baseline_checksums = receipt_field(baseline, "lan.cooperative.retry_checksums")
+            baseline_map = receipt_field(baseline, "lan.cooperative.retry_startup.map")
+        except KeyError as exc:
+            return [Check("retry receipt", False, f"{baseline_label} missing {exc}")]
+    if not isinstance(baseline_checksums, list) or len(baseline_checksums) < MIN_NATIVE_CHECKSUMS:
+        return [
+            Check(
+                "retry checksums count",
+                False,
+                f"{baseline_label} retry_checksums={format_value(baseline_checksums)}",
+            )
+        ]
+    checks.append(
+        Check(
+            "retry checksums count",
+            True,
+            f"{len(baseline_checksums)} entries",
+        )
+    )
+    for label, receipt in receipts:
+        if vmce:
+            try:
+                victory = receipt_field(receipt, "lan.vera_outcome.dialog.victory")
+                retry_map = receipt_field(
+                    receipt, "lan.vera_outcome.retry_mission.map"
+                )
+                checksums = receipt_field(receipt, "lan.native_checksums")
+                failure = receipt_field(receipt, "lan.checksum_failure")
+            except KeyError as exc:
+                checks.append(Check("retry receipt", False, f"{label} missing {exc}"))
+                continue
+            checks.append(
+                Check(
+                    f"retry verdict {label}",
+                    victory is False,
+                    f"victory={format_value(victory)}",
+                )
+            )
+            checks.append(
+                Check(
+                    f"retry stage {label}",
+                    _is_str(retry_map),
+                    f"retry_map={format_value(retry_map)}",
+                )
+            )
+            checks.append(
+                Check(
+                    f"retry checksum failure {label}",
+                    failure == "None",
+                    f"checksum_failure={format_value(failure)}",
+                )
+            )
+        else:
+            try:
+                victory = receipt_field(receipt, "lan.cooperative.result.victory")
+                retry_map = receipt_field(receipt, "lan.cooperative.retry_startup.map")
+                first_map = receipt_field(receipt, "lan.cooperative.first_map")
+                checksums = receipt_field(receipt, "lan.cooperative.retry_checksums")
+                failure = receipt_field(receipt, "lan.cooperative.checksum_failure")
+            except KeyError as exc:
+                checks.append(Check("retry receipt", False, f"{label} missing {exc}"))
+                continue
+            checks.append(
+                Check(
+                    f"retry verdict {label}",
+                    victory is False,
+                    f"victory={format_value(victory)}",
+                )
+            )
+            checks.append(
+                Check(
+                    f"retry stage {label}",
+                    retry_map == first_map,
+                    f"first={format_value(first_map)} retry={format_value(retry_map)}",
+                )
+            )
+            checks.append(
+                Check(
+                    f"retry checksum failure {label}",
+                    failure == "None",
+                    f"checksum_failure={format_value(failure)}",
+                )
+            )
+        if label != baseline_label:
+            checks.append(
+                Check(
+                    "retry checksums equal",
+                    checksums == baseline_checksums,
+                    f"{baseline_label}={len(baseline_checksums)} entries, "
+                    f"{label}={len(checksums) if isinstance(checksums, list) else '?'} entries",
+                )
+            )
+            if vmce:
+                checks.append(
+                    Check(
+                        "retry stage equal",
+                        retry_map == baseline_map,
+                        f"{baseline_label}={format_value(baseline_map)} "
+                        f"{label}={format_value(retry_map)}",
+                    )
+                )
+    return checks
+
+
+def _retry_identity_check(
+    label: str,
+    receipt: Mapping[str, Any],
+    expected_checkpoint: str,
+    _expected_bind: str,
+    expected_map: str,
+) -> Check:
+    # The co-op receipt is produced by the shared capture receipt builder, not
+    # the VMCE lobby receipt; it proves the checkpoint and the clean checksum
+    # stream instead of carrying lan.bind.
+    expectations = [("checkpoint", expected_checkpoint)]
+    for path, expected in expectations:
+        try:
+            value = receipt_field(receipt, path)
+        except KeyError:
+            return Check(f"identity {label}", False, f"missing {path}")
+        if _normalise(value) != _normalise(expected):
+            return Check(
+                f"identity {label}",
+                False,
+                f"{path}: expected {format_value(expected)}, got {format_value(value)}",
+            )
+    try:
+        retry_map = receipt_field(receipt, "lan.cooperative.retry_startup.map")
+    except KeyError:
+        try:
+            retry_map = receipt_field(receipt, "lan.vera_outcome.retry_mission.map")
+        except KeyError:
+            return Check(f"identity {label}", False, "missing retry mission map")
+    if not _is_str(retry_map):
+        return Check(f"identity {label}", False, f"retry map={format_value(retry_map)}")
+    return Check(f"identity {label}", True, f"checkpoint={expected_checkpoint}")
+
+
 def evaluate_receipts(
     receipts: Sequence[tuple[str, Mapping[str, Any]]],
     *,
@@ -741,6 +929,7 @@ def evaluate_receipts(
     expect_can_continue: bool | None = None,
     expect_rows: int | None = None,
     expect_next_stage: bool = False,
+    expect_retry: bool = False,
     expect_screenshots: Sequence[str] = (),
     allow_missing_simulation_hashes: bool = False,
 ) -> list[Check]:
@@ -760,9 +949,32 @@ def evaluate_receipts(
         ]
     checks: list[Check] = [Check("receipts", True, f"{players} receipts")]
 
-    checks.append(_checksum_count_check(receipts))
-    checks.append(_checksum_equal_check(receipts))
-    checks.extend(_simulation_hash_checks(receipts, allow_missing_simulation_hashes))
+    if expect_retry:
+        checks.extend(_retry_checks(receipts))
+    else:
+        checks.append(_checksum_count_check(receipts))
+        checks.append(_checksum_equal_check(receipts))
+        checks.extend(_simulation_hash_checks(receipts, allow_missing_simulation_hashes))
+
+    if expect_retry:
+        checks.append(_screenshot_names(receipts)[0])
+        for expected_name in expect_screenshots:
+            for label, available in _screenshot_names(receipts)[1].items():
+                if expected_name not in available:
+                    checks.append(
+                        Check(
+                            f"screenshot {expected_name}",
+                            False,
+                            f"{label} has no screenshot named {expected_name!r}",
+                        )
+                    )
+                    break
+            else:
+                checks.append(
+                    Check(f"screenshot {expected_name}", True, "present in every receipt")
+                )
+        checks.append(_series_sha_check(receipts))
+        return checks
 
     checks.append(
         _equal_check(
@@ -894,6 +1106,10 @@ def build_capture_command(
     output: Path,
     map_name: str | None,
     lobby_name: str | None,
+    checkpoint_host: str = CHECKPOINT_HOST,
+    checkpoint_guest: str = CHECKPOINT_GUEST,
+    vera_outcome: str = "real",
+    map_required: bool = True,
 ) -> list[str]:
     """Build the real shell-capture command line for one VMCE process."""
     if role not in ("host", "guest"):
@@ -902,7 +1118,7 @@ def build_capture_command(
     command = [
         str(exe),
         "--shell-capture",
-        CHECKPOINT_HOST if role == "host" else CHECKPOINT_GUEST,
+        checkpoint_host if role == "host" else checkpoint_guest,
         "--width",
         str(CAPTURE_WIDTH),
         "--height",
@@ -920,7 +1136,7 @@ def build_capture_command(
         "--lan-players",
         str(players),
     ]
-    if role == "host":
+    if role == "host" and map_required:
         if not map_name:
             raise UsageError("host capture requires a --lan-map catalog name")
         command.extend(("--lan-map", map_name))
@@ -930,7 +1146,8 @@ def build_capture_command(
     # with VMCE_CAPTURE_TIMEOUT (seconds) instead of waiting out the
     # capture binary's own 600 s watchdog.
     command.extend(("--shell-capture-timeout-seconds", str(CAPTURE_TIMEOUT_SECONDS)))
-    command.extend(("--vera-outcome", "real"))
+    if vera_outcome:
+        command.extend(("--vera-outcome", vera_outcome))
     return command
 
 
@@ -967,6 +1184,14 @@ def _prepare_process(
         output=output,
         map_name=context.map_name if index == 0 else None,
         lobby_name=lobby_name,
+        checkpoint_host=scenario.checkpoint_host,
+        checkpoint_guest=scenario.checkpoint_guest,
+        vera_outcome=(
+            ("retry" if scenario.expect_retry else "real")
+            if scenario.checkpoint_host in (CHECKPOINT_HOST, CHECKPOINT_GUEST)
+            else ""
+        ),
+        map_required=scenario.checkpoint_host == CHECKPOINT_HOST,
     )
     return ProcessSpec(
         role=role,
@@ -1230,7 +1455,12 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
         try:
             host = _launch_process(specs[0], environment)
             launched.append(host)
-            marker_seen = wait_for_host_ready(host)
+            # The co-op campaign host only advertises its room after reading
+            # the campaign; launching the guest immediately gives the slower
+            # start enough overlap with the host's first admission wait.
+            marker_seen = (
+                False if scenario.expect_retry else wait_for_host_ready(host)
+            )
             if host.popen.poll() is not None:
                 raise RunFailure(
                     f"host exited with code {host.popen.returncode} before the guests "
@@ -1287,15 +1517,33 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                     expect_can_continue=scenario.expect_can_continue,
                     expect_rows=players,
                     expect_next_stage=scenario.expect_next_stage,
+                    expect_retry=scenario.expect_retry,
+                    expect_screenshots=scenario.expect_screenshots,
                 )
             )
             for process in launched:
                 receipt = dict(receipts)[process.spec.role]
+                checkpoint = (
+                    scenario.checkpoint_host
+                    if process.spec.index == 0
+                    else scenario.checkpoint_guest
+                )
+                if scenario.expect_retry:
+                    checks.append(
+                        _retry_identity_check(
+                            process.spec.role,
+                            receipt,
+                            checkpoint,
+                            process.spec.bind,
+                            context.map_name,
+                        )
+                    )
+                    continue
                 checks.append(
                     _receipt_identity_check(
                         process.spec.role,
                         receipt,
-                        CHECKPOINT_HOST if process.spec.index == 0 else CHECKPOINT_GUEST,
+                        checkpoint,
                         process.spec.bind,
                         context.map_name,
                         process.spec.index == 0,
@@ -1310,7 +1558,8 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                         else "missing lan.vera_outcome.next_mission",
                     )
                 )
-            checks.append(_participant_count_check(receipts, players))
+            if not scenario.expect_retry:
+                checks.append(_participant_count_check(receipts, players))
         else:
             checks.append(
                 Check(
@@ -1560,6 +1809,7 @@ def compare_command(args: argparse.Namespace) -> int:
             expect_can_continue=True if args.expect_can_continue else None,
             expect_rows=args.expect_rows,
             expect_next_stage=args.expect_next_stage,
+            expect_retry=args.expect_retry,
             expect_screenshots=args.expect_screenshot,
             allow_missing_simulation_hashes=args.allow_missing_simulation_hashes,
         )
@@ -1662,6 +1912,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="capture.json in host-first order (repeat once per player)",
     )
     compare_parser.add_argument("--expect-victory", action="store_true")
+    compare_parser.add_argument(
+        "--expect-retry",
+        action="store_true",
+        help="compare a real two-process defeat/retry capture",
+    )
     compare_parser.add_argument("--expect-can-continue", action="store_true")
     compare_parser.add_argument("--expect-rows", type=int)
     compare_parser.add_argument("--expect-next-stage", action="store_true")
