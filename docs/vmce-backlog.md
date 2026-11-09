@@ -82,7 +82,9 @@ visible correctness/claim gap, S3 is polish/robustness. Evidence for each item i
   1920 shot; typography/inset rules from the existing lobby; no protocol/sim changes.
   Open items at implementation time: exact column widths, whether a combined H-star native
   icon exists, and the defeat-page `准备` header wording.
-- **B25 Result-page color/röle/Ready/Leave revision (TODO, not implemented).** Approved copy:
+- **B25 Result-page color/role/Ready/Leave revision (TODO, not implemented; victory-page
+  subset only after B26).** The defeat page moves to BC6, so B25's defeat Ready/Leave rules are
+  superseded by B26. Approved copy:
   - Every data row colours all text cells (Owner, Country, Result, Ready) with that role's
     lobby House colour; headers stay native yellow; country/star/H icons keep native colours.
     Each row gets a 1 px-inset dark translucent backdrop strip (native palette, no borders) so
