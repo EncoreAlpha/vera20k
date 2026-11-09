@@ -45,6 +45,15 @@ pub const RANK_STATIC: u16 = 0x06F3;
 pub const COMMENDATION_STATIC: u16 = 0x06F4;
 pub const ENEMIES_DESTROYED_LABEL_STATIC: u16 = 0x069F;
 pub const ENEMIES_DESTROYED_VALUE_STATIC: u16 = 0x06F6;
+
+/// VERA's victory/campaign-end `0x103` pages hide the top report's
+/// destroyed-enemies label and value; the native panel keeps its height.
+pub fn vmce_page_hides_enemy_kills(id: u16) -> bool {
+    matches!(
+        id,
+        ENEMIES_DESTROYED_LABEL_STATIC | ENEMIES_DESTROYED_VALUE_STATIC
+    )
+}
 pub const SCORE_ART_REGION_STATIC: u16 = 0x072B;
 
 /// Retail `gamemd.exe`:
@@ -336,8 +345,8 @@ pub const CAMPAIGN_END_CONTROLS: [CampaignScoreControlSpec; 30] = {
         end_control(TITLE_STATIC, Static, RectPx::new(425, 1, 108, 10), 0x5002_0001, Some("GUI:CampaignResults"), None, Some(TEXT_REVEAL)),
         end_control(0x0732, Static, RectPx::new(167, 19, 87, 10), 0x5000_0001, BLANK, Some("STT:MPScoreLabelDifficulty"), Some(TEXT_REVEAL)),
         end_control(0x03EA, Static, RectPx::new(257, 19, 80, 10), 0x5000_0002, BLANK, Some("STT:MPCampEndTime"), Some(TEXT_REVEAL)),
-        end_control(0x0738, Static, RectPx::new(240, 254, 55, 10), 0x5000_0001, BLANK, Some("STT:MPScoreLabelScore"), Some(PLACE_REVEAL)),
-        end_control(0x073B, Static, RectPx::new(123, 254, 55, 10), 0x5000_0001, BLANK, Some("STT:MPScoreLabelScore"), Some(PLACE_REVEAL)),
+        end_control(0x0738, Static, RectPx::new(240, 254, 55, 10), 0x5000_0001, BLANK, Some("GUI:Score"), Some(PLACE_REVEAL)),
+        end_control(0x073B, Static, RectPx::new(123, 254, 55, 10), 0x5000_0001, BLANK, Some("GUI:Score"), Some(PLACE_REVEAL)),
         end_control(0x073C, Static, RectPx::new(83, 31, 49, 10), 0x5000_0000, Some("GUI:Player"), None, Some(HEADER_REVEAL)),
         end_control(0x073D, Static, RectPx::new(149, 31, 41, 10), 0x5000_0002, Some("GUI:Kills"), None, Some(HEADER_REVEAL)),
         end_control(0x073E, Static, RectPx::new(202, 31, 41, 10), 0x5000_0002, Some("GUI:Losses"), None, Some(HEADER_REVEAL)),
@@ -723,6 +732,122 @@ pub fn vmce_result_text_rgb(row: &VmceResultRow) -> [u8; 3] {
     row.rgb.unwrap_or([255, 255, 0])
 }
 
+/// One role row of VERA's full-screen statistics page: the B25 player/House
+/// projection plus the terminal score cells and the income statistic.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmceStatisticsRow {
+    pub player: String,
+    pub owner: String,
+    pub rgb: Option<[u8; 3]>,
+    pub kills: u32,
+    pub losses: u32,
+    pub built: u32,
+    pub score: i32,
+    pub income: i64,
+}
+
+/// VERA's victory/campaign-end statistics page content.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmceStatistics {
+    pub rows: Vec<VmceStatisticsRow>,
+    pub total_time: String,
+    pub par_time: String,
+}
+
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceStatisticsRowCells {
+    pub cells: [RectPx; 6],
+}
+
+/// VERA's full-screen statistics layout inside the reused `0x103` background.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceStatisticsLayout {
+    pub frame: RectPx,
+    pub fill: RectPx,
+    pub title: RectPx,
+    pub total_time: RectPx,
+    pub par_time: RectPx,
+    pub headers: [VmceResultHeader; 6],
+    pub rows: [VmceStatisticsRowCells; 4],
+    pub back: RectPx,
+}
+
+/// VERA-only statistics controls, outside the native `0x103` id ranges.
+#[cfg(feature = "vmce")]
+pub const VMCE_STATS_TAB_CONTROL: u16 = 0x7003;
+#[cfg(feature = "vmce")]
+pub const VMCE_STATS_BACK_CONTROL: u16 = 0x7004;
+
+#[cfg(feature = "vmce")]
+const VMCE_STATS_TAB_RECT: RectPx = RectPx::new(12, 300, 24, 96);
+
+/// Authored 800x600 statistics page: one native panel over the reused
+/// `0x103` background, the time header, the six-column table and Back.
+#[cfg(feature = "vmce")]
+fn vmce_statistics_layout(scale: ShellScale) -> VmceStatisticsLayout {
+    let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
+    let columns = [
+        RectPx::new(40, 0, 150, 17),
+        RectPx::new(200, 0, 70, 17),
+        RectPx::new(270, 0, 70, 17),
+        RectPx::new(340, 0, 70, 17),
+        RectPx::new(410, 0, 80, 17),
+        RectPx::new(490, 0, 90, 17),
+    ];
+    let headers = [
+        VmceResultHeader {
+            key: "GUI:Player",
+            rect: rect(40, 96, 150, 17),
+            centred: false,
+        },
+        VmceResultHeader {
+            key: "GUI:Kills",
+            rect: rect(200, 96, 70, 17),
+            centred: true,
+        },
+        VmceResultHeader {
+            key: "GUI:Losses",
+            rect: rect(270, 96, 70, 17),
+            centred: true,
+        },
+        VmceResultHeader {
+            key: "GUI:Built",
+            rect: rect(340, 96, 70, 17),
+            centred: true,
+        },
+        VmceResultHeader {
+            key: "GUI:Score",
+            rect: rect(410, 96, 80, 17),
+            centred: true,
+        },
+        VmceResultHeader {
+            key: "VERA:VmceIncome",
+            rect: rect(490, 96, 90, 17),
+            centred: true,
+        },
+    ];
+    let rows = std::array::from_fn(|row| VmceStatisticsRowCells {
+        cells: std::array::from_fn(|column| {
+            let template = columns[column];
+            rect(template.x, 122 + row as i32 * 34, template.w, 24)
+        }),
+    });
+    VmceStatisticsLayout {
+        frame: rect(8, 8, 616, 552),
+        fill: rect(10, 10, 612, 548),
+        title: rect(8, 26, 616, 18),
+        total_time: rect(40, 56, 260, 17),
+        par_time: rect(340, 56, 260, 17),
+        headers,
+        rows,
+        back: rect(238, 486, 156, 42),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CampaignScoreLayout {
     pub scale: ShellScale,
@@ -746,6 +871,12 @@ pub struct CampaignScoreLayout {
     /// VMCE host Continue, stacked above Leave Room (same native Continue id).
     #[cfg(feature = "vmce")]
     pub vmce_continue_button: RectPx,
+    /// Vertical `统计数据` tab on the left edge of the victory page.
+    #[cfg(feature = "vmce")]
+    pub vmce_stats_tab: RectPx,
+    /// The full-screen statistics page laid out inside the reused background.
+    #[cfg(feature = "vmce")]
+    pub vmce_statistics: VmceStatisticsLayout,
     pub warning_monitor: RectPx,
     pub controls: Vec<CampaignScoreControlRect>,
     /// VMCE settlement board (up to four participants) and its status strip,
@@ -845,6 +976,10 @@ impl CampaignScoreLayout {
             vmce_leave_button: page.scale.scale_rect(VMCE_LEAVE_RECT),
             #[cfg(feature = "vmce")]
             vmce_continue_button: page.scale.scale_rect(VMCE_CONTINUE_RECT),
+            #[cfg(feature = "vmce")]
+            vmce_stats_tab: page.scale.scale_rect(VMCE_STATS_TAB_RECT),
+            #[cfg(feature = "vmce")]
+            vmce_statistics: vmce_statistics_layout(page.scale),
             warning_monitor: page.warning_monitor,
             controls,
             #[cfg(feature = "vmce")]
@@ -892,6 +1027,25 @@ impl CampaignScoreLayout {
             self.vmce_ready_button = scale.scale_rect(self.vmce_ready_button);
             self.vmce_leave_button = scale.scale_rect(self.vmce_leave_button);
             self.vmce_continue_button = scale.scale_rect(self.vmce_continue_button);
+            self.vmce_stats_tab = scale.scale_rect(self.vmce_stats_tab);
+            let stats = &mut self.vmce_statistics;
+            for rect in std::iter::once(&mut stats.frame)
+                .chain(std::iter::once(&mut stats.fill))
+                .chain(std::iter::once(&mut stats.title))
+                .chain(std::iter::once(&mut stats.total_time))
+                .chain(std::iter::once(&mut stats.par_time))
+                .chain(std::iter::once(&mut stats.back))
+            {
+                *rect = scale.scale_rect(*rect);
+            }
+            for header in &mut stats.headers {
+                header.rect = scale.scale_rect(header.rect);
+            }
+            for row in &mut stats.rows {
+                for cell in &mut row.cells {
+                    *cell = scale.scale_rect(*cell);
+                }
+            }
         }
         self.warning_monitor = scale.scale_rect(self.warning_monitor);
         self.background = scale.scale_rect(self.background);
@@ -1040,6 +1194,12 @@ pub struct CampaignScorePage {
     /// VMCE's settlement board, projected by `app::vmce_result` at open time.
     #[cfg(feature = "vmce")]
     vmce_board: Option<VmceResultBoard>,
+    /// VMCE's statistics content, projected before the finished world retired.
+    #[cfg(feature = "vmce")]
+    vmce_statistics: Option<VmceStatistics>,
+    /// Whether the full-screen statistics page is showing.
+    #[cfg(feature = "vmce")]
+    vmce_stats_open: bool,
 }
 
 /// The campaign `0x72B` SCRA static's kind-4 timer and frame. The timer is
@@ -1099,6 +1259,38 @@ impl CampaignScorePage {
         self.vmce_board.as_ref()
     }
 
+    /// Attach the VMCE statistics content projected for this page.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn set_vmce_statistics(&mut self, statistics: Option<VmceStatistics>) {
+        self.vmce_statistics = statistics;
+    }
+
+    /// The projected statistics content, when the page has any.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_statistics(&self) -> Option<&VmceStatistics> {
+        self.vmce_statistics.as_ref()
+    }
+
+    /// Whether the statistics page is open.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_stats_open(&self) -> bool {
+        self.vmce_stats_open
+    }
+
+    /// Toggle the statistics page; a page without statistics cannot open.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn toggle_vmce_stats(&mut self) {
+        if self.vmce_statistics.is_some() {
+            self.vmce_stats_open = !self.vmce_stats_open;
+        }
+    }
+
+    /// Close the statistics page (the bottom Back button).
+    #[cfg(feature = "vmce")]
+    pub(crate) fn close_vmce_stats(&mut self) {
+        self.vmce_stats_open = false;
+    }
+
     /// Install the app-resolved values into the native `0x103` controls.
     pub fn open(model: CampaignScoreScreenModel, texts: CampaignScoreTexts, now: Instant) -> Self {
         let mut statics = Vec::with_capacity(10);
@@ -1131,6 +1323,10 @@ impl CampaignScorePage {
             presentation_started: false,
             #[cfg(feature = "vmce")]
             vmce_board: None,
+            #[cfg(feature = "vmce")]
+            vmce_statistics: None,
+            #[cfg(feature = "vmce")]
+            vmce_stats_open: false,
         }
     }
 
@@ -1207,6 +1403,10 @@ impl CampaignScorePage {
             presentation_started: false,
             #[cfg(feature = "vmce")]
             vmce_board: None,
+            #[cfg(feature = "vmce")]
+            vmce_statistics: None,
+            #[cfg(feature = "vmce")]
+            vmce_stats_open: false,
         }
     }
 
@@ -1750,17 +1950,26 @@ mod tests {
             // Every column sits inside its neighbour without overlap or gaps.
             assert_eq!(row.player.x + row.player.w, row.role.x);
             assert!(row.role.x + row.role.w <= row.country_icon.x);
-            assert_eq!(row.country_icon.x + row.country_icon.w, row.country.x.saturating_sub(2));
+            assert_eq!(
+                row.country_icon.x + row.country_icon.w,
+                row.country.x.saturating_sub(2)
+            );
             assert!(row.country.x + row.country.w <= row.verdict.x);
             assert_eq!(row.verdict.x + row.verdict.w, row.ready.x);
-            assert_eq!(row.ready.x + row.ready.w, board.header_rule.x + board.header_rule.w);
+            assert_eq!(
+                row.ready.x + row.ready.w,
+                board.header_rule.x + board.header_rule.w
+            );
             // No caption strip: the last row ends inside the compact board.
             assert!(row.player.y + row.player.h <= board.frame.y + board.frame.h);
         }
         assert_eq!(board.rows[3].player.y, 515);
         // Board clearance after the down-shift: time panels above, status/help
         // below, right-panel buttons on the right.
-        assert!(board.frame.y >= 430, "board moved down to clear the time panels");
+        assert!(
+            board.frame.y >= 430,
+            "board moved down to clear the time panels"
+        );
         assert!(board.frame.y > 417, "time panels end at y 417");
         assert!(board.frame.y + board.frame.h <= layout.status_help.y);
         assert!(board.rows[3].ready.y + board.rows[3].ready.h < board.frame.y + board.frame.h);
@@ -1770,8 +1979,10 @@ mod tests {
         assert_eq!(layout.vmce_ready_button, RectPx::new(644, 241, 156, 42));
         assert_eq!(layout.vmce_continue_button, RectPx::new(644, 493, 156, 42));
         assert_eq!(layout.vmce_leave_button, RectPx::new(644, 535, 156, 42));
-        assert!(layout.vmce_continue_button.y + layout.vmce_continue_button.h
-            <= layout.vmce_leave_button.y);
+        assert!(
+            layout.vmce_continue_button.y + layout.vmce_continue_button.h
+                <= layout.vmce_leave_button.y
+        );
         // The responsive path scales the board and its buttons with the page.
         let responsive = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
         let scaled = responsive.vmce_result.expect("scaled VMCE board");
@@ -1868,5 +2079,112 @@ mod tests {
         assert_eq!(defeat.len(), 1);
         assert_eq!(defeat[0].kind, VmceResultButtonKind::Continue);
         assert_eq!(defeat[0].rect, RectPx::new(644, 535, 156, 42));
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_stats_tab_and_page_clear_the_native_page_controls() {
+        let layout = CampaignScoreLayout::compute_layout(800, 600);
+        let tab = layout.vmce_stats_tab;
+        let stats = layout.vmce_statistics;
+        // Tab: left edge, below the rank box and clear of the eagle art, the
+        // time panels and the native Continue column.
+        assert_eq!(tab, RectPx::new(12, 300, 24, 96));
+        let rank = layout.control_rect(RANK_STATIC).expect("rank");
+        assert!(tab.y > rank.y + rank.h, "tab starts below the rank box");
+        let eagle = layout.control_rect(SCORE_ART_REGION_STATIC).expect("eagle");
+        assert!(tab.x + tab.w <= eagle.x, "tab stays left of the eagle art");
+        for id in [PAR_TIME_VALUE_STATIC, YOUR_TIME_VALUE_STATIC] {
+            let time = layout.control_rect(id).expect("time value");
+            assert!(tab.y + tab.h <= time.y || tab.x + tab.w <= time.x);
+        }
+        assert!(tab.x + tab.w < layout.continue_button.x);
+
+        // Full-screen page: native panel inside the reused background, four
+        // rows and six columns, with the Back button inside the panel.
+        assert_eq!(stats.frame, RectPx::new(8, 8, 616, 552));
+        assert!(stats.fill.x > stats.frame.x && stats.fill.y > stats.frame.y);
+        assert!(stats.fill.x + stats.fill.w < stats.frame.x + stats.frame.w);
+        assert!(stats.fill.y + stats.fill.h < stats.frame.y + stats.frame.h);
+        assert_eq!(stats.headers.len(), 6);
+        assert_eq!(stats.rows.len(), 4);
+        assert_eq!(
+            stats.headers.map(|header| header.key),
+            [
+                "GUI:Player",
+                "GUI:Kills",
+                "GUI:Losses",
+                "GUI:Built",
+                "GUI:Score",
+                "VERA:VmceIncome"
+            ]
+        );
+        assert_eq!(stats.headers[0].rect, RectPx::new(40, 96, 150, 17));
+        assert_eq!(stats.headers[5].rect, RectPx::new(490, 96, 90, 17));
+        for (index, row) in stats.rows.iter().enumerate() {
+            let y = 122 + index as i32 * 34;
+            assert_eq!(row.cells[0], RectPx::new(40, y, 150, 24));
+            assert_eq!(row.cells[5], RectPx::new(490, y, 90, 24));
+            for pair in row.cells.windows(2) {
+                assert!(pair[0].x + pair[0].w <= pair[1].x, "columns do not overlap");
+            }
+            assert!(row.cells[5].x + row.cells[5].w < stats.fill.x + stats.fill.w);
+            assert!(row.cells[0].y + row.cells[0].h < stats.back.y);
+        }
+        assert_eq!(stats.back, RectPx::new(238, 486, 156, 42));
+        assert!(stats.back.y + stats.back.h < stats.frame.y + stats.frame.h);
+        // Scaled path: the page and table scale with the shell.
+        let scaled = CampaignScoreLayout::compute_responsive_layout(1920, 1080);
+        assert!(scaled.vmce_statistics.fill.w > stats.fill.w);
+        assert_eq!(scaled.vmce_statistics.rows.len(), 4);
+        assert!(scaled.vmce_stats_tab.h > tab.h);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_stats_page_toggles_and_returns() {
+        let mut page = CampaignScorePage::open(
+            CampaignScoreScreenModel::default(),
+            CampaignScoreTexts::default(),
+            Instant::now(),
+        );
+        page.toggle_vmce_stats();
+        assert!(!page.vmce_stats_open(), "no statistics, no page");
+        page.set_vmce_statistics(Some(VmceStatistics {
+            rows: vec![VmceStatisticsRow {
+                player: "LiveHost".into(),
+                owner: "Alpha".into(),
+                rgb: Some([10, 20, 30]),
+                kills: 12,
+                losses: 3,
+                built: 40,
+                score: 900,
+                income: 5_000,
+            }],
+            total_time: "00:09:47".into(),
+            par_time: "00:12:00".into(),
+        }));
+        page.toggle_vmce_stats();
+        assert!(page.vmce_stats_open(), "the tab opens the page");
+        page.toggle_vmce_stats();
+        assert!(!page.vmce_stats_open(), "the same tab toggles back");
+        page.toggle_vmce_stats();
+        page.close_vmce_stats();
+        assert!(!page.vmce_stats_open(), "Back returns to the victory page");
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_pages_hide_only_the_enemy_kill_report() {
+        assert!(vmce_page_hides_enemy_kills(ENEMIES_DESTROYED_LABEL_STATIC));
+        assert!(vmce_page_hides_enemy_kills(ENEMIES_DESTROYED_VALUE_STATIC));
+        for id in [
+            RANK_STATIC,
+            PAR_TIME_VALUE_STATIC,
+            YOUR_TIME_VALUE_STATIC,
+            CONTINUE_BUTTON,
+        ] {
+            assert!(!vmce_page_hides_enemy_kills(id));
+        }
     }
 }

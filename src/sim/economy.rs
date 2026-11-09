@@ -48,6 +48,12 @@ pub struct Economy {
     /// House `+0x54E8`, the score: refinery deposits, kills and captures add
     /// to it, and the score screen reads it.
     score: i32,
+    /// Total credits this House gained during the mission (positive
+    /// `Add_Credits` and `Add_Tiberium_Credits` wallet gains only; spending,
+    /// losses, starting balance and carry-over do not reduce it). Read by
+    /// VERA's statistics page; it never steers gameplay.
+    #[serde(default)]
+    credits_earned: i64,
     /// Ares builds: the House store (`+0x2FC`) and its buildings' stores.
     #[cfg(feature = "ares")]
     #[serde(default)]
@@ -63,6 +69,7 @@ impl Economy {
             scenario_credits: 0,
             spent_credits: 0,
             score: 0,
+            credits_earned: 0,
             #[cfg(feature = "ares")]
             storage: AresTiberiumStorage::new(),
         }
@@ -89,6 +96,11 @@ impl Economy {
 
     pub const fn score(&self) -> i32 {
         self.score
+    }
+
+    /// Total credits gained during the mission; a display statistic only.
+    pub const fn credits_earned(&self) -> i64 {
+        self.credits_earned
     }
 
     /// House ReadScenarioINI500B40: wrapping Credits*100 sets +1DC and the
@@ -167,6 +179,9 @@ impl Economy {
     /// balance. No score/spending, timer, RNG, detach or callback side effect.
     pub fn add_credits(&mut self, amount: i32) {
         self.credits = self.credits.wrapping_add(amount);
+        if amount > 0 {
+            self.credits_earned = self.credits_earned.saturating_add(i64::from(amount));
+        }
     }
 
     /// EvadeClass::Do @0x004C6272..0x004C6285 calls Add_Credits and then
@@ -224,6 +239,7 @@ impl Economy {
             X87::mul(amount, X87::load_i32(5)),
             X87::load_i32(self.score),
         ));
+        let before = self.credits;
         self.credits = X87::ftol_i32_low_masked(X87::add(
             X87::mul(
                 X87::mul(X87::load_i32(value), X87::load_f32(income)),
@@ -231,6 +247,11 @@ impl Economy {
             ),
             X87::load_i32(self.credits),
         ));
+        // The harvester/refinery income statistic counts wallet gains only.
+        let gained = i64::from(self.credits).saturating_sub(i64::from(before));
+        if gained > 0 {
+            self.credits_earned = self.credits_earned.saturating_add(gained);
+        }
     }
 
     /// A captured or authored balance for a test.
@@ -333,6 +354,42 @@ mod tests {
                 row["name"]
             );
         }
+    }
+
+    #[test]
+    fn credits_earned_counts_positive_gains_only() {
+        let mut wallet = Economy::new(5_000);
+        wallet.add_credits(300);
+        assert_eq!(wallet.credits_earned(), 300);
+        // Losses, spending and the starting balance are not income.
+        wallet.add_credits(-120);
+        wallet.spend_money(1_000);
+        assert_eq!(wallet.credits(), 5_000 + 300 - 120 - 1_000);
+        assert_eq!(wallet.credits_earned(), 300);
+
+        // Add_Tiberium_Credits adds its wallet gain only.
+        wallet.add_tiberium_credits(100, supplied_float(1.0), supplied_float(1.0));
+        assert_eq!(wallet.credits(), 4_280);
+        assert_eq!(wallet.credits_earned(), 400);
+    }
+
+    #[test]
+    fn credits_earned_serializes_and_defaults_to_zero() {
+        let mut wallet = Economy::new(100);
+        wallet.add_credits(250);
+        let mut json = serde_json::to_value(&wallet).unwrap();
+        assert_eq!(json["credits_earned"], 250);
+        json.as_object_mut().unwrap().remove("credits_earned");
+        let restored: Economy = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            restored.credits_earned(),
+            0,
+            "older saves keep the field empty"
+        );
+        assert_eq!(restored.credits(), 350);
+        let round_trip: Economy =
+            serde_json::from_str(&serde_json::to_string(&wallet).unwrap()).unwrap();
+        assert_eq!(round_trip.credits_earned(), 250);
     }
 
     #[test]

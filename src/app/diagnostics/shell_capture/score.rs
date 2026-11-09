@@ -138,6 +138,8 @@ pub(super) enum VmceResultTarget {
     GuestUnready,
     GuestReady,
     CampaignEnd,
+    HostVictoryStats,
+    CampaignEndStats,
 }
 
 #[cfg(feature = "vmce")]
@@ -149,6 +151,8 @@ impl VmceResultTarget {
             Self::GuestUnready => "vmce-result-guest-unready",
             Self::GuestReady => "vmce-result-guest-ready",
             Self::CampaignEnd => "vmce-result-campaign-end",
+            Self::HostVictoryStats => "vmce-result-host-victory-stats",
+            Self::CampaignEndStats => "vmce-result-campaign-end-stats",
         }
     }
 
@@ -1132,6 +1136,10 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         target,
         VmceResultTarget::GuestUnready | VmceResultTarget::GuestReady
     );
+    let stats_open = matches!(
+        target,
+        VmceResultTarget::HostVictoryStats | VmceResultTarget::CampaignEndStats
+    );
     crate::app::shell_network_setup::install_vmce_lobby_fixture(
         state,
         &crate::app::shell_network_setup::VmceLobbyFixture {
@@ -1145,7 +1153,10 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
         .ok_or_else(|| anyhow::anyhow!("VMCE result fixture needs authored role metadata"))?;
     let ready = match target {
-        VmceResultTarget::HostVictoryNext | VmceResultTarget::CampaignEnd => [Some(true); 4],
+        VmceResultTarget::HostVictoryNext
+        | VmceResultTarget::CampaignEnd
+        | VmceResultTarget::HostVictoryStats
+        | VmceResultTarget::CampaignEndStats => [Some(true); 4],
         VmceResultTarget::GuestUnready => [Some(false); 4],
         VmceResultTarget::GuestReady => [Some(false), Some(true), Some(false), Some(false)],
     };
@@ -1177,6 +1188,8 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     model.enemies_destroyed = "23".into();
     model.rank = "Colonel".into();
     let _ = target.victory();
+    let total_time = model.your_time.clone();
+    let par_time = model.par_time.clone();
     App::open_campaign_score_page(
         state,
         CampaignScoreScreenModel {
@@ -1187,12 +1200,41 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         "Synthetic UI fixture; not native-parity evidence.".into(),
     );
     let _ = App::ensure_skirmish_shell_chrome(state);
-    state
+    const KILLS: [u32; 4] = [12, 7, 4, 2];
+    const LOSSES: [u32; 4] = [3, 5, 2, 1];
+    const BUILT: [u32; 4] = [40, 31, 18, 9];
+    const SCORE: [i32; 4] = [900, 640, 410, 220];
+    const INCOME: [i64; 4] = [5_000, 3_200, 2_100, 1_200];
+    let statistics = crate::ui::campaign_score_shell::VmceStatistics {
+        rows: (0..4)
+            .map(|role| crate::ui::campaign_score_shell::VmceStatisticsRow {
+                player: if role == 0 {
+                    "LiveHost".into()
+                } else {
+                    format!("LiveGuest{role}")
+                },
+                owner: roles[role].owner.clone(),
+                rgb: roles[role].color,
+                kills: KILLS[role],
+                losses: LOSSES[role],
+                built: BUILT[role],
+                score: SCORE[role],
+                income: INCOME[role],
+            })
+            .collect(),
+        total_time,
+        par_time,
+    };
+    let page = state
         .frontend
         .campaign_score_page
         .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("VMCE result fixture did not open the 0x103 page"))?
-        .set_vmce_board(Some(board));
+        .ok_or_else(|| anyhow::anyhow!("VMCE result fixture did not open the 0x103 page"))?;
+    page.set_vmce_board(Some(board));
+    page.set_vmce_statistics(Some(statistics));
+    if stats_open {
+        page.toggle_vmce_stats();
+    }
     Ok(())
 }
 

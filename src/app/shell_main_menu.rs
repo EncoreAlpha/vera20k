@@ -934,6 +934,34 @@ impl App {
                     rect: button.rect,
                 });
             }
+            // The statistics tab lives on VERA's victory/campaign-end page and
+            // is the only control on the full-screen stats page besides Back.
+            if board.victory {
+                let stats_open = state
+                    .frontend
+                    .campaign_score_page
+                    .as_ref()
+                    .is_some_and(|page| page.vmce_stats_open());
+                let tab = crate::ui::shell::layout::LaidOutControl {
+                    id: crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL,
+                    rect: layout.vmce_stats_tab,
+                };
+                if stats_open {
+                    let back = crate::ui::shell::layout::LaidOutControl {
+                        id: crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL,
+                        rect: layout.vmce_statistics.back,
+                    };
+                    press_feed = vec![tab, back];
+                    hover_feed.push(crate::ui::shell::layout::LaidOutControl {
+                        id: tab.id,
+                        rect: tab.rect,
+                    });
+                    hover_feed.push(back);
+                } else {
+                    press_feed.push(tab);
+                    hover_feed.push(tab);
+                }
+            }
         }
         state
             .frontend
@@ -963,6 +991,8 @@ impl App {
         let vmce_button = pressed.is_some_and(|id| {
             id == crate::ui::campaign_score_shell::VMCE_READY_CONTROL
                 || id == crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL
+                || id == crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL
+                || id == crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL
         });
         #[cfg(not(feature = "vmce"))]
         let vmce_button = false;
@@ -993,6 +1023,22 @@ impl App {
             .frontend
             .shell_controller
             .on_pointer_up(x, y, &press_feed);
+        // VERA's stats tab and Back toggle the full-screen page.
+        #[cfg(feature = "vmce")]
+        if let Some(page) = state.frontend.campaign_score_page.as_mut()
+            && page.vmce_board().is_some_and(|board| board.victory)
+        {
+            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_TAB_CONTROL) {
+                page.toggle_vmce_stats();
+                state.platform.window.request_redraw();
+                return;
+            }
+            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL) {
+                page.close_vmce_stats();
+                state.platform.window.request_redraw();
+                return;
+            }
+        }
         // VMCE's own right-panel buttons: Leave Room closes the page, a guest's
         // Ready runs the existing ready action; neither is the native Continue.
         #[cfg(feature = "vmce")]

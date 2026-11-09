@@ -113,6 +113,25 @@ pub(crate) fn render_campaign_score_page(
         .map(|key| resolve_csf(state, key).into_owned())
         .unwrap_or_default();
     let pressed = active.then(|| controller.pressed()).flatten();
+    // VERA's 0x103 victory/campaign-end pages: the B25 board also carries the
+    // statistics projection and the tab/stats-page state.
+    #[cfg(feature = "vmce")]
+    let (vmce_page, vmce_stats_open, vmce_statistics) = {
+        let page = state
+            .frontend
+            .campaign_score_page
+            .as_ref()
+            .expect("checked before render");
+        (
+            page.vmce_board().is_some_and(|board| board.victory),
+            page.vmce_stats_open(),
+            page.vmce_statistics().cloned(),
+        )
+    };
+    #[cfg(feature = "vmce")]
+    let stats_open = vmce_page && vmce_stats_open && vmce_statistics.is_some();
+    #[cfg(not(feature = "vmce"))]
+    let stats_open = false;
 
     let mut labels: Vec<PaintLabel<'static>> = Vec::new();
     let campaign_page = state
@@ -123,9 +142,22 @@ pub(crate) fn render_campaign_score_page(
     if children {
         campaign_page.set_status_help(&status, now);
         for static_text in campaign_page.statics_mut() {
-            let Some(window) = static_text.paint(now) else {
+            // Advance every native kind-1 reveal first (the page's terminal
+            // state depends on the hidden kills statics too), then skip the
+            // enemies report's paint on VERA's pages: its label and value are
+            // hidden, but the native top panel keeps its fixed height.
+            let window = static_text.paint(now);
+            #[cfg(feature = "vmce")]
+            let hide = vmce_page
+                && crate::ui::campaign_score_shell::vmce_page_hides_enemy_kills(static_text.id);
+            #[cfg(not(feature = "vmce"))]
+            let hide = false;
+            let Some(window) = window else {
                 continue;
             };
+            if hide {
+                continue;
+            }
             let Some(rect) = layout.control_rect(static_text.id) else {
                 continue;
             };
@@ -187,6 +219,10 @@ pub(crate) fn render_campaign_score_page(
     // covered by the art).
     #[cfg(feature = "vmce")]
     let mut vmce_board_sprites: Vec<crate::render::batch::SpriteInstance> = Vec::new();
+    #[cfg(feature = "vmce")]
+    let mut vmce_stats_sprites: Vec<crate::render::batch::SpriteInstance> = Vec::new();
+    #[cfg(feature = "vmce")]
+    let mut vmce_stats_buttons: Vec<crate::render::batch::SpriteInstance> = Vec::new();
     #[cfg(feature = "vmce")]
     if let (Some(board_layout), Some(board)) = (
         layout.vmce_result,
@@ -303,6 +339,23 @@ pub(crate) fn render_campaign_score_page(
             path_a_reveal: None,
         });
     }
+    #[cfg(feature = "vmce")]
+    if vmce_page {
+        if stats_open {
+            labels.clear();
+        }
+        paint_vmce_stats_labels(
+            state,
+            &layout,
+            vmce_statistics.as_ref(),
+            stats_open,
+            &mut labels,
+            &mut vmce_stats_sprites,
+            &mut vmce_stats_buttons,
+            chrome,
+            now,
+        );
+    }
     let text =
         shell_paint::paint_labels_scaled(&state.renderer.bit_font, &labels, layout.scale.factor());
     let mut draws = Vec::with_capacity(6);
@@ -380,6 +433,22 @@ pub(crate) fn render_campaign_score_page(
             instances: vmce_board_sprites,
         });
     }
+    #[cfg(feature = "vmce")]
+    if !vmce_stats_sprites.is_empty()
+        && let Some(skirmish) = state.frontend.skirmish_shell_chrome.as_ref()
+    {
+        draws.push(TexturedDraw {
+            texture: &skirmish.texture,
+            instances: vmce_stats_sprites,
+        });
+    }
+    #[cfg(feature = "vmce")]
+    if !vmce_stats_buttons.is_empty() {
+        draws.push(TexturedDraw {
+            texture: &chrome.texture,
+            instances: vmce_stats_buttons,
+        });
+    }
     encode_shell_pass(
         state,
         encoder,
@@ -407,6 +476,198 @@ fn static_align(dialog: CampaignScoreDialog, id: u16) -> ShellAlign {
 
 fn rgb_f32(rgb: [u8; 3]) -> [f32; 3] {
     rgb.map(|channel| f32::from(channel) / 255.0)
+}
+
+/// The vertical `统计数据` tab on the victory page's left edge.
+#[cfg(feature = "vmce")]
+fn paint_vmce_stats_tab(
+    state: &AppState,
+    layout: &crate::ui::campaign_score_shell::CampaignScoreLayout,
+    highlighted: bool,
+    sprites: &mut Vec<crate::render::batch::SpriteInstance>,
+    labels: &mut Vec<PaintLabel<'static>>,
+) {
+    use crate::app::frontend::skirmish_shell_render::vmce_panel;
+    let Some(atlas) = state.frontend.skirmish_shell_chrome.as_ref() else {
+        return;
+    };
+    let tab = layout.vmce_stats_tab;
+    let depth = shell_paint::DIALOG_BACKGROUND_DEPTH + 0.0001;
+    let rgb = if highlighted {
+        [0.28, 0.21, 0.11]
+    } else {
+        vmce_panel::FILL_RGB
+    };
+    vmce_panel::push_solid_rect(sprites, atlas, tab, rgb, depth);
+    vmce_panel::push_list_frame(sprites, atlas, tab, layout.scale, depth);
+    let font = &state.renderer.bit_font;
+    let text = crate::i18n::tr("VERA:VmceStatistics");
+    let chars: Vec<char> = text.chars().collect();
+    let line_h = (17.0 * layout.scale.factor()).round().max(1.0) as i32;
+    let total_h = line_h * chars.len() as i32;
+    let start_y = tab.y + ((tab.h - total_h) / 2).max(0);
+    let _ = font;
+    for (index, ch) in chars.iter().enumerate() {
+        labels.push(PaintLabel {
+            text: ch.to_string().into(),
+            rect: crate::ui::shell::geom::RectPx::new(
+                tab.x,
+                start_y + index as i32 * line_h,
+                tab.w,
+                line_h,
+            ),
+            align: ShellAlign::H_CENTER,
+            rgb: if highlighted {
+                [1.0, 1.0, 1.0]
+            } else {
+                SHELL_TEXT_RGB_ENABLED
+            },
+            path_a_reveal: None,
+        });
+    }
+}
+
+/// The full-screen statistics page and the tab, drawn after the native art.
+#[cfg(feature = "vmce")]
+#[allow(clippy::too_many_arguments)]
+fn paint_vmce_stats_labels(
+    state: &AppState,
+    layout: &crate::ui::campaign_score_shell::CampaignScoreLayout,
+    statistics: Option<&crate::ui::campaign_score_shell::VmceStatistics>,
+    stats_open: bool,
+    labels: &mut Vec<PaintLabel<'static>>,
+    sprites: &mut Vec<crate::render::batch::SpriteInstance>,
+    buttons: &mut Vec<crate::render::batch::SpriteInstance>,
+    chrome: &crate::render::main_menu_shell_chrome::MainMenuShellChromeAtlas,
+    now: Instant,
+) {
+    use crate::app::frontend::skirmish_shell_render::vmce_panel;
+    let Some(atlas) = state.frontend.skirmish_shell_chrome.as_ref() else {
+        return;
+    };
+    let Some(statistics) = statistics.filter(|_| stats_open) else {
+        paint_vmce_stats_tab(state, layout, stats_open, sprites, labels);
+        return;
+    };
+    let stats_layout = layout.vmce_statistics;
+    let depth = shell_paint::DIALOG_BACKGROUND_DEPTH + 0.0001;
+    vmce_panel::push_fill(sprites, atlas, stats_layout.fill, depth);
+    vmce_panel::push_list_frame(sprites, atlas, stats_layout.frame, layout.scale, depth);
+    // The tab stays highlighted above the page it opened.
+    paint_vmce_stats_tab(state, layout, stats_open, sprites, labels);
+    let mut push = |text: String, rect, align, rgb| {
+        labels.push(PaintLabel {
+            text: text.into(),
+            rect,
+            align,
+            rgb,
+            path_a_reveal: None,
+        });
+    };
+    push(
+        crate::i18n::tr("VERA:VmceStatistics"),
+        stats_layout.title,
+        ShellAlign::H_CENTER,
+        SHELL_TEXT_RGB_ENABLED,
+    );
+    push(
+        format!(
+            "{} {}",
+            resolve_csf(state, "GUI:YourTime"),
+            statistics.total_time
+        ),
+        stats_layout.total_time,
+        ShellAlign::NONE,
+        SHELL_TEXT_RGB_ENABLED,
+    );
+    push(
+        format!(
+            "{} {}",
+            resolve_csf(state, "GUI:ParTime"),
+            statistics.par_time
+        ),
+        stats_layout.par_time,
+        ShellAlign::NONE,
+        SHELL_TEXT_RGB_ENABLED,
+    );
+    for header in stats_layout.headers {
+        let text = if let Some(key) = header.key.strip_prefix("VERA:") {
+            crate::i18n::tr(&format!("VERA:{key}"))
+        } else {
+            resolve_csf(state, header.key).into_owned()
+        };
+        push(
+            text,
+            header.rect,
+            if header.centred {
+                ShellAlign::H_CENTER
+            } else {
+                ShellAlign::NONE
+            },
+            SHELL_TEXT_RGB_ENABLED,
+        );
+    }
+    let mut row_rgb = |row: &crate::ui::campaign_score_shell::VmceStatisticsRow| {
+        crate::ui::campaign_score_shell::vmce_result_text_rgb(
+            &crate::ui::campaign_score_shell::VmceResultRow {
+                player: String::new(),
+                role: String::new(),
+                country: String::new(),
+                flag: None,
+                won: true,
+                ready: None,
+                host: false,
+                rgb: row.rgb,
+            },
+        )
+        .map(|channel| f32::from(channel) / 255.0)
+    };
+    for (row, cells) in statistics.rows.iter().zip(stats_layout.rows.iter()) {
+        let rgb = row_rgb(row);
+        let strip = crate::ui::shell::geom::RectPx::new(
+            cells.cells[0].x + 1,
+            cells.cells[0].y + 1,
+            (cells.cells[5].x + cells.cells[5].w - 1) - (cells.cells[0].x + 1),
+            cells.cells[0].h - 2,
+        );
+        vmce_panel::push_solid_rect_alpha(sprites, atlas, strip, [0.0, 0.0, 0.0], depth, 0.55);
+        let values = [
+            row.player.clone(),
+            row.kills.to_string(),
+            row.losses.to_string(),
+            row.built.to_string(),
+            row.score.to_string(),
+            row.income.to_string(),
+        ];
+        for (column, value) in values.iter().enumerate() {
+            let rect = cells.cells[column];
+            let align = if column == 0 {
+                ShellAlign::NONE
+            } else {
+                ShellAlign::H_CENTER
+            };
+            push(value.clone(), rect, align, rgb);
+        }
+    }
+    let back = layout.vmce_statistics.back;
+    *buttons = shell_paint::paint_buttons(
+        chrome,
+        &[PaintButton {
+            rect: back,
+            pressed: false,
+            hovered: false,
+            enabled: true,
+        }],
+        crate::app::frontend::menu_page_render::MENU_PAGE_BUTTON_POLICY,
+        now,
+        None,
+    );
+    push(
+        crate::i18n::tr("VERA:VmceBack"),
+        owner_draw_button_label_rect(back, false),
+        ShellAlign::BUTTON_CAPTION,
+        SHELL_TEXT_RGB_ENABLED,
+    );
 }
 
 /// VMCE's settlement board: one flat native dialog fill and the native list

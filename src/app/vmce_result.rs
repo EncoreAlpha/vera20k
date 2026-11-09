@@ -332,6 +332,8 @@ fn open_page(
     what: &str,
     victory: bool,
 ) {
+    #[cfg(feature = "vmce")]
+    let statistics = victory.then(|| statistics_page(state, &model)).flatten();
     state.frontend.score_page = None;
     state.frontend.score_art = None;
     state.frontend.coop_score_page = None;
@@ -389,7 +391,88 @@ fn open_page(
     #[cfg(feature = "vmce")]
     if let Some(page) = state.frontend.campaign_score_page.as_mut() {
         page.set_vmce_board(board);
+        page.set_vmce_statistics(statistics);
     }
+}
+
+/// VERA's victory/campaign-end statistics projection: the B25 player/House
+/// rows plus the terminal score cells and the mission income statistic. Read
+/// only; no second result state.
+#[cfg(feature = "vmce")]
+fn statistics_page(
+    state: &AppState,
+    model: &crate::ui::campaign_score_shell::CampaignScoreScreenModel,
+) -> Option<crate::ui::campaign_score_shell::VmceStatistics> {
+    use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
+    let launch = state.match_state.session.network_setup()?;
+    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)?;
+    let sim = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .map(|runtime| &runtime.simulation);
+    let terminal = sim.and_then(|sim| sim.terminal_score_snapshot());
+    let coop = sim.map(|sim| {
+        sim.cooperative_score_rows()
+            .into_iter()
+            .map(|row| (sim.interner().resolve(row.owner).to_owned(), row))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    });
+    let mut rows = Vec::new();
+    for (role, info) in roles.iter().enumerate() {
+        if info.owner.is_empty() {
+            continue;
+        }
+        let player = launch
+            .humans
+            .iter()
+            .find(|human| !human.is_observer() && human.role.native_value() == role as i32)
+            .map_or_else(|| info.owner.clone(), |human| human.name.clone());
+        let owner_id = sim
+            .and_then(|sim| sim.interner().get(&info.owner))
+            .or_else(|| sim.and_then(|sim| sim.interner().get(&info.owner)));
+        let values = terminal.and_then(|snapshot| {
+            snapshot
+                .rows
+                .iter()
+                .find(|row| Some(row.owner) == owner_id)
+                .map(|row| {
+                    (
+                        row.kills,
+                        row.losses,
+                        row.built,
+                        row.score,
+                        row.credits_earned,
+                    )
+                })
+        });
+        let (kills, losses, built, score, income) = values.or_else(|| {
+            coop.as_ref()?.get(&info.owner).map(|row| {
+                (
+                    row.kills,
+                    row.losses,
+                    row.built,
+                    row.score,
+                    row.credits_earned,
+                )
+            })
+        })?;
+        rows.push(VmceStatisticsRow {
+            player,
+            owner: info.owner.clone(),
+            rgb: info.color,
+            kills,
+            losses,
+            built,
+            score,
+            income,
+        });
+    }
+    (!rows.is_empty()).then(|| VmceStatistics {
+        rows,
+        total_time: model.your_time.clone(),
+        par_time: model.par_time.clone(),
+    })
 }
 
 #[cfg(all(test, feature = "vmce"))]

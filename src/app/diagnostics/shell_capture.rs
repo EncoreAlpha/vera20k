@@ -187,6 +187,10 @@ const CHECKPOINT_VMCE_RESULT_GUEST_READY: &str = "vmce-result-guest-ready";
 #[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_RESULT_CAMPAIGN_END: &str = "vmce-result-campaign-end";
 #[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS: &str = "vmce-result-host-victory-stats";
+#[cfg(feature = "vmce")]
+const CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS: &str = "vmce-result-campaign-end-stats";
+#[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P: &str = "vmce-defeat-host-disabled-2p";
 #[cfg(feature = "vmce")]
 const CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_4P: &str = "vmce-defeat-host-disabled-4p";
@@ -399,6 +403,10 @@ pub enum ShellCaptureCheckpoint {
     VmceResultGuestReady,
     #[cfg(feature = "vmce")]
     VmceResultCampaignEnd,
+    #[cfg(feature = "vmce")]
+    VmceResultHostVictoryStats,
+    #[cfg(feature = "vmce")]
+    VmceResultCampaignEndStats,
     #[cfg(feature = "vmce")]
     VmceDefeatHostDisabled2p,
     #[cfg(feature = "vmce")]
@@ -652,6 +660,14 @@ impl ShellCaptureCheckpoint {
             CHECKPOINT_VMCE_RESULT_GUEST_READY => Ok(Self::VmceResultGuestReady),
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_CAMPAIGN_END => Ok(Self::VmceResultCampaignEnd),
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS => {
+                Ok(Self::VmceResultHostVictoryStats)
+            }
+            #[cfg(feature = "vmce")]
+            CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS => {
+                Ok(Self::VmceResultCampaignEndStats)
+            }
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P => Ok(Self::VmceDefeatHostDisabled2p),
             #[cfg(feature = "vmce")]
@@ -1070,6 +1086,10 @@ impl ShellCaptureCheckpoint {
             #[cfg(feature = "vmce")]
             #[cfg(feature = "vmce")]
             Self::VmceResultCampaignEnd => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultHostVictoryStats => CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS,
+            #[cfg(feature = "vmce")]
+            Self::VmceResultCampaignEndStats => CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS,
             #[cfg(feature = "vmce")]
             Self::VmceDefeatHostDisabled2p => CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P,
             #[cfg(feature = "vmce")]
@@ -1854,6 +1874,8 @@ where
             | ShellCaptureCheckpoint::VmceResultGuestUnready
             | ShellCaptureCheckpoint::VmceResultGuestReady
             | ShellCaptureCheckpoint::VmceResultCampaignEnd
+            | ShellCaptureCheckpoint::VmceResultHostVictoryStats
+            | ShellCaptureCheckpoint::VmceResultCampaignEndStats
             | ShellCaptureCheckpoint::VmceDefeatHostDisabled2p
             | ShellCaptureCheckpoint::VmceDefeatHostDisabled4p
             | ShellCaptureCheckpoint::VmceDefeatGuestVoted
@@ -2849,6 +2871,14 @@ impl ShellCaptureSession {
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceResultCampaignEnd => Some(
                 score::CampaignScoreCapture::vmce(score::VmceResultTarget::CampaignEnd),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultHostVictoryStats => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::HostVictoryStats),
+            ),
+            #[cfg(feature = "vmce")]
+            ShellCaptureCheckpoint::VmceResultCampaignEndStats => Some(
+                score::CampaignScoreCapture::vmce(score::VmceResultTarget::CampaignEndStats),
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceDefeatHostDisabled2p => Some(
@@ -5561,6 +5591,14 @@ mod tests {
             (
                 CHECKPOINT_VMCE_RESULT_CAMPAIGN_END,
                 ShellCaptureCheckpoint::VmceResultCampaignEnd,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS,
+                ShellCaptureCheckpoint::VmceResultHostVictoryStats,
+            ),
+            (
+                CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS,
+                ShellCaptureCheckpoint::VmceResultCampaignEndStats,
             ),
             (
                 CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P,

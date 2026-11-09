@@ -165,25 +165,31 @@ base and units, or spawn them with triggers. VMCE does not grant an MCV or const
 
 ## Result page and Continue
 
-VMCE victory, defeat and the last mission use the same settlement page: the layout and input
-of the original campaign score page `0x103`, with the result state and Continue semantics owned
-by VMCE.
+VMCE victory and the campaign-end/last mission share the original campaign score page `0x103`
+(layout and input); the defeat result is the native BC6 cooperative statistics dialog instead.
+The result state, Continue and retry semantics belong to VMCE.
 
-- The page shows par time, your time, rank, commendation and kills. Rank and commendation come
-  from the map `[Ranking]` under/over-par fields; difficulty is the lobby-frozen VMCE row.
-- The page lists up to four participating players. While a next mission is being agreed, each
-  row shows Ready or Waiting. On a defeat or the last mission the ready glyphs are still drawn
-  today even though only the host/next-stage gate reads them (known gap B04).
-- On a win with a next mission, a guest's Continue is its ready action; after everyone is
-  ready only the host's Continue starts the next mission.
-- On a defeat, a guest's Continue is its ready action but the host decides: the host's
-  Continue restarts the same frozen stage with the same seed, roles and map, and guests follow
-  without pressing Continue. **Current caveat:** the advertised 15 s page-arrival grace and the
-  retry loading path are not finished (backlog B01/B02); until they land, Retry can fail to
-  load and returns both peers to the lobby.
-- On the campaign's last mission (`EndOfGame=yes`), Continue is the all-ready gate; every peer
-  plays the campaign completion locally and returns to the main menu. **Current caveat:** there
-  is no 30 s forced start yet (B02), so one unready guest stalls the page.
+- Victory/campaign-end `0x103`: par time, your time, rank and commendation stay native; the
+  top report's destroyed-enemies label/value are hidden and the native panel keeps its height.
+  The page shows a `玩家 | 所属方 | 国家 | 结果 | 准备` board for up to four roles with the
+  lobby player name, map House name and role House colour (all text on a dark strip), plus a
+  vertical `统计数据` tab below the rank box.
+- The `统计数据` tab opens a full-screen page over the same background: total and par time in
+  the header, then four rows and six columns `玩家 | 击毁 | 损失 | 建造 | 得分 | 收入`. Income is
+  gross credits earned (positive credit gains only; no spent/net), a display-only statistic.
+  The same tab or the bottom `返回` button closes it. The page is victory/campaign-end only.
+- Victory with a next mission: a guest's Continue is its ready action; after every connected
+  guest is ready only the host's Continue starts the next mission.
+- Campaign end (`EndOfGame=yes`): the same all-ready gate; every peer plays the campaign
+  completion locally and returns to the main menu. There is no 30 s forced start or host pull:
+  an unready guest stalls the page, and the only exit is Leave Room.
+- Defeat: the page is the native BC6 cooperative result dialog, opened as the statistics view
+  itself (four rows `Player / Kills / Losses / Built / Score`, chat hidden, no Ready column and
+  no separate stats entry). Each guest's `重试` click casts one retry vote and immediately lights
+  the native button; the host's `重试` starts disabled and lights only after every online guest
+  voted, then restarts the same frozen stage with the same seed, roles and map — no timeout and
+  no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
+  Retry loading itself is still the B01 blocker, so a real-LAN vote validation is deferred.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).
@@ -301,11 +307,17 @@ real-process captures:
   roster and round path.
 - `EndOfGame` campaign completion and defeat retry have production code and focused unit
   tests; their real dual-process `2p-final`/`2p-retry` captures are not recorded yet, and
-  retry loading/timers are still release blockers (B01/B02).
-- The VMCE lobby has a role board (Role/Country/Ready/Host/Color) and the settlement page a
-  four-row board with the three continuations; HUD and loading/transition UI are deferred.
-- i18n after the upstream sync: English and zh-CN have real VMCE copy; the other eight
-  shipped languages carry English placeholders until a translation pass (B08).
+  retry loading is still a release blocker (B01), and a real 2p-retry capture (vote → reopen)
+  is part of the release gate with 2p-win and 4p-win. There are no result-page timers anywhere:
+  defeat uses the vote gate and campaign end the all-ready gate (B02 cancelled). The release
+  version after the UI batch is `0.2.9-vmce.5`.
+- The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
+  five-column result board and the statistics tab/page, and the defeat page is BC6. HUD and
+  loading/transition UI are deferred.
+- i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
+  English placeholders and are translated later (B08). VERA labels default to the Windows system
+  language when the player has not picked one; native CSF follows the install language, and that
+  mismatch is expected.
 - Known gaps and their evidence live in [the VMCE backlog](vmce-backlog.md).
 - `AltNextScenario` and `SkipMapSelect` execution are not implemented. Cross-mission money
   is not implemented either.

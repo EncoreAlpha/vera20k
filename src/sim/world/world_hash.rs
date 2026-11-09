@@ -914,6 +914,10 @@ impl Simulation {
             row.built.hash(hasher);
             row.raw_score.hash(hasher);
             row.score.hash(hasher);
+            if row.credits_earned != 0 {
+                b"terminal-score-credits-earned-v1".hash(hasher);
+                row.credits_earned.hash(hasher);
+            }
         }
     }
 
@@ -1125,6 +1129,12 @@ impl Simulation {
             house.economy().spent_credits().hash(hasher);
             // The score feeds the terminal Scenario draw.
             house.economy().score().hash(hasher);
+            // Mission credit income is display-only; retain the zero stream.
+            let credits_earned = house.economy().credits_earned();
+            if credits_earned != 0 {
+                b"house-credits-earned-v1".hash(hasher);
+                credits_earned.hash(hasher);
+            }
             // Ares builds' tiberium stores, once any holds tiberium.
             #[cfg(feature = "ares")]
             house.economy().ares_storage().hash_retained(hasher);

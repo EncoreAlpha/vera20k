@@ -31,6 +31,9 @@ pub struct TerminalScoreRowSnapshot {
     pub built: u32,
     pub raw_score: i32,
     pub score: i32,
+    /// Positive credit gains during the mission (display statistic only).
+    #[serde(default)]
+    pub credits_earned: i64,
 }
 
 /// The one-shot raw score result for a finished match.
@@ -73,6 +76,8 @@ pub struct CooperativeScoreRow {
     pub built: u32,
     /// `+0x54E8` when positive, else 0; no survivor bonus and no draw.
     pub score: i32,
+    /// Positive credit gains during the mission (display statistic only).
+    pub credits_earned: i64,
 }
 
 /// `Houses[]` order without passive types or the observer House
@@ -132,6 +137,7 @@ impl Simulation {
                         .losses()
                         .wrapping_add(house.tracking().active_total() as u32),
                     score: house.economy().score().max(0),
+                    credits_earned: house.economy().credits_earned(),
                 }
             })
             .collect()
@@ -177,6 +183,7 @@ impl Simulation {
                 built: stats.built(),
                 raw_score,
                 score: raw_score.max(0),
+                credits_earned: house.economy().credits_earned(),
             });
         }
         TerminalScoreSnapshot { rows }
@@ -212,14 +219,17 @@ impl Simulation {
         let contenders = score_contenders(houses, session);
         let mut rows = Vec::with_capacity(contenders.len());
         for owner in contenders {
-            let Some((country, survived, stats, raw_score)) = houses.get(&owner).map(|house| {
-                (
-                    house.country(),
-                    !house.is_defeated(),
-                    house.stats(),
-                    house.economy().score(),
-                )
-            }) else {
+            let Some((country, survived, stats, raw_score, credits_earned)) =
+                houses.get(&owner).map(|house| {
+                    (
+                        house.country(),
+                        !house.is_defeated(),
+                        house.stats(),
+                        house.economy().score(),
+                        house.economy().credits_earned(),
+                    )
+                })
+            else {
                 continue;
             };
             // 0x005C99EB..0x005C99F5 adds only a positive score to the zeroed
@@ -243,6 +253,7 @@ impl Simulation {
                 built: stats.built(),
                 raw_score,
                 score,
+                credits_earned,
             });
         }
 
@@ -735,6 +746,7 @@ mod tests {
             built: 3,
             raw_score: 100,
             score: 225,
+            credits_earned: 0,
         };
         mutate(&mut row, alternate);
         sim.terminal_score_snapshot
@@ -760,6 +772,11 @@ mod tests {
         assert_ne!(base, hash_with_score_row(|row, _| row.built += 1));
         assert_ne!(base, hash_with_score_row(|row, _| row.raw_score += 1));
         assert_ne!(base, hash_with_score_row(|row, _| row.score += 1));
+        assert_ne!(
+            base,
+            hash_with_score_row(|row, _| row.credits_earned += 1),
+            "credit income participates in the terminal-score hash"
+        );
     }
 
     #[test]
@@ -851,6 +868,11 @@ mod tests {
         tracking.set_active_for_test(EntityCategory::Structure, yard, 2);
         let _ = enemy;
 
+        sim.houses
+            .get_mut(&host)
+            .unwrap()
+            .economy_mut_for_test()
+            .add_credits(77);
         let rows = sim.cooperative_score_rows();
         assert_eq!(
             rows,
@@ -863,6 +885,7 @@ mod tests {
                     // Losses 4 plus six on the map; the produced 40 is unused.
                     built: 10,
                     score: 0,
+                    credits_earned: 77,
                 },
                 CooperativeScoreRow {
                     owner: guest,
@@ -871,6 +894,7 @@ mod tests {
                     losses: 0,
                     built: 0,
                     score: 70,
+                    credits_earned: 0,
                 },
             ]
         );
