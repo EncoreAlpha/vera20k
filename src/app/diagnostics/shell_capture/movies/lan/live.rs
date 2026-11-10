@@ -2261,6 +2261,13 @@ impl LiveLanCapture {
             VeraOutcomePhase::Observe => match outcome {
                 VmceOutcome::Win | VmceOutcome::Lose => {
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
+                        ensure!(
+                            page.model
+                                .vmce_statistics
+                                .as_ref()
+                                .is_some_and(|stats| stats.rows.len() == 4),
+                            "VMCE defeat page is missing its four-row statistics table"
+                        );
                         let victory = page.victory;
                         ensure!(
                             victory == (outcome == VmceOutcome::Win),

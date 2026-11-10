@@ -74,6 +74,41 @@ pub(crate) fn open_defeat(state: &mut AppState) {
     let ranking_model =
         crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
     model.vmce_statistics = statistics_page(state, &ranking_model);
+    if model.vmce_statistics.is_none() {
+        // The result board must never be empty: rebuild the four role rows
+        // directly from the BC6 score rows when the role projection is not
+        // available after the mission retires.
+        use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
+        let launch = state.match_state.session.network_setup();
+        let rows = (0..4)
+            .map(|role| {
+                let human = launch.and_then(|launch| {
+                    launch.humans.iter().find(|human| {
+                        !human.is_observer() && human.role.native_value() == role as i32
+                    })
+                });
+                let row = model.rows.get(role);
+                VmceStatisticsRow {
+                    player: row
+                        .map(|row| row.name.clone())
+                        .or_else(|| human.map(|human| human.name.clone()))
+                        .unwrap_or_else(|| format!("Player {}", role + 1)),
+                    owner: format!("role{}", role + 1),
+                    kills: row.map_or(0, |row| row.kills),
+                    losses: row.map_or(0, |row| row.losses),
+                    built: row.map_or(0, |row| row.built),
+                    score: row.map_or(0, |row| row.score),
+                    income: 0,
+                    rgb: row.map(|row| row.rgb),
+                }
+            })
+            .collect::<Vec<_>>();
+        model.vmce_statistics = Some(VmceStatistics {
+            total_time: model.time.clone(),
+            par_time: model.time.clone(),
+            rows,
+        });
+    }
     let rows = model.rows.len();
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
@@ -427,9 +462,6 @@ pub(crate) fn statistics_page(
     });
     let mut rows = Vec::new();
     for (role, info) in roles.iter().enumerate() {
-        if info.owner.is_empty() {
-            continue;
-        }
         let player = launch
             .humans
             .iter()
@@ -453,17 +485,22 @@ pub(crate) fn statistics_page(
                     )
                 })
         });
-        let (kills, losses, built, score, income) = values.or_else(|| {
-            coop.as_ref()?.get(&info.owner).map(|row| {
-                (
-                    row.kills,
-                    row.losses,
-                    row.built,
-                    row.score,
-                    row.credits_earned,
-                )
+        // A role the finished world no longer reports still gets its row:
+        // the VMCE defeat page is the four-row statistics view, so a missing
+        // per-owner snapshot means zeroes, never a silently shortened table.
+        let (kills, losses, built, score, income) = values
+            .or_else(|| {
+                coop.as_ref()?.get(&info.owner).map(|row| {
+                    (
+                        row.kills,
+                        row.losses,
+                        row.built,
+                        row.score,
+                        row.credits_earned,
+                    )
+                })
             })
-        })?;
+            .unwrap_or((0, 0, 0, 0, 0));
         rows.push(VmceStatisticsRow {
             player,
             owner: info.owner.clone(),
