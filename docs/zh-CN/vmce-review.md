@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 23 | 14 | 9 |
-| 合计 | 57 | 46 | 11 |
+| P3 | 22 | 13 | 9 |
+| 合计 | 56 | 45 | 11 |
 
 ## P1 — 优先修复
 
@@ -354,13 +354,6 @@ lang: zh-CN
 - **修正：** Discovery 回复用 `!session.network_room_full()`（必要时再叠加 `protocol.editable()` 以处理 GO 锁定）作为 `open` 位；房主对每次 Discovery 都重新回答，成员/上限变化后无需额外状态刷新。
 - **验收：** 2/2、4/4 的关间房间在 LAN 列表中不可加入（或以关闭态显示）；有人离开后恢复可加入；普通 8 人 LAN 房间的 open 语义与 GO 锁定拒绝不回归。
 
-### A46 · B101 主角色 House 名直到开局才校验，准入可放过错误战役 — P3
-
-- **问题与影响：** `load_vmce_scenario` 读取 `Player1..N` 时只要求非空并写入合成 `[Basic]`，不把 House 名与地图 `[Houses]` 对照；联机准入和 Ready/Go 都会通过。真正的校验在开局 `resolve_vmce_houses` 的 `validate_against_roster`，且按字符串精确匹配（大小写不同即视为不同 House）；失败后只显示“角色配置无效/可能人数超过角色或角色缺失、重复”的笼统提示。结果是：作者把 `Player2=Americans House` 误写为不同大小写或写错 House，系列看起来通过准入、客人也已 Ready，房主点开始时才失败，玩家不知道为什么不能开始。同一文件的控制段成员检查却使用大小写不敏感比较，校验策略不一致。
-- **依据：** [准入读取 PlayerN](../../src/app/shell_network_setup/vmce_map.rs#L648)只检查存在性并写入合成段；[角色 House 去重](../../src/app/shell_network_setup/vmce_map.rs#L651)也是精确字符串；[控制段成员检查](../../src/app/shell_network_setup/vmce_map.rs#L615)已经用大小写不敏感比较；[开局校验调用](../../src/app/match_bootstrap.rs#L437)在 Start 时才 `validate_against_roster`；[名字精确匹配](../../src/map/basic.rs#L45)；[开局失败提示](../../src/app/shell_network_setup/actions/start.rs#L482)只给笼统原因。
-- **修正：** 在 `load_vmce_scenario`（以及 B05 的逐关预校验）中按地图 `[Houses]` 解析主角色 House，并用与开局 `validate_against_roster` 相同的匹配策略（若开局改为大小写不敏感，两处一起改）在准入时拒绝未知/重复 House；错误包含关卡、PlayerN 和 House 名。确保“准入通过”的系列不会在 Start 再因 House 名失败。
-- **验收：** `PlayerN` 指向不存在 House、大小写不同、重复 House 的 `campaign.ini` 在准入/Ready 前被拒并指出关卡与玩家；合法系列与初始 VMCE 房间不回归；控制段与主角色使用一致的 House 匹配策略；Start 不再出现该迟到错误。
-
 ### B40 地图详情缓存依赖协议存在 — P3
 
 - **问题与影响：** `vmce_map_details` 在每帧 setup view 中运行，缓存未命中会解析地图 INI；缓存只在 `network_setup_protocol` 存在时生效，没有 protocol 的诊断帧可能每帧重复解析。
@@ -405,7 +398,7 @@ lang: zh-CN
 
 ### B14/B16 错误提示难以触达或归因错误 — P3
 
-- **问题与影响：** 发现阶段的过滤让部分无效战役提示难以触达；设置/冻结失败可能错误归因到本地席位，且存在按翻译后字符串判断错误类型。
+- **问题与影响：** 发现阶段的过滤让部分无效战役提示难以触达；设置/冻结失败可能错误归因到本地席位，且存在按翻译后字符串判断错误类型。本轮探测：`Player2` 的 House 名大小写与地图 `[Houses]` 不一致时，准入的 `VmceMapConfig::apply_to_map` 拒绝该系列，`refresh_vmce_entries` 只写日志并跳过，大厅没有可行动提示。
 - **依据：** [大厅错误状态](../../src/app/shell_network_setup/view.rs)、[开局准入](../../src/app/shell_network_setup/actions/start.rs)。
 - **修正：** 用结构化错误身份代替翻译字符串匹配，让设置/冻结失败指出真正原因和行动。
 - **验收：** 无效战役、地图缺失、系列不一致、冻结失败各自显示明确原因；不把其他玩家误记为本地席位。
@@ -442,6 +435,7 @@ lang: zh-CN
 - 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；关间大厅截图中 Change Map 与 Start Mission 外观一致（启用态），与 A42 对应。
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
+- 无效战役探测：`Player2=alliance house`（地图 `[Houses]` 为 `Alliance House`）的 2p 系列在发现阶段被过滤（主机日志 `ignoring VMCE stage ... with invalid configuration`），大厅没有原因提示；该行为归入既有的 B14/B16，而不是开局迟到失败。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
 
 ## 已核对但不构成问题
