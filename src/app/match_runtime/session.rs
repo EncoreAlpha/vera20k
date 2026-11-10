@@ -898,8 +898,12 @@ impl MatchSession {
         index: usize,
         choices: SkirmishLocalSlot,
         observer: bool,
+        role: Option<crate::skirmish_launch::LaunchHumanRole>,
     ) -> anyhow::Result<PeerChoicesChange> {
         anyhow::ensure!(self.host, "only the host checks LAN peer choices");
+        if let Some(role) = role {
+            self.validate_network_vmce_role(index, role)?;
+        }
         let several = self.network_several_observers();
         let launch = match self.network.as_ref().map(|network| &network.phase) {
             Some(
@@ -915,15 +919,25 @@ impl MatchSession {
             .humans
             .get(index)
             .ok_or_else(|| anyhow::anyhow!("unknown participant"))?;
-        let Some(row) = human.raw_slot_index else {
-            return Ok(PeerChoicesChange::default());
-        };
+        let previous_role = human.role;
+        let row = human.raw_slot_index;
         let observer = if several {
             observer
         } else {
             human.is_observer()
         };
-        self.accept_peer_choices(index, row, choices, observer, PeerChoicePolicy::Lan)
+        let mut change = if let Some(row) = row {
+            self.accept_peer_choices(index, row, choices, observer, PeerChoicePolicy::Lan)?
+        } else {
+            PeerChoicesChange::default()
+        };
+        if let Some(role) = role {
+            self.set_network_vmce_role(index, role)?;
+            // VMCE's seat-keyed role is carried by the full LAN options, so
+            // other guests must receive a revision when it actually changes.
+            change.options |= previous_role != role;
+        }
+        Ok(change)
     }
 
     fn accept_peer_choices(
@@ -3819,13 +3833,13 @@ mod tests {
                 .unwrap();
         }
         session
-            .accept_lan_peer_choices(1, slot.clone(), false)
+            .accept_lan_peer_choices(1, slot.clone(), false, None)
             .unwrap();
         assert_eq!(guest(&session), (true, Some(4)));
         session
             .choose_network_row_kind(2, NetworkRowKind::Open)
             .unwrap();
-        session.accept_lan_peer_choices(1, slot, false).unwrap();
+        session.accept_lan_peer_choices(1, slot, false, None).unwrap();
         assert_eq!(guest(&session), (false, Some(2)));
         assert_eq!(observer_rows(&session), [4]);
     }

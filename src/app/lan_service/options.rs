@@ -1565,6 +1565,83 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn guest_role_only_change_republishes_to_other_guests() {
+        use crate::skirmish_launch::LaunchHumanRole;
+
+        let mut host = fixture(true);
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        for human in &mut launch.humans {
+            human.role = LaunchHumanRole::Player { group: -2 };
+        }
+        for row in 2..4 {
+            let mut human = launch.humans[1].clone();
+            human.name = format!("Guest{row}");
+            human.raw_slot_index = Some(row);
+            human.slot.color_index = row;
+            launch.humans.push(human);
+        }
+        launch.rebuild_house_roster();
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        host.set_network_vmce_role(0, LaunchHumanRole::Player { group: 0 })
+            .unwrap();
+        let unchanged = host.network_setup().unwrap().humans[1].slot.clone();
+        let change = host
+            .accept_lan_peer_choices(
+                1,
+                unchanged,
+                false,
+                Some(LaunchHumanRole::Player { group: 1 }),
+            )
+            .unwrap();
+        assert!(change.options, "a role-only edit must publish host options");
+
+        let mut other_guest = host.network_setup().unwrap().clone();
+        other_guest.humans.rotate_left(2);
+        for human in &mut other_guest.humans {
+            human.role = LaunchHumanRole::Player { group: -2 };
+        }
+        apply_vmce_roles(&mut other_guest, &vmce_role_rows(&host)).unwrap();
+        assert_eq!(
+            other_guest
+                .humans
+                .iter()
+                .find(|human| human.name == "Guest")
+                .unwrap()
+                .role,
+            LaunchHumanRole::Player { group: 1 }
+        );
+        let unchanged = host.network_setup().unwrap().humans[1].slot.clone();
+        let duplicate = host
+            .accept_lan_peer_choices(
+                1,
+                unchanged,
+                false,
+                Some(LaunchHumanRole::Player { group: 1 }),
+            )
+            .unwrap();
+        assert!(!duplicate.options, "a repeated role must not republish");
+        let before = host.clone();
+        let mut invalid_choices = host.network_setup().unwrap().humans[1].slot.clone();
+        invalid_choices.color_index = 7;
+        assert!(
+            host.accept_lan_peer_choices(
+                1,
+                invalid_choices,
+                false,
+                Some(LaunchHumanRole::Player { group: 0 }),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            host, before,
+            "a conflicting role must not change other choices"
+        );
+    }
+
     #[test]
     fn extended_options_and_roster_retain_thirtieth_participant() {
         let mut host = fixture(true);
@@ -2187,7 +2264,7 @@ mod tests {
         request.country_random = false;
         let mut wol = lan.clone();
         let result = lan
-            .accept_lan_peer_choices(1, request.clone(), false)
+            .accept_lan_peer_choices(1, request.clone(), false, None)
             .unwrap();
         assert!(result.options);
         assert!(!result.roster);

@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: B13, B12, then the remaining S1/S2 items. B03 now rolls back and aborts on a failed LAN host setup; a real failure-path capture remains to be run. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: B12, then the remaining S1/S2 items. B03 now rolls back and aborts on a failed LAN host setup; a real failure-path capture remains to be run. B13 republishes LAN guest role changes; its four-player propagation has focused test coverage but no new real-LAN capture. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -66,7 +66,7 @@ recorded here for residuals only.
 
 - Version after the B01 fix: `0.2.9-vmce.6`. Push `feature/vmce` only after the screenshot review
   manifest is accepted; no formal Release.
-- Fix order: **B13 → B12** (B03 implemented; failure capture remains). Release gate: VMCE `2p-retry` now passes with a genuine
+- Fix order: **B12** next (B03 and B13 implemented; their real-LAN checks remain). Release gate: VMCE `2p-retry` now passes with a genuine
   capture (BC6 page, guest votes, host retries, same stage, 300 equal checksums); `2p-win` and
   `4p-win` remain. Three-player, disconnect and RTL checks are not blocking.
 - B01 is accepted: genuine VMCE 2p-retry receipt and identical host/guest live-table stats pass.
@@ -143,8 +143,11 @@ recorded here for residuals only.
 - **B12 Observer seats reset to Random on map/mode change;** VMCE start rejects "observer has a
   player role" and the UI cannot restore Observer, so the room can be stuck. Decision: disable
   observer seats in VMCE and reject the observer role, instead of fixing seat restore.
-- **B13 Guest role changes are not republished to 3rd/4th guests** on LAN (WOL path does).
-  Decision: fix the LAN republish so 3rd/4th guests receive the change.
+- **B13 Guest role changes were not republished to 3rd/4th guests — implemented.** The LAN
+  choice owner now marks a changed VMCE role as an options change, so the existing full setup
+  publish carries it by seat; repeated unchanged roles do not republish. The four-player,
+  local-first projection is covered by a focused test. A real four-process role-change capture
+  remains outstanding.
 - **B14 Invalid-campaign modal is near-unreachable** (discovery filters the series first) and
   keyed on localized string equality; lobby status classifier matches English substrings.
 - **B15 Host does not re-read its own campaign.ini** between start publish and frozen commit

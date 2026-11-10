@@ -2158,23 +2158,12 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                 choices.team = crate::skirmish_launch::LaunchTeam::from_shell_value(values[3]);
                 let role = (values.len() >= 5 && launch.mode.class.is_vmce())
                     .then(|| crate::skirmish_launch::LaunchHumanRole::from_native(values[4]));
-                if let Some(role) = role {
-                    state
-                        .match_state
-                        .session
-                        .validate_network_vmce_role(source, role)?;
-                }
                 let change = state.match_state.session.accept_lan_peer_choices(
                     source,
                     choices,
                     values[0] == -3,
+                    role,
                 )?;
-                if let Some(role) = role {
-                    state
-                        .match_state
-                        .session
-                        .set_network_vmce_role(source, role)?;
-                }
                 // A VERA room's guest who starts or stops watching changes
                 // rows: the roster, then the options, as WOL's R arm.
                 let mut deferred = Vec::new();
