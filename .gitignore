@@ -47,6 +47,9 @@ Thumbs.db
 !/docs/ares-country-presentation.md
 !/docs/ares-country-paradrop.md
 !/docs/ares-country-powerplants.md
+!/docs/vmce.md
+!/docs/vmce-guide.md
+!/docs/vmce-backlog.md
 !/docs/vmce-baseline.md
 !/docs/phobos.md
 !/docs/phobos-custom-radiation.md
@@ -92,7 +95,6 @@ Thumbs.db
 !/docs/_config.yml
 !/docs/index.md
 !/docs/Networking.md
-!/docs/veramultiplayer-campaign-expansion.md
 !/docs/ares-unit-delivery.md
 !/docs/ares-superweapon-building-gates.md
 !/docs/ares-superweapon-money.md

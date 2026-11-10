@@ -11,7 +11,7 @@ play a cooperative campaign described by an external `campaign.ini`, on top of t
 the Cargo feature `vmce`.
 
 This page is the player and map-author guide. The Chinese version is
-[zh-CN/veramultiplayer-campaign-expansion.md](zh-CN/veramultiplayer-campaign-expansion.md).
+[zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
 ## Relation to the original
 
@@ -172,25 +172,29 @@ The result state, Continue and retry semantics belong to VMCE.
 - Victory/campaign-end `0x103`: par time, your time, rank and commendation stay native; the
   top report's destroyed-enemies label/value are hidden and the native panel keeps its height.
   The page shows a `玩家 | 所属方 | 国家 | 结果 | 准备` board for up to four roles with the
-  lobby player name, map House name and role House colour (all text on a dark strip), plus a
-  vertical `统计数据` tab below the rank box.
-- The `统计数据` tab opens a full-screen page over the same background: total and par time in
-  the header, then four rows and six columns `玩家 | 击毁 | 损失 | 建造 | 得分 | 收入`. Income is
-  gross credits earned (positive credit gains only; no spent/net), a display-only statistic.
-  The same tab or the bottom `返回` button closes it. The page is victory/campaign-end only.
+  lobby player name, map House name and role House colour (no row backdrop strips).
+- Right panel: row one host `继续` / guest `准备`, row two `统计数据`, bottom `离开房间`.
+  Guest Ready stays one-shot; host Continue requires every connected guest ready/ready-voted.
+- The `统计数据` button opens a full-screen page over the BC6-style background: total and par
+  time in the header, then four role rows and six columns `玩家 | 击毁 | 损失 | 建造 | 分数 |
+  收入`. Income is gross credits earned (positive credit gains only; no spent/net), a
+  display-only statistic. The statistics page's right panel has only a normal bottom `返回`;
+  there is no left tab, no bottom Leave and no other button. The page is victory/campaign-end
+  only; the defeat BC6 page is itself the statistics view.
 - Victory with a next mission: a guest's Continue is its ready action; after every connected
   guest is ready only the host's Continue starts the next mission.
 - Campaign end (`EndOfGame=yes`): the same all-ready gate; every peer plays the campaign
   completion locally and returns to the main menu. There is no 30 s forced start or host pull:
   an unready guest stalls the page, and the only exit is Leave Room.
 - Defeat: the page is the native BC6 cooperative result dialog, opened as the statistics view
-  itself (four rows `Player / Kills / Losses / Built / Score`, chat hidden, no Ready column and
-  no separate stats entry). Each guest's `重试` click casts one retry vote and immediately lights
-  the native button; the host's `重试` starts disabled and lights only after every online guest
-  voted, then restarts the same frozen stage with the same seed, roles and map — no timeout and
-  no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
-  Retry loading code is fixed (B01), but the real VMCE 2p-retry acceptance capture is still
-  blocked in the headless harness, so the acceptance remains open.
+  itself (time header plus the shared six-column table `Player / Kills / Losses / Built / Score /
+  Income`; rows match admitted players only — 2p shows 2, 4p shows 4 — with lobby names, and
+  chat/Ready/stats entry hidden). Each guest's `重试` click casts one retry vote and immediately
+  lights the native button; the host's `重试` starts disabled and lights only after every online
+  guest voted, then restarts the same frozen stage with the same seed, roles and map — no timeout
+  and no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
+  The genuine VMCE 2p-retry capture passes: both peers vote, the host retries, both reload the
+  same VMCE stage, 300 native checksums match, and host/guest table stats are identical.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).
@@ -306,15 +310,16 @@ real-process captures:
   lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
   the next mission on every peer. Three players are not run separately; they share the same
   roster and round path.
-- `EndOfGame` campaign completion and defeat retry have production code and focused unit
-  tests; their real dual-process `2p-final`/`2p-retry` captures are not recorded yet, and
-  retry loading is still a release blocker (B01), and a real 2p-retry capture (vote → reopen)
-  is part of the release gate with 2p-win and 4p-win. There are no result-page timers anywhere:
-  defeat uses the vote gate and campaign end the all-ready gate (B02 cancelled). The release
-  version after the UI batch is `0.2.9-vmce.5`.
+- `EndOfGame` campaign completion has production code and focused unit tests; its real
+  dual-process `2p-final` capture is not recorded yet. Defeat retry is accepted: the genuine
+  VMCE `2p-retry` capture (VMCE checkpoints, BC6 page, guest votes → host retry → same stage,
+  300 equal checksums) passes, with identical host/guest live-table stats. `2p-win` and
+  `4p-win` remain the other release gates. There are no result-page timers anywhere: defeat
+  uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version
+  `0.2.9-vmce.6` is the current fork release.
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
-  five-column result board and the statistics tab/page, and the defeat page is BC6. HUD and
-  loading/transition UI are deferred.
+  five-column result board, the right-panel statistics button/page, and the BC6 defeat page.
+  HUD and loading/transition UI are deferred.
 - i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that

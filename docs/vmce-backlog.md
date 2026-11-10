@@ -66,13 +66,11 @@ recorded here for residuals only.
 
 - Version after the B01 fix: `0.2.9-vmce.6`. Push `feature/vmce` only after the screenshot review
   manifest is accepted; no formal Release.
-- Fix order: **finish VMCE 2p-retry capture → B03 → B13 → B12**. Release gate: a real VMCE
-  `2p-retry` capture (VMCE BC6 four-row page, guest votes, host retries, same stage, 300 equal
-  checksums) is still open; `2p-win` and `4p-win` remain. Three-player, disconnect and RTL
-  checks are not blocking.
-  campaign end is the all-ready gate. One unready guest stalls the page; the only exit is Leave Room.
-- B01 code is fixed (retry reopens the same frozen map/seed/roles/Houses), but its real VMCE
-  `2p-retry` acceptance capture is blocked in the headless harness and B01 stays open until it passes.
+- Fix order: **B03 → B13 → B12**. Release gate: VMCE `2p-retry` now passes with a genuine
+  capture (BC6 page, guest votes, host retries, same stage, 300 equal checksums); `2p-win` and
+  `4p-win` remain. Three-player, disconnect and RTL checks are not blocking.
+- B01 is accepted: genuine VMCE 2p-retry receipt and identical host/guest live-table stats pass.
+
 - B03: a failed setup apply aborts clearly with rollback/error reporting; no automatic retry.
 - B04: closed by B26 — the BC6 defeat page no longer paints the old `0x103` ready gate.
 - B05: validate every `campaign.ini` stage at host map pick, not only `Entry`.
@@ -90,31 +88,26 @@ recorded here for residuals only.
 
 ## S1 — release blockers
 
-- **B01 Retry never restarts 鈥?completed (`c1dd00f83`, `21f71ea58`).** Retry freeze rebuilt a
-  `PreparedNetworkStartup` without the admitted map config/source/digest, so the loader aborted
-  and both peers fell back to the lobby. `freeze_cooperative_round` now captures the previous
-  frozen startup's identity before mutating network state and rebuilds with the same
-  `vmce_map_config`/`local_map_source`/effective digest, seed, difficulty, roles/countries/colours
-  and House assignments; no next-stage resolution, re-randomisation or `campaign.ini` re-read.
-  Any retry load failure on either peer now sends a VERA-only `0x3A` reason (missing map, config
-  mismatch, identity mismatch, load failure), shows one native blocking box in the current
-  language on both peers, and returns both to the LAN lobby; the transport is retired after the
-  send. The B26 all-online-guest vote gate is unchanged (no timeout, host never votes, a leaving
-  guest's vote clears, duplicate clicks are safe). Tests: frozen-identity inheritance with the
-  network fields deliberately cleared after the votes, reason classification, wire round-trip,
-  and the existing vote-gate tests. Real VMCE `2p-retry` capture passes (`.scratch/vmce-retry`, commit
-  `8f03b60ca`): both peers reach the VMCE BC6 page, the host gates on the guest vote, begin/options
-  and ack complete, Go starts the retry, both load the same `VMCE/LDA-Lose/stage01/all01umd.map`, and
-  both receipts carry the retried-stage evidence and 300 identical native checksums. Residual: the 800
-  result screenshot still paints the BC6 board area black (only Retry/Leave Room show), so the
-  Live-table fixes (`1adbc7863`): one row per admitted player (2p=2, 4p=4) with lobby names,
-  bare HH:MM:SS times with the label drawn once, and 收入/all six headers localized in zh-CN.
-  Regenerated host/guest 800 screenshots under `.scratch/vmce-retry`; receipt/checksums unchanged.
-  each guest's click is one vote and lights its button; the host's Retry stays disabled until every online guest
-  voted and then starts, with no timeout; the host never votes. Campaign end uses the existing all-ready gate:
-  guests press Ready and the host's Continue starts only when every connected guest is ready; there is no 30 s
-  forced start or host pull. One unready guest stalls the page, and the only exit is Leave Room.
-  Retry loading code is fixed; its real VMCE `2p-retry` capture is still blocked (see B01).
+- **B01 Retry never restarts — completed (`c1dd00f83`, `21f71ea58`, `8f03b60ca`, `fac77ce6d`, `1adbc7863`, `60faac2de`).**
+  The retry freeze rebuilt a `PreparedNetworkStartup` without the admitted map config/source/digest,
+  so the loader aborted and both peers fell back to the lobby. `freeze_cooperative_round` now
+  captures the previous frozen startup's identity before mutating network state and rebuilds with
+  the same `vmce_map_config`/`local_map_source`/effective digest, seed, difficulty,
+  roles/countries/colours and House assignments; no next-stage resolution, re-randomisation or
+  `campaign.ini` re-read. Any retry load failure on either peer now sends a VERA-only `0x3A`
+  reason (missing map, config mismatch, identity mismatch, load failure), shows one native
+  blocking box in the current language on both peers, and returns both to the LAN lobby. The B26
+  all-online-guest vote gate is unchanged (no timeout, host never votes, a leaving guest's vote
+  clears, duplicate clicks are safe). The live BC6 statistics table now matches admitted players
+  only (2p=2, 4p=4), uses lobby names, bare `HH:MM:SS` times, localized headers including `收入`,
+  and projects scores by canonical network source/House so host and guest show identical
+  per-player stats (host `LiveHost 16/26/90/7600`, guest `0/0/88/0` in the recorded run).
+  Genuine VMCE `2p-retry` capture passes (`.scratch/vmce-retry`, VMCE checkpoints): both peers
+  reach the BC6 page, the host gates on the guest vote, begin/options and ack complete, Go starts
+  the retry, both load the same `VMCE/LDA-Lose/stage01/all01umd.map`, and both receipts carry the
+  retried-stage evidence and 300 identical native checksums. Residuals: no 4p-retry real capture;
+  the two-peer load-failure modal/lobby path has unit coverage only.
+
 
 ## S2 — correctness / claims
 

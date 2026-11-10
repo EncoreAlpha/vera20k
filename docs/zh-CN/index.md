@@ -45,7 +45,7 @@ lang: zh-CN
 
 ## 游戏模式
 
-- [VERA Multiplayer Campaign Expansion 说明书](veramultiplayer-campaign-expansion.md)
+- [VERA Multiplayer Campaign Expansion 说明书](vmce.md)
 
 ## 扩展与原作者
 
