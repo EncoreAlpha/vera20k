@@ -80,6 +80,34 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   and AI takeover remain open.
 - **B02:** result-page timers and forced pulls were cancelled; do not introduce them.
 
+## Lobby UI review residuals (B37–B41)
+
+Static review of the VMCE lobby increment (the 53 commits since the upstream merge) found the
+following unfinished items; none blocks play today.
+
+- **B37 — scaled ellipsize:** the owner board's country text passes the screen rect width to
+  `ellipsize_native`, which compares it against the font's native pixel width. At shell scales
+  other than 1 a country name that needs shortening is clipped mid-glyph (scale > 1) or shortened
+  unnecessarily (scale < 1); 800×600 hides it. Use the authored width (`scale.base_rect(...).w`)
+  as the result page and the status strip already do, and add a boundary test at 1920×1080 and
+  640×480.
+- **B38 — vacancy rows:** with fewer players than authored roles the board leaves the unclaimed
+  rows without the localized "Waiting" text (only a disabled swatch) while the headers still
+  promise country/ready/color. Decide whether to label vacancies or shrink the board to the
+  claimed roles.
+- **B39 — lobby dead code:** `layout.flags[row]` is assigned for VMCE but row icons are skipped
+  for VMCE, so the rect and its "no stale native flag" comment are dead; `VmceLobbyRole.role` is
+  no longer painted after the role column was removed; `sidebar.fill` uses a literal 14 instead
+  of `SIDEBAR_TOP + INNER_PAD`, and the `ROW_PAD` comment says 2 px while the value is 1.
+- **B40 — map-details cache dependency:** `vmce_map_details` runs inside the per-frame setup view
+  and parses the map INI on a cache miss; the cache exists only while `network_setup_protocol` is
+  present, so protocol-less diagnostic frames can re-parse it every frame. Move the cache to an
+  always-present owner or add a frame-time guard.
+- **B41 — synthetic catalog record:** `open_vmce_intermission` pushes a scenario record when the
+  next stage is not found; the lookup ignores the series directory and the push bypasses the
+  catalog owner, so a repeated open could duplicate the record. Deduplicate by
+  `(series directory, map file)` or move the ensure-stage responsibility into the catalog owner.
+
 ## Completed work and limits
 
 - **B33 — per-player outcomes and in-mission participation:** implemented. Locked decisions: a
