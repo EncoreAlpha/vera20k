@@ -527,8 +527,10 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         visible_limit
     };
     // No AI plays in a VERA room while anyone watches (`0x5EC9F0`'s
-    // TXT_NO_AI_WITH_OBSERVER).
+    // TXT_NO_AI_WITH_OBSERVER). VMCE rooms list no AI option either: a lone
+    // host starts the campaign alone, and the status line says so.
     let watched = several && launch.humans.iter().any(|human| human.is_observer());
+    let ai_allowed = !watched && mode.class.lists_in_skirmish();
     let seats = 0..visible_limit.min(crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT) as u8;
     let removed = |row: &u8| session.network_vacancy(*row) == Some(NetworkVacancy::Closed);
     let add_slot = (several && host)
@@ -536,10 +538,6 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         .flatten();
     // The host keeps at least two seats.
     let may_remove = seats.filter(|row| !removed(row)).count() > 2;
-    // Battle/FreeForAll list in Skirmish and allow AI rows. VMCE shares the
-    // same host seat editor for solo testing: an AI row may fill an Open seat
-    // without becoming a network participant or taking a campaign role.
-    let ai_allowed = !watched && (mode.class.lists_in_skirmish() || mode.class.is_vmce());
     let mut listed = Vec::new();
     if several {
         let rows = 0..crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT as u8;

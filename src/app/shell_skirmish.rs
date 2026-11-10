@@ -1317,6 +1317,15 @@ impl App {
             })
             .map(|key| Self::localized_status_help_text(state, key))
             .unwrap_or_default();
+        // A VMCE lobby with nothing hovered explains that a lone host may
+        // start: the other authored roles do not need players.
+        let text = if text.is_empty() {
+            crate::app::shell_network_setup::vmce_solo_hint_key(state)
+                .map(crate::i18n::tr)
+                .unwrap_or_default()
+        } else {
+            text
+        };
         let text =
             if target == Some(crate::ui::skirmish_shell::SkirmishHoverTarget::MapPreview0x468) {
                 crate::app::frontend::preview_zoom::box_help(state, text)

@@ -1460,6 +1460,7 @@ mod tests {
             "VERA:VmceOwner",
             "VERA:VmceRoleColumn",
             "VERA:VmceStartMission",
+            "VERA:VmceSoloHint",
             "VERA:VmceStatusMapMismatch",
             "VERA:VmceStatusMissingMap",
             "VERA:VmceStatusRoleConflict",

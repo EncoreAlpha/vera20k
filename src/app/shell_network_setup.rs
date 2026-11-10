@@ -1074,8 +1074,34 @@ fn show_setup_dialog(state: &mut AppState, dialog: SetupDialog, quick_match: boo
     state.frontend.skirmish_shell_state.choose_map_modal = None;
     state.frontend.skirmish_preview_texture = None;
     shell_transition::invalidate_main_menu_dialog_instance(state);
+    // A VMCE lobby tells a lone host that the other authored roles need no
+    // players: the status line carries that hint until a control is hovered.
+    #[cfg(feature = "vmce")]
+    if let Some(key) = vmce_solo_hint_key(state) {
+        crate::ui::skirmish_shell::set_status_help_text(
+            &mut state.frontend.skirmish_shell_state,
+            crate::i18n::tr(key),
+        );
+    }
     state.platform.window.request_redraw();
     true
+}
+
+/// The status-line hint for a VMCE lobby without a hovered control: a lone host
+/// can start the campaign; the map's other primary roles stay unclaimed.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_solo_hint_key(state: &AppState) -> Option<&'static str> {
+    state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vmce())
+        .then_some("VERA:VmceSoloHint")
+}
+
+#[cfg(not(feature = "vmce"))]
+pub(crate) fn vmce_solo_hint_key(_state: &AppState) -> Option<&'static str> {
+    None
 }
 
 /// Reopen the existing LAN participants on the fixed next campaign stage.

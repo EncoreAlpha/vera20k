@@ -387,6 +387,8 @@ real-process captures:
 - The lobby lists only the selected map's actual primary roles: the player rows, Ready/colour
   slots, the role board and the host's room limit all follow that count (2–4), so a three-role map
   shows three seats instead of four.
+- VMCE rooms list no AI seat option: the authored primary roles are for human players. A lone
+  host can start the campaign without filling the other roles, and the status line says so.
 - i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that
