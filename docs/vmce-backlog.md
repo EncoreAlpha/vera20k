@@ -80,7 +80,7 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   and AI takeover remain open.
 - **B02:** result-page timers and forced pulls were cancelled; do not introduce them.
 
-## Lobby UI review residuals (B37–B48)
+## Lobby UI review residuals (B37–B56)
 
 Static review of the VMCE lobby increment (the 53 commits since the upstream merge) found the
 following unfinished items; none blocks play today.
@@ -137,6 +137,37 @@ following unfinished items; none blocks play today.
   Players/Owner labels (labels top-aligned at y 11, headers V-centred at y 14); the country column is
   only 114 px. Rebalance the widths (Ready about 40–48 px, country about 170 px or more), align the
   baselines and keep the native colour anchor.
+
+- **B49 — combo chrome:** the player-name and owner combos are 96 and 80 px wide, widths that the
+  native combo-face table does not provide (it maps exact widths 249/207/180/150/151/118/117/42/39/38/
+  213/44 and returns `None` otherwise), so the two primary controls paint as a custom flat field with
+  a gold hairline and no native face; their open/pressed/disabled states change only the arrow and
+  text. Give 96/80 a native-style two-pixel bevel or a stretchable face, or move to native face
+  widths while reflowing the board.
+- **B50 — palette:** the same screen carries four unrelated blacks (board/status `[16,16,25]`, combo
+  fields `[0.055,0.025,0.025]`, empty swatches `[0.10,0.10,0.10]`), a gold accent on combo and
+  swatch outlines, the native grey-blue list-frame tones and pure yellow text. Define one VMCE palette
+  (base, raised field, bevel, disabled, warning) sampled from the native dialog art and centralize the
+  constants; keep the accent for selection/warning only.
+- **B51 — display-only affordance:** the board uses the native list frame, yellow values and the same
+  text size as the editable combos but has no hover, focus or selection state, so it reads as an
+  interactive list. Use a dimmer value tone or a small caption to mark it read-only, or make a cell
+  genuinely interactive.
+- **B52 — briefing framing:** the mission briefing is the only full-width block without a panel
+  (`x=74, w=558`, plain text), giving lines of about 90 characters under two framed panels. Frame it
+  like the board or constrain it to the board column with a reading measure of about 450–500 px.
+- **B53 — warning emphasis:** the inline status line uses the same yellow and size as ordinary labels,
+  so the only "room cannot start" explanation does not stand out. Use a warmer warning colour or an
+  icon for errors and a neutral style while a check is in progress.
+- **B54 — layout stability:** showing or hiding the status strip switches the briefing box between
+  118 and 64 px and moves the text below it, including when a background series scan completes.
+  Reserve the strip area always, or merge the status into the board footer, so the reading position
+  does not jump.
+- **B55 — empty-role contrast:** an unclaimed row's swatch (`[0.10,0.10,0.10]` on a `[16,16,25]`-based
+  fill) is about 1.1:1 contrast, so with no country/ready text the row looks like missing rendering.
+  Use a muted but visible tone or a hatch/dashed outline for vacancy, together with B38.
+- **B56 — ellipsis style:** `ellipsize_native` appends `..`, while the enlarged-preview briefing uses
+  `...`; one lobby shows both cut markers. Unify through one helper (prefer `...`) with a test.
 
 ## Completed work and limits
 
