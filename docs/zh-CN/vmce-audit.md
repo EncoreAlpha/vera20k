@@ -36,7 +36,7 @@ lang: zh-CN
 ### A04 相同国家的不同角色仍可开局 — P2，关联 B59
 
 - **触发与影响：** 两个不同主 House 使用同一 `Country` 时，当前角色校验仍可通过。按国家索引的胜利触发器会解析首个匹配 House，地图不能按约定明确区分玩家。即使玩家之间国家唯一，若先登记的 AI House 与玩家同国却互为敌人，[胜利判定](../../src/sim/world/house_defeat.rs#L933)也可能以该 AI 为胜方而把同国玩家判负；该 AI 场景尚未实机复现。
-- **依据：** [角色绑定](../../src/app/match_bootstrap.rs#L425)只检查 House 存在及角色不重复；[国家查找](../../src/sim/world/mod.rs#L6330)按登记顺序返回首个匹配项。普通原版动作按本地玩家国家直接比较，VMCE 又按首个 House 的联盟扩展胜方。大厅虽有国家冲突提示，但展示逻辑不是开局校验的权威所有者。
+- **依据：** [角色绑定](../../src/app/match_bootstrap.rs#L426)只检查 House 存在及角色不重复；[国家查找](../../src/sim/world/mod.rs#L6330)按登记顺序返回首个匹配项。普通原版动作按本地玩家国家直接比较，VMCE 又按首个 House 的联盟扩展胜方。大厅虽有国家冲突提示，但展示逻辑不是开局校验的权威所有者。
 - **方案：** 在共享的角色解析/开局校验中，根据生效规则解析各主 House 的国家身份并拒绝玩家角色间重复；提示冲突角色和国家。另明确玩家与 AI 同国时胜方及联盟的歧义，在有证据支持前不要笼统禁止所有 AI 同国，也不能仅检查玩家角色就认为问题解决。保持国家索引和默认值的现有所有者。
 - **验收：** 两个不同主 House 同国的地图不能 Ready/开局；不同国家可开局；覆盖大小写、默认国家和随机角色。另覆盖 AI 先于玩家、玩家先于 AI、同国多 AI 及不同联盟关系，核对原版本国胜利与 VMCE 盟友扩展的约定，确保所有端结论一致。
 
@@ -99,7 +99,7 @@ lang: zh-CN
 ### A20 任务中替换地图可能让结果页失去 VMCE 控件 — P2，关联 B72
 
 - **触发与影响：** 任务开始后本地已加载地图文件被覆盖或替换、但战役清单和下一关未变化时，胜利结果页可能无法构建角色板，退回普通计分页外观，缺少玩家胜负、准备和离开房间等 VMCE 控件。
-- **依据：** [结果板](../../src/app/vmce_result.rs#L205)依赖当前角色元数据；[元数据投影](../../src/app/shell_network_setup/view.rs#L118)从磁盘重读已完成关卡并要求与冻结配置的源摘要匹配；[结果页](../../src/app/vmce_result.rs#L400)把可能为空的结果板交给界面。此时已加载的模拟状态和磁盘文件可能不同。
+- **依据：** [结果板](../../src/app/vmce_result.rs#L205)依赖当前角色元数据；[元数据投影](../../src/app/shell_network_setup/view.rs#L118)从磁盘重读已完成关卡并要求与冻结配置的源摘要匹配；[结果页](../../src/app/vmce_result.rs#L401)把可能为空的结果板交给界面。此时已加载的模拟状态和磁盘文件可能不同。
 - **方案：** 从开局冻结的角色、所属方、国家和颜色数据建立结算投影，保持运行中任务的数据一致；若需要拒绝文件变化，应明确提示并走可靠的全员退出路径，不应静默退回普通页面。
 - **验收：** 任务运行时仅替换当前地图，然后让地图正常触发胜利；确认各端结果页和操作仍正确，或各端得到明确失败并可靠返回。覆盖地图缺失及文件替换。
 
@@ -113,7 +113,7 @@ lang: zh-CN
 ### A24 重试加载失败消息缺少来源和加载尝试校验 — P1，关联 B76
 
 - **触发与影响：** 在 LAN 的 Prepared 网络加载阶段，接收端若收到格式正确的 VMCE 重试失败消息，就可能中止当前加载并返回大厅；接收代码没有确认发送者属于当前任务，也没有确认当前加载是对应的 VMCE 重试。普通 LAN 加载也可到达此阶段。传输 Active 阶段对未经封装的非进度包还有额外过滤，不能笼统推断所有加载阶段都能注入；实际发包和旧包到达条件仍需实测。
-- **依据：** [消息接收](../../src/app/lan_service.rs#L1918)只检查 LAN 会话后调用处理函数；[失败处理](../../src/app/loading/pump.rs#L3429)对活动网络加载执行失败退出；[报文解码](../../src/net/lan_messages/cooperative.rs#L366)不携带加载尝试身份。[准备阶段传输](../../src/net/udp.rs#L2005)接纳全局消息，作用域[不是认证](../../src/net/udp.rs#L1172)。
+- **依据：** [消息接收](../../src/app/lan_service.rs#L1919)只检查 LAN 会话后调用处理函数；[失败处理](../../src/app/loading/pump.rs#L3429)对活动网络加载执行失败退出；[报文解码](../../src/net/lan_messages/cooperative.rs#L366)不携带加载尝试身份。[准备阶段传输](../../src/net/udp.rs#L2005)接纳全局消息，作用域[不是认证](../../src/net/udp.rs#L1172)。
 - **方案：** 复用既有会话/加载所有者，核实发送者属于本次已接纳的在线参战者，并将失败通知绑定活动的 VMCE 重试加载尝试；忽略不匹配的来源、阶段和过期通知，保留合法失败时全员退出的行为。
 - **验收：** 分别向 VMCE 重试加载发送合法失败、非参战端来源及旧尝试通知，确认仅合法通知使各端退出；覆盖普通 LAN 加载和传输阶段边界。此项为静态追踪，尚未做发包复现。
 
@@ -134,7 +134,7 @@ lang: zh-CN
 ### A29 反斜杠清单路径在部分平台无法加载 — P2，关联 B81
 
 - **触发与影响：** 在 Linux/macOS，`Scenario1=Allied\01.map` 指向真实的 `Allied/01.map` 时，清单校验可通过，但目录扫描会按字面反斜杠查找文件，战役可能不显示；`NextScenario` 使用反斜杠时也可能在通关后加载失败。Windows 行为依赖其路径语义。
-- **依据：** [清单校验](../../src/app/shell_network_setup/vmce_map.rs#L743)先把反斜杠换成斜杠；[地图加载](../../src/app/shell_network_setup/vmce_map.rs#L510)却直接 `join(entry)`；[发现](../../src/app/shell_network_setup/vmce_map.rs#L456)和[下一关解析](../../src/app/shell_network_setup/vmce_map.rs#L303)都调用该加载器。
+- **依据：** [清单校验](../../src/app/shell_network_setup/vmce_map.rs#L748)先把反斜杠换成斜杠；[地图加载](../../src/app/shell_network_setup/vmce_map.rs#L519)却直接 `join(entry)`；[发现](../../src/app/shell_network_setup/vmce_map.rs#L456)和[下一关解析](../../src/app/shell_network_setup/vmce_map.rs#L303)都调用该加载器。
 - **方案：** 让清单校验、发现、加载及目录身份使用同一跨平台路径规范化所有者，并保留 canonicalize 防逃逸检查。
 - **验收：** Linux/macOS 和 Windows 分别覆盖包含子目录的入口、ScenarioN 和下一关的两种分隔符，检查准入及切关结果一致，并拒绝路径逃逸。静态追踪，尚未跨平台运行。
 
@@ -162,7 +162,7 @@ lang: zh-CN
 ### A33 非 ASCII 地图文件名无法按原名解析 — P2，关联 B85
 
 - **触发与影响：** `campaign.ini` 用 UTF-8 写入 `Scenario1=第一关.map`，磁盘上也是该文件名时，解析结果可能变成逐字节扩展后的乱码路径，导致战役发现失败。系列目录名由操作系统单独读取，不应与清单里的地图文件名混为一谈。
-- **依据：** [VMCE 外部配置读取](../../src/rules/ini_parser.rs#L514)使用[逐字节扩展](../../src/util/native_string.rs#L3)，而[清单路径校验](../../src/app/shell_network_setup/vmce_map.rs#L743)把所得字符串直接作为文件系统路径。
+- **依据：** [VMCE 外部配置读取](../../src/rules/ini_parser.rs#L514)使用[逐字节扩展](../../src/util/native_string.rs#L3)，而[清单路径校验](../../src/app/shell_network_setup/vmce_map.rs#L748)把所得字符串直接作为文件系统路径。
 - **方案：** 为 VMCE 自有配置定义明确的文本编码，并在文件路径与联机身份边界一致解码；不要改变零售游戏 INI 所需的原生字节语义。
 - **验收：** 用中英文文件名和子目录测试发现、房客整套校验、下一关与 UTF-8 报文字节边界；同时覆盖旧 ASCII 战役兼容性。静态追踪，尚未实机复现。
 
@@ -192,14 +192,14 @@ lang: zh-CN
 ### A07 回到房间后随机玩家在角色板中消失 — P2，关联 B43
 
 - **触发与影响：** 切换到下一关房间时所有人重置为随机角色，右侧角色板可能全显示等待，甚至看不到已准备玩家的状态；实际参战者仍在左侧玩家列表。
-- **依据：** [关间重置](../../src/app/match_runtime/session/cooperative_round.rs#L571)将角色设为 `-2`；[角色板](../../src/app/shell_network_setup/view.rs#L395)只查找具体索引 `0..3`。
+- **依据：** [关间重置](../../src/app/match_runtime/session/cooperative_round.rs#L574)将角色设为 `-2`；[角色板](../../src/app/shell_network_setup/view.rs#L395)只查找具体索引 `0..3`。
 - **方案：** 用独立的随机玩家列表或包含姓名和准备状态的汇总呈现；不要为显示而提前抽取或锁定随机角色。
 - **验收：** 两至四人全部随机、部分随机及角色更换后，房主和客人都能看到所有玩家与准备状态；开局时仍只分配未占角色。
 
 ### A08 人数超过下一关角色数时界面重叠 — P2，关联 B60
 
 - **触发与影响：** 例如四人进入只有两个角色的下一关，真实玩家行仍保留，但简报和状态区域按角色数布局，可能与额外玩家行重叠，妨碍识别和操作。
-- **依据：** [列表投影](../../src/app/shell_network_setup/view.rs#L541)保留超出角色数的真实玩家；[布局](../../src/ui/coop_lobby.rs#L112)按玩家行绘制控件，但简报起点按 `role_count` 计算；[布局调用](../../src/app/input/multiplayer_setup.rs#L46)也按角色数传入。
+- **依据：** [列表投影](../../src/app/shell_network_setup/view.rs#L541)保留超出角色数的真实玩家；[布局](../../src/ui/coop_lobby.rs#L112)按玩家行绘制控件，但简报起点按 `role_count` 计算；[布局调用](../../src/app/input/multiplayer_setup.rs#L50)也按角色数传入。
 - **方案：** 玩家列表区域按实际可见人数与角色数中的较大值预留空间，或使用独立滚动区域；保持房间，不自动创建观察者或踢人。
 - **验收：** 实际采集四人转两角色、三人转一角色及不同缩放，检查所有玩家、离开/移除操作、提示和简报不重叠；人数降至限制内后可以开始。
 
@@ -262,7 +262,7 @@ lang: zh-CN
 ### A28 任务退出框仍可能提供 Observe — P1，关联 B80
 
 - **触发与影响：** 多名玩家的主 House 各不相同时，任务内退出确认框可能出现 Observe，违背 VMCE 不需要观察者的要求。点击后不是正常离房：它排队本方 `DESTRUCT` 并留在任务中；而 VMCE 抑制通常的空 House 败北处理，因此还可能让菜单闸门不能按普通多人路径重新打开。具体表现尚需运行验证。
-- **依据：** [确认框选择](../../src/app/input/abort.rs#L29)按通用网络模式与存活 House 数提供 Observe，仅对共享同一主 House 的队友隐藏；[点击处理](../../src/app/in_game.rs#L533)排队自毁而不发送退出；[任务 House 处理](../../src/sim/world/house_defeat.rs#L245)对 VMCE 禁用普通空 House 败北门。[菜单准入](../../src/app/in_game.rs#L498)依赖本地败北标志重开清除的闸门。
+- **依据：** [确认框选择](../../src/app/input/abort.rs#L28)按通用网络模式与存活 House 数提供 Observe，仅对共享同一主 House 的队友隐藏；[点击处理](../../src/app/in_game.rs#L533)排队自毁而不发送退出；[任务 House 处理](../../src/sim/world/house_defeat.rs#L245)对 VMCE 禁用普通空 House 败北门。[菜单准入](../../src/app/in_game.rs#L498)依赖本地败北标志重开清除的闸门。
 - **方案：** 在退出确认框及对应执行入口的既有模式/动作所有者中明确排除 VMCE 的 Observe，保留普通 LAN 的原有行为；VMCE 使用正常离房，不能将玩家变为观察者或通过此入口意外自毁。
 - **验收：** 真实二至四人 VMCE 中打开退出框，覆盖主 House 存活、消灭及共享授权场景；确认不出现 Observe、离房路径正确。普通 LAN 仍保持原有选项。静态追踪，尚未实机复现。
 
@@ -294,3 +294,4 @@ lang: zh-CN
 - 仍须按 B36 做跨机器 2/3/4 人、关间新人加入和离开、混合胜负、地图动态外交、重生、文件不一致、丢包与完整片尾验证；原版时序和相同帧竞争仍需对应证据。不要把静态审查或本机测试当作完整验收。
 - 本轮用 `tools/native_inspect` 对零售 `gamemd.exe` 做指令级核对（A27）：`HouseClass::Update` 从 0x004F8440 开始，0x004F8448 `xor ebp,ebp`；0x004F85F7 比较全局 `GameMode` 0x00A8B238 与 0，非零跳 0x004F860B；仅 `GameMode==0` 时 0x004F85FF 才比较 House+0x27C>0 并跳过胜利路径；0x006E50A0 递减 +0x27C，0x006E50B1 起把 House+0x298 计时器设为 60 帧。该读取只证明文件字节与线性反汇编，不证明活动 YR 可达、运行期初值/重定位；A34–A38 为静态追踪。随后用 fast `asset extract` 提取零售 `MISSIONMD.INI` 的 24 个战役段与 `MISSION.INI` 的 26 个 ALL/SOV/TRN 段共 50 张地图，按 `src/map/actions.rs` 的 8 字段动作块解析 `[Actions]`，未发现动作 15（AllowWin）；`MAPS01/02.MIX` 的其余 `C*M*` 条目是多人地图，没有 `[Actions]`。因此零售战役内容不触发该门，A27 的实机对照需构造测试地图。
 - 本轮尝试用现有合成检查点 `vmce-defeat-guest-voted`/`vmce-result-host-victory-stats` 采集 A37/A38 的截图证据：在本机 VMCE settings 树上运行 fast `vera20k.exe --shell-capture ...`，两者都在渲染前失败（`VMCE defeat fixture needs authored role metadata`）。原因是 [大厅 fixture](../../src/app/shell_network_setup.rs#L1368) 把角色缓存放在 `game_config.paths.ra2_dir` 下，而 [vmce_map_details](../../src/app/shell_network_setup/view.rs#L135) 按 `settings_dir/Maps` 查找；未命中后的第二次地图加载在采集状态中取不到角色。该采集阻塞已记为 B91；A37/A38 仍只有静态依据。
+- 本轮逐条校验审查页的 129 个 `src/` 行引用：重新打开被引文件并核对所在行内容，修正 A04、A07、A20、A28、A29、A33 的偏移引用（角色绑定 #L426、关间重置 #L574、结果板 #L401、确认框选择 #L28、清单校验与地图加载 #L748/#L519、清单路径校验 #L748）。其余引用行的内容与说明一致。
