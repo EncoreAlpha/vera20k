@@ -115,6 +115,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   idle page or a silently stopped peer is never detected and the wait can last forever. Send the
   round keepalive and keep the existing silent-peer check running; see
   [audit A40](zh-CN/vmce-review.md).
+- **B95 — map cinematics in VMCE:** a map's `[Basic]` `Intro`/`Brief`/`Action`/`Win`/`Lose`/
+  `PostScore`/`PreMapSelect` movies play on the campaign-start and BC6 continuation paths, but VMCE
+  mission start, win/lose result and the next-stage handoff go straight to the result page or
+  `begin_loading`, so the films are skipped. Play them through the existing fullscreen-movie owner
+  on each local peer; see [audit A41](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery

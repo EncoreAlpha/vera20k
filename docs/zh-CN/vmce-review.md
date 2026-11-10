@@ -18,7 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 17 | 8 | 9 |
+| P3 | 18 | 9 | 9 |
+| 合计 | 52 | 41 | 11 |
 
 ## P1 — 优先修复
 
@@ -317,6 +318,13 @@ lang: zh-CN
 - **依据：** [BC6 保活未发送](../../src/app/cooperative_round.rs#L17)（RESIDUAL 注释，原生 0x0046EADD、20 s）；[LAN 服务在轮次阶段提前返回](../../src/app/lan_service.rs#L1778)，跳过 [announce](../../src/app/lan_service.rs#L1856)、[租约轮询](../../src/app/lan_service.rs#L1853) 和 [setup 保活](../../src/app/lan_service.rs#L877)。
 - **修正：** 在 VMCE/co-op 轮次打开期间复用现有保活所有者：周期性发送原生 0x0D（或等价保活）并继续运行租约/对端静默检查；检测到静默时提供可行动的提示并走既有的失败/离开路径，不能静默无限等待。
 - **验收：** 结果页保持打开超过保活/租约周期，抓包确认两端周期保活、租约不过期；暂停一端进程，另一端在有界时间内提示/退出而不是无限等待；正常 Ready、重试与关间 Go 流程不回归。
+
+### A41 · B95 VMCE 开局与关间继续不播放地图场景电影 — P3
+
+- **问题与影响：** 自定义 VMCE 系列若在地图 `[Basic]` 设置 `Intro`/`Brief`/`Action`/`Win`/`Lose`/`PostScore`/`PreMapSelect` 电影，原生战役开局与 BC6 续关路径会播放对应影片，而 VMCE 的关卡开始、胜利/失败结算和关间继续都直接进入结果页或 `begin_loading`，这些过场会被静默跳过。作者用电影承担叙事或关间转场时玩家看不到；不影响胜负、解锁、同步和校验和。
+- **依据：** [关间继续电影无所有权](../../src/app/cooperative_round.rs#L975)（RESIDUAL：Win/PostScore/PreMapSelect/Lose 及胜利后的 Intro/Brief/Action 无 owner）；[原生胜利电影入口](../../src/app/campaign_victory.rs#L49)只对 `CampaignScore`/`CampaignVictoryContinue` 返回 `basic.win`，[VMCE 结果目的地](../../src/app/match_runtime/scenario_exit.rs#L155)是 `CooperativeResult`，不经过该入口；[下一关加载](../../src/app/cooperative_round.rs#L1030)直接调用 `LoadingRequest::network`，没有电影阶段；战役开局的 [Intro/Brief 读取](../../src/app/shell_campaign.rs#L304)也未接入 VMCE 的加载路径。
+- **修正：** 复用现有 `fullscreen_movie` 所有权：关卡开始按 `Intro`（缺省 `Brief`）、胜利按 `Win → PostScore → PreMapSelect`、失败按 `Lose` 播放地图设置的电影，再进入现有结果页/继续流程；每端本地播放，保持输入锁和返回语义，不改变胜负判定、解锁时机与随机种子；未设置键时保持现状。
+- **验收：** 作者化两关系列分别为各键设置影片与留空；2p/4p 各端在开局、胜利、失败和关间继续的对应时点看到同一影片，并能返回正确页面；未设置时无额外停顿；300 个 checksum、结果一致性与解锁流程不回归。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 
