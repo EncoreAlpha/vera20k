@@ -629,11 +629,10 @@ impl VmceHouseAssignments {
         if !(0..=2).contains(&self.difficulty) {
             return Err("VMCE frozen difficulty is outside the lobby rows 0..=2".to_owned());
         }
-        let players = launch
-            .humans
-            .iter()
-            .filter(|human| !human.is_observer())
-            .collect::<Vec<_>>();
+        if launch.humans.iter().any(|human| human.is_observer()) {
+            return Err("VMCE does not admit observers".to_owned());
+        }
+        let players = &launch.humans;
         if players.len() != self.participants.len() {
             return Err("VMCE frozen assignment count differs from participants".to_owned());
         }

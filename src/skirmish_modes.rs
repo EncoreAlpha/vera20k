@@ -82,8 +82,9 @@ pub enum ModeStartEffect {
 
 impl MpModeClass {
     /// Active original vtable+BC:5C0FD0 for ordinary modes,5C4F00 for Coop.
+    /// VMCE is an authored four-player campaign and does not admit observers.
     pub const fn allows_observers(self) -> bool {
-        !matches!(self, Self::Cooperative)
+        !matches!(self, Self::Cooperative | Self::Vmce)
     }
 
     /// Active original vtable+4:5C4EE0 is true only for Cooperative.

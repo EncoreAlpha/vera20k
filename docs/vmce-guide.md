@@ -10,6 +10,12 @@ play a cooperative campaign described by an external `campaign.ini`, on top of t
 *Yuri's Revenge* assets. VMCE is not a runtime INI toggle: it is selected at compile time with
 the Cargo feature `vmce`.
 
+VMCE does not support observers. If a room already has observers, they must become
+players or leave before the host selects a VMCE campaign.
+
+The victory result board and its controls have a known state-projection issue (B32), including
+Random roles. The current automated win captures do not verify the settled board's usability.
+
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
@@ -33,11 +39,9 @@ VMCE takes another path:
 - Inside a mission, random crates and ShortGame follow campaign semantics, and the
   Special House auto-alliance and Secret Lab random assignment are skipped. The matching
   lobby switches are shown disabled for VMCE.
-- Victory and defeat use the same VMCE settlement page (the layout and input of the original
-  campaign score page `0x103`; the page state and Continue semantics belong to VMCE). A win
-  with a `NextScenario` lets every player Continue into the next mission; a defeat or the last
-  mission only acknowledges the page and returns to the lobby. VMCE does not write
-  `coopsave.ini` and saves no cross-mission progress.
+- Victory and campaign completion use the campaign score page `0x103`; defeat uses the BC6
+  statistics page. Guests ready for the next mission or vote to retry, and the host continues
+  after the corresponding gate opens. VMCE does not write `coopsave.ini` or save progress.
 
 VMCE does not change the original single-player campaign or ordinary skirmish rules. Those
 modes keep their original behavior and do not read the VMCE campaign format.
@@ -90,8 +94,9 @@ VMCE reads only `Maps/VMCE`. The old `Maps/VeraCampaign` and interim `Maps/Vmce`
 are not read; move each series directory under `Maps/VMCE/<series>/` once.
 
 Maps must be loose `.map` files, and one map cannot be listed by two series. LAN peers must
-install the same series directory, `campaign.ini`, series CSF and selected map bytes; VMCE
-never transfers files.
+install the same series directory, `campaign.ini` and selected map bytes; VMCE never transfers
+files. The optional series CSF is not checked for equality, so distribute the same file to keep
+labels consistent.
 
 ### Series display name from CSF
 
@@ -154,7 +159,8 @@ base and units, or spawn them with triggers. VMCE does not grant an MCV or const
 - Initial alliances and shared vision come from the map `[Houses] Allies=` graph. Put all role
   Houses into each other's `Allies=` lists.
 - Losing one role's primary House does not end the mission automatically. Victory and defeat
-  come from map trigger outcome actions.
+  come from map trigger outcome actions. The eliminated role can still receive defeat EVA,
+  full-map reveal or input restrictions while the mission continues (B06).
 - Cameras, EVA lines, text and input locks apply to every player. VMCE does not filter
   presentation or input locks per role.
 - Shroud reset (action 51) and radar interruption (action 139) are House-private. Write one
@@ -174,7 +180,9 @@ The result state, Continue and retry semantics belong to VMCE.
   The page shows a `玩家 | 所属方 | 国家 | 结果 | 准备` board for up to four roles with the
   lobby player name, map House name and role House colour (no row backdrop strips).
 - Right panel: row one host `继续` / guest `准备`, row two `统计数据`, bottom `离开房间`.
-  Guest Ready stays one-shot; host Continue requires every connected guest ready/ready-voted.
+  Guest Ready is one-shot; host Continue requires every connected guest ready. The current
+  board and button artwork can remain stale after Ready changes (B31); the round state still
+  enforces the gate.
 - The `统计数据` button opens a full-screen page over the BC6-style background: total and par
   time in the header, then four role rows and six columns `玩家 | 击毁 | 损失 | 建造 | 分数 |
   收入`. Income is gross credits earned (positive credit gains only; no spent/net), a
@@ -193,8 +201,10 @@ The result state, Continue and retry semantics belong to VMCE.
   lights the native button; the host's `重试` starts disabled and lights only after every online
   guest voted, then restarts the same frozen stage with the same seed, roles and map — no timeout
   and no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
-  The genuine VMCE 2p-retry capture passes: both peers vote, the host retries, both reload the
+  The genuine VMCE 2p-retry capture passes: the guest votes, the host retries, both reload the
   same VMCE stage, 300 native checksums match, and host/guest table stats are identical.
+  If player source order differs from seat order, defeat statistics can appear on the wrong
+  player row (B30).
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).
@@ -229,7 +239,7 @@ not implemented; see Current limitations.
 | `Player1..PlayerN` | House name | required | Must exist in the map `[Houses]` registry; role Houses must be distinct |
 | `NextScenario` | map path | empty | Next mission after victory; must be listed in `ScenarioCount`; ignored when `EndOfGame=yes` |
 | `AltNextScenario` | map path | empty | Validated but not executed yet |
-| `EndOfGame` | boolean | empty | `yes` makes this the campaign's last mission and wins over `NextScenario`; a stage with neither key is rejected at VMCE host setup |
+| `EndOfGame` | boolean | empty | `yes` makes this the campaign's last mission and wins over `NextScenario`; the Entry stage is checked at host setup, later stages at transition |
 
 `[Scenario:<map path>:<House name>]`:
 
@@ -286,11 +296,11 @@ After an upstream sync, see [VMCE fork baseline](vmce-baseline.md) for the
 merge/version/validation state. `tools/vmce_lan_acceptance.py` runs the
 real-process captures:
 
-- `--suite dev`: one short `2p-win` flow probe. It caps each capture at 120 s
+- `--suite dev`: one short `2p-retry` flow probe. It caps each capture at 120 s
   and stops as soon as either peer exits non-zero, so a development probe
   cannot idle for the release timeout.
-- `--suite fast|smoke|full`: the release scenarios (`4p-win`, `2p-win`) with
-  the full 300-frame checksum/hash comparison.
+- `--suite fast`: `4p-win`; `--suite smoke` and `--suite full`: `4p-win`,
+  `2p-win` and `2p-retry`, with the full 300-frame checksum comparison.
 - `VMCE_CAPTURE_TIMEOUT=<seconds>` overrides the per-capture cap (default
   300 s outside `dev`).
 - `compare` runs offline over receipts; the `run` command only launches the
@@ -302,19 +312,14 @@ real-process captures:
 - No in-mission save/load.
 - No AI takeover after a player disconnects; no mid-mission join or host migration.
 - No cross-mission money/role reselection or persistent progress.
-- The two-player LAN path has been exercised end-to-end with real dual-process captures:
-  win → next mission, defeat, last mission, shared-House no-auto-defeat, and a mismatched next
-  stage returning both peers to the lobby. After the upstream sync these receipts are a new
-  baseline; old captures are no longer comparable.
-- The four-player path has been exercised end-to-end with four real processes on one host:
-  lobby/role setup, a 300-frame checksum match, win → settlement with four rows → Continue →
-  the next mission on every peer. Three players are not run separately; they share the same
-  roster and round path.
+- The current build passed two- and four-process win → next mission captures with 300 matching
+  checksums. The capture drives the round directly and does not verify that its rendered result
+  board and controls are usable (B32). Three players have not been run separately; the
+  four-player capture does not exercise changing a guest's role after joining.
 - `EndOfGame` campaign completion has production code and focused unit tests; its real
-  dual-process `2p-final` capture is not recorded yet. Defeat retry is accepted: the genuine
-  VMCE `2p-retry` capture (VMCE checkpoints, BC6 page, guest votes → host retry → same stage,
-  300 equal checksums) passes, with identical host/guest live-table stats. `2p-win` and
-  `4p-win` remain the other release gates. There are no result-page timers anywhere: defeat
+  dual-process `2p-final` capture is not recorded yet. The current build's VMCE `2p-retry`
+  capture passed (BC6 page, guest votes → host retry → same stage, 300 matching checksums).
+  There are no result-page timers anywhere: defeat
   uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version
   `0.2.9-vmce.6` is the current fork release.
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the

@@ -2,7 +2,7 @@
 
 VMCE is VERA20K's optional LAN campaign expansion: up to four human players progress
 through an authored external campaign (`Maps/VMCE/<series>/`), with native campaign
-result pages and deterministic shared missions. It does not load the stock Cooperative
+result pages and deterministic shared missions. VMCE has no observer seats. It does not load the stock Cooperative
 campaign modes and does not read `Coopsave.ini`.
 
 ## Build
@@ -25,13 +25,13 @@ the same VMCE build.
 |---|---|
 | Lobby | Four roles, Owner/Ready/colour board, invalid-campaign blocking/inline errors |
 | Campaign flow | `NextScenario`, `EndOfGame`, external series directory, strict Entry-stage validation |
-| 4-player LAN | Real four-process acceptance: checksum match, four-row settlement, next mission on every peer |
-| Defeat retry | Guest vote → host retries the same frozen stage; genuine VMCE `2p-retry` capture passes |
+| LAN validation | Current build: two- and four-process win and next mission, 300 matching checksums |
+| Defeat retry | Current build: guest vote → host retries the same frozen stage, 300 matching checksums |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers |
 | i18n | English and zh-CN real; other shipped languages use English placeholders |
 
-Known gaps live in the [VMCE backlog](vmce-backlog.md): setup atomicity (B03), role-change
-sync (B13), observer seats (B12), later-stage validation (B05), HUD/loading UI (B20/B21),
+Known gaps live in the [VMCE backlog](vmce-backlog.md): later-stage validation (B05),
+real-LAN failure and role-change captures (B03/B13), HUD/loading UI (B20/B21),
 and the deferred `AltNextScenario`/`SkipMapSelect`/cross-mission money work (B23).
 
 ## Start here

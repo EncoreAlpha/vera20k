@@ -495,7 +495,8 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     // VERA's rooms list their seats, the map's players, whether taken or
     // Open, then the spectators. A seat the host removed (Closed) stays
     // hidden until the host's Add slot row, after the seats, opens it.
-    let several = session.network_several_observers() && observer_row.is_some();
+    let several =
+        session.network_several_observers() && (observer_row.is_some() || mode.class.is_vmce());
     let visible_limit = if several {
         usize::from(session.network_player_row_limit())
     } else {
@@ -698,7 +699,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                         swatch: None,
                     });
                 }
-                if observer_row == Some(usize::from(row)) {
+                if !mode.class.is_vmce() && observer_row == Some(usize::from(row)) {
                     players.push(SetupChoice {
                         value: 7,
                         text: label(state, "GUI:OpenObserver"),
@@ -775,7 +776,9 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         if !sides {
             countries.clear();
         }
-        if observer || switching && session.network_free_row(true).is_some() {
+        if !mode.class.is_vmce()
+            && (observer || switching && session.network_free_row(true).is_some())
+        {
             countries.push(SetupChoice {
                 value: -3,
                 text: label(state, "GUI:Observer"),

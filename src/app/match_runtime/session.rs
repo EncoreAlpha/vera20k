@@ -599,6 +599,15 @@ impl MatchSession {
             "network setup has no local participant"
         );
         anyhow::ensure!(
+            !launch.mode.class.is_vmce() || launch.humans.iter().all(|human| !human.is_observer()),
+            "VMCE does not admit observers"
+        );
+        let observer_row = if launch.mode.class.is_vmce() {
+            None
+        } else {
+            observer_row
+        };
+        anyhow::ensure!(
             launch.humans.len() + launch.opponents.len() <= NETWORK_PLAYER_SLOT_COUNT,
             "network setup exceeds the participant slots"
         );
@@ -796,6 +805,10 @@ impl MatchSession {
             anyhow::bail!("network setup is not editable");
         };
         anyhow::ensure!(
+            !launch.mode.class.is_vmce() || !human.is_observer(),
+            "VMCE does not admit observers"
+        );
+        anyhow::ensure!(
             launch.humans.len() + if host { launch.opponents.len() } else { 0 }
                 < NETWORK_PLAYER_SLOT_COUNT,
             "network setup has no free slot"
@@ -869,6 +882,13 @@ impl MatchSession {
         countries: Option<&[crate::skirmish_launch::LaunchCountry]>,
     ) -> anyhow::Result<PeerChoicesChange> {
         anyhow::ensure!(self.host, "only the host checks a peer's choices");
+        anyhow::ensure!(
+            !observer
+                || self
+                    .network_setup()
+                    .is_some_and(|launch| !launch.mode.class.is_vmce()),
+            "VMCE does not admit observers"
+        );
         let human = self
             .network_setup()
             .and_then(|launch| launch.humans.get(index))
@@ -901,6 +921,13 @@ impl MatchSession {
         role: Option<crate::skirmish_launch::LaunchHumanRole>,
     ) -> anyhow::Result<PeerChoicesChange> {
         anyhow::ensure!(self.host, "only the host checks LAN peer choices");
+        anyhow::ensure!(
+            !observer
+                || self
+                    .network_setup()
+                    .is_some_and(|launch| !launch.mode.class.is_vmce()),
+            "VMCE does not admit observers"
+        );
         if let Some(role) = role {
             self.validate_network_vmce_role(index, role)?;
         }
@@ -1191,6 +1218,14 @@ impl MatchSession {
             anyhow::bail!("network setup is not editable");
         };
         anyhow::ensure!(N <= NETWORK_PLAYER_SLOT_COUNT, "too many roster rows");
+        anyhow::ensure!(
+            !launch.mode.class.is_vmce()
+                || rows.iter().all(|row| !matches!(
+                    row,
+                    NetworkRosterEntry::Vacancy(NetworkVacancy::OpenObserver)
+                )),
+            "VMCE does not admit observer seats"
+        );
         let mut candidate = launch.clone();
         for human in &mut candidate.humans {
             human.raw_slot_index = None;
@@ -1232,6 +1267,13 @@ impl MatchSession {
         kind: NetworkRowKind,
     ) -> anyhow::Result<Option<crate::skirmish_launch::SkirmishHumanSlot>> {
         anyhow::ensure!(self.host, "only the host may change participant row kinds");
+        anyhow::ensure!(
+            kind != NetworkRowKind::OpenObserver
+                || self
+                    .network_setup()
+                    .is_some_and(|launch| !launch.mode.class.is_vmce()),
+            "VMCE does not admit observers"
+        );
         //5EC9F0 returns before any reset when the selected item pointer is unchanged.
         let current_kind = self
             .network_display_ai(row)
@@ -1768,6 +1810,11 @@ impl MatchSession {
             "a host cannot receive guest-authored host setup"
         );
         anyhow::ensure!(capacity > 0, "host map capacity must be positive");
+        anyhow::ensure!(
+            !incoming.mode.class.is_vmce()
+                || incoming.humans.iter().all(|human| !human.is_observer()),
+            "VMCE does not admit observers"
+        );
         anyhow::ensure!(N <= NETWORK_PLAYER_SLOT_COUNT, "too many vacancy rows");
         anyhow::ensure!(
             observer_row.is_none_or(|row| usize::from(row) < NETWORK_PLAYER_SLOT_COUNT),
@@ -1808,11 +1855,23 @@ impl MatchSession {
         validate_network_option_rows(&incoming)?;
         incoming.opponents.sort_by_key(|ai| ai.raw_slot_index);
         incoming.rebuild_house_roster();
+        let vmce = incoming.mode.class.is_vmce();
         *launch = incoming;
         *vacancies = [NetworkVacancy::Open; NETWORK_PLAYER_SLOT_COUNT];
         vacancies[..N].copy_from_slice(&incoming_vacancies);
+        if vmce {
+            for (row, vacancy) in vacancies.iter_mut().enumerate() {
+                if *vacancy == NetworkVacancy::OpenObserver {
+                    *vacancy = if row < admitted_capacity as usize {
+                        NetworkVacancy::Open
+                    } else {
+                        NetworkVacancy::Closed
+                    };
+                }
+            }
+        }
         *retained_capacity = admitted_capacity;
-        *retained_observer_row = observer_row;
+        *retained_observer_row = if vmce { None } else { observer_row };
         Ok(())
     }
 
@@ -2021,11 +2080,12 @@ impl MatchSession {
         matches!(
             self.network.as_ref().map(|network| &network.phase),
             Some(NetworkPhase::Setup {
+                launch,
                 observer_row: Some(_),
                 open_spectators: true,
                 several_observers: true,
                 ..
-            })
+            }) if launch.mode.class.allows_observers()
         )
     }
 
@@ -2210,6 +2270,13 @@ impl MatchSession {
             !file.is_empty() && capacity > 0,
             "map requires a valid participant capacity"
         );
+        anyhow::ensure!(
+            !mode.class.is_vmce()
+                || self.network_setup().is_some_and(|launch| {
+                    launch.humans.iter().all(|human| !human.is_observer())
+                }),
+            "VMCE does not admit observers"
+        );
         let mut candidate = self.clone();
         let several = self.network_several_observers();
         let (old_capacity, observer_row, host_extra, new_capacity) = {
@@ -2231,7 +2298,7 @@ impl MatchSession {
             let session_mode = return_context.session_mode();
             let room = *room;
             let changed = launch.mode != mode;
-            if changed && mode.class.uses_cooperative_setup() {
+            if (changed && mode.class.uses_cooperative_setup()) || mode.class.is_vmce() {
                 *observer_row = None;
             } //5C1A10
             let new_capacity = row_capacity(session_mode, room, &mode, capacity);
@@ -2664,6 +2731,13 @@ impl MatchSession {
     /// watches while a spectator row is open, and one asking to watch where
     /// no spectator row is open takes a free seat, as online joiners do.
     pub(crate) fn network_join_row(&self, observer: bool) -> Option<(u8, bool)> {
+        if observer
+            && self
+                .network_setup()
+                .is_some_and(|launch| launch.mode.class.is_vmce())
+        {
+            return None;
+        }
         if self.network_room_full() {
             return None;
         }
@@ -3601,7 +3675,80 @@ mod tests {
 
     #[cfg(feature = "vmce")]
     #[test]
-    fn vmce_limits_map_seats_and_keeps_observers_separate() {
+    fn vmce_selection_rejects_observers_without_changing_the_room() {
+        let mut launch = network_fixture();
+        launch.local_player_index = 0;
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Battle;
+        let mut session = MatchSession::default();
+        session.enter_network(super::NetworkReturnContext::LanLobby);
+        session
+            .accept_network_setup(launch, true, Some(7), true)
+            .unwrap();
+        session.set_network_spectators(true).unwrap();
+        let mut spectator = session.network_setup().unwrap().humans[1].clone();
+        spectator.name = "Spectator".into();
+        spectator.raw_slot_index = Some(8);
+        spectator.set_observer(true);
+        session.add_network_participant(spectator.clone()).unwrap();
+
+        let mut vmce = session.network_setup().unwrap().mode.clone();
+        vmce.class = crate::skirmish_modes::MpModeClass::Vmce;
+        let before = session.clone();
+        assert!(session
+            .select_network_map(vmce.clone(), "EIGHT.YRM".into(), 8)
+            .is_err());
+        assert_eq!(session, before);
+        session.remove_network_participant(2).unwrap();
+        session
+            .select_network_map(vmce, "EIGHT.YRM".into(), 8)
+            .unwrap();
+        assert!(session
+            .network_setup()
+            .unwrap()
+            .humans
+            .iter()
+            .all(|human| !human.is_observer()));
+        assert_eq!(session.network_observer_row(), None);
+        session.set_network_spectators(true).unwrap();
+        assert!(!session.network_spectators_welcome());
+        assert_eq!(session.network_join_row(true), None);
+        assert!(session.add_network_participant(spectator).is_err());
+        let choices = session.network_setup().unwrap().humans[1].slot.clone();
+        assert!(session.accept_lan_peer_choices(1, choices, true, None).is_err());
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_guest_discards_old_observer_seats_and_rejects_observer_rosters() {
+        use super::{NetworkRosterEntry, NetworkVacancy};
+
+        let mut launch = network_fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Battle;
+        let mut session = MatchSession::default();
+        session.enter_network(super::NetworkReturnContext::LanLobby);
+        session
+            .accept_network_setup(launch, false, Some(7), false)
+            .unwrap();
+        let mut incoming = session.network_setup().unwrap().clone();
+        incoming.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        let mut vacancies = [NetworkVacancy::Open; 8];
+        vacancies[7] = NetworkVacancy::OpenObserver;
+        session
+            .accept_network_host_setup(incoming, vacancies, 8, Some(7), false)
+            .unwrap();
+        assert_eq!(session.network_observer_row(), None);
+        assert_eq!(session.network_vacancy(7), Some(NetworkVacancy::Closed));
+
+        let mut roster = [NetworkRosterEntry::Vacancy(NetworkVacancy::Open); 8];
+        roster[7] = NetworkRosterEntry::Vacancy(NetworkVacancy::OpenObserver);
+        let before = session.clone();
+        assert!(session.accept_network_roster(roster).is_err());
+        assert_eq!(session, before);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_limits_map_seats_without_observers() {
         use super::NetworkVacancy;
         use crate::skirmish_modes::MpModeClass;
 
@@ -3661,18 +3808,7 @@ mod tests {
         assert_eq!(session.network_setup_capacity(), Some(4));
         assert_eq!(session.network_player_row_limit(), 4);
         session.set_network_spectators(true).unwrap();
-        assert_eq!(
-            session.network_vacancy(4),
-            Some(NetworkVacancy::OpenObserver)
-        );
-
-        let mut spectator = session.network_setup().unwrap().humans[1].clone();
-        spectator.name = "Spectator".into();
-        spectator.raw_slot_index = Some(4);
-        spectator.set_observer(true);
-        session.add_network_participant(spectator).unwrap();
-        assert!(session.network_setup().unwrap().humans[2].is_observer());
-        assert_eq!(session.network_player_row_limit(), 4);
+        assert_eq!(session.network_vacancy(4), Some(NetworkVacancy::Closed));
 
         let player = session.network_setup().unwrap().humans[1].clone();
         for row in [2, 3] {
@@ -3684,8 +3820,8 @@ mod tests {
         assert_eq!(session.network_player_row_limit(), 4);
         assert_eq!(
             session.network_join_row(false),
-            Some((5, true)),
-            "a fifth would-be player is admitted as a spectator, not a fifth player seat"
+            None,
+            "a fifth player cannot join as a spectator"
         );
     }
 

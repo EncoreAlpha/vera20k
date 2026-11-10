@@ -705,6 +705,28 @@ impl App {
         };
 
         if state.frontend.shell_route.network_setup() {
+            #[cfg(feature = "vmce")]
+            if state
+                .frontend
+                .skirmish_modes
+                .iter()
+                .any(|mode| mode.id == selection.mode_id && mode.class.is_vmce())
+                && state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.humans.iter().any(|human| human.is_observer()))
+            {
+                let ok = Self::skirmish_shell_label(state, "TXT_OK", "OK");
+                Self::show_skirmish_validation_modal(
+                    state,
+                    crate::ui::skirmish_shell::SkirmishValidationModalState::new(
+                        crate::i18n::tr("VERA:VmceNoObservers"),
+                        ok,
+                    ),
+                );
+                return false;
+            }
             // `+0x18` reads the list's selected row (`0x005E66D0`).
             let row = state
                 .frontend

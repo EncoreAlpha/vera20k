@@ -603,6 +603,10 @@ mod tests {
             "[Basic]\nPlayer1=Alpha\nPlayer2=Beta\n[Houses]\n0=Alpha\n1=Beta\n",
         );
         let first = resolve_vmce_houses(&two_players, &launch, 123).unwrap();
+        let mut observer = launch.clone();
+        observer.humans[1].set_observer(true);
+        assert!(resolve_vmce_houses(&two_players, &observer, 123).is_err());
+        assert!(first.validate_for_launch(&observer).is_err());
         let second = resolve_vmce_houses(&two_players, &launch, 123).unwrap();
         assert_eq!(first, second);
         assert_ne!(

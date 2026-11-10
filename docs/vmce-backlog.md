@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: B12, then the remaining S1/S2 items. B03 now rolls back and aborts on a failed LAN host setup; a real failure-path capture remains to be run. B13 republishes LAN guest role changes; its four-player propagation has focused test coverage but no new real-LAN capture. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: remaining S1/S2 items. B03 now rolls back and aborts on a failed LAN host setup; a real failure-path capture remains to be run. B13 republishes LAN guest role changes; its four-player propagation has focused test coverage but no new real-LAN capture. B12 disables VMCE observers. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -66,7 +66,7 @@ recorded here for residuals only.
 
 - Version after the B01 fix: `0.2.9-vmce.6`. Push `feature/vmce` only after the screenshot review
   manifest is accepted; no formal Release.
-- Fix order: **B12** next (B03 and B13 implemented; their real-LAN checks remain). Release gate: VMCE `2p-retry` now passes with a genuine
+- B03 and B13 are implemented; their real-LAN checks remain. Release gate: VMCE `2p-retry` now passes with a genuine
   capture (BC6 page, guest votes, host retries, same stage, 300 equal checksums); `2p-win` and
   `4p-win` remain. Three-player, disconnect and RTL checks are not blocking.
 - B01 is accepted: genuine VMCE 2p-retry receipt and identical host/guest live-table stats pass.
@@ -140,9 +140,9 @@ recorded here for residuals only.
   is received before releasing it.
 - **B11 Next-stage identity caps catalog map path at 215 bytes** in the fixed LAN envelope;
   longer valid paths fail closed to the lobby.
-- **B12 Observer seats reset to Random on map/mode change;** VMCE start rejects "observer has a
-  player role" and the UI cannot restore Observer, so the room can be stuck. Decision: disable
-  observer seats in VMCE and reject the observer role, instead of fixing seat restore.
+- **B12 Observer seats — implemented.** VMCE rejects observers at setup and network admission,
+  and no longer reserves or displays observer seats. Switching from another mode while someone
+  observes is refused with a notice until they become a player or leave; the room is unchanged.
 - **B13 Guest role changes were not republished to 3rd/4th guests — implemented.** The LAN
   choice owner now marks a changed VMCE role as an options change, so the existing full setup
   publish carries it by seat; repeated unchanged roles do not republish. The four-player,
@@ -152,6 +152,18 @@ recorded here for residuals only.
   keyed on localized string equality; lobby status classifier matches English substrings.
 - **B15 Host does not re-read its own campaign.ini** between start publish and frozen commit
   (fails closed only at next stage).
+- **B30 Defeat statistics can be assigned to the wrong player.** The defeat projection looks up
+  generated network-owner names in rows keyed by authored Houses, then falls back to row order.
+  When source order and lobby seat order differ, player statistics and colours can be swapped.
+- **B31 Victory Ready display does not track the round.** The result board is captured once,
+  so later Ready icons and a guest's button remain stale. The host button is drawn enabled from
+  `can_continue` before the all-ready gate actually allows Continue, making a click appear inert.
+- **B32 Victory result board may be missing or incomplete.** The board reads lobby role metadata
+  through the setup protocol, which is cleared at match start; with a next mission it also reads
+  the next map name against the finished map's config. Frozen Random assignments are not used by
+  the board or victory statistics. The live win capture counts simulation rows and drives the
+  round directly, so it does not prove that the rendered board and controls work. A capture after
+  the entry animation is needed to verify the visible outcome.
 
 ## S3 — robustness / tests
 

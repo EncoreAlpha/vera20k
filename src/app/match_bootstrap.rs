@@ -447,10 +447,7 @@ pub(crate) fn resolve_vmce_houses(
         let mut occupied_rows = [false; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT];
         for (human_index, human) in launch.humans.iter().enumerate() {
             let role = human.role.native_value();
-            if human.is_observer() {
-                anyhow::ensure!(role == -1, "observer {} has a player role", human.name);
-                continue;
-            }
+            anyhow::ensure!(!human.is_observer(), "VMCE does not admit observers");
             let row = human
                 .raw_slot_index
                 .filter(|row| usize::from(*row) < occupied_rows.len())

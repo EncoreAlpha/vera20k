@@ -672,6 +672,10 @@ fn apply_vmce_roles(
         launch.mode.class.is_vmce(),
         "LAN VMCE role roster without the VMCE mode"
     );
+    ensure!(
+        launch.humans.iter().all(|human| !human.is_observer()),
+        "VMCE does not admit observers"
+    );
     if roles.is_empty() {
         return Ok(());
     }
@@ -681,6 +685,10 @@ fn apply_vmce_roles(
     // same people differently.
     let mut by_row = [None; NETWORK_PLAYER_SLOT_COUNT];
     for entry in roles {
+        ensure!(
+            entry.role.native_value() == -2 || (0..4).contains(&entry.role.native_value()),
+            "invalid LAN VMCE role"
+        );
         let slot = by_row
             .get_mut(usize::from(entry.row))
             .ok_or_else(|| anyhow!("LAN VMCE role row is outside setup rows"))?;
@@ -716,11 +724,6 @@ fn apply_vmce_roles(
             continue;
         };
         let value = role.native_value();
-        if human.is_observer() {
-            ensure!(value == -1, "LAN VMCE observer has a player role");
-            human.role = role;
-            continue;
-        }
         ensure!(
             value == -2 || (0..4).contains(&value),
             "invalid LAN VMCE role"
@@ -1760,6 +1763,22 @@ mod tests {
 
     #[cfg(feature = "vmce")]
     #[test]
+    fn vmce_wire_roles_reject_observers_even_before_roster_binding() {
+        let mut launch = fixture(false).network_setup().unwrap().clone();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        launch.humans[1].set_observer(true);
+        assert!(apply_vmce_roles(&mut launch, &[]).is_err());
+
+        launch.humans[1].set_observer(false);
+        let role = VmceRoleRow {
+            row: 7,
+            role: crate::skirmish_launch::LaunchHumanRole::Observer,
+        };
+        assert!(apply_vmce_roles(&mut launch, &[role]).is_err());
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
     fn vmce_role_roster_round_trips_in_extended_host_options() {
         use crate::skirmish_launch::LaunchHumanRole;
         let mut host = fixture(true);
@@ -1770,7 +1789,6 @@ mod tests {
         for human in &mut launch.humans {
             human.role = LaunchHumanRole::Player { group: -2 };
         }
-        launch.humans[1].set_observer(true);
         host.accept_network_setup(launch, true, Some(7), false)
             .unwrap();
         host.set_network_vmce_role(0, LaunchHumanRole::Player { group: 0 })
@@ -1821,8 +1839,7 @@ mod tests {
                 .expect("bound role row")
         };
         assert_eq!(by_row(0).role.native_value(), 0);
-        assert!(by_row(1).is_observer());
-        assert_eq!(by_row(1).role.native_value(), -1);
+        assert_eq!(by_row(1).role.native_value(), -2);
         assert_eq!(
             guest
                 .humans

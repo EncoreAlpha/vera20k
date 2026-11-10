@@ -2,7 +2,7 @@
 
 VMCE 是 VERA20K 的可选 LAN 战役扩展：最多 4 名玩家推进一套外部战役目录
 （`Maps/VMCE/<系列>/`），使用原生战役结算页与确定性的共享任务。它不加载原版
-Cooperative 战役模式，也不读写 `Coopsave.ini`。
+Cooperative 战役模式，也不读写 `Coopsave.ini`。VMCE 不设观察者席位。
 
 ## 构建
 
@@ -23,13 +23,13 @@ cargo build --profile fast --features vmce --bin vera20k
 |---|---|
 | 大厅 | 四个角色、所属方/准备/颜色板、非法战役的阻塞/内联错误 |
 | 战役流程 | `NextScenario`、`EndOfGame`、外部系列目录、Entry 关严格校验 |
-| 4 人 LAN | 4 个真实进程验收：checksum 一致、4 行结算、每端进入下一关 |
-| 失败重试 | 客人投票 → 房主重开同一冻结关卡；真实 VMCE `2p-retry` 采集已通过 |
+| LAN 验证 | 当前构建的双进程和四进程胜利与下一关采集通过，300 个 checksum 一致 |
+| 失败重试 | 当前构建的客人投票 → 房主重开同一冻结关卡采集通过，300 个 checksum 一致 |
 | 结果页 | `0x103` 胜利板 + 统计页；原生 BC6 失败统计页；结果页无计时器 |
 | i18n | en/zh-CN 真值；其余语言英文占位 |
 
-已知缺口见 [VMCE 待办](../vmce-backlog.md)：setup 原子性（B03）、角色变更同步（B13）、
-观战位（B12）、后续关卡校验（B05）、HUD/加载页（B20/B21），以及暂缓的
+已知缺口见 [VMCE 待办](../vmce-backlog.md)：设置失败和角色变更的真实 LAN 采集（B03/B13）、
+后续关卡校验（B05）、HUD/加载页（B20/B21），以及暂缓的
 `AltNextScenario`/`SkipMapSelect`/跨关资金（B23）。
 
 ## 从这里开始
