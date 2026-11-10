@@ -133,6 +133,7 @@ class Scenario:
     checkpoint_guest: str = CHECKPOINT_GUEST
     expect_retry: bool = False
     expect_screenshots: tuple[str, ...] = ()
+    language: str = ""
 
 
 SCENARIOS = {
@@ -161,6 +162,7 @@ SCENARIOS = {
         expect_next_stage=False,
         expect_retry=True,
         expect_screenshots=("vera-result-real-lose", "vera-retry-mission"),
+        language="zh-CN",
     ),
 }
 
@@ -1131,6 +1133,7 @@ def build_capture_command(
     checkpoint_guest: str = CHECKPOINT_GUEST,
     vera_outcome: str = "real",
     map_required: bool = True,
+    language: str = "",
 ) -> list[str]:
     """Build the real shell-capture command line for one VMCE process."""
     if role not in ("host", "guest"):
@@ -1169,6 +1172,8 @@ def build_capture_command(
     command.extend(("--shell-capture-timeout-seconds", str(CAPTURE_TIMEOUT_SECONDS)))
     if vera_outcome:
         command.extend(("--vera-outcome", vera_outcome))
+    if language:
+        command.extend(("--language", language))
     return command
 
 
@@ -1213,6 +1218,7 @@ def _prepare_process(
             else ""
         ),
         map_required=scenario.checkpoint_host == CHECKPOINT_HOST,
+        language=scenario.language,
     )
     return ProcessSpec(
         role=role,

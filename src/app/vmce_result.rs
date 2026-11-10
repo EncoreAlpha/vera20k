@@ -80,27 +80,28 @@ pub(crate) fn open_defeat(state: &mut AppState) {
         // available after the mission retires.
         use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
         let launch = state.match_state.session.network_setup();
-        let rows = (0..4)
-            .map(|role| {
-                let human = launch.and_then(|launch| {
-                    launch.humans.iter().find(|human| {
-                        !human.is_observer() && human.role.native_value() == role as i32
-                    })
-                });
-                let row = model.rows.get(role);
-                VmceStatisticsRow {
-                    player: row
-                        .map(|row| row.name.clone())
-                        .or_else(|| human.map(|human| human.name.clone()))
-                        .unwrap_or_else(|| format!("Player {}", role + 1)),
-                    owner: format!("role{}", role + 1),
-                    kills: row.map_or(0, |row| row.kills),
-                    losses: row.map_or(0, |row| row.losses),
-                    built: row.map_or(0, |row| row.built),
-                    score: row.map_or(0, |row| row.score),
-                    income: 0,
-                    rgb: row.map(|row| row.rgb),
-                }
+        let mut humans = launch
+            .map(|launch| {
+                launch
+                    .humans
+                    .iter()
+                    .filter(|human| !human.is_observer())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        humans.sort_by_key(|human| human.role.native_value());
+        let rows = humans
+            .into_iter()
+            .enumerate()
+            .map(|(index, human)| VmceStatisticsRow {
+                player: human.name.clone(),
+                owner: format!("role{}", human.role.native_value().max(0) + 1),
+                kills: model.rows.get(index).map_or(0, |row| row.kills),
+                losses: model.rows.get(index).map_or(0, |row| row.losses),
+                built: model.rows.get(index).map_or(0, |row| row.built),
+                score: model.rows.get(index).map_or(0, |row| row.score),
+                income: 0,
+                rgb: model.rows.get(index).map(|row| row.rgb),
             })
             .collect::<Vec<_>>();
         model.vmce_statistics = Some(VmceStatistics {
@@ -447,7 +448,7 @@ pub(crate) fn statistics_page(
 ) -> Option<crate::ui::campaign_score_shell::VmceStatistics> {
     use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
     let launch = state.match_state.session.network_setup()?;
-    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)?;
+    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state);
     let sim = state
         .match_state
         .sim_runtime
@@ -460,16 +461,23 @@ pub(crate) fn statistics_page(
             .map(|row| (sim.interner().resolve(row.owner).to_owned(), row))
             .collect::<std::collections::BTreeMap<_, _>>()
     });
+    let mut admitted = launch
+        .humans
+        .iter()
+        .filter(|human| !human.is_observer())
+        .map(|human| (human.role.native_value(), human))
+        .collect::<Vec<_>>();
+    admitted.sort_by_key(|(role, _)| *role);
     let mut rows = Vec::new();
-    for (role, info) in roles.iter().enumerate() {
-        let player = launch
-            .humans
-            .iter()
-            .find(|human| !human.is_observer() && human.role.native_value() == role as i32)
-            .map_or_else(|| info.owner.clone(), |human| human.name.clone());
-        let owner_id = sim
-            .and_then(|sim| sim.interner().get(&info.owner))
-            .or_else(|| sim.and_then(|sim| sim.interner().get(&info.owner)));
+    // Only actual admitted players get a statistics row: a 2-player match
+    // shows two rows, a 4-player match four. Country/flag data stays out of
+    // the Player column; it is the lobby participant's name.
+    for (role, human) in admitted {
+        let info = roles
+            .as_ref()
+            .and_then(|roles| usize::try_from(role).ok().and_then(|role| roles.get(role)));
+        let owner = info.map_or("", |info| info.owner.as_str());
+        let owner_id = sim.and_then(|sim| sim.interner().get(owner));
         let values = terminal.and_then(|snapshot| {
             snapshot
                 .rows
@@ -485,12 +493,9 @@ pub(crate) fn statistics_page(
                     )
                 })
         });
-        // A role the finished world no longer reports still gets its row:
-        // the VMCE defeat page is the four-row statistics view, so a missing
-        // per-owner snapshot means zeroes, never a silently shortened table.
         let (kills, losses, built, score, income) = values
             .or_else(|| {
-                coop.as_ref()?.get(&info.owner).map(|row| {
+                coop.as_ref()?.get(owner).map(|row| {
                     (
                         row.kills,
                         row.losses,
@@ -502,9 +507,9 @@ pub(crate) fn statistics_page(
             })
             .unwrap_or((0, 0, 0, 0, 0));
         rows.push(VmceStatisticsRow {
-            player,
-            owner: info.owner.clone(),
-            rgb: info.color,
+            player: human.name.clone(),
+            owner: owner.to_owned(),
+            rgb: info.and_then(|info| info.color),
             kills,
             losses,
             built,
@@ -512,11 +517,38 @@ pub(crate) fn statistics_page(
             income,
         });
     }
-    (!rows.is_empty()).then(|| VmceStatistics {
+    Some(VmceStatistics {
         rows,
-        total_time: model.your_time.clone(),
-        par_time: model.par_time.clone(),
+        total_time: bare_duration(&model.your_time),
+        par_time: bare_duration(&model.par_time),
     })
+}
+
+/// The native score model's time fields keep their CSF label (`時間:...`).
+/// The shared statistics header draws its own label, so the value is only the
+/// trailing `HH:MM:SS`.
+#[cfg(feature = "vmce")]
+fn bare_duration(value: &str) -> String {
+    let value = value.trim();
+    let candidate = value
+        .char_indices()
+        .rev()
+        .nth(7)
+        .map_or(value, |(index, _)| &value[index..]);
+    let bytes = candidate.as_bytes();
+    if candidate.len() == 8
+        && bytes[2] == b':'
+        && bytes[5] == b':'
+        && bytes[..2]
+            .iter()
+            .chain(&bytes[3..5])
+            .all(u8::is_ascii_digit)
+        && bytes[6..].iter().all(u8::is_ascii_digit)
+    {
+        candidate.to_owned()
+    } else {
+        value.to_owned()
+    }
 }
 
 #[cfg(all(test, feature = "vmce"))]
@@ -525,6 +557,13 @@ mod tests {
     use crate::app::match_runtime::session::VmceRoundEnding;
 
     #[test]
+    #[test]
+    fn the_statistics_time_header_drops_the_native_label() {
+        assert_eq!(bare_duration("時間:00:00:13"), "00:00:13");
+        assert_eq!(bare_duration("00:00:13"), "00:00:13");
+        assert_eq!(bare_duration(""), "");
+    }
+
     fn the_result_row_text_uses_the_authored_house_colour() {
         let mut row = crate::ui::campaign_score_shell::VmceResultRow {
             player: "LiveHost".into(),

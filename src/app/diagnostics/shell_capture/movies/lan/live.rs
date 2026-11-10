@@ -2318,6 +2318,58 @@ impl LiveLanCapture {
                             .is_some_and(|round| round.vera())
                     });
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
+                        let statistics = page
+                            .model
+                            .vmce_statistics
+                            .as_ref()
+                            .context("VMCE defeat page statistics table")?;
+                        ensure!(
+                            statistics.rows.len() == self.expected_players,
+                            "VMCE defeat rows do not match admitted players: {} != {}",
+                            statistics.rows.len(),
+                            self.expected_players
+                        );
+                        for time in [statistics.total_time.as_str(), statistics.par_time.as_str()] {
+                            ensure!(
+                                time.len() == 8 && time.matches(':').count() == 2,
+                                "VMCE defeat time header embeds its label: {time:?}"
+                            );
+                        }
+                        let launch = state
+                            .match_state
+                            .session
+                            .network_setup()
+                            .context("VMCE defeat roster")?;
+                        ensure!(
+                            launch.humans.iter().all(|human| {
+                                statistics.rows.iter().any(|row| row.player == human.name)
+                            }),
+                            "VMCE defeat rows do not use the lobby player names"
+                        );
+                        if crate::i18n::selected_language() == "zh-CN" {
+                            let scale = crate::app::input::coop_score::layout(state).page.scale;
+                            let layout =
+                                crate::ui::campaign_score_shell::vmce_statistics_layout(scale);
+                            for header in layout.headers {
+                                let label = if let Some(key) = header.key.strip_prefix("VERA:") {
+                                    crate::i18n::tr(&format!("VERA:{key}"))
+                                } else {
+                                    crate::i18n::label(
+                                        state.process_assets.csf.as_ref(),
+                                        header.key,
+                                        header.key,
+                                    )
+                                };
+                                ensure!(
+                                    label.chars().any(|character| !character.is_ascii()),
+                                    "VMCE defeat header is not localized in zh-CN: {label:?}"
+                                );
+                            }
+                            ensure!(
+                                crate::i18n::tr("VERA:VmceIncome") == "收入",
+                                "VMCE income header is not localized in zh-CN"
+                            );
+                        }
                         let victory = page.victory;
                         let rows = page.model.rows.len();
                         let can_continue = page.model.can_continue;
