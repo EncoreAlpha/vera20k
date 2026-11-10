@@ -5,7 +5,7 @@ title: VERA Multiplayer Campaign Expansion
 
 # VERA Multiplayer Campaign Expansion (VMCE)
 
-VMCE is an optional multiplayer campaign capability built into VERA20K. It lets 2–4 players
+VMCE is an optional multiplayer campaign capability built into VERA20K. It lets up to four players
 play a cooperative campaign described by an external `campaign.ini`, on top of the original
 *Yuri's Revenge* assets. VMCE is not a runtime INI toggle: it is selected at compile time with
 the Cargo feature `vmce`.
@@ -18,6 +18,9 @@ Ready and Continue. Random roles display the House assigned when the mission sta
 
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
+
+Unless a paragraph says **planned**, this guide describes the current implementation.
+The agreed redesign below is not implemented or validated; do not author maps against it yet.
 
 ## Relation to the original
 
@@ -63,10 +66,10 @@ or shipping profile:
 
 ```bash
 # Developer build with VMCE enabled:
-cargo build --profile fast --features vmce --bin vera20k
+python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 
 # Minimal release build with VMCE enabled:
-cargo build --release --no-default-features --features vmce --bin vera20k
+python -m tools.cargo_run -- build --release --no-default-features --features vmce --bin vera20k
 ```
 
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
@@ -207,9 +210,10 @@ The result state, Continue and retry semantics belong to VMCE.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).
-- Before a next mission loads, both peers exchange the identity they resolved (map path plus
-  source, effective-map and config digests). A mismatch returns both peers to the lobby instead
-  of one side loading while the other waits.
+- Before a next mission loads, peers exchange the identity they resolved (map path plus
+  source, effective-map and config digests). A mismatch rejects the transition and requests a
+  return to the lobby. The rejection can currently be lost during transport teardown (B10),
+  leaving a peer waiting; two-sided recovery is not yet guaranteed.
 - On load, roles are re-resolved against the next map's own `[Basic] PlayerN`/`[Houses]`
   binding; the previous mission's House names are not carried over. The next mission's seed is
   derived deterministically from the previous seed and the next stage's identity (both peers
@@ -245,7 +249,7 @@ not implemented; see Current limitations.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `Player1Control..Player4Control` | boolean | empty | `yes` grants this role control of the shared House |
-| `PlayerControl` | boolean | empty | Legacy alias for `Player1Control` when no `PlayerNControl` is written |
+| `PlayerControl` | boolean | empty | Legacy alias for `Player1Control` when `Player1Control` is absent |
 
 A `[Scenario:...]` section matches the map path case-insensitively and treats `/` and `\` as
 equivalent, so the section header does not have to repeat `ScenarioN`'s exact spelling. The
@@ -255,6 +259,8 @@ rejected. `campaign.ini` is limited to 64 KiB. Every listed map must exist local
 current session only plays the first mission.
 
 ## Outcome actions
+
+This table describes **current behavior**, not the planned per-player outcome rules.
 
 | Action | Name | VMCE behavior |
 |---|---|---|
@@ -268,6 +274,38 @@ Use `67`/`68` for new maps. The country arguments of `1`/`2` do not filter roles
 
 Do not rely on one primary House being wiped out to end the mission. Add explicit trigger
 conditions for each role. There is no automatic "all roles failed" fallback.
+
+## Planned campaign redesign — not implemented
+
+The accepted direction is one integrated feature covering per-player outcomes, surviving
+participation, intermission role selection and locally persistent stage unlocks. Its detailed
+requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
+
+- A country-index victory should make its allies winners and non-allied players losers,
+  including when an AI House triggers it. The trigger timing, competing outcomes and defeat
+  action behavior require original-engine investigation; they are not yet established here.
+  Map triggers, not players, change diplomacy during a mission.
+- Players whose primary House is eliminated retain authorized shared control and normal fog;
+  map-spawned units belonging to that House become controllable again. Even if all primary
+  Houses are eliminated, the mission waits for the map's outcome actions. Shared control after
+  an alliance changes remains to be investigated.
+- Mixed winners and losers share one result and continuation flow, with each player's outcome
+  shown and no separate elimination marker. A previously eliminated ally of the winner also
+  wins. If at least one player wins, everyone may continue; if all lose, guests vote to retry
+  and the host starts once they have voted, using the same frozen roles and seed.
+- After the result ready gate, players return to the campaign room with the designated next stage,
+  reselect roles and ready again. Joining and leaving are allowed between stages. If there are
+  more players than roles, keep the room and block Start until the count is valid. The host
+  cannot replace the designated stage within that intermission.
+- Completing a stage and resolving the next stage unlocks it locally for its participants,
+  without requiring the next stage to load. A verified new intermission guest receives this
+  room's actually visited stages and its designated next stage; a room started from an unlocked
+  middle stage shares only stages actually started or visited in that room. Stage unlocks survive
+  series updates; the stable identity and synchronization design still need implementation.
+  New hosts may select their locally unlocked stages; guests need matching files, not prior unlocks.
+- The final stage uses the common result gate, followed by the completion presentation and a
+  return to the main menu. No observers are introduced. Cross-mission money and branching keys
+  remain separate deferred work; if branches are added, only the actually chosen branch unlocks.
 
 ## Map-author notes
 
@@ -311,7 +349,7 @@ real-process captures:
 - No in-mission save/load.
 - No AI takeover after a player disconnects; no mid-mission join or host migration.
 - No cross-mission money/role reselection or persistent progress.
-- The current build passed two- and four-process win → next mission captures with 300 matching
+- The branch has passed two- and four-process win → next mission captures with 300 matching
   checksums. After the entry animation, the capture checks the board and uses the Ready and
   Continue mouse controls. Three players have not been run separately; the
   four-player capture does not exercise changing a guest's role after joining.

@@ -9,7 +9,7 @@ Cooperative 战役模式，也不读写 `Coopsave.ini`。VMCE 不设观察者席
 VMCE 与 Ares、Phobos 一样是编译期能力：
 
 ```sh
-cargo build --profile fast --features vmce --bin vera20k
+python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 ```
 
 不带 `--features vmce` 时，不注册 `Multiplayer Campaign` 模式行，不扫描
@@ -28,15 +28,15 @@ cargo build --profile fast --features vmce --bin vera20k
 | 结果页 | `0x103` 胜利板 + 统计页；原生 BC6 失败统计页；结果页无计时器 |
 | i18n | en/zh-CN 真值；其余语言英文占位 |
 
-已知缺口见 [VMCE 待办](../vmce-backlog.md)：设置失败和角色变更的真实 LAN 采集（B03/B13）、
-后续关卡校验（B05）、HUD/加载页（B20/B21），以及暂缓的
-`AltNextScenario`/`SkipMapSelect`/跨关资金（B23）。
+当前缺陷与已确定但尚未实现的新胜负规则、关卡间重选角色和关卡解锁，见
+[中文待办](vmce-backlog.md)。
 
 ## 从这里开始
 
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
-- [VMCE 待办](../vmce-backlog.md) — 工程台账、锁定决策与残留（英文）。
+- [VMCE 待办（中文）](vmce-backlog.md) — 已确认目标、修复顺序和验收范围。
+- [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。
 - [English hub](../vmce.md)。
 
@@ -50,8 +50,11 @@ VMCE 拥有自己的模式、大厅板、战役数据、结果页和统计投影
 ## 验收
 
 ```sh
-python tools/vmce_lan_acceptance.py --suite smoke
+python -m tools.vmce_lan_acceptance run --suite smoke --exe "<VERA20K程序路径>" --retail-source "<原版游戏目录>" --series "<VMCE战役目录>"
 ```
+
+请替换尖括号内的路径。一次运行中的场景共用同一战役目录，所选战役必须适合套件中的
+所有场景；分别验证胜利或重试时，可用 `--scenario` 指定场景并选择相应战役。
 
 VMCE 场景只允许 VMCE 检查点；脚本会拒绝经典 `lan-live-coop-*` 检查点。收据、截图
 和对比数据留在 `.scratch/`，不提交仓库。

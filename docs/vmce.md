@@ -10,7 +10,7 @@ campaign modes and does not read `Coopsave.ini`.
 VMCE is a compile-time capability, like Ares or Phobos:
 
 ```sh
-cargo build --profile fast --features vmce --bin vera20k
+python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 ```
 
 Without `--features vmce`, the `Multiplayer Campaign` mode row is absent, `Maps/VMCE/`
@@ -30,15 +30,15 @@ the same VMCE build.
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers |
 | i18n | English and zh-CN real; other shipped languages use English placeholders |
 
-Known gaps live in the [VMCE backlog](vmce-backlog.md): later-stage validation (B05),
-real-LAN failure and role-change captures (B03/B13), HUD/loading UI (B20/B21),
-and the deferred `AltNextScenario`/`SkipMapSelect`/cross-mission money work (B23).
+The [VMCE backlog](vmce-backlog.md) separates current defects from the agreed but
+not yet implemented redesign of outcomes, intermission role selection and unlocks.
 
 ## Start here
 
 - [VMCE player and map-author guide](vmce-guide.md) — campaign directories,
   `campaign.ini`, LAN flow, result pages, testing and troubleshooting.
 - [VMCE backlog](vmce-backlog.md) — engineering task ledger, locked decisions and residuals.
+- [Chinese backlog](zh-CN/vmce-backlog.md).
 - [VMCE baseline](vmce-baseline.md) — upstream sync, version and real-capture baseline.
 - [Chinese guide](zh-CN/vmce.md).
 
@@ -53,8 +53,12 @@ dialog presented as a statistics view.
 ## Accepting a build
 
 ```sh
-python tools/vmce_lan_acceptance.py --suite smoke
+python -m tools.vmce_lan_acceptance run --suite smoke --exe "<VERA20K_EXECUTABLE>" --retail-source "<RETAIL_DIRECTORY>" --series "<VMCE_SERIES_DIRECTORY>"
 ```
+
+Each run uses the same series for all selected scenarios; the series must suit every
+scenario in the chosen suite. Use `--scenario` with an appropriate series when testing
+win or retry separately. Replace the placeholders with local paths.
 
 The tool drives only VMCE checkpoints for VMCE scenarios; classic `lan-live-coop-*`
 checkpoints are rejected. Receipts, screenshots and comparison data stay under

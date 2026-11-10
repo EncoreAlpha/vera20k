@@ -16,9 +16,8 @@ the upstream sync, not a native-parity certification.
 Shared files follow upstream, then replay the VMCE work. The VMCE-only
 surfaces that survive the merge:
 
-- cooperative rounds: upstream warning cleanup plus VERA's Next /
-  CampaignEnd / Retry endings, ready gates, 15 s retry grace and 30 s
-  campaign-end pull;
+- cooperative rounds: VERA's Next / CampaignEnd / Retry endings and ready
+  gates. There is no retry grace timer or forced campaign-end pull;
 - campaign score `0x103`: upstream Smooth Online Menus slide path plus the
   VERA settlement board; the native Continue rect/input is unchanged;
 - VMCE lobby: the flat native board, the setup 90-tick/high-credit presets
@@ -43,8 +42,11 @@ language files use the English text as explicit placeholders until translated.
 
 ## Real-process captures
 
-`tools/vmce_lan_acceptance.py run --suite smoke` is the real-process baseline:
-`4p-win` and `2p-win` only (defeat/final remain reserved). It compares the
-full 300-frame checksum stream, result rows and next-stage fields. Bundles are
-written under `.scratch/`; receipts from earlier baselines are not valid for
-this merge because the build changed.
+The current runner's `smoke` suite lists `4p-win`, `2p-win` and `2p-retry`.
+It compares the 300-frame checksum stream and scenario-specific receipt fields;
+each run uses a single supplied series, which must suit the selected scenarios.
+Two- and four-player wins and a two-player retry have been exercised with their
+appropriate series. A separate two-process final-stage probe reached credits and
+returned after Escape; the standard runner does not yet implement `2p-final` and
+the full credits duration was not observed. Bundles stay under `.scratch/`;
+older pre-merge receipts do not prove the current build.
