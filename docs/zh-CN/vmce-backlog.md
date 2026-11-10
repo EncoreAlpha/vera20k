@@ -69,5 +69,6 @@ B33–B35 的功能已在工作区实现，并有定向测试和本机多进程�
 - **B30–B32：** 失败统计按冻结玩家/所属方对应；胜利结果板读取已完成关卡和冻结角色，并更新准备状态。双人/三人/四人胜利采集等待了入场动画并使用按钮；双人反序重试核对了统计与颜色，双人混合胜负也已有采集。
 - **B24–B28：** 大厅/结果页界面已实现；四行 BC6 是 VMCE 扩展。收入列仅展示正向总收入，不参与模拟决策。**B29** 仅在本地 UI 技能分支，不能作为运行正确性的证据。
 - 已修复末关片尾后仍回到 LAN 战役房间的问题；这不等于 B10 的末关消息丢失风险已解决。
+- **地图驱动的厅位：** 角色面板、玩家行和房主房间上限跟随所选地图实际存在的主角色数（2–4），面板高度、状态条和简报位置随之下移/上移，例如三角色地图只显示三个席位。combo 的 bevel 保持在单元格内，图注分隔线在所有缩放下按设备像素绘制。证据：`ui::coop_lobby` 6、`skirmish_shell_render::vmce_panel` 4、`app::shell_network_setup` 32、`app::diagnostics::shell_capture` 94、`skirmish_shell_render` 102、`campaign_score_shell` 16，及两种特性组合的检查；未做采集，缩放后的屏幕观感仍未验证。
 - **大厅版面与材质修复（B37–B39、B42、B44、B47–B50、B53、B55、B56）：** 已实现。所属方下拉加宽到 120px（100px 文本面），board 重排到 298..632，国家文字 150、Ready 48、颜色列保留原生锚点；左侧标签与 board 表头统一到 y=14。96/120px 的 combo 单元格改用 VERA 的原生色调字段（共享底色 + 原生 list frame 双像素 bevel），因为原生 combo 面没有这些宽度。用一组调色板替代原先四种黑与金色描边：board/字段底色、中性空位色块、list frame bevel、内联状态的警告色；状态条改为整行宽并对第二行省略。未认领角色显示原生「等待」文本；AI 行不再显示所属方下拉；board 国家/等待文本按原生像素宽度测量，所有截断标记统一为 `...`；删除死代码 `layout.flags`/`VmceLobbyRole.role` 与字面量填充高度。证据：定向测试（`ui::coop_lobby` 5、`skirmish_shell_render::vmce_panel` 3、`app::shell_network_setup` 32、`skirmish_shell_render` 100、`ui::multiplayer_setup` 10）与默认特性构建；未做采集/截图，调色对比与 combo 字段接缝的屏幕观感仍未验证。
 

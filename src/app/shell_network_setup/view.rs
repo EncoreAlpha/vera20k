@@ -107,6 +107,13 @@ fn vmce_role_metadata_with_config(
     }
 }
 
+/// The map details derive their row budget from the map's actual selectable
+/// primary roles, so the lobby shows exactly as many rows and slots.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_role_count(state: &AppState) -> usize {
+    vmce_map_details(state).role_count()
+}
+
 #[cfg(feature = "vmce")]
 fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
     let session = &state.match_state.session;
@@ -349,16 +356,17 @@ pub(crate) fn vmce_result_roles(state: &AppState) -> Option<[VmceResultRoleInfo;
     any.then_some(roles)
 }
 
-/// The VMCE board: the four authored role slots, their claimed participants
-/// and the local campaign-status warning. The map's role Houses are the role
-/// names; an unclaimed slot uses the native vacancy style.
+/// The VMCE board: one row per authored primary role of the selected map, their
+/// claimed participants and the local campaign-status warning. The map's role
+/// Houses are the role names; an unclaimed slot uses the native vacancy style.
 #[cfg(feature = "vmce")]
 fn vmce_lobby_board(
     state: &AppState,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
     details: &super::VmceMapDetails,
+    role_count: usize,
 ) -> (
-    [crate::ui::multiplayer_setup::VmceLobbyRoleSlot; 4],
+    Vec<crate::ui::multiplayer_setup::VmceLobbyRoleSlot>,
     Option<String>,
 ) {
     use crate::ui::multiplayer_setup::{VmceLobbyRole, VmceLobbyRoleSlot};
@@ -384,8 +392,8 @@ fn vmce_lobby_board(
             .country_insignia_pcx(index.0)
             .or_else(|| flag_pcx_for_side_item_data(i32::from(index.0)).map(str::to_owned))
     };
-    let roles =
-        std::array::from_fn(|role| {
+    let roles = (0..role_count.min(4))
+        .map(|role| {
             if details.owners[role].is_none() {
                 return VmceLobbyRoleSlot::Waiting;
             }
@@ -401,7 +409,8 @@ fn vmce_lobby_board(
                 host: human.raw_slot_index == Some(0),
                 ready: session.network_player_ready(participant),
             })
-        });
+        })
+        .collect::<Vec<_>>();
     // Two authored roles whose Houses share one Country are a lobby error the
     // player can see before Ready; name the first pair.
     let mut status = vmce_role_conflict(details).map(|(owner, country, other)| {
@@ -470,6 +479,11 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
     #[cfg(feature = "vmce")]
     let vera_details = mode.class.is_vmce().then(|| vmce_map_details(state));
+    /// The map's actual selectable primary roles decide the lobby's rows/slots.
+    #[cfg(feature = "vmce")]
+    let vmce_role_count = vera_details
+        .as_ref()
+        .map_or(4, |details| details.role_count());
     let host = session.host();
     let host_name = protocol.wol_host.as_deref();
     let local = launch.humans.get(launch.local_player_index)?;
@@ -503,6 +517,12 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         session.network_several_observers() && (observer_row.is_some() || mode.class.is_vmce());
     let visible_limit = if several {
         usize::from(session.network_player_row_limit())
+    } else {
+        visible_limit
+    };
+    #[cfg(feature = "vmce")]
+    let visible_limit = if mode.class.is_vmce() {
+        visible_limit.min(vmce_role_count.max(1))
     } else {
         visible_limit
     };
@@ -977,17 +997,18 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     });
     #[cfg(feature = "vmce")]
     let (vmce_roles, vmce_status): (
-        [crate::ui::multiplayer_setup::VmceLobbyRoleSlot; 4],
+        Vec<crate::ui::multiplayer_setup::VmceLobbyRoleSlot>,
         Option<String>,
     ) = if mode.class.is_vmce() {
         vmce_lobby_board(
             state,
             launch,
             vera_details.as_ref().expect("VERA map details"),
+            vmce_role_count,
         )
     } else {
         (
-            std::array::from_fn(|_| crate::ui::multiplayer_setup::VmceLobbyRoleSlot::Waiting),
+            vec![crate::ui::multiplayer_setup::VmceLobbyRoleSlot::Waiting; 4],
             None,
         )
     };

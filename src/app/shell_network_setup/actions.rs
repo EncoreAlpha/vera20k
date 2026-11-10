@@ -772,6 +772,18 @@ pub(crate) fn commit_map_selection(
         .match_state
         .session
         .accept_network_vmce_map_config(vmce_map_config)?;
+    // The selected map's authored primary roles are the room's slots: the host
+    // caps the room at that count so no player joins without a role to pick.
+    #[cfg(feature = "vmce")]
+    if mode.class.is_vmce()
+        && state.match_state.session.host()
+        && state.match_state.session.network_several_observers()
+    {
+        let people = super::view::vmce_role_count(state).clamp(2, 4) as u8;
+        if let Err(error) = state.match_state.session.set_network_people_limit(people) {
+            log::warn!("VMCE role-limit update failed: {error:#}");
+        }
+    }
     #[cfg(feature = "vmce")]
     if vmce_lan_material_changed {
         if map_changed {

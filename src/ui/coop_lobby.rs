@@ -64,10 +64,12 @@ pub(crate) fn apply(
     layout: &mut MultiplayerSetupLayout,
     dialog: SetupDialog,
     row_count: usize,
+    role_count: usize,
     screen_width: i32,
     screen_height: i32,
     status_present: bool,
 ) {
+    let role_count = role_count.clamp(1, 4);
     // Use the same responsive mapping and resource anchors as the original
     // network setup, including its title, preview, labels and sidebar buttons.
     let native = MultiplayerSetupLayout::new(
@@ -112,10 +114,12 @@ pub(crate) fn apply(
         columns[0] = rect(PLAYER_COMBO_X, y, PLAYER_COMBO_W, ROW_H);
         columns[4] = rect(OWNER_COMBO_X, y, OWNER_COMBO_W, ROW_H);
     }
-    layout.vmce_sidebar = Some(sidebar(scale));
+    layout.vmce_sidebar = Some(sidebar(scale, role_count));
 
-    // The board frame ends at its fourth row plus the 4 px inner padding.
-    let board_bottom = SIDEBAR_TOP + INNER_PAD + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD;
+    // The board frame ends at its last authored-role row plus the 4 px inner
+    // padding.
+    let board_bottom =
+        SIDEBAR_TOP + INNER_PAD + HEADER_H + 1 + role_count as i32 * ROW_PITCH + INNER_PAD;
     let briefing = if status_present {
         let status_y = board_bottom + STATUS_GUTTER;
         let status_w = SIDEBAR_RIGHT - PLAYER_COMBO_X;
@@ -160,9 +164,8 @@ pub(crate) fn apply(
         let x1 = 180 + 266 * (index as i32 + 1) / 3;
         rect(x0, 271, x1 - x0, 17)
     }));
-    // A VMCE room's capacity is at most four authored roles, but keep the
-    // ordinary paging placement if a larger roster is ever admitted.
-    let bottom = ROW_Y + row_count.min(4) as i32 * ROW_PITCH + 2;
+    // A VMCE room's capacity follows the selected map's authored roles.
+    let bottom = ROW_Y + row_count.min(role_count) as i32 * ROW_PITCH + 2;
     layout.roster_navigation = [
         rect(PLAYER_COMBO_X, bottom, 94, 18),
         rect(446, bottom, 94, 18),
@@ -170,7 +173,8 @@ pub(crate) fn apply(
     layout.roster_page_label = rect(176, bottom, 262, 18);
 }
 
-fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
+fn sidebar(scale: ShellScale, role_count: usize) -> VmceLobbySidebar {
+    let role_count = role_count.clamp(1, 4);
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
     let header_y = HEADER_Y;
     let headers = [
@@ -196,40 +200,40 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
             centred: true,
         },
     ];
-    // The one caption row's dark rule, then four rows on the native pitch.
+    // The one caption row's dark rule, then one row per authored primary role
+    // on the native pitch.
     let header_rule = rect(
         CONTENT_X,
         header_y + HEADER_H + 1,
         SIDEBAR_RIGHT - INNER_PAD - CONTENT_X,
         1,
     );
-    let rows = std::array::from_fn(|row| {
-        let y = ROW_Y + row as i32 * ROW_PITCH;
-        let content = y + ROW_PAD;
-        let content_h = ROW_H - 2 * ROW_PAD;
-        VmceLobbySidebarRow {
-            // The native flag PCX carries its country emblem beside the flag
-            // (the roster draws it in a 49x21 cell); give it the full native
-            // frame plus air, and centre it without clipping.
-            country_icon: rect(CONTENT_X, y, COUNTRY_ICON_W, ROW_H),
-            country: rect(COUNTRY_TEXT_X, content, COUNTRY_TEXT_W, content_h),
-            ready: rect(READY_X, content, READY_W, content_h),
-            color: rect(COLOR_X + 2, content, COLOR_W - 4, content_h),
-        }
-    });
-    let frame = rect(
-        SIDEBAR_X,
-        SIDEBAR_TOP,
-        SIDEBAR_RIGHT - SIDEBAR_X,
-        (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP,
-    );
+    let rows = (0..role_count)
+        .map(|row| {
+            let y = ROW_Y + row as i32 * ROW_PITCH;
+            let content = y + ROW_PAD;
+            let content_h = ROW_H - 2 * ROW_PAD;
+            VmceLobbySidebarRow {
+                // The native flag PCX carries its country emblem beside the
+                // flag (the roster draws it in a 49x21 cell); give it the full
+                // native frame plus air, and centre it without clipping.
+                country_icon: rect(CONTENT_X, y, COUNTRY_ICON_W, ROW_H),
+                country: rect(COUNTRY_TEXT_X, content, COUNTRY_TEXT_W, content_h),
+                ready: rect(READY_X, content, READY_W, content_h),
+                color: rect(COLOR_X + 2, content, COLOR_W - 4, content_h),
+            }
+        })
+        .collect::<Vec<_>>();
+    let board_h =
+        (header_y + HEADER_H + 1 + role_count as i32 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP;
+    let frame = rect(SIDEBAR_X, SIDEBAR_TOP, SIDEBAR_RIGHT - SIDEBAR_X, board_h);
     VmceLobbySidebar {
         frame,
         fill: scale.scale_rect(RectPx::new(
             SIDEBAR_X + FILL_BORDER,
             SIDEBAR_TOP + FILL_BORDER,
             SIDEBAR_RIGHT - SIDEBAR_X - 2 * FILL_BORDER,
-            (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP - 2 * FILL_BORDER,
+            board_h - 2 * FILL_BORDER,
         )),
         header_rule,
         headers,
@@ -251,14 +255,57 @@ mod tests {
         height: i32,
         status: bool,
     ) -> MultiplayerSetupLayout {
+        coop_layout_with_roles(host, flavor, width, height, status, 4)
+    }
+
+    fn coop_layout_with_roles(
+        host: bool,
+        flavor: SetupFlavor,
+        width: i32,
+        height: i32,
+        status: bool,
+        role_count: usize,
+    ) -> MultiplayerSetupLayout {
         let dialog = SetupDialog {
             host,
             flavor,
             modern: true,
         };
         let mut layout = MultiplayerSetupLayout::new(dialog, width, height, true);
-        apply(&mut layout, dialog, 4, width, height, status);
+        apply(
+            &mut layout,
+            dialog,
+            role_count,
+            role_count,
+            width,
+            height,
+            status,
+        );
         layout
+    }
+
+    #[test]
+    fn the_board_and_roster_follow_the_maps_authored_role_count() {
+        let coop = coop_layout_with_roles(true, SetupFlavor::Lan, 800, 600, false, 2);
+        let board = coop.vmce_sidebar.as_ref().expect("board");
+        assert_eq!(board.rows.len(), 2);
+        let frame = coop.page.scale.base_rect(board.frame);
+        assert_eq!(
+            frame.h,
+            (HEADER_Y + HEADER_H + 1 + 2 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP
+        );
+        // One row shorter than the four-role board: the briefing starts higher.
+        let briefing = coop.page.scale.base_rect(coop.cooperative_description);
+        assert_eq!(
+            briefing.y,
+            SIDEBAR_TOP + INNER_PAD + HEADER_H + 1 + 2 * ROW_PITCH + INNER_PAD + STATUS_GUTTER
+        );
+        // The roster navigation follows the same two slots.
+        assert_eq!(coop.control_rect(0x411).unwrap().h, ROW_H);
+        assert_eq!(
+            coop.page.scale.base_rect(coop.roster_navigation[0]).y,
+            ROW_Y + 2 * ROW_PITCH + 2
+        );
     }
 
     #[test]
@@ -290,7 +337,7 @@ mod tests {
             let player = base(coop.combos[0][0]);
             let owner = base(coop.combos[0][4]);
             assert_eq!(player.x + player.w + 4, owner.x);
-            let board = coop.vmce_sidebar.expect("VMCE owner board");
+            let board = coop.vmce_sidebar.as_ref().expect("VMCE owner board");
             // 4 px gutter behind the owner combo, then the native panel frame.
             assert_eq!(base(board.frame).x, owner.x + owner.w + 4);
             assert_eq!(base(board.frame).x, SIDEBAR_X);
@@ -377,7 +424,7 @@ mod tests {
             // Without a message the reserved strip disappears and the briefing
             // starts directly under the board.
             let coop = coop_layout(true, SetupFlavor::Lan, width, height, false);
-            let board = coop.vmce_sidebar.expect("board");
+            let board = coop.vmce_sidebar.as_ref().expect("board");
             assert!(coop.vmce_status_bar.is_none());
             let briefing = base(coop.cooperative_description);
             let last_row = base(board.rows[3].color);
@@ -390,7 +437,7 @@ mod tests {
     #[test]
     fn owner_board_columns_cover_the_content_width_without_overlap() {
         let coop = coop_layout(true, SetupFlavor::Lan, 800, 600, false);
-        let board = coop.vmce_sidebar.expect("VMCE owner board");
+        let board = coop.vmce_sidebar.as_ref().expect("VMCE owner board");
         let base = |rect| coop.page.scale.base_rect(rect);
         let row = board.rows[0];
         assert_eq!(base(row.country_icon), RectPx::new(302, 36, 50, 24));
@@ -448,7 +495,7 @@ mod tests {
         for (_, label) in &coop.labels {
             assert_eq!(coop.page.scale.base_rect(*label).y, HEADER_Y);
         }
-        let headers = coop.vmce_sidebar.expect("board").headers;
+        let headers = coop.vmce_sidebar.as_ref().expect("board").headers;
         for header in headers {
             assert_eq!(coop.page.scale.base_rect(header.rect).y, HEADER_Y);
         }
@@ -470,6 +517,7 @@ mod tests {
         assert!(
             !coop
                 .vmce_sidebar
+                .as_ref()
                 .expect("board")
                 .headers
                 .iter()
@@ -477,7 +525,7 @@ mod tests {
         );
         // The board keeps a further 4 px gutter behind the owner combo.
         assert_eq!(
-            coop.vmce_sidebar.expect("board").frame.x,
+            coop.vmce_sidebar.as_ref().expect("board").frame.x,
             owner.x + owner.w + 4
         );
     }

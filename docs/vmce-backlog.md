@@ -185,4 +185,11 @@ The lobby layout and chrome pass (see Completed work) fixed most review items; t
   tests (`ui::coop_lobby` 5, `skirmish_shell_render::vmce_panel` 3, `app::shell_network_setup` 32,
   `skirmish_shell_render` 100, `ui::multiplayer_setup` 10) and a default-feature build; no capture
   or screenshot, so palette contrast and the combo field seam remain visually unverified.
+- **Map-driven lobby slots:** the role board, player rows and the host's room limit follow the
+  selected map's authored primary roles (2–4); the board height, status strip and briefing move
+  with them, so a three-role map shows three seats. Combo bevels stay inside their cells and the
+  caption rule draws in device pixels at every shell scale. Evidence: `ui::coop_lobby` 6,
+  `skirmish_shell_render::vmce_panel` 4, `app::shell_network_setup` 32,
+  `app::diagnostics::shell_capture` 94, `skirmish_shell_render` 102, `campaign_score_shell` 16 and
+  both feature checks; no capture, so the scaled-shell look is still unverified.
 

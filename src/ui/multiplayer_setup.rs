@@ -512,8 +512,9 @@ pub(crate) struct SetupView {
     #[cfg(feature = "vmce")]
     pub(crate) vmce: bool,
     /// The four authored campaign role slots, in order, for the VMCE board.
+    /// One row per authored primary role of the selected map.
     #[cfg(feature = "vmce")]
-    pub(crate) vmce_roles: [VmceLobbyRoleSlot; 4],
+    pub(crate) vmce_roles: Vec<VmceLobbyRoleSlot>,
     /// The VMCE inline status line: a local asset/role problem the guest or
     /// host must fix before Ready/Start. Empty when the room is consistent.
     #[cfg(feature = "vmce")]
@@ -772,7 +773,7 @@ const ROSTER_BUTTON_H: i32 = 24;
 /// `Basic Player1..Player4` roles, listed right of the participant columns.
 /// The native panel tile fills the frame and the native list frame lines its
 /// border; paint-only, no cell is a control or a hit target.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct VmceLobbySidebar {
     /// The native panel/list frame around the captions and the four rows.
     pub(crate) frame: RectPx,
@@ -782,8 +783,8 @@ pub(crate) struct VmceLobbySidebar {
     pub(crate) header_rule: RectPx,
     /// Country / Ready / Color captions, in that order.
     pub(crate) headers: [VmceLobbyHeader; 3],
-    /// The four role slots, in campaign order.
-    pub(crate) rows: [VmceLobbySidebarRow; 4],
+    /// One row per authored primary role of the selected map, in campaign order.
+    pub(crate) rows: Vec<VmceLobbySidebarRow>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1410,7 +1411,7 @@ mod tests {
             #[cfg(feature = "vmce")]
             vmce: false,
             #[cfg(feature = "vmce")]
-            vmce_roles: std::array::from_fn(|_| VmceLobbyRoleSlot::Waiting),
+            vmce_roles: vec![VmceLobbyRoleSlot::Waiting; 4],
             #[cfg(feature = "vmce")]
             vmce_status: None,
             cooperative_description: None,
@@ -1452,7 +1453,7 @@ mod tests {
                 })
                 .collect();
             let mut coop = MultiplayerSetupLayout::new(view.dialog, 800, 600, true);
-            crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 800, 600, false);
+            crate::ui::coop_lobby::apply(&mut coop, view.dialog, 2, 4, 800, 600, false);
             for id in [SPEED, DIFFICULTY] {
                 let (x, y) = center(coop.control_rect(id).unwrap());
                 assert_eq!(coop.control_at(&view, x, y), Some(id));

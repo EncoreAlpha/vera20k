@@ -149,6 +149,16 @@ pub(super) struct VmceMapDetails {
     pub briefing: Option<String>,
 }
 
+#[cfg(feature = "vmce")]
+impl VmceMapDetails {
+    /// The map's actual selectable primary roles: one authored `PlayerN` House
+    /// per row and slot. Without a resolved map the four-row shape stays.
+    pub(crate) fn role_count(&self) -> usize {
+        let count = self.owners.iter().filter(|owner| owner.is_some()).count();
+        if count == 0 { 4 } else { count.min(4) }
+    }
+}
+
 /// A VMCE guest's local campaign/map problem, shown in the lobby's inline
 /// status bar after the host's options revision is parsed.
 #[cfg(feature = "vmce")]
@@ -1118,10 +1128,9 @@ pub(crate) fn open_vmce_intermission(state: &mut AppState) -> anyhow::Result<()>
     state.frontend.screen = super::GameScreen::MainMenu;
     show_setup_dialog(state, dialog, false);
     if host {
-        state
-            .match_state
-            .session
-            .set_network_people_limit(state.frontend.room_limits.players)?;
+        // The next stage's authored primary roles are its slots.
+        let people = view::vmce_role_count(state).clamp(2, 4) as u8;
+        state.match_state.session.set_network_people_limit(people)?;
         if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
             protocol.republish_setup();
         }

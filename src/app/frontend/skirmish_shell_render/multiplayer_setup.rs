@@ -1006,7 +1006,7 @@ fn paint_vmce_lobby_board(
     use crate::ui::multiplayer_setup::VmceLobbyRoleSlot;
     let (Some(atlas), Some(board)) = (
         state.frontend.skirmish_shell_chrome.as_ref(),
-        layout.vmce_sidebar,
+        layout.vmce_sidebar.as_ref(),
     ) else {
         return;
     };

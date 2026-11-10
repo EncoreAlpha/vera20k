@@ -43,10 +43,17 @@ pub(crate) fn layout(state: &AppState) -> MultiplayerSetupLayout {
             crate::app::shell_network_setup::view::vmce_lobby_status_present(state);
         #[cfg(not(feature = "vmce"))]
         let status_present = false;
+        #[cfg(feature = "vmce")]
+        let role_count = crate::app::shell_network_setup::view::vmce_role_count(state);
+        #[cfg(not(feature = "vmce"))]
+        let role_count = 4;
         crate::ui::coop_lobby::apply(
             &mut layout,
             dialog,
-            usize::from(state.match_state.session.network_player_row_limit()),
+            role_count.min(usize::from(
+                state.match_state.session.network_player_row_limit(),
+            )),
+            role_count,
             w as i32,
             h as i32,
             status_present,

@@ -384,6 +384,9 @@ real-process captures:
 - Unclaimed role rows show the native `Waiting` text in the country cell and a muted grey swatch;
   the Owner cell names the whole authored House, and a room problem (role conflict, missing or
   mismatched campaign) appears in the full-width warning strip in orange rather than yellow.
+- The lobby lists only the selected map's actual primary roles: the player rows, Ready/colour
+  slots, the role board and the host's room limit all follow that count (2–4), so a three-role map
+  shows three seats instead of four.
 - i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that
