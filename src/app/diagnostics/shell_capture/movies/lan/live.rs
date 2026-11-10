@@ -1749,6 +1749,7 @@ impl LiveLanCapture {
                 VeraOutcomePhase::Observe
                     | VeraOutcomePhase::Round
                     | VeraOutcomePhase::NextMission
+                    | VeraOutcomePhase::Ending
                     | VeraOutcomePhase::Retrying
                     | VeraOutcomePhase::Quit
             )
@@ -2863,15 +2864,36 @@ impl LiveLanCapture {
                 self.step_vera_outcome(state, committed)?;
             }
             VeraOutcomePhase::Ending => {
-                if state.frontend.campaign_score_page.is_none()
-                    && state.match_state.session.cooperative_round().is_none()
-                    && render_frame >= 60
+                if state.frontend.credits_roll.is_some() {
+                    let started = *self.vera_outcome_next_frame.get_or_insert(render_frame);
+                    if render_frame == started {
+                        self.request_screenshot("vera-campaign-credits");
+                    } else if render_frame == started.saturating_add(90) {
+                        App::credits_roll_input(
+                            state,
+                            crate::app::frontend::credits_roll::CreditsInput::Escape,
+                        );
+                    }
+                    return Ok(());
+                }
+                if self.vera_outcome_next_frame.is_some()
+                    && state.frontend.campaign_score_page.is_none()
+                    && state.frontend.fullscreen_movie.is_none()
                 {
+                    let entered = *self.pair_linger_wall.get_or_insert_with(Instant::now);
+                    if entered.elapsed() < std::time::Duration::from_secs(3) {
+                        return Ok(());
+                    }
+                    ensure!(state.match_state.session.network_return_context().is_none()
+                        && state.frontend.lan.is_none()
+                        && state.frontend.shell_route == crate::app::shell_route::ShellRoute::MainMenu,
+                        "VMCE campaign completion returned to a network room");
                     let evidence = json!({
                         "kind": "end",
                         "completed": true,
                         "render_frame": render_frame,
                         "screen": format!("{:?}", state.frontend.screen),
+                        "network_return": format!("{:?}", state.match_state.session.network_return_context()),
                     });
                     if let Some(receipt) = self.final_receipt.as_mut() {
                         receipt["vera_outcome"] = evidence.clone();
@@ -2885,7 +2907,7 @@ impl LiveLanCapture {
                     self.phase = Phase::Finished;
                 } else {
                     ensure!(
-                        render_frame < 1_200,
+                        render_frame < 20_000,
                         "VMCE campaign completion did not finish: screen={:?}",
                         state.frontend.screen
                     );

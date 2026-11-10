@@ -167,8 +167,10 @@ recorded here for residuals only.
 
 - **B16 Setup apply failures are invisible** at default log level; freeze error misattributes all
   humans to "local slot".
-- **B17 Missing tests/captures:** retry-freeze/load, defeat projection,
-  campaign-end; 2p-final real captures; 3-player path; RTL visual.
+- **B17 Missing tests/captures:** 3-player path and RTL visual. A real two-process final-stage
+  probe reached the credits and returned to the main menu after Escape, with 300 matching
+  checksums; the standard runner's `2p-final` scenario is still unimplemented and the full
+  credits duration was not observed.
 - **B18 Test workflow:** per-phase deadlines, short dev probe defaults, retail directory reuse.
   (Current: `--suite dev`, 120 s cap, fail-fast; phase deadlines and cache reuse still open.)
 - **B19 Evidence baseline:** upstream-sync changed gameplay; old 2p/4p receipts are invalid.

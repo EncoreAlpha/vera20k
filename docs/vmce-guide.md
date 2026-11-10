@@ -315,8 +315,9 @@ real-process captures:
   checksums. After the entry animation, the capture checks the board and uses the Ready and
   Continue mouse controls. Three players have not been run separately; the
   four-player capture does not exercise changing a guest's role after joining.
-- `EndOfGame` campaign completion has production code and focused unit tests; its real
-  dual-process `2p-final` capture is not recorded yet. The current build's VMCE `2p-retry`
+- A real two-process `EndOfGame` probe reached the credits on both peers, then used Escape
+  to return both to the main menu. It compared 300 checksums; it did not watch the entire
+  credits roll. The standard acceptance runner does not yet support `2p-final`. VMCE `2p-retry`
   capture passed (BC6 page, guest votes → host retry → same stage, 300 matching checksums).
   There are no result-page timers anywhere: defeat
   uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version

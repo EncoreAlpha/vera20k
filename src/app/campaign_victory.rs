@@ -253,7 +253,9 @@ impl App {
         state.frontend.campaign_score_art = None;
         crate::app::lan_service::cooperative::release_transport(state);
         Self::close_finished_scenario(state);
-        state.frontend.shell_route = crate::app::shell_route::ShellRoute::MainMenu;
+        // End the LAN visit as well as the scenario: otherwise the credits
+        // return path sees a network context and reopens the campaign room.
+        Self::commit_lan_back(state);
         Self::advance_campaign_victory(
             state,
             CampaignVictory {
