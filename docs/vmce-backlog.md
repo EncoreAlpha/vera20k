@@ -120,21 +120,16 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   mission start, win/lose result and the next-stage handoff go straight to the result page or
   `begin_loading`, so the films are skipped. Play them through the existing fullscreen-movie owner
   on each local peer; see [audit A41](zh-CN/vmce-review.md).
-- **B96 — campaign-end rows:** the campaign completion dialog reuses the native `0xBC7` layout with
-  exactly two score places, and the tallies are two rows. VMCE 3–4 player campaigns therefore list
-  only the first two players on the completion page and a solo host leaves an empty second row.
-  Extend the page to the actual participants (or use the existing statistics page for the full
-  roster) while keeping the classic two-player layout; see [audit A42](zh-CN/vmce-review.md).
 - **B97 — disabled Change Map paints enabled:** in an intermission room `vmce_intermission_map` locks
   the map and `SetupAction::ChooseMap` returns early, but the setup renderer passes a hard-coded
   `false` disabled flag for the button, so it keeps the enabled red face and bright caption and
   clicks silently do nothing (guests use the same paint path). Drive paint from the same
-  `enabled(CHOOSE_MAP)` test; see [audit A43](zh-CN/vmce-review.md).
+  `enabled(CHOOSE_MAP)` test; see [audit A42](zh-CN/vmce-review.md).
 - **B98 — manifest key validation:** the `[Campaign]` section reads only known keys and silently
   ignores unknown ones, and `ScenarioN` rows beyond `ScenarioCount` are neither read nor rejected;
   the scenario sections already reject `PlayerN` beyond `PlayerCount`. A low `ScenarioCount` or a
   stray/typoed key therefore drops a stage without an admission error. Whitelist `[Campaign]` keys
-  and reject out-of-range `ScenarioN`; see [audit A44](zh-CN/vmce-review.md).
+  and reject out-of-range `ScenarioN`; see [audit A43](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery

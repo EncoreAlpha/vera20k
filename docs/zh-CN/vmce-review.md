@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 21 | 12 | 9 |
-| 合计 | 55 | 44 | 11 |
+| P3 | 20 | 11 | 9 |
+| 合计 | 54 | 43 | 11 |
 
 ## P1 — 优先修复
 
@@ -326,21 +326,14 @@ lang: zh-CN
 - **修正：** 复用现有 `fullscreen_movie` 所有权：关卡开始按 `Intro`（缺省 `Brief`）、胜利按 `Win → PostScore → PreMapSelect`、失败按 `Lose` 播放地图设置的电影，再进入现有结果页/继续流程；每端本地播放，保持输入锁和返回语义，不改变胜负判定、解锁时机与随机种子；未设置键时保持现状。
 - **验收：** 作者化两关系列分别为各键设置影片与留空；2p/4p 各端在开局、胜利、失败和关间继续的对应时点看到同一影片，并能返回正确页面；未设置时无额外停顿；300 个 checksum、结果一致性与解锁流程不回归。
 
-### A42 · B96 3–4 人战役完成页仍只有两行成绩 — P3
-
-- **问题与影响：** 战役完成页复用原生 `0xBC7` 对话框，只绑定两个成绩位；VMCE 3–4 人打完末关时完成页只列出前两名玩家的名字/分数，其余玩家完全不出现；单人房主完成时第二行回退为空名字的黄色空行。玩家会以为名单或成绩缺失。
-- **依据：** [完成页两行布局](../../src/ui/campaign_score_shell.rs#L270)（`CAMPAIGN_END_PLACES` 固定两组 name/score）；[成绩tallies 固定两行](../../src/app/frontend/skirmish_session/cooperative.rs#L583)（`campaign_end_tallies` 返回 `[[i32; 4]; 2]`）；[构建只取两行并回退空行](../../src/app/cooperative_round.rs#L452)（`.take(2)`）与[缺失行](../../src/app/cooperative_round.rs#L476)（空名字、黄色）；[原生缺第二个 House 时行未初始化](../../src/app/cooperative_round.rs#L438)（RESIDUAL：这里用空名回退）。
-- **修正：** VMCE 末关完成页按实际参战者生成 3–4 行（扩展现有对话框布局，或把完整名单交给现有全屏统计页承载），单人只显示有成绩的行或隐藏空行；普通双人 Classic Cooperative 仍保持原生 `0xBC7` 两行语义；不改片尾与返回流程。
-- **验收：** 2/3/4 人末关及单人房主完成时，完成页显示的玩家与成绩行同实际参战者一致、没有空白行；2 人经典合作与片尾返回不变；300 个 checksum、结果一致性与解锁不回归。
-
-### A43 · B97 关间房间的 Change Map 被禁用却仍按启用态绘制 — P3
+### A42 · B97 关间房间的 Change Map 被禁用却仍按启用态绘制 — P3
 
 - **问题与影响：** 进入关间房间后 `vmce_intermission_map` 非空，`CHOOSE_MAP` 的启用规则与点击处理都把它禁用；但 setup 右栏按钮绘制把 choose_map 的 disabled 参数写死为 `false`，按钮继续显示启用态的红色底与亮黄文字，点击没有任何反应或说明，玩家会以为按钮坏了。客人（非房主）也走同一条绘制路径。本轮 4p-win 关间大厅截图里 Change Map 与 Start Mission 的按钮外观一致（同为启用态），支持该问题。
 - **依据：** [关间地图锁](../../src/app/shell_network_setup/view.rs#L1034)（`session.vmce_intermission_map().is_some()`）；[启用规则](../../src/ui/multiplayer_setup.rs#L545)（`CHOOSE_MAP => self.host && !self.map_locked`）；[绘制硬编码](../../src/app/frontend/skirmish_shell_render.rs#L396)（choose_map 按钮的 disabled 恒为 `false`）；[点击守卫](../../src/app/shell_network_setup/actions.rs#L66)（关间地图存在时直接返回）。绘制层已有[禁用 alpha](../../src/app/frontend/skirmish_shell_render.rs#L103)，只是没有接到这个按钮。
 - **修正：** 绘制使用与命中测试同一 `view.enabled(CHOOSE_MAP)`（或把视图的禁用集合下发给 setup 绘制），让关间房间与客人侧显示原生禁用态；状态栏可补充「关间房间固定下一关」。普通房主房间保持可点击。
 - **验收：** 关间房间和客人侧的 Change Map 以禁用态绘制、点击无动作（最好有说明）；普通房主的 Change Map 仍能打开选图；800×600 与缩放截图不回归；开始/准备流程不变。
 
-### A44 · B98 campaign.ini 的未知键与超量 ScenarioN 被静默忽略 — P3
+### A43 · B98 campaign.ini 的未知键与超量 ScenarioN 被静默忽略 — P3
 
 - **问题与影响：** `[Campaign]` 只读取已知键，未知键被静默忽略；`ScenarioN` 只读取 `Scenario1..=ScenarioCount`，超出数量的显式行既不报错也不生效（对比 `[Scenario:...]` 会显式拒绝超出 `PlayerCount` 的 `PlayerN`）。作者把 `ScenarioCount` 写少、残留旧 `ScenarioN` 或把键名拼错时，准入通过但战役在本应存在的关卡处提前结束，该行被无声丢弃；若 `NextScenario` 指向被丢弃的关卡才会报“目标不在清单”，否则玩家只看到少关卡。
 - **依据：** [Campaign 清单读取](../../src/app/shell_network_setup/vmce_map.rs#L722)按 `ScenarioCount` 循环读 `Scenario1..=count`，没有检查额外 `ScenarioN` 或未知键；[场景段白名单](../../src/app/shell_network_setup/vmce_map.rs#L592)对 `PlayerN` 超出 `PlayerCount` 会显式拒绝，两处校验力度不一致；[控制段白名单](../../src/app/shell_network_setup/vmce_map.rs#L624)同样逐键校验。
@@ -425,6 +418,6 @@ lang: zh-CN
 - 原版依据：`tools/native_inspect` 在零售 `gamemd.exe` 上指令级核对 AllowWin 门（`HouseClass::Update` 0x004F8440，`GameMode` 0x00A8B238，House+0x27C，0x006E50A0 起的 60 帧计时器）。
 - 零售数据扫描：`MISSIONMD.INI` 24 个战役段 + `MISSION.INI` 26 个 ALL/SOV/TRN 段共 50 张地图按 8 字段动作块解析 `[Actions]`，动作 15 为 0；`MAPS01/02.MIX` 的 `C*M*` 条目是多人地图，没有 `[Actions]`。
 - 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，关间大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
-- 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；关间大厅截图中 Change Map 与 Start Mission 外观一致（启用态），与 A43 对应。
-- 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程；完成对话框本身未被截图，不能用于验证 A42 的行数。
+- 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；关间大厅截图中 Change Map 与 Start Mission 外观一致（启用态），与 A42 对应。
+- 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
