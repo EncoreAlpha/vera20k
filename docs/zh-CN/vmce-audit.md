@@ -180,6 +180,13 @@ lang: zh-CN
 - **方案：** 给 `0x36` 增加轮次绑定（本关结果 nonce、关间 epoch 或每轮递增 ID），接收端丢弃不属于当前轮次的记录，并限制每轮每端只接受一次；保留“双方解析不一致则退回大厅”的原语义，但只对当前轮次的身份生效。
 - **验收：** 构造上一轮的 `0x36` 延迟/重复送达下一轮（覆盖退役期暂存和可靠重发），确认新轮次不再被误退回大厅；真实身份不一致仍退回；丢包、乱序、四人与关间新人场景不回归。静态追踪，尚未实机复现。
 
+### A39 旧轮次结算记录会在 nonce 校验前触发全员退场 — P2，关联 B92
+
+- **触发与影响：** 结果页各端交换带 nonce 和下一关摘要的结算记录；接收端先比较每槽结果 `entries` 与关身份摘要，最后才比较 nonce。上一轮或错误轮次的记录若保留了相同结果位（例如两关都是全员获胜且角色不变），摘要会用记录携带的旧 nonce 与当前关身份重新计算，必然不匹配，于是被当成“玩家结算不一致”，走 `quit_cooperative_round` 并离开到主界面——即使本轮记录一致。可靠传输重发、关间退役窗口暂存和新轮次重放都可能送达这种旧记录。
+- **依据：** [结算记录](../../src/net/lan_messages/cooperative.rs#L27)只有 nonce/entries/confirmed/stage_digest，没有显式轮次；[结算接收](../../src/app/match_runtime/session/cooperative_round.rs#L419)先比较 `entries`（[L452](../../src/app/match_runtime/session/cooperative_round.rs#L452)）和 `stage_digest`（[L456](../../src/app/match_runtime/session/cooperative_round.rs#L456)），`agreement.nonce == record.nonce` 直到 [L482](../../src/app/match_runtime/session/cooperative_round.rs#L482) 才检查；[摘要推导](../../src/app/match_runtime/session/cooperative_round.rs#L138)使用的是记录 nonce 加当前关身份。[接收错误路径](../../src/app/lan_service/cooperative.rs#L621)在 `vmce_result_received` 返回错误时退出轮次并[回到主界面](../../src/app/cooperative_round.rs#L1066)；退役期[暂存](../../src/app/lan_service.rs#L1929)与[重放](../../src/app/lan_service/cooperative.rs#L174)保留到达顺序。
+- **方案：** 先按轮次校验 nonce：`agreement.nonce == Some(record.nonce)` 时不匹配就直接丢弃并记日志，不进入 entries/digest 比较；nonce 未知的首包路径保留 used-nonce 检查，但已用 nonce 的记录只丢弃、不触发退场；只有当前 nonce 的 entries 或下一关摘要不一致才视为真实分歧。也接受给记录增加显式轮次字段。
+- **验收：** 在房主和客人两侧分别构造上一轮记录在下一轮重放/延迟送达（首包与已建立 nonce 后），确认记录被丢弃且结算继续；当前轮真实 entries/下一关不一致仍退场；重复记录与关间暂存重放不回归。静态追踪，尚未实机复现。
+
 ## 前端与交互
 
 ### A07 回到房间后随机玩家在角色板中消失 — P2，关联 B43

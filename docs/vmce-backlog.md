@@ -105,6 +105,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   record therefore rejects a valid stage and returns everyone to the lobby, and any peer can send
   one. Bind the record to the round and accept one per peer per round; see
   [audit A36](zh-CN/vmce-audit.md).
+- **B92 — stale result records before the nonce check:** the result record compares per-slot
+  entries and the stage digest before checking the round nonce, so a replayed record from the
+  previous round (same per-slot outcomes) fails the digest and makes the receiver quit the round
+  back to the main menu. Check the nonce first, drop foreign-round records and keep teardown only
+  for real disagreement; see [audit A39](zh-CN/vmce-audit.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
