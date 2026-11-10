@@ -335,7 +335,7 @@ lang: zh-CN
 
 ### A43 · B98 campaign.ini 的未知键与超量 ScenarioN 被静默忽略 — P3
 
-- **问题与影响：** `[Campaign]` 只读取已知键，未知键被静默忽略；`ScenarioN` 只读取 `Scenario1..=ScenarioCount`，超出数量的显式行既不报错也不生效（对比 `[Scenario:...]` 会显式拒绝超出 `PlayerCount` 的 `PlayerN`）。作者把 `ScenarioCount` 写少、残留旧 `ScenarioN` 或把键名拼错时，准入通过但战役在本应存在的关卡处提前结束，该行被无声丢弃；若 `NextScenario` 指向被丢弃的关卡才会报“目标不在清单”，否则玩家只看到少关卡。
+- **问题与影响：** `[Campaign]` 只读取已知键，未知键被静默忽略；`ScenarioN` 只读取 `Scenario1..=ScenarioCount`，超出数量的显式行既不报错也不生效（对比 `[Scenario:...]` 会显式拒绝超出 `PlayerCount` 的 `PlayerN`）。作者把 `ScenarioCount` 写少、残留旧 `ScenarioN` 或把键名拼错时，准入通过但战役在本应存在的关卡处提前结束，该行被无声丢弃；若 `NextScenario` 指向被丢弃的关卡才会报“目标不在清单”，否则玩家只看到少关卡。本轮用含 `Scenario2`（超出 `ScenarioCount=1`）与未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，准入与两端采集均 PASS（300 个 checksum 一致），证实这些键确实被静默忽略。
 - **依据：** [Campaign 清单读取](../../src/app/shell_network_setup/vmce_map.rs#L722)按 `ScenarioCount` 循环读 `Scenario1..=count`，没有检查额外 `ScenarioN` 或未知键；[场景段白名单](../../src/app/shell_network_setup/vmce_map.rs#L592)对 `PlayerN` 超出 `PlayerCount` 会显式拒绝，两处校验力度不一致；[控制段白名单](../../src/app/shell_network_setup/vmce_map.rs#L624)同样逐键校验。
 - **修正：** 在 `parse_vmce_manifest` 中增加 `[Campaign]` 键白名单（`Name`/`Entry`/`ScenarioCount`/`Scenario1..=ScenarioCount`），并拒绝 `ScenarioN` 中 N 超过 `ScenarioCount` 的显式键；错误包含段名与键名。保留 `ScenarioCount` 上限和 `Entry` 必须属于清单的现有校验。
 - **验收：** `ScenarioCount=1` 同时写 `Scenario1`/`Scenario2`、未知键（如拼错的 `Scenariocount` 或额外 `Foo=`）都在准入被拒并指出段/键；合法系列行为不变；B05 的逐关预校验与整套字节身份不受影响。
@@ -420,4 +420,5 @@ lang: zh-CN
 - 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，关间大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
 - 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；关间大厅截图中 Change Map 与 Start Mission 外观一致（启用态），与 A42 对应。
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
+- 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
