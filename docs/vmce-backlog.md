@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: B03, then the remaining S1/S2 items. B01 is accepted: the genuine VMCE 2p-retry receipt passes (same VMCE stage, 300 equal checksums) and the live defeat page renders the four-row statistics table on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: B03, then the remaining S1/S2 items. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -107,9 +107,9 @@ recorded here for residuals only.
   and ack complete, Go starts the retry, both load the same `VMCE/LDA-Lose/stage01/all01umd.map`, and
   both receipts carry the retried-stage evidence and 300 identical native checksums. Residual: the 800
   result screenshot still paints the BC6 board area black (only Retry/Leave Room show), so the
-  four-row visual acceptance was fixed in `fac77ce6d`: the live page now draws the four rows, columns
-  and time header on both host and guest (regenerated `.scratch/vmce-retry` 800 screenshots).
-- **B02 Timers — cancelled by design; no timers exist.** Retry is the B26 team-agreement vote gate:
+  Live-table fixes (`1adbc7863`): one row per admitted player (2p=2, 4p=4) with lobby names,
+  bare HH:MM:SS times with the label drawn once, and 收入/all six headers localized in zh-CN.
+  Regenerated host/guest 800 screenshots under `.scratch/vmce-retry`; receipt/checksums unchanged.
   each guest's click is one vote and lights its button; the host's Retry stays disabled until every online guest
   voted and then starts, with no timeout; the host never votes. Campaign end uses the existing all-ready gate:
   guests press Ready and the host's Continue starts only when every connected guest is ready; there is no 30 s
