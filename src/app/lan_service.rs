@@ -51,6 +51,7 @@ struct PeerAdmission {
 /// Derived from the host's admitted Session snapshot. This names which
 /// challenge may assemble a peer's Type3 into the local Session; it is not a
 /// second participant/address writer.
+#[derive(Clone)]
 struct PeerAdmissionRecord {
     name: String,
     identity: PeerAdmission,

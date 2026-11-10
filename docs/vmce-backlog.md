@@ -4,7 +4,7 @@ Living task ledger for known VMCE gaps. Severity: S1 blocks the next release, S2
 visible correctness/claim gap, S3 is polish/robustness. Evidence for each item is in
 `.scratch/vmce-logic-audit/` (local audit reports, not committed) and the cited source.
 
-> Current work order: B03, then the remaining S1/S2 items. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
+> Current work order: B13, B12, then the remaining S1/S2 items. B03 now rolls back and aborts on a failed LAN host setup; a real failure-path capture remains to be run. B01 is accepted: genuine VMCE 2p-retry receipt (same VMCE stage, 300 equal checksums) and the live BC6 table (rows matching admitted players, lobby names, bare times, localized headers) pass on host and guest. The B24–B28 UI batch is complete; B29 (VMCE UI skill) is on the local-only branch `feature/vmce-ui-skill` at `ad7f27e2e` and is never merged or pushed.
 
 ## UI — completed batch (B24–B28)
 
@@ -66,7 +66,7 @@ recorded here for residuals only.
 
 - Version after the B01 fix: `0.2.9-vmce.6`. Push `feature/vmce` only after the screenshot review
   manifest is accepted; no formal Release.
-- Fix order: **B03 → B13 → B12**. Release gate: VMCE `2p-retry` now passes with a genuine
+- Fix order: **B13 → B12** (B03 implemented; failure capture remains). Release gate: VMCE `2p-retry` now passes with a genuine
   capture (BC6 page, guest votes, host retries, same stage, 300 equal checksums); `2p-win` and
   `4p-win` remain. Three-player, disconnect and RTL checks are not blocking.
 - B01 is accepted: genuine VMCE 2p-retry receipt and identical host/guest live-table stats pass.
@@ -87,6 +87,12 @@ recorded here for residuals only.
 - B23: do none of `AltNextScenario`, `SkipMapSelect` or cross-mission money in this batch.
 
 ## S1 — release blockers
+
+- **B03 Setup apply rollback — implemented; live failure capture outstanding.** LAN host
+  options and their roster reapplication restore the prior session, revision and peer admissions
+  if application fails, revoke the agreement and pending readiness, and show a blocking notice
+  before leaving the room. A focused test exercises failure after the session and scope change;
+  the real-LAN failure/notice path has not yet been captured.
 
 - **B01 Retry never restarts — completed (`c1dd00f83`, `21f71ea58`, `8f03b60ca`, `fac77ce6d`, `1adbc7863`, `60faac2de`).**
   The retry freeze rebuilt a `PreparedNetworkStartup` without the admitted map config/source/digest,

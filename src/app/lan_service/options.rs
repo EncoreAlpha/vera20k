@@ -249,6 +249,54 @@ pub(super) struct ReceivedOptions {
     options: ExtendedOptions,
 }
 
+/// A failed host setup must not leave its partially applied revision or roster
+/// in use. The modal aborts the room, so map-transfer and presentation state
+/// are retired with the setup rather than reused for another attempt.
+struct SetupCheckpoint {
+    session: MatchSession,
+    scope: Option<crate::net::lan_messages::SessionScope>,
+    peers: std::collections::BTreeMap<SocketAddrV4, super::PeerAdmissionRecord>,
+}
+
+impl SetupCheckpoint {
+    fn capture(session: &MatchSession, service: &super::LanService) -> Self {
+        Self {
+            session: session.clone(),
+            scope: service.setup_scope,
+            peers: service.peer_admissions.clone(),
+        }
+    }
+
+    fn abort(self, session: &mut MatchSession, service: &mut super::LanService) {
+        *session = self.session;
+        // The old scope remains available for the room-leave exchange, but no
+        // old or partially received agreement can authorize Ready or GO.
+        service.setup_scope = self.scope;
+        service.peer_admissions = self.peers;
+        service.setup_agreement = None;
+        service.received_options = None;
+        service.deferred_setup.retain(|request| {
+            !matches!(
+                request,
+                crate::app::shell_network_setup::NetworkSetupRequest::Ready(_)
+                    | crate::app::shell_network_setup::NetworkSetupRequest::MapStatus(_)
+            )
+        });
+        let _ = session.invalidate_network_agreement();
+    }
+}
+
+fn abort_received_setup(state: &mut AppState, checkpoint: SetupCheckpoint, error: &anyhow::Error) {
+    log::error!("LAN host setup could not be applied: {error:#}");
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        checkpoint.abort(&mut state.match_state.session, service);
+    }
+    crate::app::shell_network_setup::fail_go_handoff_with(
+        state,
+        Some(crate::i18n::tr("VERA:LanSetupApplyFailed")),
+    );
+}
+
 pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
     let Some(options) = state.match_state.lan_service.as_ref().and_then(|service| {
         let received = service.received_options.as_ref()?;
@@ -256,8 +304,16 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
     }) else {
         return Ok(());
     };
+    let checkpoint = SetupCheckpoint::capture(
+        &state.match_state.session,
+        state
+            .match_state
+            .lan_service
+            .as_ref()
+            .expect("received options own a LAN service"),
+    );
     #[cfg(feature = "vmce")]
-    return receive_options_text(
+    let result = receive_options_text(
         state,
         &options.text,
         options.source_sha256,
@@ -268,7 +324,7 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.vmce_series,
     );
     #[cfg(not(feature = "vmce"))]
-    return receive_options_text(
+    let result = receive_options_text(
         state,
         &options.text,
         options.source_sha256,
@@ -276,6 +332,10 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.selected_map_file,
         options.room,
     );
+    if let Err(error) = &result {
+        abort_received_setup(state, checkpoint, error);
+    }
+    result
 }
 
 fn queue_payload(
@@ -778,105 +838,118 @@ pub(super) fn receive_extended(
             if stale_revision {
                 return Ok(());
             }
-            prevalidate_received_options(
+            let checkpoint = SetupCheckpoint::capture(
                 &state.match_state.session,
-                &state.frontend.skirmish_modes,
-                &options,
-            )?;
-            {
-                let service = state.match_state.lan_service.as_mut().expect("visit");
-                service.setup_scope = Some(scope);
-                service.deferred_setup.retain(|request| {
-                    !matches!(
-                        request,
-                        crate::app::shell_network_setup::NetworkSetupRequest::Ready(_)
-                            | crate::app::shell_network_setup::NetworkSetupRequest::MapStatus(_)
-                    )
-                });
-                service.setup_agreement = Some(options.agreement.clone());
-                service.received_options = Some(ReceivedOptions {
-                    scope,
-                    options: options.clone(),
-                });
-                service.replace_peer_admissions(
-                    options
-                        .admissions
-                        .iter()
-                        .map(|admission| {
-                            (
-                                admission.endpoint,
-                                admission.name.clone(),
-                                admission.identity,
-                            )
-                        })
-                        .chain(std::iter::once((
-                            host.1,
-                            host.0.clone(),
-                            super::PeerAdmission {
-                                join_nonce: [0; 16],
-                                admission_nonce: [0; 16],
-                            },
-                        ))),
-                );
-            }
-            // A full host snapshot also retires an old endpoint through the
-            // same ParticipantLeft owner as Type10. Otherwise a lost departure
-            // could retain a peer while its stale Type3 is correctly refused.
-            let launch = state
-                .match_state
-                .session
-                .network_setup()
-                .ok_or_else(|| anyhow!("no setup"))?;
-            let departed = launch
-                .humans
-                .iter()
-                .enumerate()
-                .filter_map(|(source, human)| {
-                    if source == launch.local_player_index {
-                        return None;
-                    }
-                    let endpoint = state.match_state.session.network_endpoint(source)?;
-                    let retained = state
-                        .match_state
-                        .lan_service
-                        .as_ref()
-                        .expect("visit")
-                        .peer_admissions
-                        .get(&endpoint)
-                        .is_some_and(|record| record.name.eq_ignore_ascii_case(&human.name));
-                    (!retained).then_some(endpoint)
-                })
-                .collect::<Vec<_>>();
-            for endpoint in departed {
-                if let Some(index) = state.match_state.session.network_endpoint_source(endpoint) {
-                    crate::app::shell_network_setup::service_event(
-                        state,
-                        NetworkSetupEvent::ParticipantLeft { index },
-                    )?;
+                state.match_state.lan_service.as_ref().expect("visit"),
+            );
+            let result = (|| -> Result<()> {
+                prevalidate_received_options(
+                    &state.match_state.session,
+                    &state.frontend.skirmish_modes,
+                    &options,
+                )?;
+                {
+                    let service = state.match_state.lan_service.as_mut().expect("visit");
+                    service.setup_scope = Some(scope);
+                    service.deferred_setup.retain(|request| {
+                        !matches!(
+                            request,
+                            crate::app::shell_network_setup::NetworkSetupRequest::Ready(_)
+                                | crate::app::shell_network_setup::NetworkSetupRequest::MapStatus(
+                                    _
+                                )
+                        )
+                    });
+                    service.setup_agreement = Some(options.agreement.clone());
+                    service.received_options = Some(ReceivedOptions {
+                        scope,
+                        options: options.clone(),
+                    });
+                    service.replace_peer_admissions(
+                        options
+                            .admissions
+                            .iter()
+                            .map(|admission| {
+                                (
+                                    admission.endpoint,
+                                    admission.name.clone(),
+                                    admission.identity,
+                                )
+                            })
+                            .chain(std::iter::once((
+                                host.1,
+                                host.0.clone(),
+                                super::PeerAdmission {
+                                    join_nonce: [0; 16],
+                                    admission_nonce: [0; 16],
+                                },
+                            ))),
+                    );
                 }
+                // A full host snapshot also retires an old endpoint through the
+                // same ParticipantLeft owner as Type10. Otherwise a lost departure
+                // could retain a peer while its stale Type3 is correctly refused.
+                let launch = state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .ok_or_else(|| anyhow!("no setup"))?;
+                let departed = launch
+                    .humans
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(source, human)| {
+                        if source == launch.local_player_index {
+                            return None;
+                        }
+                        let endpoint = state.match_state.session.network_endpoint(source)?;
+                        let retained = state
+                            .match_state
+                            .lan_service
+                            .as_ref()
+                            .expect("visit")
+                            .peer_admissions
+                            .get(&endpoint)
+                            .is_some_and(|record| record.name.eq_ignore_ascii_case(&human.name));
+                        (!retained).then_some(endpoint)
+                    })
+                    .collect::<Vec<_>>();
+                for endpoint in departed {
+                    if let Some(index) = state.match_state.session.network_endpoint_source(endpoint)
+                    {
+                        crate::app::shell_network_setup::service_event(
+                            state,
+                            NetworkSetupEvent::ParticipantLeft { index },
+                        )?;
+                    }
+                }
+                crate::app::shell_network_setup::invalidate_network_agreement(state)?;
+                #[cfg(feature = "vmce")]
+                receive_options_text(
+                    state,
+                    &options.text,
+                    options.source_sha256,
+                    options.effective_digest,
+                    options.selected_map_file,
+                    options.room,
+                    options.vmce_roles,
+                    options.vmce_series,
+                )?;
+                #[cfg(not(feature = "vmce"))]
+                receive_options_text(
+                    state,
+                    &options.text,
+                    options.source_sha256,
+                    options.effective_digest,
+                    options.selected_map_file,
+                    options.room,
+                )?;
+                super::maps::received_options(state, scope, options.random_map)
+            })();
+            if let Err(error) = &result {
+                abort_received_setup(state, checkpoint, error);
             }
-            crate::app::shell_network_setup::invalidate_network_agreement(state)?;
-            #[cfg(feature = "vmce")]
-            receive_options_text(
-                state,
-                &options.text,
-                options.source_sha256,
-                options.effective_digest,
-                options.selected_map_file,
-                options.room,
-                options.vmce_roles,
-                options.vmce_series,
-            )?;
-            #[cfg(not(feature = "vmce"))]
-            receive_options_text(
-                state,
-                &options.text,
-                options.source_sha256,
-                options.effective_digest,
-                options.selected_map_file,
-                options.room,
-            )?;
-            super::maps::received_options(state, scope, options.random_map)
+            result
         }
         crate::net::lan_messages::extended_setup::SetupKind::Roster => {
             let names: Vec<String> = serde_json::from_slice(bytes)?;
@@ -1428,6 +1501,50 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn failed_vmce_options_restore_setup_and_revoke_agreement() {
+        let mut session = fixture(false);
+        let mut service = super::super::tests::service();
+        let original_launch = session.network_setup().unwrap().clone();
+        let original_scope = service.setup_scope.unwrap();
+        service.setup_agreement = Some(
+            crate::app::shell_network_setup::agreement::MultiplayerAgreement {
+                version: crate::app::shell_network_setup::agreement::version(),
+                rules_digest: "a".repeat(64),
+            },
+        );
+        let checkpoint = SetupCheckpoint::capture(&session, &service);
+
+        let mut incoming = original_launch.clone();
+        incoming.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        incoming.humans[0].slot.color_index = 5;
+        session
+            .accept_network_host_setup(
+                incoming,
+                [NetworkVacancy::Open; NETWORK_PLAYER_SLOT_COUNT],
+                8,
+                None,
+                false,
+            )
+            .unwrap();
+        service.setup_scope.as_mut().unwrap().revision += 1;
+        assert!(session.accept_network_vmce_map_config(None).is_err());
+
+        checkpoint.abort(&mut session, &mut service);
+        assert_eq!(session.network_setup(), Some(&original_launch));
+        assert_eq!(service.setup_scope, Some(original_scope));
+        let proof = crate::net::lan_messages::LanSessionProof {
+            scope: original_scope,
+            join_nonce: [0; 16],
+            admission_nonce: [0; 16],
+            version: crate::app::shell_network_setup::agreement::version(),
+            rules_digest: "a".repeat(64),
+        };
+        assert!(!service.validate_peer_agreement(&proof));
+        assert!(service.received_options.is_none());
     }
 
     /// The host's VMCE role projection keyed by synchronized seat, matching
