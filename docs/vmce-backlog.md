@@ -80,25 +80,10 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   and AI takeover remain open.
 - **B02:** result-page timers and forced pulls were cancelled; do not introduce them.
 
-## Lobby UI review residuals (B37–B56)
+## Lobby UI review residuals
 
-Static review of the VMCE lobby increment (the 53 commits since the upstream merge) found the
-following unfinished items; none blocks play today.
+The lobby layout and chrome pass (see Completed work) fixed most review items; these remain open.
 
-- **B37 — scaled ellipsize:** the owner board's country text passes the screen rect width to
-  `ellipsize_native`, which compares it against the font's native pixel width. At shell scales
-  other than 1 a country name that needs shortening is clipped mid-glyph (scale > 1) or shortened
-  unnecessarily (scale < 1); 800×600 hides it. Use the authored width (`scale.base_rect(...).w`)
-  as the result page and the status strip already do, and add a boundary test at 1920×1080 and
-  640×480.
-- **B38 — vacancy rows:** with fewer players than authored roles the board leaves the unclaimed
-  rows without the localized "Waiting" text (only a disabled swatch) while the headers still
-  promise country/ready/color. Decide whether to label vacancies or shrink the board to the
-  claimed roles.
-- **B39 — lobby dead code:** `layout.flags[row]` is assigned for VMCE but row icons are skipped
-  for VMCE, so the rect and its "no stale native flag" comment are dead; `VmceLobbyRole.role` is
-  no longer painted after the role column was removed; `sidebar.fill` uses a literal 14 instead
-  of `SIDEBAR_TOP + INNER_PAD`, and the `ROW_PAD` comment says 2 px while the value is 1.
 - **B40 — map-details cache dependency:** `vmce_map_details` runs inside the per-frame setup view
   and parses the map INI on a cache miss; the cache exists only while `network_setup_protocol` is
   present, so protocol-less diagnostic frames can re-parse it every frame. Move the cache to an
@@ -107,21 +92,10 @@ following unfinished items; none blocks play today.
   next stage is not found; the lookup ignores the series directory and the push bypasses the
   catalog owner, so a repeated open could duplicate the record. Deduplicate by
   `(series directory, map file)` or move the ensure-stage responsibility into the catalog owner.
-
-- **B42 — owner combo width:** the owner dropdown is 80 px wide with a 60 px text face and a 74 px,
-  23 px-high list row, so authored House names (`Americans House`, `YuriCountry House`) truncate in
-  the face and wrap/clip in the list; after the board's role column was removed no place shows the
-  full name. Widen the owner combo by reflowing the board's left edge, widen the open list to its
-  longest choice, or show the full name in the help/status line; assert at least 100 px of text width
-  at 800×600.
 - **B43 — Random roles invisible:** newly admitted participants default to Random, but the board
   maps only concrete roles 0..3, so Random players have no row and no Ready glyph; a room can show
   blank or partial rows while its players are present. Show a localized Random placeholder row per
   Random participant, or an inline "N players use Random" line, without changing assignment timing.
-- **B44 — inline status clipping:** the status strip wraps exactly two lines and adds no ellipsis;
-  the role-conflict message with substituted names and the missing/mismatch messages exceed 362×2 px,
-  so the trailing instruction is cut. Allow a third line, or ellipsize the second and shorten the
-  text.
 - **B45 — briefing truncation:** the lobby briefing is drawn into a box that shrinks from 118 to
   64 px when the status strip shows, with no ellipsis or scroll, so long `MISSIONMD.INI` briefings
   lose their tail silently. Mark the cut with "..." as the enlarged preview does, or stop shrinking
@@ -129,26 +103,6 @@ following unfinished items; none blocks play today.
 - **B46 — verification feedback:** a pending whole-series scan maps to no inline status and Ready is
   gated by `accept_eligible`, so a guest sees an inert Ready button for the scan's duration. Show a
   checking-campaign status while Pending and distinguish failed or cancelled.
-- **B47 — AI rows:** an AI-filled row keeps a visible, host-enabled owner combo whose pick fails with
-  "role row has no player" (log only), showing "Random" with no effect. Require `human.is_some()` for
-  the owner combo, or disable the row's control explicitly.
-- **B48 — board composition:** the board leaves a 66 px gap between Ready (440..520) and Color
-  (586..628), an 80 px Ready cell for a small glyph, and its header row about 3 px above the
-  Players/Owner labels (labels top-aligned at y 11, headers V-centred at y 14); the country column is
-  only 114 px. Rebalance the widths (Ready about 40–48 px, country about 170 px or more), align the
-  baselines and keep the native colour anchor.
-
-- **B49 — combo chrome:** the player-name and owner combos are 96 and 80 px wide, widths that the
-  native combo-face table does not provide (it maps exact widths 249/207/180/150/151/118/117/42/39/38/
-  213/44 and returns `None` otherwise), so the two primary controls paint as a custom flat field with
-  a gold hairline and no native face; their open/pressed/disabled states change only the arrow and
-  text. Give 96/80 a native-style two-pixel bevel or a stretchable face, or move to native face
-  widths while reflowing the board.
-- **B50 — palette:** the same screen carries four unrelated blacks (board/status `[16,16,25]`, combo
-  fields `[0.055,0.025,0.025]`, empty swatches `[0.10,0.10,0.10]`), a gold accent on combo and
-  swatch outlines, the native grey-blue list-frame tones and pure yellow text. Define one VMCE palette
-  (base, raised field, bevel, disabled, warning) sampled from the native dialog art and centralize the
-  constants; keep the accent for selection/warning only.
 - **B51 — display-only affordance:** the board uses the native list frame, yellow values and the same
   text size as the editable combos but has no hover, focus or selection state, so it reads as an
   interactive list. Use a dimmer value tone or a small caption to mark it read-only, or make a cell
@@ -156,18 +110,10 @@ following unfinished items; none blocks play today.
 - **B52 — briefing framing:** the mission briefing is the only full-width block without a panel
   (`x=74, w=558`, plain text), giving lines of about 90 characters under two framed panels. Frame it
   like the board or constrain it to the board column with a reading measure of about 450–500 px.
-- **B53 — warning emphasis:** the inline status line uses the same yellow and size as ordinary labels,
-  so the only "room cannot start" explanation does not stand out. Use a warmer warning colour or an
-  icon for errors and a neutral style while a check is in progress.
 - **B54 — layout stability:** showing or hiding the status strip switches the briefing box between
   118 and 64 px and moves the text below it, including when a background series scan completes.
   Reserve the strip area always, or merge the status into the board footer, so the reading position
   does not jump.
-- **B55 — empty-role contrast:** an unclaimed row's swatch (`[0.10,0.10,0.10]` on a `[16,16,25]`-based
-  fill) is about 1.1:1 contrast, so with no country/ready text the row looks like missing rendering.
-  Use a muted but visible tone or a hatch/dashed outline for vacancy, together with B38.
-- **B56 — ellipsis style:** `ellipsize_native` appends `..`, while the enlarged-preview briefing uses
-  `...`; one lobby shows both cut markers. Unify through one helper (prefer `...`) with a test.
 
 ## Completed work and limits
 
@@ -226,3 +172,17 @@ following unfinished items; none blocks play today.
   its retention does not establish runtime correctness.
 - Campaign completion was fixed to leave the LAN visit before returning to the main menu.
   The final Go reliability issue B10 remains separate.
+- **Lobby layout and chrome pass (B37–B39, B42, B44, B47–B50, B53, B55, B56):** implemented.
+  The owner combo is 120 px wide (a 100 px text face) and the board reflows to 298..632 with country
+  text 150, Ready 48 and the colour column on its native anchor; labels and captions share y 14.
+  The 96/120 px combo cells paint VERA's native-toned field (shared fill plus the native list-frame
+  bevel), because no native combo face covers those widths. One palette replaces the four unrelated
+  blacks and the gold hairline: board/field fill, muted empty swatch, list-frame bevel and a warning
+  colour for the inline status, which now spans the room width and ellipsizes its second line.
+  Unclaimed roles show the native waiting label; AI rows no longer show an owner combo; board
+  country and waiting text are measured in authored pixels, and every cut marker is "..."; the dead
+  `layout.flags`/`VmceLobbyRole.role` code and the literal fill height are gone. Evidence: focused
+  tests (`ui::coop_lobby` 5, `skirmish_shell_render::vmce_panel` 3, `app::shell_network_setup` 32,
+  `skirmish_shell_render` 100, `ui::multiplayer_setup` 10) and a default-feature build; no capture
+  or screenshot, so palette contrast and the combo field seam remain visually unverified.
+

@@ -432,8 +432,6 @@ pub(crate) struct SetupRowIcon {
 #[cfg(feature = "vmce")]
 #[derive(Debug, Clone)]
 pub(crate) struct VmceLobbyRole {
-    /// The primary House the role controls.
-    pub(crate) role: String,
     /// The House's authored country, localized when the rules know it.
     pub(crate) country: Option<String>,
     /// The country insignia PCX the chrome atlas loaded.

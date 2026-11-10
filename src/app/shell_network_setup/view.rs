@@ -386,16 +386,15 @@ fn vmce_lobby_board(
     };
     let roles =
         std::array::from_fn(|role| {
-            let Some(owner) = details.owners[role].as_deref() else {
+            if details.owners[role].is_none() {
                 return VmceLobbyRoleSlot::Waiting;
-            };
+            }
             let Some((participant, human)) = launch.humans.iter().enumerate().find(|(_, human)| {
                 !human.is_observer() && human.role.native_value() == role as i32
             }) else {
                 return VmceLobbyRoleSlot::Waiting;
             };
             VmceLobbyRoleSlot::Claimed(VmceLobbyRole {
-                role: owner.to_owned(),
                 country: details.countries[role].as_deref().map(country_text),
                 flag: details.countries[role].as_deref().and_then(country_flag),
                 color: details.colors[role],
@@ -897,6 +896,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                     && !bare
                     && (!mode.class.is_vmce() || column == SetupColumn::Team)
                     && (column == SetupColumn::Country || !observer)
+                    && !(column == SetupColumn::Team && mode.class.is_vmce() && human.is_none())
                     && !(column == SetupColumn::Team && clan_room && !mode.class.is_vmce()),
                 selected,
                 choices,

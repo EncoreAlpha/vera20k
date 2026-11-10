@@ -381,6 +381,9 @@ real-process captures:
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
   five-column result board, the right-panel statistics button/page, and the BC6 defeat page.
   HUD and loading/transition UI are deferred.
+- Unclaimed role rows show the native `Waiting` text in the country cell and a muted grey swatch;
+  the Owner cell names the whole authored House, and a room problem (role conflict, missing or
+  mismatched campaign) appears in the full-width warning strip in orange rather than yellow.
 - i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that

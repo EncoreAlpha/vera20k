@@ -18,34 +18,39 @@ use crate::ui::shell::geom::{RectPx, ShellScale};
 const PLAYER_COMBO_X: i32 = 74;
 const PLAYER_COMBO_W: i32 = 96;
 const OWNER_COMBO_X: i32 = 174;
-const OWNER_COMBO_W: i32 = 80;
+/// Wide enough for the authored House names: the 20 px arrow reserve leaves a
+/// 100 px text face, where `Americans House` and `YuriCountry House` fit.
+const OWNER_COMBO_W: i32 = 120;
 /// Authored 800x600 metrics of the owner board. The board frame starts after
 /// the 4 px gutter behind the owner combo and ends flush against the native
 /// right panel's bevel at x 632; the content keeps a 4 px inner padding. The
 /// separate role column is gone: country starts at the content edge, the
-/// country text uses the freed width, one Ready glyph cell follows, and the
-/// color swatch keeps its native 586..628 slot.
-const SIDEBAR_X: i32 = 258;
+/// country text owns the wide middle, one narrow Ready glyph cell follows, and
+/// the color swatch keeps its native 586..628 slot.
+const SIDEBAR_X: i32 = 298;
 const SIDEBAR_RIGHT: i32 = 632;
 const SIDEBAR_TOP: i32 = 10;
 const INNER_PAD: i32 = 4;
-/// Content starts at x 262; the country emblem keeps the native 50 px cell.
+/// Content starts at x 302; the country emblem keeps the native 50 px cell.
 const CONTENT_X: i32 = SIDEBAR_X + INNER_PAD;
 const COUNTRY_ICON_W: i32 = 50;
 const COUNTRY_TEXT_X: i32 = CONTENT_X + 54;
-const COUNTRY_TEXT_W: i32 = 114;
+const COUNTRY_TEXT_W: i32 = 150;
 /// One Ready cell for the host H-in-star / guest accepted star.
-const READY_X: i32 = 440;
-const READY_W: i32 = 80;
+const READY_X: i32 = 514;
+const READY_W: i32 = 48;
 /// The color column keeps its approved 586..628 region.
 const COLOR_X: i32 = 586;
 const COLOR_W: i32 = SIDEBAR_RIGHT - INNER_PAD - COLOR_X;
-/// The native roster row pitch, its combo height, and the board's 2 px
-/// vertical padding inside each row.
+/// The native roster row pitch, its combo height, and the board's 1 px padding
+/// above and below each row's content (2 px total).
 const ROW_PITCH: i32 = 26;
 const ROW_Y: i32 = 36;
 const ROW_H: i32 = 24;
 const ROW_PAD: i32 = 1;
+/// The captions and the left labels share this y so both rows read on one
+/// baseline.
+const HEADER_Y: i32 = SIDEBAR_TOP + INNER_PAD;
 /// The status strip's native two-line text height plus its 4 px padding.
 const STATUS_H: i32 = 48;
 /// The flat fill's inset inside the native list frame.
@@ -93,16 +98,19 @@ pub(crate) fn apply(
 
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
     layout.labels = vec![
-        ("GUI:Players", rect(PLAYER_COMBO_X, 11, PLAYER_COMBO_W, 17)),
-        ("VERA:VmceOwner", rect(OWNER_COMBO_X, 11, OWNER_COMBO_W, 17)),
+        (
+            "GUI:Players",
+            rect(PLAYER_COMBO_X, HEADER_Y, PLAYER_COMBO_W, 17),
+        ),
+        (
+            "VERA:VmceOwner",
+            rect(OWNER_COMBO_X, HEADER_Y, OWNER_COMBO_W, 17),
+        ),
     ];
     for (row, columns) in layout.combos.iter_mut().enumerate() {
         let y = ROW_Y + row as i32 * ROW_PITCH;
         columns[0] = rect(PLAYER_COMBO_X, y, PLAYER_COMBO_W, ROW_H);
         columns[4] = rect(OWNER_COMBO_X, y, OWNER_COMBO_W, ROW_H);
-        // The board owns the emblems now; keep the retained rect on its
-        // country slot so no stale native flag column paints left of it.
-        layout.flags[row] = rect(SIDEBAR_X + INNER_PAD + 2, y + ROW_PAD, 18, 20);
     }
     layout.vmce_sidebar = Some(sidebar(scale));
 
@@ -110,18 +118,19 @@ pub(crate) fn apply(
     let board_bottom = SIDEBAR_TOP + INNER_PAD + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD;
     let briefing = if status_present {
         let status_y = board_bottom + STATUS_GUTTER;
+        let status_w = SIDEBAR_RIGHT - PLAYER_COMBO_X;
         layout.vmce_status_bar = Some(VmceLobbyStatusBar {
-            frame: rect(SIDEBAR_X, status_y, SIDEBAR_RIGHT - SIDEBAR_X, STATUS_H),
+            frame: rect(PLAYER_COMBO_X, status_y, status_w, STATUS_H),
             fill: rect(
-                SIDEBAR_X + FILL_BORDER,
+                PLAYER_COMBO_X + FILL_BORDER,
                 status_y + FILL_BORDER,
-                SIDEBAR_RIGHT - SIDEBAR_X - 2 * FILL_BORDER,
+                status_w - 2 * FILL_BORDER,
                 STATUS_H - 2 * FILL_BORDER,
             ),
             text: rect(
-                SIDEBAR_X + FILL_BORDER + INNER_PAD,
+                PLAYER_COMBO_X + FILL_BORDER + INNER_PAD,
                 status_y + FILL_BORDER + INNER_PAD,
-                SIDEBAR_RIGHT - SIDEBAR_X - 2 * (FILL_BORDER + INNER_PAD),
+                status_w - 2 * (FILL_BORDER + INNER_PAD),
                 STATUS_H - 2 * (FILL_BORDER + INNER_PAD),
             ),
         });
@@ -163,7 +172,7 @@ pub(crate) fn apply(
 
 fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
     let rect = |x, y, w, h| scale.scale_rect(RectPx::new(x, y, w, h));
-    let header_y = SIDEBAR_TOP + INNER_PAD;
+    let header_y = HEADER_Y;
     let headers = [
         VmceLobbyHeader {
             key: "VERA:VmceCountryColumn",
@@ -220,7 +229,7 @@ fn sidebar(scale: ShellScale) -> VmceLobbySidebar {
             SIDEBAR_X + FILL_BORDER,
             SIDEBAR_TOP + FILL_BORDER,
             SIDEBAR_RIGHT - SIDEBAR_X - 2 * FILL_BORDER,
-            (14 + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP - 2 * FILL_BORDER,
+            (header_y + HEADER_H + 1 + 4 * ROW_PITCH + INNER_PAD) - SIDEBAR_TOP - 2 * FILL_BORDER,
         )),
         header_rule,
         headers,
@@ -384,22 +393,22 @@ mod tests {
         let board = coop.vmce_sidebar.expect("VMCE owner board");
         let base = |rect| coop.page.scale.base_rect(rect);
         let row = board.rows[0];
-        assert_eq!(base(row.country_icon), RectPx::new(262, 36, 50, 24));
-        assert_eq!(base(row.country), RectPx::new(316, 37, 114, 22));
-        assert_eq!(base(row.ready), RectPx::new(440, 37, 80, 22));
+        assert_eq!(base(row.country_icon), RectPx::new(302, 36, 50, 24));
+        assert_eq!(base(row.country), RectPx::new(356, 37, 150, 22));
+        assert_eq!(base(row.ready), RectPx::new(514, 37, 48, 22));
         assert_eq!(base(row.color), RectPx::new(588, 37, 38, 22));
-        assert_eq!(base(board.headers[0].rect), RectPx::new(264, 14, 166, 17));
-        assert_eq!(base(board.headers[1].rect), RectPx::new(440, 14, 80, 17));
+        assert_eq!(base(board.headers[0].rect), RectPx::new(304, 14, 202, 17));
+        assert_eq!(base(board.headers[1].rect), RectPx::new(514, 14, 48, 17));
         assert_eq!(base(board.headers[2].rect), RectPx::new(586, 14, 42, 17));
         let rule = base(board.header_rule);
-        assert_eq!((rule.x, rule.y, rule.w, rule.h), (262, 32, 366, 1));
+        assert_eq!((rule.x, rule.y, rule.w, rule.h), (302, 32, 326, 1));
         let frame = base(board.frame);
-        assert_eq!((frame.x, frame.y, frame.w, frame.h), (258, 10, 374, 130));
+        assert_eq!((frame.x, frame.y, frame.w, frame.h), (298, 10, 334, 130));
         for (index, row) in board.rows.iter().enumerate() {
             let y = 36 + index as i32 * 26;
-            assert_eq!(base(row.country_icon), RectPx::new(262, y, 50, 24));
-            assert_eq!(base(row.country), RectPx::new(316, y + 1, 114, 22));
-            assert_eq!(base(row.ready), RectPx::new(440, y + 1, 80, 22));
+            assert_eq!(base(row.country_icon), RectPx::new(302, y, 50, 24));
+            assert_eq!(base(row.country), RectPx::new(356, y + 1, 150, 22));
+            assert_eq!(base(row.ready), RectPx::new(514, y + 1, 48, 22));
             assert_eq!(base(row.color), RectPx::new(588, y + 1, 38, 22));
         }
         for row in &board.rows {
@@ -427,8 +436,22 @@ mod tests {
         let player = coop.control_rect(0x411).unwrap();
         let owner = coop.control_rect(0x76D).unwrap();
         assert_eq!(player, RectPx::new(74, 36, 96, 24));
-        assert_eq!(owner, RectPx::new(174, 36, 80, 24));
+        assert_eq!(owner, RectPx::new(174, 36, 120, 24));
         assert_eq!(player.x + player.w + 4, owner.x);
+        // The authored House names need a readable text face: the arrow reserve
+        // is 20 px, so the cell must leave at least 100 px for the text.
+        assert!(
+            coop.page.scale.base_rect(owner).w - 20 >= 100,
+            "owner text face: {owner:?}"
+        );
+        // The list labels and the board captions share one baseline.
+        for (_, label) in &coop.labels {
+            assert_eq!(coop.page.scale.base_rect(*label).y, HEADER_Y);
+        }
+        let headers = coop.vmce_sidebar.expect("board").headers;
+        for header in headers {
+            assert_eq!(coop.page.scale.base_rect(header.rect).y, HEADER_Y);
+        }
         // The interactive column is Owner; the board's separate role captions
         // are gone.
         assert!(coop.labels.iter().any(|(key, _)| *key == "VERA:VmceOwner"));

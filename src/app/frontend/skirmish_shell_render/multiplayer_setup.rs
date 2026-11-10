@@ -250,7 +250,11 @@ pub(crate) fn render_multiplayer_setup(
                     localized_label(state, key, key)
                 },
                 *rect,
-                ShellAlign::NONE,
+                if vmce {
+                    ShellAlign::V_CENTER
+                } else {
+                    ShellAlign::NONE
+                },
                 SHELL_LABEL_TEXT_RGB,
                 SHELL_CONTROL_TEXT_DEPTH,
             ));
@@ -311,22 +315,15 @@ pub(crate) fn render_multiplayer_setup(
                 continue;
             };
             if vmce {
-                // Coop uses wider cells than the stock combo sprites support.
-                // Give every player and role a consistent visible field even
-                // when the original fixed-width face sprite is unavailable.
-                push_solid_rect(
+                // The stock combo faces only cover exact native widths; the
+                // 96/120 px VMCE cells get VERA's native-toned field instead of
+                // a flat block with no chrome.
+                vmce_panel::push_combo_field(
                     &mut controls,
                     atlas,
                     rect,
-                    [0.055, 0.025, 0.025],
+                    scale,
                     SHELL_CONTROL_DEPTH + 0.00002,
-                );
-                push_rect_outline(
-                    &mut controls,
-                    atlas,
-                    rect,
-                    [0.49, 0.38, 0.28],
-                    SHELL_CONTROL_DEPTH - 0.00002,
                 );
             }
             let selected = combo.selected.and_then(|index| combo.choices.get(index));
@@ -1044,13 +1041,22 @@ fn paint_vmce_lobby_board(
             SHELL_CONTROL_TEXT_DEPTH,
         ));
     }
-    let disabled_rgb = [0.10, 0.10, 0.10];
-    let outline_rgb = [0.34, 0.32, 0.28];
+    let disabled_rgb = vmce_panel::EMPTY_SWATCH_RGB;
+    let outline_rgb = vmce_panel::SWATCH_OUTLINE_RGB;
     for (slot, cells) in view.vmce_roles.iter().zip(board.rows.iter()) {
         match slot {
             VmceLobbyRoleSlot::Waiting => {
-                // Native vacancy style: Country/Ready stay blank and the
-                // swatch is the disabled variant; no separate role column.
+                // Vacancy: the native waiting label in the country cell and the
+                // muted swatch, so an unclaimed role never reads as a missing
+                // row. Ready stays blank and there is no separate role column.
+                let waiting = localized_label(state, "GUI:Waiting", "Waiting");
+                texts.push(text(
+                    &vmce_panel::ellipsize_scaled(font, &waiting, cells.country, scale),
+                    cells.country,
+                    ShellAlign::V_CENTER,
+                    SHELL_LABEL_TEXT_RGB,
+                    SHELL_CONTROL_TEXT_DEPTH,
+                ));
                 push_vmce_swatch(controls, atlas, cells.color, disabled_rgb, outline_rgb);
             }
             VmceLobbyRoleSlot::Claimed(role) => {
@@ -1065,7 +1071,7 @@ fn paint_vmce_lobby_board(
                 }
                 if let Some(country) = &role.country {
                     texts.push(text(
-                        &vmce_panel::ellipsize_native(font, country, cells.country.w),
+                        &vmce_panel::ellipsize_scaled(font, country, cells.country, scale),
                         cells.country,
                         ShellAlign::V_CENTER,
                         SHELL_LABEL_TEXT_RGB,
@@ -1121,7 +1127,7 @@ fn paint_vmce_lobby_board(
                         line_h,
                     ),
                     ShellAlign::NONE,
-                    SHELL_LABEL_TEXT_RGB,
+                    vmce_panel::WARNING_RGB,
                     SHELL_CONTROL_TEXT_DEPTH,
                 ));
             }

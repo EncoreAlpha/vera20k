@@ -229,7 +229,6 @@ impl VmceLobbyCapture {
                     }),
                     crate::ui::multiplayer_setup::VmceLobbyRoleSlot::Claimed(role) => json!({
                         "row": index + 1,
-                        "role": role.role,
                         "country": role.country,
                         "flag": role.flag,
                         "color": role.color,
