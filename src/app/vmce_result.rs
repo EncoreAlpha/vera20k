@@ -1,15 +1,8 @@
-//! VMCE's settlement page: a won mission, a lost mission and the campaign's
-//! last mission all use retail's campaign score dialog `0x103` for rendering
-//! and input (the dialog VMCE's victory already used), while this module owns
-//! the result state, the network round and the outcome semantics. The stock
-//! Cooperative mode keeps its own BC6 dialog in `cooperative_round`.
+//! VMCE's settlement pages and round semantics. Victory and campaign end use
+//! the campaign score dialog `0x103`; defeat uses the cooperative BC6 dialog.
 //!
-//! The `0x103` Continue is the page's only action:
-//! - a won mission with a next stage is the all-ready/start gate: a guest's
-//!   Continue marks it ready, the host's starts the next stage;
-//! - a defeat or the last mission acknowledges the page and leaves for the
-//!   lobby on every peer;
-//! - a solo host has no guest row to wait for and starts/leaves directly.
+//! Guests ready on victory and vote to retry on defeat; the host continues
+//! once every connected guest is ready. Campaign end uses the all-ready gate.
 
 use crate::app::match_bootstrap::VmceNextStage;
 use crate::app::{App, AppState};
@@ -73,136 +66,12 @@ pub(crate) fn open_defeat(state: &mut AppState) {
     // time. Project it while the finished world is still resident.
     let ranking_model =
         crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    model.vmce_statistics = statistics_page(state, &ranking_model);
-    if model.vmce_statistics.is_none() {
-        // The result board must never be empty: rebuild the four role rows
-        // directly from the BC6 score rows when the role projection is not
-        // available after the mission retires.
-        use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
-        let launch = state.match_state.session.network_setup();
-        let mut humans = launch
-            .map(|launch| {
-                launch
-                    .humans
-                    .iter()
-                    .filter(|human| !human.is_observer())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        humans.sort_by_key(|human| human.role.native_value());
-        let rows = humans
-            .into_iter()
-            .enumerate()
-            .map(|(index, human)| VmceStatisticsRow {
-                player: human.name.clone(),
-                owner: format!("role{}", human.role.native_value().max(0) + 1),
-                kills: model.rows.get(index).map_or(0, |row| row.kills),
-                losses: model.rows.get(index).map_or(0, |row| row.losses),
-                built: model.rows.get(index).map_or(0, |row| row.built),
-                score: model.rows.get(index).map_or(0, |row| row.score),
-                income: 0,
-                rgb: model.rows.get(index).map(|row| row.rgb),
-            })
-            .collect::<Vec<_>>();
-        model.vmce_statistics = Some(VmceStatistics {
-            total_time: model.time.clone(),
-            par_time: model.time.clone(),
-            rows,
-        });
-    }
-    // Project the real per-role score rows, in admission order (raw row),
-    // over the table. Only a role the world genuinely reports as all-zero
-    // stays zero; the fallback above must not replace real scores.
-    {
-        let launch = state.match_state.session.network_setup();
-        let mut admitted = launch
-            .map(|launch| {
-                launch
-                    .humans
-                    .iter()
-                    .filter(|human| !human.is_observer())
-                    .map(|human| (human.role.native_value(), human))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        admitted.sort_by_key(|(role, human)| (human.raw_slot_index.unwrap_or(u8::MAX), *role));
-        let coop_rows = state
-            .match_state
-            .sim_runtime
-            .as_ref()
-            .map(|runtime| runtime.simulation.cooperative_score_rows())
-            .unwrap_or_default();
-        let sim = state
-            .match_state
-            .sim_runtime
-            .as_ref()
-            .map(|runtime| &runtime.simulation);
-        // Network sources are assigned by the shared roster order (colour,
-        // then raw row), not by a peer's local `humans` order. Resolve each
-        // launch human to its source and House owner before matching scores.
-        let launch_owner = launch.map(|launch| {
-            let mut ordered = launch.humans.iter().enumerate().collect::<Vec<_>>();
-            ordered.sort_by_key(|(index, human)| {
-                (
-                    human.slot.color_index,
-                    human.raw_slot_index.unwrap_or(*index as u8),
-                )
-            });
-            ordered
-                .into_iter()
-                .enumerate()
-                .filter_map(|(source, (index, _))| {
-                    state
-                        .match_state
-                        .session
-                        .network_source_owner(source)
-                        .map(|owner| (index, owner))
-                })
-                .collect::<std::collections::BTreeMap<_, _>>()
-        });
-        if let Some(statistics) = model.vmce_statistics.as_mut() {
-            statistics.rows = admitted
-                .iter()
-                .enumerate()
-                .map(|(index, (_role, human))| {
-                    let human_index = launch
-                        .and_then(|launch| {
-                            launch.humans.iter().position(|candidate| {
-                                candidate.raw_slot_index == human.raw_slot_index
-                                    && candidate.name == human.name
-                            })
-                        })
-                        .unwrap_or(index);
-                    let owner = launch_owner
-                        .as_ref()
-                        .and_then(|owners| owners.get(&human_index))
-                        .map_or("", String::as_str);
-                    let source = sim
-                        .and_then(|sim| {
-                            coop_rows
-                                .iter()
-                                .find(|row| sim.interner().resolve(row.owner) == owner)
-                        })
-                        .or_else(|| coop_rows.get(index));
-                    let fallback = model.rows.get(index);
-                    crate::ui::campaign_score_shell::VmceStatisticsRow {
-                        player: human.name.clone(),
-                        owner: fallback.map_or_else(String::new, |_| String::new()),
-                        rgb: fallback.map(|row| row.rgb),
-                        kills: source
-                            .map_or_else(|| fallback.map_or(0, |row| row.kills), |row| row.kills),
-                        losses: source
-                            .map_or_else(|| fallback.map_or(0, |row| row.losses), |row| row.losses),
-                        built: source
-                            .map_or_else(|| fallback.map_or(0, |row| row.built), |row| row.built),
-                        score: source
-                            .map_or_else(|| fallback.map_or(0, |row| row.score), |row| row.score),
-                        income: source.map_or(0, |row| row.credits_earned),
-                    }
-                })
-                .collect();
-        }
-    }
+    let Some(statistics) = statistics_page(state, &ranking_model, VmceScoreSource::Live) else {
+        log::error!("Could not build the VMCE defeat statistics");
+        App::leave_mission_result_screen(state);
+        return;
+    };
+    model.vmce_statistics = Some(statistics);
     let rows = model.rows.len();
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
@@ -485,7 +354,9 @@ fn open_page(
     victory: bool,
 ) {
     #[cfg(feature = "vmce")]
-    let statistics = victory.then(|| statistics_page(state, &model)).flatten();
+    let statistics = victory
+        .then(|| statistics_page(state, &model, VmceScoreSource::Terminal))
+        .flatten();
     state.frontend.score_page = None;
     state.frontend.score_art = None;
     state.frontend.coop_score_page = None;
@@ -548,13 +419,18 @@ fn open_page(
     }
 }
 
-/// VERA's victory/campaign-end statistics projection: the B25 player/House
-/// rows plus the terminal score cells and the mission income statistic. Read
-/// only; no second result state.
-#[cfg(feature = "vmce")]
-pub(crate) fn statistics_page(
+/// Victory uses terminal scores; defeat shows the live, unbonused House values.
+enum VmceScoreSource {
+    Terminal,
+    Live,
+}
+
+/// Project each admitted player from the frozen assignment and the finished
+/// world's House statistics. Both result pages share this owner.
+fn statistics_page(
     state: &AppState,
     model: &crate::ui::campaign_score_shell::CampaignScoreScreenModel,
+    source: VmceScoreSource,
 ) -> Option<crate::ui::campaign_score_shell::VmceStatistics> {
     use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
     let launch = state.match_state.session.network_setup()?;
@@ -565,7 +441,10 @@ pub(crate) fn statistics_page(
         .sim_runtime
         .as_ref()
         .map(|runtime| &runtime.simulation);
-    let terminal = sim.and_then(|sim| sim.terminal_score_snapshot());
+    let terminal = match source {
+        VmceScoreSource::Terminal => sim.and_then(|sim| sim.terminal_score_snapshot()),
+        VmceScoreSource::Live => None,
+    };
     let coop = sim.map(|sim| {
         sim.cooperative_score_rows()
             .into_iter()
@@ -584,18 +463,20 @@ pub(crate) fn statistics_page(
     // shows two rows, a 4-player match four. Country/flag data stays out of
     // the Player column; it is the lobby participant's name.
     for (role, human) in admitted {
-        let role = assignments
-            .and_then(|assignments| {
-                assignments.participants.iter().find(|assignment| {
-                    Some(assignment.raw_slot_index) == human.raw_slot_index
-                        && assignment.participant_name == human.name
-                })
+        let assignment = assignments.and_then(|assignments| {
+            assignments.participants.iter().find(|assignment| {
+                Some(assignment.raw_slot_index) == human.raw_slot_index
+                    && assignment.participant_name == human.name
             })
-            .map_or(role, |assignment| i32::from(assignment.player_index));
+        });
+        let role = assignment.map_or(role, |assignment| i32::from(assignment.player_index));
         let info = roles
             .as_ref()
             .and_then(|roles| usize::try_from(role).ok().and_then(|role| roles.get(role)));
-        let owner = info.map_or("", |info| info.owner.as_str());
+        let owner = assignment.map_or_else(
+            || info.map_or("", |info| info.owner.as_str()),
+            |assignment| assignment.owner_name.as_str(),
+        );
         let owner_id = sim.and_then(|sim| sim.interner().get(owner));
         let values = terminal.and_then(|snapshot| {
             snapshot

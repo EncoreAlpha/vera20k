@@ -1469,6 +1469,27 @@ impl LiveLanCapture {
                     && crate::map::skirmish_scenarios::is_valid_map(map, mode, false)
             })
             .context("retail network map with enough starts")?;
+        #[cfg(feature = "vmce")]
+        if self.target == LanTarget::LiveVmceHost
+            && matches!(self.vera_outcome, Some(VmceOutcome::Retry))
+        {
+            // Pick a high colour in the ordinary setup before entering VMCE,
+            // where colour controls are hidden. This makes source order differ
+            // from seat order and exercises the real result projection.
+            let row = state.match_state.session.network_setup()
+                .and_then(|launch| launch.local_player().raw_slot_index)
+                .context("host setup row")?;
+            let control = setup_control_at_row(state, SetupColumn::Color, usize::from(row))?
+                .context("host colour control")?;
+            let view = setup::view(state).context("host setup view")?;
+            ensure!(view.enabled(control) && view.combo(control)
+                .is_some_and(|combo| combo.choices.iter().any(|choice| choice.value == 7)),
+                "host cannot select the retry probe colour");
+            setup::apply_action(state, SetupAction::Select { control, value: 7 });
+            ensure!(state.match_state.session.network_setup()
+                .is_some_and(|launch| launch.local_player().slot.color_index == 7),
+                "retry probe colour was not accepted");
+        }
         setup::commit_map_selection(state, mode_id, map_index, None)?;
         self.select_country(state)?;
         self.open_human_rows(state, ai)
@@ -1511,6 +1532,13 @@ impl LiveLanCapture {
         }
         if !all_ready || !all_map {
             return Ok(());
+        }
+        if matches!(self.vera_outcome, Some(VmceOutcome::Retry)) {
+            let host = launch.humans.iter().find(|human| human.raw_slot_index == Some(0))
+                .context("retry host seat")?;
+            ensure!(launch.humans.iter().any(|human| human.raw_slot_index != Some(0)
+                && human.slot.color_index < host.slot.color_index),
+                "retry probe did not reverse command-source and seat order");
         }
         // Snapshot the real four-process lobby before the production Start
         // advances to loading; the UI review needs a native lobby frame from a
@@ -2379,10 +2407,21 @@ impl LiveLanCapture {
                         let sim = &state.match_state.sim_runtime.as_ref()
                             .context("VMCE defeat simulation")?.simulation;
                         let score_rows = sim.cooperative_score_rows();
+                        let first_seat = assignments.participants.iter()
+                            .min_by_key(|assignment| assignment.raw_slot_index)
+                            .context("VMCE defeat has no participants")?;
+                        ensure!(score_rows.first().is_some_and(|score|
+                            sim.interner().resolve(score.owner) != first_seat.owner_name),
+                            "retry probe did not reverse the actual score and seat order");
+                        let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
+                            .context("VMCE defeat role metadata")?;
                         for row in &statistics.rows {
                             let assignment = assignments.participants.iter()
                                 .find(|assignment| assignment.participant_name == row.player)
                                 .context("VMCE defeat player has no frozen assignment")?;
+                            ensure!(row.owner == assignment.owner_name
+                                && row.rgb == roles[usize::from(assignment.player_index)].color,
+                                "VMCE defeat player {} has the wrong House or colour", row.player);
                             let score = score_rows.iter()
                                 .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
                                 .context("VMCE defeat House has no score row")?;
@@ -2706,6 +2745,32 @@ impl LiveLanCapture {
                     ensure!(board.local_ready == session.cooperative_round_ready_progress()
                         .is_some_and(|(_, _, local)| local),
                         "VMCE result local Ready status is stale");
+                    let statistics = state.frontend.campaign_score_page.as_ref()
+                        .and_then(|page| page.vmce_statistics())
+                        .context("VMCE victory statistics are missing")?;
+                    let sim = &state.match_state.sim_runtime.as_ref()
+                        .context("VMCE victory simulation")?.simulation;
+                    let terminal = sim.terminal_score_snapshot();
+                    let live_scores = sim.cooperative_score_rows();
+                    ensure!(statistics.rows.len() == self.expected_players,
+                        "VMCE victory statistics have the wrong number of rows");
+                    for row in &statistics.rows {
+                        let assignment = assignments.participants.iter()
+                            .find(|assignment| assignment.participant_name == row.player)
+                            .context("VMCE victory player has no frozen assignment")?;
+                        let values = terminal.and_then(|snapshot| snapshot.rows.iter()
+                            .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
+                            .map(|score| (score.kills, score.losses, score.built, score.score, score.credits_earned)))
+                            .or_else(|| live_scores.iter()
+                                .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
+                                .map(|score| (score.kills, score.losses, score.built, score.score, score.credits_earned)))
+                            .context("VMCE victory House has no score")?;
+                        ensure!(row.owner == assignment.owner_name
+                            && (row.kills, row.losses, row.built, row.score, row.income)
+                                == values,
+                            "VMCE victory statistics for {} do not match House {}",
+                            row.player, assignment.owner_name);
+                    }
                 }
                 if state.frontend.coop_score_page.is_none() && !native_victory_page {
                     self.vera_outcome_phase = VeraOutcomePhase::NextMission;

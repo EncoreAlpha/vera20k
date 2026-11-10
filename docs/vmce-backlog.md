@@ -152,9 +152,10 @@ recorded here for residuals only.
   keyed on localized string equality; lobby status classifier matches English substrings.
 - **B15 Host does not re-read its own campaign.ini** between start publish and frozen commit
   (fails closed only at next stage).
-- **B30 Defeat statistics can be assigned to the wrong player.** The defeat projection looks up
-  generated network-owner names in rows keyed by authored Houses, then falls back to row order.
-  When source order and lobby seat order differ, player statistics and colours can be swapped.
+- **B30 Defeat statistics assigned to the wrong player — fixed.** Victory and defeat share a
+  projection keyed by the frozen player-to-House assignment. A real two-player retry capture
+  reverses command-source and seat order, checks each House's statistics and colour, and reloads
+  the same stage with 300 matching checksums.
 - **B31 Victory Ready display — fixed.** The board refreshes after round events and local Ready;
   host Continue uses the actual all-ready gate. Two- and four-player win captures click the
   settled page's Ready and Continue controls.

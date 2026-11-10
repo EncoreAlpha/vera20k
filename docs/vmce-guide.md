@@ -202,8 +202,8 @@ The result state, Continue and retry semantics belong to VMCE.
   and no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
   The genuine VMCE 2p-retry capture passes: the guest votes, the host retries, both reload the
   same VMCE stage, 300 native checksums match, and host/guest table stats are identical.
-  If player source order differs from seat order, defeat statistics can appear on the wrong
-  player row (B30).
+  Defeat statistics use each player's frozen House assignment, including when command-source
+  order differs from seat order.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
   rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
   validated at setup; a malformed later stage fails at the transition (B05).
