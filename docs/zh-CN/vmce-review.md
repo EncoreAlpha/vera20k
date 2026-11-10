@@ -124,7 +124,7 @@ lang: zh-CN
 
 ### A07 · B43 回到房间后随机玩家在角色板中消失 — P2
 
-- **问题与影响：** 切换到下一关房间时所有人重置为随机角色，右侧角色板可能全显示等待，甚至看不到已准备玩家的状态；实际参战者仍在左侧玩家列表。本轮 2p-win/4p-win 真实采集的关间大厅截图显示两名/四名玩家的 Owner 都重置为 `隨機`，右侧角色板对应行均为 `等待 ...`、Ready/Color 空白，支持该现象。
+- **问题与影响：** 切换到下一关房间时所有人重置为随机角色，右侧角色板可能全显示等待，甚至看不到已准备玩家的状态；实际参战者仍在左侧玩家列表。本轮 2p-win/4p-win 真实采集的初始 VMCE 大厅截图（关间房间截图尚未采集）显示两名/四名玩家的 Owner 都重置为 `隨機`，右侧角色板对应行均为 `等待 ...`、Ready/Color 空白，支持该现象。
 - **依据：** [关间重置](../../src/app/match_runtime/session/cooperative_round.rs#L574)将角色设为 `-2`；[角色板](../../src/app/shell_network_setup/view.rs#L395)只查找具体索引 `0..3`。
 - **修正：** 用独立的随机玩家列表或包含姓名和准备状态的汇总呈现；不要为显示而提前抽取或锁定随机角色。
 - **验收：** 两至四人全部随机、部分随机及角色更换后，房主和客人都能看到所有玩家与准备状态；开局时仍只分配未占角色。
@@ -145,7 +145,7 @@ lang: zh-CN
 
 ### A13 · B66 外部战役路径使零售任务简报查找失败 — P2
 
-- **问题与影响：** VMCE 地图使用 `VMCE/<系列>/<目录>/all01umd.map` 等目录路径时，大厅查找零售 `MISSIONMD.INI` 的任务简报会使用整条路径，无法匹配按文件名命名的节，显示简报不可用。本轮 2p-win/4p-win 关间大厅截图仍显示 `Mission briefing unavailable`。
+- **问题与影响：** VMCE 地图使用 `VMCE/<系列>/<目录>/all01umd.map` 等目录路径时，大厅查找零售 `MISSIONMD.INI` 的任务简报会使用整条路径，无法匹配按文件名命名的节，显示简报不可用。本轮 2p-win/4p-win 初始 VMCE 大厅截图仍显示 `Mission briefing unavailable`。
 - **依据：** [简报查找](../../src/app/shell_network_setup/view.rs#L173)直接把目录形式的地图路径传给 INI；零售 `MISSIONMD.INI` 的对应节为 `[ALL01UMD.MAP]`。这与 B45 的长简报截尾是两个问题。
 - **修正：** 对零售简报查找取得地图文件名组件，同时正确处理两种路径分隔符，并继续使用现有简报键解析与缺失回退；不改变加载地图的完整路径身份。
 - **验收：** 用带目录的 `all01umd.map` 通过生产简报读取路径取得对应文本；覆盖 `/`、`\\`、大小写和真正缺少简报的情况，并采集当前界面。
@@ -286,7 +286,7 @@ lang: zh-CN
 
 ### A34 · B86 大厅角色板不显示共享 House 授权 — P3
 
-- **问题与影响：** 地图通过 `[Scenario:<map>:<House>]` 的 `PlayerNControl=yes` 把共享 House 授权给角色。大厅角色板只列主角色的 House、国家、旗帜和颜色，不显示每个角色额外控制的共享 House；玩家在准备和开局前无法确认谁控制哪些共享单位，容易重复操作或无人控制，地图作者也无法在大厅核对授权是否写对。本轮 4p-win 关间大厅截图（`LDA-4p` 系列把 `French House` 的 `Player1Control`/`Player2Control` 授权给角色 1/2）只显示玩家 Owner 与角色板的 Country/Ready/Color，没有任何共享 House 名称或授权提示，支持该问题。
+- **问题与影响：** 地图通过 `[Scenario:<map>:<House>]` 的 `PlayerNControl=yes` 把共享 House 授权给角色。大厅角色板只列主角色的 House、国家、旗帜和颜色，不显示每个角色额外控制的共享 House；玩家在准备和开局前无法确认谁控制哪些共享单位，容易重复操作或无人控制，地图作者也无法在大厅核对授权是否写对。本轮 4p-win 初始 VMCE 大厅截图（`LDA-4p` 系列把 `French House` 的 `Player1Control`/`Player2Control` 授权给角色 1/2）只显示玩家 Owner 与角色板的 Country/Ready/Color，没有任何共享 House 名称或授权提示，支持该问题。
 - **依据：** [地图角色详情](../../src/app/shell_network_setup.rs#L144)只有 `owners`/`countries`/`colors`/`briefing`；[角色板](../../src/app/shell_network_setup/view.rs#L359)只用这些主角色字段生成行；共享授权只在[开局 House 授权](../../src/sim/scenario_bootstrap.rs#L3725)按地图 `campaign_player_controls` 生效。指南只说明共享控制存在，不说明其不在大厅显示。
 - **修正：** 在既有地图详情/角色板所有者中投影每个角色的共享 House（名称，必要时附国家/颜色），用紧凑行或提示展示；复用已解析的 `VmceMapConfig` 或 `load_vmce_scenario` 的同一控制段读取，不新增第二套 `campaign.ini` 解析。无授权时保持现状。
 - **验收：** `campaign.ini` 分别给单角色和多角色写共享 House 时，大厅对应角色显示共享 House；无授权地图不变；2–4 角色、800×600 与缩放布局不重叠。
@@ -328,7 +328,7 @@ lang: zh-CN
 
 ### A42 · B97 关间房间的 Change Map 被禁用却仍按启用态绘制 — P3
 
-- **问题与影响：** 进入关间房间后 `vmce_intermission_map` 非空，`CHOOSE_MAP` 的启用规则与点击处理都把它禁用；但 setup 右栏按钮绘制把 choose_map 的 disabled 参数写死为 `false`，按钮继续显示启用态的红色底与亮黄文字，点击没有任何反应或说明，玩家会以为按钮坏了。本轮 4p-win 关间大厅截图里 Change Map 与 Start Mission 的按钮外观一致（同为启用态）；而本轮合成 guest 大厅截图（`vmce-lobby-guest-waiting`）右侧只有 Ready/Leave Room、没有 Change Map，说明客人侧不显示该按钮，问题影响面是房主侧；此前“客人也走同一绘制路径”的判断不准确。
+- **问题与影响：** 进入关间房间后 `vmce_intermission_map` 非空，`CHOOSE_MAP` 的启用规则与点击处理都把它禁用；但 setup 右栏按钮绘制把 choose_map 的 disabled 参数写死为 `false`，按钮继续显示启用态的红色底与亮黄文字，点击没有任何反应或说明，玩家会以为按钮坏了。普通房主大厅截图显示 Change Map 处于启用态；绘制代码对该按钮的 disabled 参数写死为 `false`，因此关间锁定后仍保持这一外观（本轮尚未采集关间房间截图）；而本轮合成 guest 大厅截图（`vmce-lobby-guest-waiting`）右侧只有 Ready/Leave Room、没有 Change Map，说明客人侧不显示该按钮，问题影响面是房主侧；此前“客人也走同一绘制路径”的判断不准确。
 - **依据：** [关间地图锁](../../src/app/shell_network_setup/view.rs#L1034)（`session.vmce_intermission_map().is_some()`）；[启用规则](../../src/ui/multiplayer_setup.rs#L545)（`CHOOSE_MAP => self.host && !self.map_locked`）；[绘制硬编码](../../src/app/frontend/skirmish_shell_render.rs#L396)（choose_map 按钮的 disabled 恒为 `false`）；[点击守卫](../../src/app/shell_network_setup/actions.rs#L66)（关间地图存在时直接返回）。绘制层已有[禁用 alpha](../../src/app/frontend/skirmish_shell_render.rs#L103)，只是没有接到这个按钮。
 - **修正：** 绘制使用与命中测试同一 `view.enabled(CHOOSE_MAP)`（或把视图的禁用集合下发给 setup 绘制），让关间房间与客人侧显示原生禁用态；状态栏可补充「关间房间固定下一关」。普通房主房间保持可点击。
 - **验收：** 关间房间房主侧的 Change Map 以禁用态绘制、点击无动作（最好有说明）；客人侧本就不显示该按钮，保持现状；普通房主的 Change Map 仍能打开选图；800×600 与缩放截图不回归；开始/准备流程不变。
@@ -431,8 +431,8 @@ lang: zh-CN
 
 - 原版依据：`tools/native_inspect` 在零售 `gamemd.exe` 上指令级核对 AllowWin 门（`HouseClass::Update` 0x004F8440，`GameMode` 0x00A8B238，House+0x27C，0x006E50A0 起的 60 帧计时器）。
 - 零售数据扫描：`MISSIONMD.INI` 24 个战役段 + `MISSION.INI` 26 个 ALL/SOV/TRN 段共 50 张地图按 8 字段动作块解析 `[Actions]`，动作 15 为 0；`MAPS01/02.MIX` 的 `C*M*` 条目是多人地图，没有 `[Actions]`。
-- 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，关间大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
-- 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；关间大厅截图中 Change Map 与 Start Mission 外观一致（启用态），与 A42 对应。
+- 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，初始 VMCE 大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
+- 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人初始 VMCE 大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；初始大厅截图中 Change Map 处于启用态（关间房间截图未采集），与 A42 的绘制判断对应。
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 无效战役探测：`Player2=alliance house`（地图 `[Houses]` 为 `Alliance House`）的 2p 系列在发现阶段被过滤（主机日志 `ignoring VMCE stage ... with invalid configuration`），大厅没有原因提示；该行为归入既有的 B14/B16，而不是开局迟到失败。
