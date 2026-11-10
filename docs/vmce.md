@@ -28,7 +28,7 @@ the same VMCE build.
 | Campaign flow | `NextScenario`, `EndOfGame`, external series directory; the selected map's `campaign.ini` stage is validated strictly, and LAN admission verifies every manifest map's bytes |
 | Outcomes | Per-player win/loss from the map's actual diplomacy; an eliminated primary House keeps its authorized control and the mission continues until a map outcome trigger |
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
-| Unlocks | The next stage is unlocked locally only after every online participant confirms the round's result and stage identity (nonce-bound digest); loading the next stage is not required |
+| Unlocks | The result and stage identity must be confirmed; the current code also waits for Continue before saving, so leaving earlier can lose the unlock (B57). Loading the next stage is not required |
 | LAN validation | Current build: two-, three- and four-process win and next mission, two-player retry, 300 matching checksums; each peer's local unlock file checked |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers |
 | i18n | English and zh-CN real; other shipped languages use English placeholders |

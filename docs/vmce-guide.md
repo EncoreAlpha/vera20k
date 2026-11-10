@@ -44,7 +44,8 @@ VMCE takes another path:
   lobby switches are shown disabled for VMCE.
 - Victory and campaign completion use the campaign score page `0x103`; defeat uses the BC6
   statistics page. Guests ready for the next mission or vote to retry, and the host continues
-  after the corresponding gate opens. VMCE does not write `coopsave.ini` or save progress.
+  after the corresponding gate opens. VMCE saves local stage unlocks but does not write
+  `coopsave.ini`.
 
 VMCE does not change the original single-player campaign or ordinary skirmish rules. Those
 modes keep their original behavior and do not read the VMCE campaign format.
@@ -131,8 +132,8 @@ to the directory name.
 2. Enter a LAN room and choose the **Multiplayer Campaign** mode row.
 3. The host picks a map; every guest must show the map as available (Ready).
 4. Each player confirms a role and readies; the host starts.
-5. For a solo check, the host may add an AI seat like Skirmish. The AI does not take a
-   campaign role; on maps that ignore global AI triggers it may remain inactive.
+5. The VMCE room does not offer new AI seats. Its current minimum-participant check also rejects
+   a lone host without lobby AI (B74), despite the solo hint; the solo campaign path needs a fix.
 6. The mission uses one deterministic shared world. Both peers must see the same opening,
    triggers and result.
 
@@ -154,6 +155,8 @@ Each player role is a primary House from the map:
 - A map-authored primary House with `PlayerControl=yes` is not automatically given to a VMCE
   role. Add the matching `PlayerNControl=yes` in `campaign.ini` if that House should be
   player-controlled; otherwise it stays AI.
+- The lobby role board lists primary roles only; shared Houses granted through
+  `PlayerNControl` are not shown before the mission (B86).
 
 VMCE does not use skirmish start waypoints to place bases. Map authors must place each role's
 base and units, or spawn them with triggers. VMCE does not grant an MCV or construction yard.
@@ -221,10 +224,9 @@ The result state, Continue and retry semantics belong to VMCE.
   binding; the previous mission's House names are not carried over. The next mission's seed is
   derived deterministically from the previous seed and the next stage's identity (both peers
   compute it locally); the frozen difficulty row carries over.
-- The result page does not write `coopsave.ini`. The next stage is unlocked locally only after
-  every online participant confirms the round's result and next-stage identity: the result record
-  binds the round's nonce to a digest of the resolved stage, so opening the page alone writes
-  nothing, and a peer whose result or next stage differed never confirms. Loading the next stage
+- The result page does not write `coopsave.ini`. The current code waits for the result and stage
+  identity agreement and then for the Continue flow before unlocking the next stage locally.
+  Leaving after agreement but before Continue can lose the unlock (B57); loading the next stage
   is not required. A verified intermission guest unlocks the designated stage without receiving
   earlier stages. Admission verifies the whole series (see the install section) before the host
   can start; the selected map and `campaign.ini` are also checked individually.
@@ -262,10 +264,13 @@ not implemented; see Current limitations.
 
 A `[Scenario:...]` section matches the map path case-insensitively and treats `/` and `\` as
 equivalent, so the section header does not have to repeat `ScenarioN`'s exact spelling. The
-same rule applies to the House name in a control section. Unknown keys, duplicate
-sections/keys, `PlayerN` beyond `PlayerCount`, empty required values, and escaping paths are
-rejected. `campaign.ini` is limited to 64 KiB. Every listed map must exist locally, even if the
-current session only plays the first mission.
+same rule applies to the House name in a control section. Unknown keys, physically identical
+duplicate sections or keys, `PlayerN` beyond `PlayerCount`, empty required values, and escaping
+paths are rejected. Logically equivalent section names with differing case or separators may
+currently pass undetected (B82); do not repeat them. A `PlayerNControl` key whose role number
+exceeds the stage's `PlayerCount` is accepted but never reaches a role (B87). `campaign.ini` is
+limited to 64 KiB. Every listed map must exist locally, even if the current session only plays
+the first mission.
 
 ## Outcome actions
 
@@ -306,9 +311,9 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
   reselect roles and ready again. Joining and leaving are allowed between stages. If there are
   more players than roles, keep the room and block Start until the count is valid. The host
   cannot replace the designated stage within that intermission.
-- Completing a stage and resolving the next stage unlocks it locally for its participants once
-  every online participant confirmed the result and the stage identity, without requiring the next
-  stage to load. A verified intermission guest unlocks the designated next stage, without
+- Completing a stage and resolving the next stage is intended to unlock it once every online
+  participant confirms the result and stage identity. The current implementation also waits for
+  Continue, so leaving earlier can lose the unlock (B57); the next stage need not load. A verified intermission guest unlocks the designated next stage, without
   receiving earlier stages; this includes returning disconnected players. Unlocks survive content
   updates under the same campaign directory and stage path; persistence is implemented in the
   working tree, while real cross-machine guest joins still need connected validation.
@@ -330,9 +335,10 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
 - A map `[Colors]` entry can add a color scheme; if it reuses a rules name, VERA currently
   updates its values (the original engine does not update an existing scheme — that difference
   is still open).
-- `<Player @ X>` selectors, `<random>`/`<none>` role owners, action 15 `AllowWin` and event 33
-  ("selected by player") are not suitable for VMCE role logic. Use country selectors and
-  `67`/`68` instead.
+- `<Player @ X>` selectors, `<random>`/`<none>` role owners and event 33 ("selected by player")
+  are not suitable for VMCE role logic. Use country selectors and `67`/`68` where applicable.
+  Network mode currently bypasses the action 15 `AllowWin` tag-count victory gate; `67`/`68`
+  do not replace its delay semantics. Native campaign timing remains open under B79.
 - Reinforcement teams, task forces and base vehicles are not duplicated automatically. Write
   one copy per role when each role needs its own.
 - AI-only actions usually do nothing on a role House because VMCE marks role Houses as human.
@@ -387,8 +393,9 @@ real-process captures:
 - The lobby lists only the selected map's actual primary roles: the player rows, Ready/colour
   slots, the role board and the host's room limit all follow that count (2–4), so a three-role map
   shows three seats instead of four.
-- VMCE rooms list no AI seat option: the authored primary roles are for human players. A lone
-  host can start the campaign without filling the other roles, and the status line says so.
+- VMCE rooms list no new AI seat option: authored primary roles are for human players. The status
+  line says a lone host can start, but the current minimum-participant gate rejects that case
+  (B74). AI seats inherited from another LAN mode can also remain in the room (B73).
 - i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that
@@ -409,7 +416,9 @@ real-process captures:
   listed in `Scenario1..ScenarioN`; the map must be a loose `.map`; check log lines beginning
   `ignoring invalid VMCE series`.
 - **Campaign is missing `[Scenario:...]`:** the section does not name the selected map path.
-  `/` and `\` are interchangeable and ASCII case is ignored, but the map must exist on disk.
+  Section matching treats `/` and `\` alike and ignores ASCII case. On Linux/macOS file loading
+  currently has a backslash issue; use `/` consistently (B81). Non-ASCII map filenames in
+  `campaign.ini` may also fail to match the files (B85).
 - **Guest cannot Ready:** the guest lacks the same series directory, `campaign.ini`, selected map
   bytes, or differs in another map of the series. Admission hashes the whole series (every
   manifest map's path, length and bytes plus `campaign.ini`) in a background scan; a pending scan

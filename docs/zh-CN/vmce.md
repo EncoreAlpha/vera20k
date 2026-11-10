@@ -26,7 +26,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 | 战役流程 | `NextScenario`、`EndOfGame`、外部系列目录；所选地图的 `campaign.ini` 关卡严格校验，LAN 准入校验清单中每张地图的字节 |
 | 逐玩家胜负 | 按任务实际生效的结盟判定胜方/败方；主所属方被消灭的玩家保留原有授权的控制，任务继续等待地图胜负触发器 |
 | 关间房间 | 全员返回指定下一关的战役房间，重新选择角色并准备；强制加入/离开与角色数不足的拦截 |
-| 关卡解锁 | 只有在所有在线参与者确认本轮结果与下一关身份（绑定 nonce 的摘要）后才在本机解锁；不要求加载下一关 |
+| 关卡解锁 | 结果和下一关身份确认后，仍需经过继续流程才写入本机解锁；仅确认后退出可能丢失解锁（B57），不要求加载下一关 |
 | LAN 验证 | 当前构建的双人、三人、四人胜利与下一关、双人失败重试采集通过，300 个 checksum 一致；各端本机解锁文件已核对 |
 | 结果页 | `0x103` 胜利板 + 统计页；原生 BC6 失败统计页；结果页无计时器 |
 | i18n | en/zh-CN 真值；其余语言英文占位 |
@@ -39,6 +39,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
 - [VMCE 待办（中文）](vmce-backlog.md) — 已确认目标、修复顺序和验收范围。
+- [VMCE 代码与界面审查](vmce-audit.md) — 已确认问题、解决方案和验证条件。
 - [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。
 - [English hub](../vmce.md)。

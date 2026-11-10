@@ -2,14 +2,14 @@
 
 This is the English engineering ledger; the [Chinese backlog](zh-CN/vmce-backlog.md) uses the
 same numbering. It lists only **unfinished** work, locked decisions and acceptance boundaries.
-Implemented work moved to [Completed work and limits](#completed-work-and-limits) with its
-evidence boundary; the [player and map-author guide](vmce-guide.md) describes current behavior.
+Implemented paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits);
+an implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md) describes current behavior.
 **Planned** items are not implemented promises.
 
 ## Connected validation (B36)
 
-B33–B35 are implemented in this working tree with focused tests and local multi-process coverage.
-Before delivering them as one player-visible feature, complete connected validation with real
+B33–B35 have working implementations with focused tests and local multi-process coverage, but
+review found the open defects B57–B59 and B61–B62. Before delivery, fix those defects and complete connected validation with real
 two-, three- and four-player sessions. VMCE has up to four human roles and no observers.
 
 - Exercise allied and hostile roles, map-driven alliance changes, AI-triggered wins, simultaneous
@@ -35,6 +35,71 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 
 ## Required reliability and admission work
 
+- **B57 — unlock timing:** agreement alone does not persist the next-stage unlock; leaving or
+  waiting on the result page can lose it. Persist idempotently when the round's result and stage
+  identity are agreed. See the [Chinese audit](zh-CN/vmce-audit.md).
+- **B58 — Ready/Go revalidation:** a single series rescan is reused across distinct boundaries;
+  changing an unselected map after Ready can pass Go. Use a consumable revision-bound scan result.
+- **B59 — distinct role countries:** launch verifies distinct Houses but not distinct Countries;
+  validate country identity in the shared launch owner and report the conflicting roles. Also
+  resolve the ambiguity when an AI and a player share a Country: the first House selected for
+  an alliance victory can differ from the player. See [audit A04](zh-CN/vmce-audit.md).
+- **B61 — retry a failed series scan:** the same identity retains mismatch/failure after the guest
+  fixes a later map. Offer an explicit retry or invalidate the failed result on a user action.
+- **B62 — local unlock failure feedback:** corrupt or unwritable progress is logged only. Preserve
+  the file, report the local save failure and offer a retry.
+- **B64 — round-control authority:** an admitted guest can send `Begin`/`Go` to peers without
+  the receiver checking that the sender is the host; Ack also lacks host and round-phase checks.
+  Authenticate the sender and round identity; test premature, forged, delayed and duplicate
+  messages without breaking normal retransmission.
+- **B65 — result-message ordering:** Options delivered before Begin can be acknowledged by
+  transport without producing the round ACK, leaving the host waiting. Track both facts and
+  acknowledge idempotently once both arrive; test loss, reordering and duplicates.
+- **B68 — single-role room capacity:** `PlayerCount=1` is valid but room limits clamp to two,
+  so a second participant can join and prevent a start. Reject new excess joins while preserving
+  already-present players when a campaign advances to a smaller stage.
+- **B69 — control-message backpressure:** queue-full failures for Ready, votes, Begin, Options
+  and ACK are ignored. Retain requests until every destination accepts them, including partial
+  admission in four-player rooms.
+- **B70 — shared-House building commands:** authorized shared buildings and walls cannot be
+  repaired/sold through all input and network checks; apply the existing House grants end to end.
+- **B71 — passive primary House results:** passive Houses are filtered from score rows, but the
+  result round uses the row count as its participant count. Use frozen participants and define
+  whether passive primary roles are supported before admission.
+- **B72 — changed map and result page:** results re-read the finished map and may lose their VMCE
+  board after a disk change. Project the frozen mission identity or fail clearly and reliably.
+- **B74 — solo campaign start:** the ordinary minimum-opponent gate rejects a solo VMCE host
+  without lobby AI. Admit the supported solo campaign through the authoritative start path.
+- **B75 — shared-unit deployment and unloading:** self-click actions and some D-key unloads
+  require the primary House despite a shared grant. Reuse the grant for input and retain command
+  authorization. See [audit A23](zh-CN/vmce-audit.md).
+- **B76 — retry-load failure admission:** the failure signal is not tied to an admitted sender,
+  VMCE loading phase or attempt and may abort an unrelated network load. Validate all three;
+  exercise invalid and stale signals. See [audit A24](zh-CN/vmce-audit.md).
+- **B77 — load-failure delivery:** the reliable queue is reset immediately after enqueueing a
+  local load-failure notice, racing delivery and acknowledgement. Drain it with a bounded failure
+  path before cleanup. See [audit A25](zh-CN/vmce-audit.md).
+- **B79 — campaign AllowWin gate:** VMCE currently follows the network-mode bypass of the
+  campaign tag-count gate, potentially ending earlier than the native campaign. Verify the native
+  lifecycle and reconcile it with the agreed earliest shared boundary; see [audit A27](zh-CN/vmce-audit.md).
+- **B81 — cross-platform map paths:** manifest validation normalizes backslashes, but loading may
+  treat them literally on Linux/macOS. Normalize consistently and retain path containment checks.
+  See [audit A29](zh-CN/vmce-audit.md).
+- **B82 — equivalent INI sections:** case/separator variants of the same logical stage or House
+  control section can pass duplicate checks and silently select the first. Reject ambiguity;
+  see [audit A30](zh-CN/vmce-audit.md).
+- **B83 — construction failure notification:** failed construction can consume the loading
+  session before VMCE failure detection, so no notification is queued. Preserve the frozen
+  attempt identity; see [audit A31](zh-CN/vmce-audit.md).
+- **B84 — final installation failure:** a failed network installation shows a local error without
+  notifying peers. Use the reliable shared failure/exit path; see [audit A32](zh-CN/vmce-audit.md).
+- **B85 — non-ASCII map filenames:** external configuration widens bytes rather than decoding
+  UTF-8, so manifest filenames may not match disk. Define VMCE configuration encoding and peer
+  identities; see [audit A33](zh-CN/vmce-audit.md).
+- **B87 — out-of-range control role:** a `PlayerNControl` key whose role number exceeds the
+  stage's `PlayerCount` is accepted and then never reaches a role, so a map-author typo silently
+  leaves a shared House AI. Validate the control index against `PlayerCount` at admission and name
+  the stage/House/key; see [audit A35](zh-CN/vmce-audit.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
@@ -82,6 +147,27 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 
 ## Lobby UI review residuals
 
+- **B60 — oversubscribed intermission:** extra participant rows can overlap the briefing because
+  the layout reserves only the next map's roles; start refusal is also a generic English notice.
+  Keep the room, give every player a usable row and show the localized player/role limits.
+- **B63 — diplomacy mode name:** the Chinese diplomacy screen renders `Multiplayer Campaign`
+  literally instead of using the existing localized VMCE title.
+- **B66 — briefing lookup:** VMCE's directory-qualified map name cannot match retail
+  `MISSIONMD.INI` sections keyed by filename; use the filename for briefing lookup and capture it.
+- **B67 — solo hint:** guests and multiplayer hosts also see the single-host Start hint. Show it
+  only to a lone host and provide appropriate Ready/waiting guidance to other participants.
+- **B73 — stale lobby AI:** AI slots from an ordinary LAN room can survive switching into VMCE
+  and occupy seats without matching campaign roles. Clear lobby AI while preserving map AI.
+- **B78 — next-stage failure feedback:** if resolving the next stage fails after victory, players
+  can leave without seeing results or a reason. Preserve the outcome, explain the error and exit
+  reliably. See [audit A26](zh-CN/vmce-audit.md).
+- **B80 — in-mission Observe:** the abort dialog may offer Observe and queue local destruction.
+  Exclude that action in VMCE while preserving ordinary LAN; see [audit A28](zh-CN/vmce-audit.md).
+- **B86 — lobby shared-House visibility:** the role board lists the primary role House and country
+  only, so the shared Houses granted through `PlayerNControl` are invisible before the mission.
+  Project each role's granted Houses from the parsed `campaign.ini` control owner; keep the 2–4
+  role layouts and scales clear. See [audit A34](zh-CN/vmce-audit.md).
+
 The lobby layout and chrome pass (see Completed work) fixed most review items; these remain open.
 
 - **B40 — map-details cache dependency:** `vmce_map_details` runs inside the per-frame setup view
@@ -115,9 +201,10 @@ The lobby layout and chrome pass (see Completed work) fixed most review items; t
   Reserve the strip area always, or merge the status into the board footer, so the reading position
   does not jump.
 
-## Completed work and limits
+## Implementation and evidence limits
 
-- **B33 — per-player outcomes and in-mission participation:** implemented. Locked decisions: a
+- **B33 — per-player outcomes and in-mission participation:** the main path is implemented; the
+  distinct-country admission rule still needs B59. Locked decisions: a
   country-index victory makes the triggering House's allies winners and non-allied players losers,
   including an AI trigger; only map triggers change alliances; the first player to reach the
   native result boundary ends the mission for everyone and the other results are determined from
@@ -137,7 +224,8 @@ The lobby layout and chrome pass (see Completed work) fixed most review items; t
   open and Start is blocked; the host cannot replace the designated stage; a retry does not
   reselect roles; the last stage enters completion instead of a room. Evidence: intermission
   captures after 2-, 3- and 4-player advances. New-guest and capacity scenarios are in B36.
-- **B35 — persistent local unlocks and whole-series admission:** implemented. Locked decisions:
+- **B35 — persistent local unlocks and whole-series admission:** the main path is implemented;
+  B57, B58, B61 and B62 remain open. Locked decisions:
   unlocking does not require loading the next stage, and it is written only after every online
   participant confirms the round's result and next-stage identity — the result record binds the
   round nonce to a digest of the resolved stage, so opening the page writes nothing and a peer
@@ -149,19 +237,18 @@ The lobby layout and chrome pass (see Completed work) fixed most review items; t
   a new identity. LAN admission verifies the whole series (`campaign.ini` bytes, manifest order,
   every manifest map's relative path, length and bytes): the host advertises one digest, a guest
   verifies it in a cancellable background worker, and a pending or failed scan keeps the guest
-  unready and Start closed; the Ready/Go boundary revalidates, the selected map and
+  unready and Start closed; Ready/Go may reuse a prior revalidation (B58), while the selected map and
   `campaign.ini` remain individually checked, and the series CSF is not part of the digest.
   Branches, if added later, unlock only the branch actually selected. Evidence: after the 2-, 3-
   and 4-player captures every peer's `VmceProgress.json` contained only the designated next
   stage; whole-series mismatch has focused tests only, connected coverage is in B36.
-- **B15 — host manifest race:** implemented for VMCE LAN. The host re-verifies its whole-series
-  digest against the value it advertised on the Ready/Go path before `GO` is sent, and the freeze
-  boundary still re-reads `campaign.ini` and the selected map. Residual: a series change between
-  that revalidation and the queued `GO` is not caught.
+- **B15 — host manifest race:** VMCE LAN has a whole-series verification path, but B58 leaves
+  distinct Ready/Go boundaries reusing a cached result. The freeze boundary still re-reads
+  `campaign.ini` and the selected map. A series change after revalidation can remain undetected.
 - **B01:** same-stage two-player retry and vote were exercised over LAN with 300 matching
   checksums; four-player retry and the real load-failure notice remain unverified.
-- **B12:** VMCE rejects observers; an existing observer must become a player or leave before
-  switching into VMCE. This decision remains in force.
+- **B12:** VMCE lobby admission rejects observers; an existing observer must become a player or
+  leave before switching into VMCE. The in-mission Observe action still has the B80 defect.
 - **B30–B32:** defeat statistics use frozen player/House assignments; victory result boards
   use the finished map and frozen assignments, and Ready state refreshes. Real 2p/3p/4p victory
   captures waited for the entry animation and used the page controls. A reversed source/seat
