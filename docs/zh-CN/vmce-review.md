@@ -436,6 +436,7 @@ lang: zh-CN
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 无效战役探测：`Player2=alliance house`（地图 `[Houses]` 为 `Alliance House`）的 2p 系列在发现阶段被过滤（主机日志 `ignoring VMCE stage ... with invalid configuration`），大厅没有原因提示；该行为归入既有的 B14/B16，而不是开局迟到失败。
+- 合成 VMCE 大厅 UI 采集（本机，未提交，输出在 `.scratch/guest-lobby-capture/`）：`vmce-lobby-guest-waiting`、`vmce-lobby-inline-error`、`vmce-lobby-blocking-error` 均产出 800×600 截图。guest 等待页右侧没有 Change Map 按钮（A42 的范围据此改为房主侧）；fixture 强制 `local_map_verified=true` 时下一关预览正常显示（A44 的机制证据）；缺地图的内联橙框与无效战役阻塞框都能正常绘制（弹窗呈现本身不构成问题，静默过滤/归因仍见 B14/B16）。这些是合成 UI，不是原生等价证据。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
 
 ## 已核对但不构成问题
