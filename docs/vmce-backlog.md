@@ -140,6 +140,14 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   local Windows environment issue, resolved on the machine; it is not a VMCE code defect.
 - **B08/B22:** English and zh-CN have VMCE text; other shipped languages currently use English
   placeholders. A translation pass is later work; native CSF follows its installed language.
+- **B91 — synthetic result/defeat capture fixtures:** the `vmce-result-*` and `vmce-defeat-*`
+  shell-capture checkpoints fail with `VMCE defeat fixture needs authored role metadata` in this
+  build. The lobby fixture caches role details under `game_config.paths.ra2_dir`
+  (`install_vmce_lobby_fixture`), while `vmce_map_details` looks the cache up under
+  `settings_dir/Maps`; the miss then depends on a second map load that does not resolve in a
+  score capture. Fix the fixture cache root/file identity and recapture, then use those shots to
+  close the visual part of [A37](zh-CN/vmce-audit.md) (defeat retry state) and
+  [A38](zh-CN/vmce-audit.md) (statistics name truncation).
 
 ## Deferred work
 
