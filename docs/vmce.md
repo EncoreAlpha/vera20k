@@ -62,7 +62,10 @@ python -m tools.vmce_lan_acceptance run --exe "<VERA20K_EXECUTABLE>" --retail-so
 
 `--players` selects 2, 3 or 4 rows for the `4p-*` scenarios; `--scenario` selects
 `4p-win`, `2p-win`, `2p-retry` or `2p-final` (the final-stage scenario needs a series whose
-Entry is the campaign's last stage). A run uses the same series for every selected scenario,
+Entry is the campaign's last stage). `--entry` selects the map the run starts from (default
+`stage01/all01umd.map`); for a series that does not start at the default first stage (such as a
+`2p-final` last-stage series) pass the last-stage path and keep `campaign.ini`'s `Entry` on the
+same stage. A run uses the same series for every selected scenario,
 so pick a series that suits the scenario. On machines with limited shared GPU memory, run
 one scenario per invocation: a capture process that just exited can still hold its device
 allocation, and an immediately following scenario may fail inside wgpu with "Out of Memory"

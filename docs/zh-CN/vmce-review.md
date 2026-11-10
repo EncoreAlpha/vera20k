@@ -426,4 +426,5 @@ lang: zh-CN
 - 零售数据扫描：`MISSIONMD.INI` 24 个战役段 + `MISSION.INI` 26 个 ALL/SOV/TRN 段共 50 张地图按 8 字段动作块解析 `[Actions]`，动作 15 为 0；`MAPS01/02.MIX` 的 `C*M*` 条目是多人地图，没有 `[Actions]`。
 - 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，关间大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
 - 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人关间大厅无共享 House 授权显示，与 A34 及 B30–B32 对应。
+- 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程；完成对话框本身未被截图，不能用于验证 A42 的行数。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。

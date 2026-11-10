@@ -57,7 +57,7 @@ python -m tools.vmce_lan_acceptance run --exe "<VERA20K程序路径>" --retail-s
 ```
 
 `--players` 为 `4p-*` 场景选择 2、3 或 4 行；`--scenario` 可选 `4p-win`、`2p-win`、
-`2p-retry` 或 `2p-final`（末关场景需要 Entry 就是战役最后一关的系列）。一次运行中的场景共用
+`2p-retry` 或 `2p-final`（末关场景需要 Entry 就是战役最后一关的系列）。`--entry` 指定从系列中的哪张地图启动（默认 `stage01/all01umd.map`）；系列不是从默认第一关开始时（例如 `2p-final` 的末关系列），传入末关路径并让 `campaign.ini` 的 `Entry` 指向同一关。一次运行中的场景共用
 同一战役目录，请选择适合该场景的系列。共享显存有限的机器上建议一次只跑一个场景：刚退出的
 采集进程可能仍持有显存，紧接着跑下一个场景会在 wgpu 里报 “Out of Memory”（退出码 101），
 而每个场景单独跑都能通过。
