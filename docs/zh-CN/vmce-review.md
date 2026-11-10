@@ -436,3 +436,16 @@ lang: zh-CN
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
+
+## 已核对但不构成问题
+
+以下路径按当前生产调用链核对，未发现需要修复的玩家可见问题；列出以避免重复追查（新增证据推翻时再改回缺陷）：
+
+- **关间新人的 Ready/解锁提前：** 新人 admission 初始 `ready=false`、`map_status=0`；系列扫描 Pending 时暂扣本地 map status，验收只从 status 1 解锁；进入房间时已清空上一轮的 received options。未发现可提前 Ready 或提前写解锁的入口。
+- **新人角色板空角色：** `apply_vmce_roles` 在已绑定行数与角色数不一致时整体推迟，roster revision 会重放 options；该窗口在同一 service pass 内，不会显示空角色（随机角色不可见另见 A07）。
+- **离房与 HostLeft：** 离开走可靠 Departure，房主收到 `ParticipantLeft` 后重发 options/roster；房主离开走 HostLeft；`leave_setup` 清理 `vmce_intermission_map`，下一房间不会被上一关锁图。
+- **房主缺新人也能开始：** `request_start` 要求其他每个 human 的 map status 非 0 且 `all_ready`；新人 admission 两值初始都不满足；进入 GO 锁定后 `join_denial` 也拒绝后到者。
+- **GO/下一关加载身份：** 客人 Ready 的系列边界会先启动 revalidation，GO 后的 handoff boundary 取其已验证结果；A03/B58 的边界复用仍是已知弱点，未发现额外缺口。
+- **seed 与随机角色：** 下一关 seed 由上一关 seed 与双方已同意的 stage identity 派生；随机角色分配按 `raw_slot_index` 排序，与 humans 顺序无关。
+- **结果页/计分美术泄漏到关间或加载：** `advance_vmce_intermission` 会清 campaign score page/art；失败页只进重试，不进入关间，故不会把上一页残留带进房间或加载。
+
