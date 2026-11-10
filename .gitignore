@@ -174,3 +174,6 @@ tools/vendor-eval/
 
 # Session-local native disassembly packets are never part of the tree.
 /gamemd-annotated-*.gzf
+
+# Local Windows/macOS build outputs parked for manual testing, never committed.
+/dist/
