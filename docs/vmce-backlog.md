@@ -100,6 +100,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   stage's `PlayerCount` is accepted and then never reaches a role, so a map-author typo silently
   leaves a shared House AI. Validate the control index against `PlayerCount` at admission and name
   the stage/House/key; see [audit A35](zh-CN/vmce-audit.md).
+- **B88 — stale next-stage identity records:** the VERA `0x36` stage record carries no round or
+  epoch binding, and the retire-phase hold queue replays records after a later round opens. An old
+  record therefore rejects a valid stage and returns everyone to the lobby, and any peer can send
+  one. Bind the record to the round and accept one per peer per round; see
+  [audit A36](zh-CN/vmce-audit.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
@@ -167,6 +172,9 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   only, so the shared Houses granted through `PlayerNControl` are invisible before the mission.
   Project each role's granted Houses from the parsed `campaign.ini` control owner; keep the 2–4
   role layouts and scales clear. See [audit A34](zh-CN/vmce-audit.md).
+- **B89 — defeat-page retry vote feedback:** the BC6 failure page shows only the local Retry light
+  and the host's all-voted aggregate, so 3–4 player rooms cannot see who has voted. Render per-row
+  vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-audit.md).
 
 The lobby layout and chrome pass (see Completed work) fixed most review items; these remain open.
 
