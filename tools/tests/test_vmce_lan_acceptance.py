@@ -101,6 +101,17 @@ class ComparatorTests(unittest.TestCase):
         assert_all_pass(self, checks)
         self.assertEqual(failed(checks), [])
 
+    def test_final_requires_both_peers_to_return_to_the_menu(self):
+        receipts = two_receipts()
+        for _, receipt in receipts:
+            receipt["lan"]["vera_outcome"] = {
+                "kind": "end", "completed": True,
+                "screen": "MainMenu", "network_return": "None",
+            }
+        assert_all_pass(self, self.evaluate(receipts, expect_final=True))
+        receipts[1][1]["lan"]["vera_outcome"]["screen"] = "InGame"
+        self.assertTrue(failed(self.evaluate(receipts, expect_final=True)))
+
     def test_checksum_mismatch_reports_index_path_and_labels(self):
         receipts = two_receipts()
         receipts[1][1]["lan"]["native_checksums"][57] = 999_999
@@ -203,8 +214,9 @@ class CompareCliTests(unittest.TestCase):
 class ValidationTests(unittest.TestCase):
     def test_players(self):
         self.assertEqual(acceptance.validate_players(2), 2)
+        self.assertEqual(acceptance.validate_players(3), 3)
         self.assertEqual(acceptance.validate_players(4), 4)
-        for value in (0, 1, 3, 5, "2", True, None):
+        for value in (0, 1, 5, "2", True, None):
             with self.subTest(value=value), self.assertRaises(acceptance.UsageError):
                 acceptance.validate_players(value)
 

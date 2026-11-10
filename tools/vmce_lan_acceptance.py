@@ -21,12 +21,14 @@ Usage::
 The v1 suites are:
 
 * ``fast``: ``4p-win``.
-* ``smoke``: ``4p-win`` and ``2p-win``.
-* ``full``: the same scenarios as ``smoke`` in v1.  Defeat, final, houses and
-  mismatch runs need different authored series/maps and are reserved names.
+* ``smoke``: ``4p-win``, ``2p-win`` and ``2p-retry``.
+* ``full``: the same scenarios as ``smoke`` in v1.
+
+``2p-final`` can be selected explicitly with a final-stage series. Each
+scenario needs a series authored for its outcome.
 
 Every scenario reuses the ``--series``/``--entry`` map.  ``--players`` selects
-the row count for the ``4p-*`` scenarios (2 or 4); ``2p-win`` always runs two
+the row count for the ``4p-*`` scenarios (2, 3 or 4); ``2p-win`` always runs two
 processes.  Scenarios run sequentially; the processes inside a scenario run
 concurrently.
 
@@ -132,6 +134,7 @@ class Scenario:
     checkpoint_host: str = CHECKPOINT_HOST
     checkpoint_guest: str = CHECKPOINT_GUEST
     expect_retry: bool = False
+    expect_final: bool = False
     expect_screenshots: tuple[str, ...] = ()
     language: str = ""
 
@@ -163,6 +166,15 @@ SCENARIOS = {
         expect_retry=True,
         expect_screenshots=("vera-result-real-lose", "vera-retry-mission"),
         language="zh-CN",
+    ),
+    "2p-final": Scenario(
+        name="2p-final",
+        players=2,
+        expect_victory=True,
+        expect_can_continue=True,
+        expect_next_stage=False,
+        expect_final=True,
+        expect_screenshots=("vera-campaign-credits", "vera-campaign-end"),
     ),
 }
 
@@ -199,7 +211,6 @@ RESERVED_SCENARIOS = {
     "4p-lose": "defeat acceptance needs a loss-entry series and is not implemented in v1",
     "2p-lose": "defeat acceptance needs a loss-entry series and is not implemented in v1",
     "4p-final": "campaign-final acceptance needs a final-stage series and is not implemented in v1",
-    "2p-final": "campaign-final acceptance needs a final-stage series and is not implemented in v1",
     "4p-houses": "houses acceptance needs the houses-entry series and is not implemented in v1",
     "2p-houses": "houses acceptance needs the houses-entry series and is not implemented in v1",
     "mismatch": "asymmetric mismatch acceptance is not implemented in v1",
@@ -308,9 +319,9 @@ class KillPlan:
 def validate_players(players: Any) -> int:
     """Return a supported player count, or raise ``UsageError``."""
     if isinstance(players, bool) or not isinstance(players, int):
-        raise UsageError(f"--players must be 2 or 4, got {players!r}")
-    if players not in (2, 4):
-        raise UsageError(f"--players must be 2 or 4, got {players}")
+        raise UsageError(f"--players must be 2, 3 or 4, got {players!r}")
+    if players not in (2, 3, 4):
+        raise UsageError(f"--players must be 2, 3 or 4, got {players}")
     return players
 
 
@@ -972,6 +983,7 @@ def evaluate_receipts(
     expect_rows: int | None = None,
     expect_next_stage: bool = False,
     expect_retry: bool = False,
+    expect_final: bool = False,
     expect_screenshots: Sequence[str] = (),
     allow_missing_simulation_hashes: bool = False,
 ) -> list[Check]:
@@ -1015,6 +1027,27 @@ def evaluate_receipts(
                 checks.append(
                     Check(f"screenshot {expected_name}", True, "present in every receipt")
                 )
+        checks.append(_series_sha_check(receipts))
+        return checks
+
+    if expect_final:
+        for path, expected in (
+            ("lan.vera_outcome.kind", "end"),
+            ("lan.vera_outcome.completed", True),
+            ("lan.vera_outcome.screen", "MainMenu"),
+            ("lan.vera_outcome.network_return", "None"),
+        ):
+            checks.append(_equal_check(receipts, path, path, expected=expected))
+        screenshot_check, names = _screenshot_names(receipts)
+        checks.append(screenshot_check)
+        for expected_name in expect_screenshots:
+            checks.append(
+                Check(
+                    f"screenshot {expected_name}",
+                    all(expected_name in available for available in names.values()),
+                    "required on every peer",
+                )
+            )
         checks.append(_series_sha_check(receipts))
         return checks
 
@@ -1232,7 +1265,7 @@ def _prepare_process(
         checkpoint_host=scenario.checkpoint_host,
         checkpoint_guest=scenario.checkpoint_guest,
         vera_outcome=(
-            ("retry" if scenario.expect_retry else "real")
+            ("retry" if scenario.expect_retry else "end" if scenario.expect_final else "real")
             if scenario.checkpoint_host in (CHECKPOINT_HOST, CHECKPOINT_GUEST)
             else ""
         ),
@@ -1397,13 +1430,14 @@ def _receipt_identity_check(
     expected_bind: str,
     expected_map: str,
     is_host: bool,
+    outcome_kind: str = "real",
 ) -> Check:
     """Check the capture identity fields that prove this process's role."""
     expectations: list[tuple[str, Any]] = [
         ("checkpoint", expected_checkpoint),
         ("lan.bind", expected_bind),
         ("lan.checksum_failure", "None"),
-        ("lan.vera_outcome.kind", "real"),
+        ("lan.vera_outcome.kind", outcome_kind),
         ("lan.startup.map", expected_map),
         ("lan.vmce.map_file", expected_map),
         ("lan.vmce.host", is_host),
@@ -1569,6 +1603,7 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                     expect_rows=players,
                     expect_next_stage=scenario.expect_next_stage,
                     expect_retry=scenario.expect_retry,
+                    expect_final=scenario.expect_final,
                     expect_screenshots=scenario.expect_screenshots,
                 )
             )
@@ -1598,17 +1633,19 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                         process.spec.bind,
                         context.map_name,
                         process.spec.index == 0,
+                        "end" if scenario.expect_final else "real",
                     )
                 )
-                checks.append(
-                    Check(
-                        f"next stage {process.spec.role}",
-                        _next_stage_loaded(receipt),
-                        "lan.vera_outcome.next_mission present"
-                        if _next_stage_loaded(receipt)
-                        else "missing lan.vera_outcome.next_mission",
+                if not scenario.expect_final:
+                    checks.append(
+                        Check(
+                            f"next stage {process.spec.role}",
+                            _next_stage_loaded(receipt),
+                            "lan.vera_outcome.next_mission present"
+                            if _next_stage_loaded(receipt)
+                            else "missing lan.vera_outcome.next_mission",
+                        )
                     )
-                )
             if not scenario.expect_retry:
                 checks.append(_participant_count_check(receipts, players))
         else:
@@ -1765,7 +1802,7 @@ def run_command(args: argparse.Namespace) -> int:
     """Implement ``run``; returns the process exit status."""
     scenarios = selected_scenarios(args)
     if args.suite == "full" and not args.scenario:
-        print("note: the full suite equals smoke in v1; defeat/final/houses are reserved")
+        print("note: the full suite equals smoke in v1; select 2p-final separately")
     context = _validate_run_args(args)
     summary_path = context.work_dir / "summary.json"
     summary = _summary_document(context, scenarios, [])
@@ -1928,7 +1965,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="run directory (default: .scratch/vmce-lan-acceptance/<utc>-<pid>)",
     )
-    run_parser.add_argument("--players", type=int, default=4, choices=(2, 4))
+    run_parser.add_argument("--players", type=int, default=4, choices=(2, 3, 4))
     run_parser.add_argument(
         "--keep",
         action="store_true",
@@ -1953,7 +1990,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="compare existing VMCE LAN capture receipts offline",
         description="Compare existing VMCE LAN capture receipts offline.",
     )
-    compare_parser.add_argument("--players", type=int, required=True, choices=(2, 4))
+    compare_parser.add_argument("--players", type=int, required=True, choices=(2, 3, 4))
     compare_parser.add_argument(
         "--receipt",
         action="append",
