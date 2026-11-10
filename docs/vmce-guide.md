@@ -19,8 +19,9 @@ Ready and Continue. Random roles display the House assigned when the mission sta
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
-Unless a paragraph says **planned**, this guide describes the current implementation.
-The agreed redesign below is not implemented or validated; do not author maps against it yet.
+This guide describes the current working tree. Per-player outcomes, the intermission room and
+local unlocks are implemented and have focused plus local multi-process coverage; the backlog
+lists the connected (cross-machine) scenarios that have not yet been exercised.
 
 ## Relation to the original
 
@@ -36,9 +37,8 @@ VMCE takes another path:
   "spawn at player start position" assignment.
 - Victory and defeat come only from trigger outcome actions; losing one role's primary House
   does not end the mission automatically.
-- Non-role Houses (story or shared Houses) keep campaign semantics and are not auto-defeated
-  just because they start without units; only each role's primary House is subject to
-  auto-defeat.
+- Role and non-role Houses keep campaign semantics and are not auto-defeated merely because
+  they have no units.
 - Inside a mission, random crates and ShortGame follow campaign semantics, and the
   Special House auto-alliance and Secret Lab random assignment are skipped. The matching
   lobby switches are shown disabled for VMCE.
@@ -97,9 +97,11 @@ VMCE reads only `Maps/VMCE`. The old `Maps/VeraCampaign` and interim `Maps/Vmce`
 are not read; move each series directory under `Maps/VMCE/<series>/` once.
 
 Maps must be loose `.map` files, and one map cannot be listed by two series. LAN peers must
-install the same series directory, `campaign.ini` and selected map bytes; VMCE never transfers
-files. The optional series CSF is not checked for equality, so distribute the same file to keep
-labels consistent.
+install the same complete series directory: the host advertises one content digest over
+`campaign.ini`, the manifest order, and every manifest map's relative path, byte length and raw
+bytes, and a guest may report its map as available only after its own copy produces that digest.
+VMCE never transfers files. The optional series CSF is not part of the digest, so distribute the
+same file to keep labels consistent.
 
 ### Series display name from CSF
 
@@ -161,9 +163,9 @@ base and units, or spawn them with triggers. VMCE does not grant an MCV or const
 - All players run one deterministic world; commands enter the same simulation frame.
 - Initial alliances and shared vision come from the map `[Houses] Allies=` graph. Put all role
   Houses into each other's `Allies=` lists.
-- Losing one role's primary House does not end the mission automatically. Victory and defeat
-  come from map trigger outcome actions. The eliminated role can still receive defeat EVA,
-  full-map reveal or input restrictions while the mission continues (B06).
+- Losing one role's primary House does not end the mission or cause defeat effects. The player
+  keeps authorized shared control and normal fog, and can control newly spawned own units.
+  Map triggers can change diplomacy; players cannot change it manually.
 - Cameras, EVA lines, text and input locks apply to every player. VMCE does not filter
   presentation or input locks per role.
 - Shroud reset (action 51) and radar interruption (action 139) are House-private. Write one
@@ -182,8 +184,8 @@ The result state, Continue and retry semantics belong to VMCE.
   top report's destroyed-enemies label/value are hidden and the native panel keeps its height.
   The page shows a `玩家 | 所属方 | 国家 | 结果 | 准备` board for up to four roles with the
   lobby player name, map House name and role House colour (no row backdrop strips).
-- Right panel: row one host `继续` / guest `准备`, row two `统计数据`, bottom `离开房间`.
-  Guest Ready is one-shot; host Continue requires every connected guest ready. The board and
+- Right panel: row one `Continue` for host and guest, row two Statistics, bottom Leave Room.
+  Guest Continue records readiness once; host Continue requires every connected guest ready. The board and
   button states update with the round's Ready changes.
 - The `统计数据` button opens a full-screen page over the BC6-style background: total and par
   time in the header, then four role rows and six columns `玩家 | 击毁 | 损失 | 建造 | 分数 |
@@ -191,8 +193,8 @@ The result state, Continue and retry semantics belong to VMCE.
   display-only statistic. The statistics page's right panel has only a normal bottom `返回`;
   there is no left tab, no bottom Leave and no other button. The page is victory/campaign-end
   only; the defeat BC6 page is itself the statistics view.
-- Victory with a next mission: a guest's Continue is its ready action; after every connected
-  guest is ready only the host's Continue starts the next mission.
+- Victory with a next mission: guests ready on the result page; the host continues to the
+  fixed next-stage room. Players select roles and ready again before the host starts.
 - Campaign end (`EndOfGame=yes`): the same all-ready gate; every peer plays the campaign
   completion locally and returns to the main menu. There is no 30 s forced start or host pull:
   an unready guest stalls the page, and the only exit is Leave Room.
@@ -208,8 +210,9 @@ The result state, Continue and retry semantics belong to VMCE.
   Defeat statistics use each player's frozen House assignment, including when command-source
   order differs from seat order.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
-  rejects it at host setup instead of guessing that the campaign ended. Only the Entry stage is
-  validated at setup; a malformed later stage fails at the transition (B05).
+  rejects it at host setup instead of guessing that the campaign ended. Admission verifies every
+  manifest map's bytes, but only the Entry stage's campaign configuration is validated at setup;
+  a malformed later stage's configuration fails at the transition (B05).
 - Before a next mission loads, peers exchange the identity they resolved (map path plus
   source, effective-map and config digests). A mismatch rejects the transition and requests a
   return to the lobby. The rejection can currently be lost during transport teardown (B10),
@@ -218,7 +221,13 @@ The result state, Continue and retry semantics belong to VMCE.
   binding; the previous mission's House names are not carried over. The next mission's seed is
   derived deterministically from the previous seed and the next stage's identity (both peers
   compute it locally); the frozen difficulty row carries over.
-- The result page does not write `coopsave.ini` or cross-mission progress.
+- The result page does not write `coopsave.ini`. The next stage is unlocked locally only after
+  every online participant confirms the round's result and next-stage identity: the result record
+  binds the round's nonce to a digest of the resolved stage, so opening the page alone writes
+  nothing, and a peer whose result or next stage differed never confirms. Loading the next stage
+  is not required. A verified intermission guest unlocks the designated stage without receiving
+  earlier stages. Admission verifies the whole series (see the install section) before the host
+  can start; the selected map and `campaign.ini` are also checked individually.
 
 Cross-mission money, `AltNextScenario` execution and `SkipMapSelect` branches are still
 not implemented; see Current limitations.
@@ -260,22 +269,22 @@ current session only plays the first mission.
 
 ## Outcome actions
 
-This table describes **current behavior**, not the planned per-player outcome rules.
+This table describes the working tree; full multiplayer validation is still in progress.
 
 | Action | Name | VMCE behavior |
 |---|---|---|
-| `1` | Winner is a country | Team victory; the country argument is ignored by VMCE |
-| `2` | Loser is a country | Team defeat; the country argument is ignored by VMCE |
+| `1` | Winner is a country | Allies of the first House matching the country win; other players lose, including for an AI House |
+| `2` | Loser is a country | Players matching the country lose; other players win |
 | `67` | Declare victory | Immediate team victory |
 | `68` | Declare defeat | Immediate team defeat |
 | `69` | End mission | Resumes the result timer when a prior result exists; otherwise treats the mission as victory |
 
-Use `67`/`68` for new maps. The country arguments of `1`/`2` do not filter roles in VMCE.
+Actions `67`/`68` set the same outcome for every role; use the table when designing mixed outcomes.
 
 Do not rely on one primary House being wiped out to end the mission. Add explicit trigger
 conditions for each role. There is no automatic "all roles failed" fallback.
 
-## Planned campaign redesign — not implemented
+## Campaign redesign — validation in progress
 
 The accepted direction is one integrated feature covering per-player outcomes, surviving
 participation, intermission role selection and locally persistent stage unlocks. Its detailed
@@ -287,8 +296,8 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
   Map triggers, not players, change diplomacy during a mission.
 - Players whose primary House is eliminated retain authorized shared control and normal fog;
   map-spawned units belonging to that House become controllable again. Even if all primary
-  Houses are eliminated, the mission waits for the map's outcome actions. Shared control after
-  an alliance changes remains to be investigated.
+  Houses are eliminated, the mission waits for the map's outcome actions. `PlayerNControl`
+  grants remain in force when diplomacy changes; connected validation is still needed.
 - Mixed winners and losers share one result and continuation flow, with each player's outcome
   shown and no separate elimination marker. A previously eliminated ally of the winner also
   wins. If at least one player wins, everyone may continue; if all lose, guests vote to retry
@@ -297,11 +306,12 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
   reselect roles and ready again. Joining and leaving are allowed between stages. If there are
   more players than roles, keep the room and block Start until the count is valid. The host
   cannot replace the designated stage within that intermission.
-- Completing a stage and resolving the next stage unlocks it locally for its participants,
-  without requiring the next stage to load. A verified new intermission guest receives this
-  room's actually visited stages and its designated next stage; a room started from an unlocked
-  middle stage shares only stages actually started or visited in that room. Stage unlocks survive
-  series updates; the stable identity and synchronization design still need implementation.
+- Completing a stage and resolving the next stage unlocks it locally for its participants once
+  every online participant confirmed the result and the stage identity, without requiring the next
+  stage to load. A verified intermission guest unlocks the designated next stage, without
+  receiving earlier stages; this includes returning disconnected players. Unlocks survive content
+  updates under the same campaign directory and stage path; persistence is implemented in the
+  working tree, while real cross-machine guest joins still need connected validation.
   New hosts may select their locally unlocked stages; guests need matching files, not prior unlocks.
 - The final stage uses the common result gate, followed by the completion presentation and a
   return to the main menu. No observers are introduced. Cross-mission money and branching keys
@@ -342,20 +352,28 @@ real-process captures:
   300 s outside `dev`).
 - `compare` runs offline over receipts; the `run` command only launches the
   processes and keeps the bundles under `.scratch/`.
+- Run one scenario per invocation on machines with limited shared GPU memory:
+  a capture process that just exited can still hold its device allocation, and
+  an immediately following scenario may then fail inside wgpu with "Out of
+  Memory" (exit 101) although every scenario passes when run separately.
 
 ## Current limitations
 
 - LAN only; no WOL/CnCNet/online.
 - No in-mission save/load.
 - No AI takeover after a player disconnects; no mid-mission join or host migration.
-- No cross-mission money/role reselection or persistent progress.
-- The branch has passed two- and four-process win → next mission captures with 300 matching
-  checksums. After the entry animation, the capture checks the board and uses the Ready and
-  Continue mouse controls. Three players have not been run separately; the
-  four-player capture does not exercise changing a guest's role after joining.
+- Cross-mission money is not carried over. Role reselection, whole-series admission verification
+  and local stage unlocks are implemented; real cross-machine guest and failure paths still need
+  connected validation.
+- The working tree has passed two-, three- and four-process win → next mission captures with
+  300 matching checksums, and each peer's local unlock file contains only the designated next
+  stage. They exercise the result board, Ready/Continue controls, nonce-bound result agreement
+  and whole-series admission; cross-machine play and changing a guest's role after joining have
+  not been covered.
 - A real two-process `EndOfGame` probe reached the credits on both peers, then used Escape
   to return both to the main menu. It compared 300 checksums; it did not watch the entire
-  credits roll. The standard acceptance runner does not yet support `2p-final`. VMCE `2p-retry`
+  credits roll. The standard acceptance runner's `2p-final` scenario passes on the current build
+  (credits and campaign-end screenshots on both peers). VMCE `2p-retry`
   capture passed (BC6 page, guest votes → host retry → same stage, 300 matching checksums).
   There are no result-page timers anywhere: defeat
   uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version
@@ -384,14 +402,14 @@ real-process captures:
   `ignoring invalid VMCE series`.
 - **Campaign is missing `[Scenario:...]`:** the section does not name the selected map path.
   `/` and `\` are interchangeable and ASCII case is ignored, but the map must exist on disk.
-- **Guest cannot Ready:** the guest lacks the same series directory, `campaign.ini` or selected
-  map bytes. The identity check hashes the campaign and map bytes, not the series CSF. VMCE does
-  not transfer files.
+- **Guest cannot Ready:** the guest lacks the same series directory, `campaign.ini`, selected map
+  bytes, or differs in another map of the series. Admission hashes the whole series (every
+  manifest map's path, length and bytes plus `campaign.ini`) in a background scan; a pending scan
+  also keeps Ready disabled. The series CSF is not hashed, and VMCE does not transfer files.
 - **Role House not found:** `PlayerN` must match a House name in the map `[Houses]`.
 - **Triggers never fire for the second role:** give each role House a distinct `Country` and
   write separate triggers.
-- **Mission keeps running after a role is wiped out:** expected; one role House being defeated
-  does not end a VMCE mission. Local side effects from that House's defeat (EVA, reveal, UI
-  gating) are still under review (B06). Add a `67`/`68` trigger when the mission should end.
+- **Mission keeps running after a role is wiped out:** expected; loss of a role's units does not
+  end a VMCE mission. Add the desired outcome trigger when the mission should end.
 - **No base at mission start:** VMCE does not spawn an MCV or construction yard; place or
   trigger it.
