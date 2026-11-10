@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 18 | 9 | 9 |
-| 合计 | 52 | 41 | 11 |
+| P3 | 19 | 10 | 9 |
+| 合计 | 53 | 42 | 11 |
 
 ## P1 — 优先修复
 
@@ -325,6 +325,13 @@ lang: zh-CN
 - **依据：** [关间继续电影无所有权](../../src/app/cooperative_round.rs#L975)（RESIDUAL：Win/PostScore/PreMapSelect/Lose 及胜利后的 Intro/Brief/Action 无 owner）；[原生胜利电影入口](../../src/app/campaign_victory.rs#L49)只对 `CampaignScore`/`CampaignVictoryContinue` 返回 `basic.win`，[VMCE 结果目的地](../../src/app/match_runtime/scenario_exit.rs#L155)是 `CooperativeResult`，不经过该入口；[下一关加载](../../src/app/cooperative_round.rs#L1030)直接调用 `LoadingRequest::network`，没有电影阶段；战役开局的 [Intro/Brief 读取](../../src/app/shell_campaign.rs#L304)也未接入 VMCE 的加载路径。
 - **修正：** 复用现有 `fullscreen_movie` 所有权：关卡开始按 `Intro`（缺省 `Brief`）、胜利按 `Win → PostScore → PreMapSelect`、失败按 `Lose` 播放地图设置的电影，再进入现有结果页/继续流程；每端本地播放，保持输入锁和返回语义，不改变胜负判定、解锁时机与随机种子；未设置键时保持现状。
 - **验收：** 作者化两关系列分别为各键设置影片与留空；2p/4p 各端在开局、胜利、失败和关间继续的对应时点看到同一影片，并能返回正确页面；未设置时无额外停顿；300 个 checksum、结果一致性与解锁流程不回归。
+
+### A42 · B96 3–4 人战役完成页仍只有两行成绩 — P3
+
+- **问题与影响：** 战役完成页复用原生 `0xBC7` 对话框，只绑定两个成绩位；VMCE 3–4 人打完末关时完成页只列出前两名玩家的名字/分数，其余玩家完全不出现；单人房主完成时第二行回退为空名字的黄色空行。玩家会以为名单或成绩缺失。
+- **依据：** [完成页两行布局](../../src/ui/campaign_score_shell.rs#L270)（`CAMPAIGN_END_PLACES` 固定两组 name/score）；[成绩tallies 固定两行](../../src/app/frontend/skirmish_session/cooperative.rs#L583)（`campaign_end_tallies` 返回 `[[i32; 4]; 2]`）；[构建只取两行并回退空行](../../src/app/cooperative_round.rs#L452)（`.take(2)`）与[缺失行](../../src/app/cooperative_round.rs#L476)（空名字、黄色）。
+- **修正：** VMCE 末关完成页按实际参战者生成 3–4 行（扩展现有对话框布局，或把完整名单交给现有全屏统计页承载），单人只显示有成绩的行或隐藏空行；普通双人 Classic Cooperative 仍保持原生 `0xBC7` 两行语义；不改片尾与返回流程。
+- **验收：** 2/3/4 人末关及单人房主完成时，完成页显示的玩家与成绩行同实际参战者一致、没有空白行；2 人经典合作与片尾返回不变；300 个 checksum、结果一致性与解锁不回归。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 

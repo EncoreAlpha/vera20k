@@ -120,6 +120,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   mission start, win/lose result and the next-stage handoff go straight to the result page or
   `begin_loading`, so the films are skipped. Play them through the existing fullscreen-movie owner
   on each local peer; see [audit A41](zh-CN/vmce-review.md).
+- **B96 — campaign-end rows:** the campaign completion dialog reuses the native `0xBC7` layout with
+  exactly two score places, and the tallies are two rows. VMCE 3–4 player campaigns therefore list
+  only the first two players on the completion page and a solo host leaves an empty second row.
+  Extend the page to the actual participants (or use the existing statistics page for the full
+  roster) while keeping the classic two-player layout; see [audit A42](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
