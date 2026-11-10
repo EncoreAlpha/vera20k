@@ -308,6 +308,7 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
         Ok(step) => crate::app::cooperative_round::run_step(state, step),
         Err(error) => log::warn!("VMCE result Continue refused: {error:#}"),
     }
+    refresh_board(state);
     state.platform.window.request_redraw();
     true
 }
@@ -327,7 +328,7 @@ pub(crate) fn leave_room_pressed(state: &mut AppState) -> bool {
     true
 }
 
-/// The settlement board the `0x103` page shows: one row per connected human/// The settlement board the `0x103` page shows: one row per connected human
+/// The settlement board the `0x103` page shows: one row per connected human
 /// with its authored role, country and verdict, plus the truthful caption for
 /// the continuation this page gates. Read-only projection of the round and
 /// launch the page already owns; no second result state.
@@ -342,6 +343,7 @@ pub(crate) fn result_board(
     }
     let launch = state.match_state.session.network_setup()?;
     let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)?;
+    let assignments = state.match_state.session.network_vmce_assignments()?;
     let connected = state.match_state.session.network_connected_source_indices();
     let can_continue = state.match_state.session.cooperative_round_can_continue();
     let victory = round.page_victory();
@@ -355,15 +357,19 @@ pub(crate) fn result_board(
         }
     }
     let mut rows = Vec::new();
-    for (index, human) in launch.humans.iter().enumerate() {
+    let mut humans = launch.humans.iter().enumerate().collect::<Vec<_>>();
+    humans.sort_by_key(|(_, human)| human.raw_slot_index.unwrap_or(u8::MAX));
+    for (index, human) in humans {
         if human.is_observer() || !connected.contains(&index) {
             continue;
         }
-        let role = human.role.native_value();
-        if role < 0 {
+        let Some(assignment) = assignments.participants.iter().find(|assignment| {
+            Some(assignment.raw_slot_index) == human.raw_slot_index
+                && assignment.participant_name == human.name
+        }) else {
             continue;
-        }
-        let role = role as usize;
+        };
+        let role = usize::from(assignment.player_index);
         if role >= roles.len() {
             continue;
         }
@@ -402,6 +408,17 @@ pub(crate) fn result_board(
         local_ready,
         can_continue: state.match_state.session.cooperative_round_can_continue(),
     })
+}
+
+/// Refresh the page after the round owner changes Ready or membership.
+pub(crate) fn refresh_board(state: &mut AppState) {
+    if !owns_page(state) {
+        return;
+    }
+    let board = result_board(state);
+    if let Some(page) = state.frontend.campaign_score_page.as_mut() {
+        page.set_vmce_board(board);
+    }
 }
 
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
@@ -542,6 +559,7 @@ pub(crate) fn statistics_page(
     use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
     let launch = state.match_state.session.network_setup()?;
     let roles = crate::app::shell_network_setup::view::vmce_result_roles(state);
+    let assignments = state.match_state.session.network_vmce_assignments();
     let sim = state
         .match_state
         .sim_runtime
@@ -566,6 +584,14 @@ pub(crate) fn statistics_page(
     // shows two rows, a 4-player match four. Country/flag data stays out of
     // the Player column; it is the lobby participant's name.
     for (role, human) in admitted {
+        let role = assignments
+            .and_then(|assignments| {
+                assignments.participants.iter().find(|assignment| {
+                    Some(assignment.raw_slot_index) == human.raw_slot_index
+                        && assignment.participant_name == human.name
+                })
+            })
+            .map_or(role, |assignment| i32::from(assignment.player_index));
         let info = roles
             .as_ref()
             .and_then(|roles| usize::try_from(role).ok().and_then(|role| roles.get(role)));
@@ -647,9 +673,6 @@ fn bare_duration(value: &str) -> String {
 #[cfg(all(test, feature = "vmce"))]
 mod tests {
     use super::*;
-    use crate::app::match_runtime::session::VmceRoundEnding;
-
-    #[test]
     #[test]
     fn the_statistics_time_header_drops_the_native_label() {
         assert_eq!(bare_duration("時間:00:00:13"), "00:00:13");
@@ -657,6 +680,7 @@ mod tests {
         assert_eq!(bare_duration(""), "");
     }
 
+    #[test]
     fn the_result_row_text_uses_the_authored_house_colour() {
         let mut row = crate::ui::campaign_score_shell::VmceResultRow {
             player: "LiveHost".into(),

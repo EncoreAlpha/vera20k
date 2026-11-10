@@ -931,7 +931,10 @@ impl App {
                 }
             } else {
                 let can_continue = if state.match_state.session.cooperative_round().is_some() {
-                    state.match_state.session.cooperative_round_can_continue()
+                    state
+                        .match_state
+                        .session
+                        .cooperative_round_continue_enabled()
                 } else {
                     board.can_continue
                 };

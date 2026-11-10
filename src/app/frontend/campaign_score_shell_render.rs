@@ -264,7 +264,10 @@ pub(crate) fn render_campaign_score_page(
                 crate::ui::campaign_score_shell::vmce_stats_page_buttons(&layout)
             } else {
                 let can_continue = if state.match_state.session.cooperative_round().is_some() {
-                    state.match_state.session.cooperative_round_can_continue()
+                    state
+                        .match_state
+                        .session
+                        .cooperative_round_continue_enabled()
                 } else {
                     board.can_continue
                 };

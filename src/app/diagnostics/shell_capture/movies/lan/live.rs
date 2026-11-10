@@ -2374,6 +2374,25 @@ impl LiveLanCapture {
                             }),
                             "VMCE defeat table zeroed every live score row"
                         );
+                        let assignments = state.match_state.session.network_vmce_assignments()
+                            .context("VMCE defeat assignments")?;
+                        let sim = &state.match_state.sim_runtime.as_ref()
+                            .context("VMCE defeat simulation")?.simulation;
+                        let score_rows = sim.cooperative_score_rows();
+                        for row in &statistics.rows {
+                            let assignment = assignments.participants.iter()
+                                .find(|assignment| assignment.participant_name == row.player)
+                                .context("VMCE defeat player has no frozen assignment")?;
+                            let score = score_rows.iter()
+                                .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
+                                .context("VMCE defeat House has no score row")?;
+                            ensure!(
+                                (row.kills, row.losses, row.built, row.score, row.income)
+                                    == (score.kills, score.losses, score.built, score.score, score.credits_earned),
+                                "VMCE defeat statistics for {} do not match House {}",
+                                row.player, assignment.owner_name
+                            );
+                        }
                         let rows_json = statistics
                             .rows
                             .iter()
@@ -2617,6 +2636,15 @@ impl LiveLanCapture {
                 if render_frame < opened.saturating_add(30) {
                     return Ok(());
                 }
+                // The score page hides its children during the entry wave;
+                // an early screenshot cannot establish what the player sees.
+                if crate::app::frontend::shell_transition::shell_slide_running(state) {
+                    ensure!(
+                        render_frame < opened.saturating_add(1_200),
+                        "VMCE result entry animation did not finish"
+                    );
+                    return Ok(());
+                }
                 if !self.vera_result_shot_done {
                     let victory = state
                         .frontend
@@ -2644,6 +2672,41 @@ impl LiveLanCapture {
                         .session
                         .cooperative_round()
                         .is_some_and(|round| round.vera());
+                if native_victory_page {
+                    let board = state
+                        .frontend
+                        .campaign_score_page
+                        .as_ref()
+                        .and_then(|page| page.vmce_board())
+                        .context("settled VMCE victory page has no result board")?;
+                    ensure!(
+                        board.rows.len() == self.expected_players,
+                        "settled VMCE victory board has {} rows; expected {}",
+                        board.rows.len(),
+                        self.expected_players
+                    );
+                    let session = &state.match_state.session;
+                    let launch = session.network_setup().context("VMCE result launch")?;
+                    let assignments = session
+                        .network_vmce_assignments()
+                        .context("VMCE result assignments")?;
+                    for row in &board.rows {
+                        let (index, human) = launch.humans.iter().enumerate()
+                            .find(|(_, human)| human.name == row.player)
+                            .context("VMCE result player is not admitted")?;
+                        let assignment = assignments.participants.iter()
+                            .find(|assignment| Some(assignment.raw_slot_index) == human.raw_slot_index
+                                && assignment.participant_name == human.name)
+                            .context("VMCE result player has no frozen assignment")?;
+                        ensure!(row.role == assignment.owner_name,
+                            "VMCE result player {} has the wrong House", row.player);
+                        ensure!(row.ready == Some(session.cooperative_round_slot_ready(index)),
+                            "VMCE result player {} has stale Ready status", row.player);
+                    }
+                    ensure!(board.local_ready == session.cooperative_round_ready_progress()
+                        .is_some_and(|(_, _, local)| local),
+                        "VMCE result local Ready status is stale");
+                }
                 if state.frontend.coop_score_page.is_none() && !native_victory_page {
                     self.vera_outcome_phase = VeraOutcomePhase::NextMission;
                     return Ok(());
@@ -2676,10 +2739,22 @@ impl LiveLanCapture {
                 #[cfg(feature = "vmce")]
                 let native_page_handled = {
                     if native_victory_page {
-                        ensure!(
-                            crate::app::vmce_result::continue_pressed(state),
-                            "the VMCE result page did not own Continue"
-                        );
+                        let page = state.frontend.campaign_score_page.as_ref().unwrap();
+                        let (width, height) =
+                            crate::app::frontend::shell_layout::shell_screen_size(state);
+                        let fills = crate::app::frontend::shell_layout::fills_window(state);
+                        let layout = page.layout(width, height, fills);
+                        set_window_pointer_to_rect_center(state, layout.vmce_ready_button);
+                        App::handle_campaign_score_mouse_move(state);
+                        App::handle_campaign_score_mouse_down(state);
+                        App::handle_campaign_score_mouse_up(state);
+                        MoviesCapture::restore_neutral_pointer(state);
+                        if !self.host() {
+                            ensure!(state.frontend.campaign_score_page.as_ref()
+                                .and_then(|page| page.vmce_board())
+                                .is_some_and(|board| board.local_ready),
+                                "VMCE Ready click did not update the result page");
+                        }
                     }
                     native_victory_page
                 };

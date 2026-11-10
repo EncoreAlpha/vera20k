@@ -726,6 +726,18 @@ impl MatchSession {
         }
     }
 
+    /// The finished or active VMCE mission's frozen role-to-House assignments.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn network_vmce_assignments(
+        &self,
+    ) -> Option<&crate::skirmish_launch::VmceHouseAssignments> {
+        match &self.network.as_ref()?.phase {
+            NetworkPhase::Frozen { startup, .. }
+            | NetworkPhase::CooperativeRound { previous: startup, .. } => startup.vmce_houses(),
+            _ => None,
+        }
+    }
+
     fn editable_network_setup(&mut self) -> anyhow::Result<&mut SkirmishLaunchSession> {
         match self.network.as_mut().map(|network| &mut network.phase) {
             Some(

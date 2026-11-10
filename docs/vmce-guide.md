@@ -13,8 +13,8 @@ the Cargo feature `vmce`.
 VMCE does not support observers. If a room already has observers, they must become
 players or leave before the host selects a VMCE campaign.
 
-The victory result board and its controls have a known state-projection issue (B32), including
-Random roles. The current automated win captures do not verify the settled board's usability.
+Win captures wait for the result page's entry animation before checking its board and clicking
+Ready and Continue. Random roles display the House assigned when the mission started.
 
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
@@ -180,9 +180,8 @@ The result state, Continue and retry semantics belong to VMCE.
   The page shows a `玩家 | 所属方 | 国家 | 结果 | 准备` board for up to four roles with the
   lobby player name, map House name and role House colour (no row backdrop strips).
 - Right panel: row one host `继续` / guest `准备`, row two `统计数据`, bottom `离开房间`.
-  Guest Ready is one-shot; host Continue requires every connected guest ready. The current
-  board and button artwork can remain stale after Ready changes (B31); the round state still
-  enforces the gate.
+  Guest Ready is one-shot; host Continue requires every connected guest ready. The board and
+  button states update with the round's Ready changes.
 - The `统计数据` button opens a full-screen page over the BC6-style background: total and par
   time in the header, then four role rows and six columns `玩家 | 击毁 | 损失 | 建造 | 分数 |
   收入`. Income is gross credits earned (positive credit gains only; no spent/net), a
@@ -313,8 +312,8 @@ real-process captures:
 - No AI takeover after a player disconnects; no mid-mission join or host migration.
 - No cross-mission money/role reselection or persistent progress.
 - The current build passed two- and four-process win → next mission captures with 300 matching
-  checksums. The capture drives the round directly and does not verify that its rendered result
-  board and controls are usable (B32). Three players have not been run separately; the
+  checksums. After the entry animation, the capture checks the board and uses the Ready and
+  Continue mouse controls. Three players have not been run separately; the
   four-player capture does not exercise changing a guest's role after joining.
 - `EndOfGame` campaign completion has production code and focused unit tests; its real
   dual-process `2p-final` capture is not recorded yet. The current build's VMCE `2p-retry`

@@ -729,6 +729,8 @@ pub(crate) fn service_event(
         .session
         .cooperative_round_event(event, difficulty)?;
     run_step(state, step);
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::refresh_board(state);
     state.platform.window.request_redraw();
     Ok(())
 }

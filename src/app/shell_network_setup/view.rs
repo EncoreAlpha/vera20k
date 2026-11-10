@@ -109,42 +109,45 @@ fn vmce_role_metadata_with_config(
 
 #[cfg(feature = "vmce")]
 fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
-    let Some(file) = state
-        .match_state
-        .session
-        .network_setup()
-        .and_then(|launch| launch.selected_map_file.as_deref())
+    let session = &state.match_state.session;
+    let vmce_config = session.network_vmce_map_config();
+    // During a result round the editable launch already names the next map;
+    // its retained config still belongs to the mission that just finished.
+    let Some(file) = vmce_config
+        .map(|config| config.map_file.as_str())
+        .or_else(|| session.network_setup()?.selected_map_file.as_deref())
     else {
         return super::VmceMapDetails::default();
     };
-    let (Some(config), Some(assets), Some(protocol)) = (
+    let (Some(config), Some(assets)) = (
         state.platform.game_config.as_ref(),
         state.process_assets.manager(),
-        state.frontend.network_setup_protocol.as_ref(),
     ) else {
         return super::VmceMapDetails::default();
     };
-    let root = config.paths.ra2_dir.clone();
+    let root = config.paths.settings_dir().join("Maps");
     let source_digest = state
         .match_state
         .session
         .network_map_metadata()
         .map_or_else(String::new, |metadata| metadata.source_sha256.clone());
-    let vmce_config = state.match_state.session.network_vmce_map_config();
     let digest = format!(
         "{}:{}",
         source_digest,
         vmce_config.map_or("", |config| config.config_sha256.as_str())
     );
     let key_file = file.to_ascii_lowercase();
-    let cached = protocol
-        .vmce_role_cache
-        .borrow()
-        .as_ref()
-        .filter(|(cached_root, cached_file, cached_digest, _)| {
-            *cached_root == root && *cached_file == key_file && *cached_digest == digest
-        })
-        .map(|(_, _, _, owners)| owners.clone());
+    let protocol = state.frontend.network_setup_protocol.as_ref();
+    let cached = protocol.and_then(|protocol| {
+        protocol
+            .vmce_role_cache
+            .borrow()
+            .as_ref()
+            .filter(|(cached_root, cached_file, cached_digest, _)| {
+                *cached_root == root && *cached_file == key_file && *cached_digest == digest
+            })
+            .map(|(_, _, _, owners)| owners.clone())
+    });
     cached.unwrap_or_else(|| {
         let details = crate::map::source::load_network_map_ini(&root, file, assets)
             .ok()
@@ -184,9 +187,11 @@ fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
                 Some(details)
             })
             .unwrap_or_default();
-        protocol
-            .vmce_role_cache
-            .replace(Some((root.clone(), key_file, digest, details.clone())));
+        if let Some(protocol) = protocol {
+            protocol
+                .vmce_role_cache
+                .replace(Some((root, key_file, digest, details.clone())));
+        }
         details
     })
 }

@@ -155,15 +155,12 @@ recorded here for residuals only.
 - **B30 Defeat statistics can be assigned to the wrong player.** The defeat projection looks up
   generated network-owner names in rows keyed by authored Houses, then falls back to row order.
   When source order and lobby seat order differ, player statistics and colours can be swapped.
-- **B31 Victory Ready display does not track the round.** The result board is captured once,
-  so later Ready icons and a guest's button remain stale. The host button is drawn enabled from
-  `can_continue` before the all-ready gate actually allows Continue, making a click appear inert.
-- **B32 Victory result board may be missing or incomplete.** The board reads lobby role metadata
-  through the setup protocol, which is cleared at match start; with a next mission it also reads
-  the next map name against the finished map's config. Frozen Random assignments are not used by
-  the board or victory statistics. The live win capture counts simulation rows and drives the
-  round directly, so it does not prove that the rendered board and controls work. A capture after
-  the entry animation is needed to verify the visible outcome.
+- **B31 Victory Ready display — fixed.** The board refreshes after round events and local Ready;
+  host Continue uses the actual all-ready gate. Two- and four-player win captures click the
+  settled page's Ready and Continue controls.
+- **B32 Victory result board — fixed.** The result reads the finished map's role metadata and
+  frozen House assignments after setup teardown. The two- and four-player win captures wait for
+  the entry animation and check the displayed rows and assignments before clicking the controls.
 
 ## S3 — robustness / tests
 
