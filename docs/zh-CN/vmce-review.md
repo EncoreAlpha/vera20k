@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 20 | 11 | 9 |
-| 合计 | 54 | 43 | 11 |
+| P3 | 21 | 12 | 9 |
+| 合计 | 55 | 44 | 11 |
 
 ## P1 — 优先修复
 
@@ -339,6 +339,13 @@ lang: zh-CN
 - **依据：** [关间地图锁](../../src/app/shell_network_setup/view.rs#L1034)（`session.vmce_intermission_map().is_some()`）；[启用规则](../../src/ui/multiplayer_setup.rs#L545)（`CHOOSE_MAP => self.host && !self.map_locked`）；[绘制硬编码](../../src/app/frontend/skirmish_shell_render.rs#L396)（choose_map 按钮的 disabled 恒为 `false`）；[点击守卫](../../src/app/shell_network_setup/actions.rs#L66)（关间地图存在时直接返回）。绘制层已有[禁用 alpha](../../src/app/frontend/skirmish_shell_render.rs#L103)，只是没有接到这个按钮。
 - **修正：** 绘制使用与命中测试同一 `view.enabled(CHOOSE_MAP)`（或把视图的禁用集合下发给 setup 绘制），让关间房间与客人侧显示原生禁用态；状态栏可补充「关间房间固定下一关」。普通房主房间保持可点击。
 - **验收：** 关间房间和客人侧的 Change Map 以禁用态绘制、点击无动作（最好有说明）；普通房主的 Change Map 仍能打开选图；800×600 与缩放截图不回归；开始/准备流程不变。
+
+### A44 · B98 campaign.ini 的未知键与超量 ScenarioN 被静默忽略 — P3
+
+- **问题与影响：** `[Campaign]` 只读取已知键，未知键被静默忽略；`ScenarioN` 只读取 `Scenario1..=ScenarioCount`，超出数量的显式行既不报错也不生效（对比 `[Scenario:...]` 会显式拒绝超出 `PlayerCount` 的 `PlayerN`）。作者把 `ScenarioCount` 写少、残留旧 `ScenarioN` 或把键名拼错时，准入通过但战役在本应存在的关卡处提前结束，该行被无声丢弃；若 `NextScenario` 指向被丢弃的关卡才会报“目标不在清单”，否则玩家只看到少关卡。
+- **依据：** [Campaign 清单读取](../../src/app/shell_network_setup/vmce_map.rs#L722)按 `ScenarioCount` 循环读 `Scenario1..=count`，没有检查额外 `ScenarioN` 或未知键；[场景段白名单](../../src/app/shell_network_setup/vmce_map.rs#L592)对 `PlayerN` 超出 `PlayerCount` 会显式拒绝，两处校验力度不一致；[控制段白名单](../../src/app/shell_network_setup/vmce_map.rs#L624)同样逐键校验。
+- **修正：** 在 `parse_vmce_manifest` 中增加 `[Campaign]` 键白名单（`Name`/`Entry`/`ScenarioCount`/`Scenario1..=ScenarioCount`），并拒绝 `ScenarioN` 中 N 超过 `ScenarioCount` 的显式键；错误包含段名与键名。保留 `ScenarioCount` 上限和 `Entry` 必须属于清单的现有校验。
+- **验收：** `ScenarioCount=1` 同时写 `Scenario1`/`Scenario2`、未知键（如拼错的 `Scenariocount` 或额外 `Foo=`）都在准入被拒并指出段/键；合法系列行为不变；B05 的逐关预校验与整套字节身份不受影响。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 

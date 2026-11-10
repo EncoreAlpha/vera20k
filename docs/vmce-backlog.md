@@ -130,6 +130,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   `false` disabled flag for the button, so it keeps the enabled red face and bright caption and
   clicks silently do nothing (guests use the same paint path). Drive paint from the same
   `enabled(CHOOSE_MAP)` test; see [audit A43](zh-CN/vmce-review.md).
+- **B98 — manifest key validation:** the `[Campaign]` section reads only known keys and silently
+  ignores unknown ones, and `ScenarioN` rows beyond `ScenarioCount` are neither read nor rejected;
+  the scenario sections already reject `PlayerN` beyond `PlayerCount`. A low `ScenarioCount` or a
+  stray/typoed key therefore drops a stage without an admission error. Whitelist `[Campaign]` keys
+  and reject out-of-range `ScenarioN`; see [audit A44](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
