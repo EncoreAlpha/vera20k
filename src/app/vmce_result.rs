@@ -110,6 +110,90 @@ pub(crate) fn open_defeat(state: &mut AppState) {
             rows,
         });
     }
+    // Project the real per-role score rows, in admission order (raw row),
+    // over the table. Only a role the world genuinely reports as all-zero
+    // stays zero; the fallback above must not replace real scores.
+    {
+        let launch = state.match_state.session.network_setup();
+        let mut admitted = launch
+            .map(|launch| {
+                launch
+                    .humans
+                    .iter()
+                    .filter(|human| !human.is_observer())
+                    .map(|human| (human.role.native_value(), human))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        admitted.sort_by_key(|(role, human)| (human.raw_slot_index.unwrap_or(u8::MAX), *role));
+        let coop_rows = state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map(|runtime| runtime.simulation.cooperative_score_rows())
+            .unwrap_or_default();
+        let sim = state
+            .match_state
+            .sim_runtime
+            .as_ref()
+            .map(|runtime| &runtime.simulation);
+        // The shared grant table maps each source to its primary House. Score
+        // rows are ordered by the local world, so row order alone would swap
+        // host/guest between peers; project through the grant owner instead.
+        let source_owner = sim.map(|sim| {
+            let houses = sim.houses().order().to_vec();
+            sim.session()
+                .network_sources(houses.len())
+                .filter_map(|(source, primary)| {
+                    houses
+                        .get(primary)
+                        .map(|owner| (source, sim.interner().resolve(*owner).to_owned()))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        });
+        if let Some(statistics) = model.vmce_statistics.as_mut() {
+            statistics.rows = admitted
+                .iter()
+                .enumerate()
+                .map(|(index, (_role, human))| {
+                    let human_source = launch
+                        .and_then(|launch| {
+                            launch.humans.iter().position(|candidate| {
+                                candidate.raw_slot_index == human.raw_slot_index
+                                    && candidate.name == human.name
+                            })
+                        })
+                        .unwrap_or(index);
+                    let owner = source_owner
+                        .as_ref()
+                        .and_then(|owners| owners.get(&(human_source as i8)))
+                        .map_or("", String::as_str);
+                    let source = sim
+                        .and_then(|sim| {
+                            coop_rows
+                                .iter()
+                                .find(|row| sim.interner().resolve(row.owner) == owner)
+                        })
+                        .or_else(|| coop_rows.get(index));
+                    let fallback = model.rows.get(index);
+                    crate::ui::campaign_score_shell::VmceStatisticsRow {
+                        player: human.name.clone(),
+                        owner: fallback.map_or_else(String::new, |_| String::new()),
+                        rgb: fallback.map(|row| row.rgb),
+                        kills: source
+                            .map_or_else(|| fallback.map_or(0, |row| row.kills), |row| row.kills),
+                        losses: source
+                            .map_or_else(|| fallback.map_or(0, |row| row.losses), |row| row.losses),
+                        built: source
+                            .map_or_else(|| fallback.map_or(0, |row| row.built), |row| row.built),
+                        score: source
+                            .map_or_else(|| fallback.map_or(0, |row| row.score), |row| row.score),
+                        income: source.map_or(0, |row| row.credits_earned),
+                    }
+                })
+                .collect();
+        }
+    }
     let rows = model.rows.len();
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
@@ -467,7 +551,7 @@ pub(crate) fn statistics_page(
         .filter(|human| !human.is_observer())
         .map(|human| (human.role.native_value(), human))
         .collect::<Vec<_>>();
-    admitted.sort_by_key(|(role, _)| *role);
+    admitted.sort_by_key(|(role, human)| (human.raw_slot_index.unwrap_or(u8::MAX), *role));
     let mut rows = Vec::new();
     // Only actual admitted players get a statistics row: a 2-player match
     // shows two rows, a 4-player match four. Country/flag data stays out of

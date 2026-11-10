@@ -2340,11 +2340,39 @@ impl LiveLanCapture {
                             .session
                             .network_setup()
                             .context("VMCE defeat roster")?;
+                        let mut expected = launch
+                            .humans
+                            .iter()
+                            .filter(|human| !human.is_observer())
+                            .collect::<Vec<_>>();
+                        expected.sort_by_key(|human| {
+                            (
+                                human.raw_slot_index.unwrap_or(u8::MAX),
+                                human.role.native_value(),
+                            )
+                        });
                         ensure!(
-                            launch.humans.iter().all(|human| {
-                                statistics.rows.iter().any(|row| row.player == human.name)
+                            statistics
+                                .rows
+                                .iter()
+                                .map(|row| row.player.as_str())
+                                .eq(expected.iter().map(|human| human.name.as_str())),
+                            "VMCE defeat rows are not in admission order: {:?}",
+                            statistics
+                                .rows
+                                .iter()
+                                .map(|row| row.player.as_str())
+                                .collect::<Vec<_>>()
+                        );
+                        ensure!(
+                            statistics.rows.iter().any(|row| {
+                                row.kills != 0
+                                    || row.losses != 0
+                                    || row.built != 0
+                                    || row.score != 0
+                                    || row.income != 0
                             }),
-                            "VMCE defeat rows do not use the lobby player names"
+                            "VMCE defeat table zeroed every live score row"
                         );
                         if crate::i18n::selected_language() == "zh-CN" {
                             let scale = crate::app::input::coop_score::layout(state).page.scale;
