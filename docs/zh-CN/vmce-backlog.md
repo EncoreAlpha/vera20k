@@ -63,6 +63,7 @@ B33–B35 的主要流程已有实现，并有定向测试和本机多进程覆�
 - **B17/B18 验收缺口：** 标准末关已由 `2p-final` 覆盖；仍需补设置失败、四人角色变更及 RTL 画面，改进分阶段超时和原版资源副本复用。已有一次真实双进程末关探测：两端进入片尾、按 Escape 后回主菜单，300 个校验点一致；**未观看完整片尾**。此前截图中的 `vera20k.exe` 启动错误 `0xc0000142` 是用户本机 Windows 环境问题，已由用户环境侧解决，不属于 VMCE 代码缺陷。
 - **B08/B22 语言：** 英语和简体中文有 VMCE 文本，其他已发布语言暂用英文占位，翻译留待后续；原版 CSF 仍跟随其安装语言。
 - **B91 合成结算/失败页采集 fixture：** 本构建的 `vmce-result-*` 与 `vmce-defeat-*` 采集检查点会以 `VMCE defeat fixture needs authored role metadata` 失败。大厅 fixture 把角色详情缓存在 `game_config.paths.ra2_dir` 下，而 `vmce_map_details` 按 `settings_dir/Maps` 查找缓存；未命中后又依赖一次在结算采集中无法完成的地图加载。修正 fixture 的缓存根目录/文件身份后重新采集，再用截图关闭[审查 A37](vmce-audit.md)（失败页投票状态）和[审查 A38](vmce-audit.md)（统计页名字截断）的视觉部分。
+- **B93 采集运行器的零售标记：** `vmce_lan_acceptance run` 只把 `.vera20k-lan-capture-root` 标记写进每个进程的 settings 目录，而采集路径按 `assets.ra2_dir()` 检查标记，所以直接传入普通 `--retail-source` 会以 `capture writes require an explicitly marked isolated directory` 失败。应把标记写入每个零售副本（或要求并校验传入的源已被标记）并写入文档；本次真实 `2p-retry` 采集用之前已标记的零售副本绕过。
 
 ## 暂缓或不在本次范围
 
@@ -83,7 +84,7 @@ B33–B35 的主要流程已有实现，并有定向测试和本机多进程覆�
 - **B78 下一关失败提示：** 胜利后解析下一关出错时可能直接离开，玩家看不到原因与逐玩家结果；保留结果并提供清晰提示和可靠退出。见[审查 A26](vmce-audit.md)。
 - **B80 任务内 Observe：** 退出确认框仍可能显示 Observe 并排队本方自毁；VMCE 应排除该入口，保留正常离房。见[审查 A28](vmce-audit.md)。
 - **B86 大厅共享 House 可见性：** 角色板只列主角色 House 与国家，`PlayerNControl` 授权的共享 House 在开局前不可见。从已解析的 `campaign.ini` 控制段向角色投影共享 House，并保持 2–4 角色布局与缩放不重叠。见[审查 A34](vmce-audit.md)。
-- **B89 失败页重试投票反馈：** BC6 失败页只有本机 Retry 亮起和房主的全票聚合，3–4 人时看不到谁已投票。用现有 `retry_votes` 渲染逐行投票状态。见[审查 A37](vmce-audit.md)。
+- **B89 失败页重试投票反馈：** BC6 失败页只有本机 Retry 亮起和房主的全票聚合，3–4 人时看不到谁已投票。用现有 `retry_votes` 渲染逐行投票状态。见[审查 A37](vmce-audit.md)。真实 `2p-retry` 双进程采集已确认页面没有逐行状态；3–4 人采集仍缺。
 - **B90 统计页玩家名截断：** 胜利/战役完成统计页把玩家名画进固定列宽，未使用结算板和失败页已有的原生截断，长名字会压到击杀/损失列。复用 `vmce_panel::ellipsize_native`。见[审查 A38](vmce-audit.md)。
 - **B40 地图详情缓存依赖：** `vmce_map_details` 在每帧的 setup view 里运行，缓存未命中时会解析地图 INI；缓存只在 `network_setup_protocol` 存在时生效，因此没有 protocol 的诊断帧可能每帧重复解析。应把缓存移到始终存在的所有者，或加帧时间保护。
 - **B41 合成目录记录：** 下一关不在本地场景目录时，`open_vmce_intermission` 会直接追加一条合成记录；查找忽略系列目录，追加也绕过目录所有者，重复进入时可能累积重复记录。应按 `(系列目录, 地图文件)` 去重，或把「确保下一关在目录中」的职责移入目录所有者。

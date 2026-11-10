@@ -153,6 +153,12 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   score capture. Fix the fixture cache root/file identity and recapture, then use those shots to
   close the visual part of [A37](zh-CN/vmce-audit.md) (defeat retry state) and
   [A38](zh-CN/vmce-audit.md) (statistics name truncation).
+- **B93 — acceptance runner retail marker:** `vmce_lan_acceptance run` writes the
+  `.vera20k-lan-capture-root` marker into each per-process settings directory, but the capture
+  path checks the marker under `assets.ra2_dir()`, so a plain `--retail-source` fails with
+  `capture writes require an explicitly marked isolated directory`. Write the marker into each
+  retail copy (or require and validate a marked source) and document the requirement. The real
+  `2p-retry` capture used a previously marked retail copy as a workaround.
 
 ## Deferred work
 
@@ -187,7 +193,9 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   role layouts and scales clear. See [audit A34](zh-CN/vmce-audit.md).
 - **B89 — defeat-page retry vote feedback:** the BC6 failure page shows only the local Retry light
   and the host's all-voted aggregate, so 3–4 player rooms cannot see who has voted. Render per-row
-  vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-audit.md).
+  vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-audit.md). A real
+  two-process `2p-retry` capture confirmed the page has no per-row state; 3–4 player capture
+  remains.
 - **B90 — statistics-page name truncation:** the victory/campaign-end statistics page draws the
   player name into a fixed cell without the native ellipsization the result board and failure page
   already use, so long names run into the kills/losses columns. Reuse
