@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 19 | 10 | 9 |
-| 合计 | 53 | 42 | 11 |
+| P3 | 20 | 11 | 9 |
+| 合计 | 54 | 43 | 11 |
 
 ## P1 — 优先修复
 
@@ -332,6 +332,13 @@ lang: zh-CN
 - **依据：** [完成页两行布局](../../src/ui/campaign_score_shell.rs#L270)（`CAMPAIGN_END_PLACES` 固定两组 name/score）；[成绩tallies 固定两行](../../src/app/frontend/skirmish_session/cooperative.rs#L583)（`campaign_end_tallies` 返回 `[[i32; 4]; 2]`）；[构建只取两行并回退空行](../../src/app/cooperative_round.rs#L452)（`.take(2)`）与[缺失行](../../src/app/cooperative_round.rs#L476)（空名字、黄色）。
 - **修正：** VMCE 末关完成页按实际参战者生成 3–4 行（扩展现有对话框布局，或把完整名单交给现有全屏统计页承载），单人只显示有成绩的行或隐藏空行；普通双人 Classic Cooperative 仍保持原生 `0xBC7` 两行语义；不改片尾与返回流程。
 - **验收：** 2/3/4 人末关及单人房主完成时，完成页显示的玩家与成绩行同实际参战者一致、没有空白行；2 人经典合作与片尾返回不变；300 个 checksum、结果一致性与解锁不回归。
+
+### A43 · B97 关间房间的 Change Map 被禁用却仍按启用态绘制 — P3
+
+- **问题与影响：** 进入关间房间后 `vmce_intermission_map` 非空，`CHOOSE_MAP` 的启用规则与点击处理都把它禁用；但 setup 右栏按钮绘制把 choose_map 的 disabled 参数写死为 `false`，按钮继续显示启用态的红色底与亮黄文字，点击没有任何反应或说明，玩家会以为按钮坏了。客人（非房主）也走同一条绘制路径。
+- **依据：** [关间地图锁](../../src/app/shell_network_setup/view.rs#L1034)（`session.vmce_intermission_map().is_some()`）；[启用规则](../../src/ui/multiplayer_setup.rs#L545)（`CHOOSE_MAP => self.host && !self.map_locked`）；[绘制硬编码](../../src/app/frontend/skirmish_shell_render.rs#L396)（choose_map 按钮的 disabled 恒为 `false`）；[点击守卫](../../src/app/shell_network_setup/actions.rs#L66)（关间地图存在时直接返回）。绘制层已有[禁用 alpha](../../src/app/frontend/skirmish_shell_render.rs#L103)，只是没有接到这个按钮。
+- **修正：** 绘制使用与命中测试同一 `view.enabled(CHOOSE_MAP)`（或把视图的禁用集合下发给 setup 绘制），让关间房间与客人侧显示原生禁用态；状态栏可补充「关间房间固定下一关」。普通房主房间保持可点击。
+- **验收：** 关间房间和客人侧的 Change Map 以禁用态绘制、点击无动作（最好有说明）；普通房主的 Change Map 仍能打开选图；800×600 与缩放截图不回归；开始/准备流程不变。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 

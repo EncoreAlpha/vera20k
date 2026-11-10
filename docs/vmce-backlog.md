@@ -125,6 +125,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   only the first two players on the completion page and a solo host leaves an empty second row.
   Extend the page to the actual participants (or use the existing statistics page for the full
   roster) while keeping the classic two-player layout; see [audit A42](zh-CN/vmce-review.md).
+- **B97 — disabled Change Map paints enabled:** in an intermission room `vmce_intermission_map` locks
+  the map and `SetupAction::ChooseMap` returns early, but the setup renderer passes a hard-coded
+  `false` disabled flag for the button, so it keeps the enabled red face and bright caption and
+  clicks silently do nothing (guests use the same paint path). Drive paint from the same
+  `enabled(CHOOSE_MAP)` test; see [audit A43](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
