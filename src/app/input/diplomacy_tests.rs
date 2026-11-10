@@ -93,6 +93,7 @@ const SKIRMISH: DiplomacyRules<'static> = DiplomacyRules {
     allies_allowed: true,
     quick_coop: false,
     local_inactive: false,
+    manual_alliance_allowed: true,
     game_mode_nonzero: true,
     listeners: &[true; 8],
 };
@@ -324,6 +325,14 @@ fn human_rows_enable_allies_until_the_local_player_is_inactive() {
         })
     );
     assert!(resolved.chat_header);
+    let locked = rows(
+        &fixture,
+        DiplomacyRules {
+            manual_alliance_allowed: false,
+            ..SKIRMISH
+        },
+    );
+    assert!(!locked.rows[2].as_ref().unwrap().allies.unwrap().enabled);
     let inactive = rows(
         &fixture,
         DiplomacyRules {

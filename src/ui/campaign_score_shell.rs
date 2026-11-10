@@ -664,9 +664,9 @@ pub enum VmceResultButtonKind {
     Back,
 }
 
-/// The VMCE page's right-panel buttons. The first slot is Continue (host) or
-/// Ready (guest), the second is `统计数据`, and the bottom slot is Leave Room
-/// for both roles. `continue_id` is the dialog's native result control, so the
+/// The VMCE page's right-panel buttons. The first slot is Continue for both
+/// roles, the second is `统计数据`, and the bottom slot is Leave Room.
+/// The guest's Continue records readiness. `continue_id` is the dialog's native result control, so the
 /// host's Continue keeps the native input action. The host's Continue uses
 /// frame 4 only while the all-ready gate is open; before that it is the native
 /// disabled frame 2.
@@ -717,7 +717,7 @@ pub fn vmce_result_buttons(
             rect: layout.vmce_ready_button,
             pressed: board.local_ready,
             enabled: !board.local_ready,
-            key: "VERA:VmceReady",
+            key: "GUI:Continue",
         },
         statistics,
         leave,
@@ -2093,6 +2093,7 @@ mod tests {
         let guest = vmce_result_buttons(&board(false, false, false), &layout, continue_id, false);
         assert_eq!(guest.len(), 3);
         assert_eq!(guest[0].kind, VmceResultButtonKind::Ready);
+        assert_eq!(guest[0].key, "GUI:Continue");
         assert_eq!(guest[0].id, VMCE_READY_CONTROL);
         assert_eq!(guest[0].rect, RectPx::new(644, 199, 156, 42));
         assert!(

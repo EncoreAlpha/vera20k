@@ -7,6 +7,126 @@
 
 use super::{LAN_MESSAGE_LEN, LanMessage, LanMessageError, LanMessageKind};
 
+/// VMCE-only new lobby identity, delivered reliably over the previous match's
+/// scope before Go. The revision starts at zero for the normal setup owner.
+#[cfg(feature = "vmce")]
+pub const INTERMISSION_KIND: u32 = 0x3B;
+
+/// A VMCE terminal-result agreement, scoped to this result round. Each byte
+/// is either an empty raw slot (0xff), or role 0..3 plus bit 2 for victory.
+#[cfg(feature = "vmce")]
+pub const RESULT_KIND: u32 = 0x3C;
+
+/// The result record's fields end before the LAN message's payload does, so
+/// the digest never truncates on the wire.
+#[cfg(feature = "vmce")]
+const _: () = assert!(SIGNAL_LEN + 21 + 32 <= LAN_MESSAGE_LEN);
+
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmceResultRecord {
+    pub nonce: [u8; 16],
+    pub entries: [u8; 4],
+    pub confirmed: bool,
+    /// Digest of this round's resolved continuation, bound to the result nonce.
+    pub stage_digest: [u8; 32],
+}
+
+#[cfg(feature = "vmce")]
+impl VmceResultRecord {
+    pub fn valid(&self) -> bool {
+        // A zero nonce or digest is an absent field: the pre-digest record
+        // and a replayed buffer whose tail never got written are not results.
+        if self.nonce == [0; 16] || self.stage_digest == [0; 32] {
+            return false;
+        }
+        let mut roles = 0u8;
+        let mut count = 0;
+        for value in self.entries {
+            if value == 0xff {
+                continue;
+            }
+            if value > 7 || roles & (1 << (value & 3)) != 0 {
+                return false;
+            }
+            roles |= 1 << (value & 3);
+            count += 1;
+        }
+        count > 0
+    }
+
+    pub fn encode(&self, name: &str) -> Result<LanMessage, LanMessageError> {
+        if !self.valid() {
+            return Err(LanMessageError::InvalidStageRecord);
+        }
+        let mut message = LanMessage::with_name(LanMessageKind::Unknown(RESULT_KIND), name)?;
+        message.bytes[SIGNAL_LEN..SIGNAL_LEN + 16].copy_from_slice(&self.nonce);
+        message.bytes[SIGNAL_LEN + 16..SIGNAL_LEN + 20].copy_from_slice(&self.entries);
+        message.bytes[SIGNAL_LEN + 20] = u8::from(self.confirmed);
+        message.bytes[SIGNAL_LEN + 21..SIGNAL_LEN + 53].copy_from_slice(&self.stage_digest);
+        Ok(message)
+    }
+
+    pub fn decode(message: &LanMessage) -> Option<Self> {
+        if message.u32(0) != RESULT_KIND {
+            return None;
+        }
+        let confirmed = match message.bytes[SIGNAL_LEN + 20] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let record = Self {
+            nonce: message.bytes[SIGNAL_LEN..SIGNAL_LEN + 16].try_into().ok()?,
+            entries: message.bytes[SIGNAL_LEN + 16..SIGNAL_LEN + 20]
+                .try_into()
+                .ok()?,
+            confirmed,
+            stage_digest: message.bytes[SIGNAL_LEN + 21..SIGNAL_LEN + 53]
+                .try_into()
+                .ok()?,
+        };
+        record.valid().then_some(record)
+    }
+}
+
+#[cfg(feature = "vmce")]
+pub fn encode_intermission_epoch(
+    name: &str,
+    epoch: [u8; 16],
+) -> Result<LanMessage, LanMessageError> {
+    if epoch == [0; 16] {
+        return Err(LanMessageError::InvalidStageRecord);
+    }
+    let mut message = LanMessage::with_name(LanMessageKind::Unknown(INTERMISSION_KIND), name)?;
+    message.bytes[SIGNAL_LEN..SIGNAL_LEN + 16].copy_from_slice(&epoch);
+    Ok(message)
+}
+
+#[cfg(feature = "vmce")]
+pub fn decode_intermission_epoch(message: &LanMessage) -> Option<[u8; 16]> {
+    if message.u32(0) != INTERMISSION_KIND {
+        return None;
+    }
+    let epoch: [u8; 16] = message.bytes[SIGNAL_LEN..SIGNAL_LEN + 16].try_into().ok()?;
+    (epoch != [0; 16]).then_some(epoch)
+}
+
+#[cfg(all(test, feature = "vmce"))]
+#[test]
+fn intermission_identity_requires_a_nonzero_epoch() {
+    let message = encode_intermission_epoch("Host", [7; 16]).unwrap();
+    let received = LanMessage::decode(message.as_bytes()).unwrap();
+    assert_eq!(decode_intermission_epoch(&received), Some([7; 16]));
+    assert!(encode_intermission_epoch("Host", [0; 16]).is_err());
+    assert!(
+        decode_intermission_epoch(
+            &LanMessage::with_name(LanMessageKind::Unknown(0x32), "Host").unwrap()
+        )
+        .is_none()
+    );
+}
+
 pub const SIGNAL_LEN: usize = 0x2f;
 pub const OPTIONS_KIND: u32 = 0x32;
 const DIFFICULTY_OFFSET: usize = 0x2f;
@@ -349,6 +469,32 @@ mod tests {
         bytes[SIGNAL_LEN - 1] = 0x7F;
         assert_eq!(decode_retry_load_failure(&bytes), None);
         assert_eq!(decode_retry_load_failure(&bytes[..SIGNAL_LEN - 1]), None);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_result_record_round_trips_and_rejects_an_absent_digest() {
+        let record = VmceResultRecord {
+            nonce: [3; 16],
+            entries: [4, 1, 0xff, 0xff],
+            confirmed: true,
+            stage_digest: [7; 32],
+        };
+        let message = record.encode("Host").unwrap();
+        assert_eq!(message.u32(0), RESULT_KIND);
+        assert_eq!(VmceResultRecord::decode(&message), Some(record));
+        // The pre-digest record left this range zeroed. Such a packet is not
+        // a result any peer may confirm, so it fails before the send path and
+        // again on decode.
+        let mut stale = record;
+        stale.stage_digest = [0; 32];
+        assert!(stale.encode("Host").is_err());
+        let mut bytes = record.encode("Host").unwrap().into_bytes();
+        bytes[SIGNAL_LEN + 21..SIGNAL_LEN + 53].fill(0);
+        assert_eq!(
+            VmceResultRecord::decode(&LanMessage::decode(&bytes).unwrap()),
+            None
+        );
     }
 
     #[test]

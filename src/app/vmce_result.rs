@@ -216,15 +216,7 @@ pub(crate) fn result_board(
     let connected = state.match_state.session.network_connected_source_indices();
     let can_continue = state.match_state.session.cooperative_round_can_continue();
     let victory = round.page_victory();
-    // Per-row verdict: the mission viewpoint's own survival when the finished
-    // world is still resident; otherwise the page verdict every peer shows.
-    let mut survived = std::collections::BTreeMap::new();
-    if let Some(runtime) = state.match_state.sim_runtime.as_ref() {
-        let sim = &runtime.simulation;
-        for row in sim.cooperative_score_rows() {
-            survived.insert(sim.interner().resolve(row.owner).to_owned(), row.survived);
-        }
-    }
+    let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
     let mut rows = Vec::new();
     let mut humans = launch.humans.iter().enumerate().collect::<Vec<_>>();
     humans.sort_by_key(|(_, human)| human.raw_slot_index.unwrap_or(u8::MAX));
@@ -248,10 +240,10 @@ pub(crate) fn result_board(
             role: info.owner.clone(),
             country: info.country.clone(),
             flag: info.flag.clone(),
-            won: survived
-                .get(info.owner.as_str())
-                .copied()
-                .unwrap_or(victory),
+            won: sim
+                .session()
+                .vmce_outcome(sim.interner().get(&info.owner)?)?
+                == crate::sim::house_state::HouseOutcomeKind::Victory,
             ready: can_continue.then(|| {
                 state
                     .match_state

@@ -480,6 +480,7 @@ pub(crate) struct SetupView {
     pub(crate) dialog: SetupDialog,
     pub(crate) host: bool,
     pub(crate) locked: bool,
+    pub(crate) map_locked: bool,
     /// C2's Short Game is held on in a tournament or clan room.
     pub(crate) short_game_locked: bool,
     /// VMCE runs an authored campaign: the stock ShortGame/Crates lobby
@@ -541,7 +542,8 @@ impl SetupView {
         }
         match id {
             BACK | CHAT | CHAT_LOG | GAME_OPTIONS => true,
-            START | CHOOSE_MAP => self.host,
+            START => self.host,
+            CHOOSE_MAP => self.host && !self.map_locked,
             PAGE => self.dialog.wol(),
             PREVIOUS_ROWS => self.first_row > 0,
             NEXT_ROWS => self.first_row + self.dialog.rows_per_page() < self.row_count,
@@ -1387,6 +1389,7 @@ mod tests {
             dialog: dialog(true, SetupFlavor::Wol, true),
             host: true,
             locked: false,
+            map_locked: false,
             short_game_locked: false,
             campaign_options_locked: false,
             team_header: true,
@@ -1414,6 +1417,10 @@ mod tests {
             vmce_status: None,
             cooperative_description: None,
         };
+        assert!(view.enabled(CHOOSE_MAP));
+        view.map_locked = true;
+        assert!(!view.enabled(CHOOSE_MAP));
+        view.map_locked = false;
         let center = |rect: RectPx| (rect.x + rect.w / 2, rect.y + rect.h / 2);
         let (x, y) = center(popup_layout.checkboxes[0]);
         assert_eq!(popup_layout.control_at(&view, x, y), Some(CHECKBOXES[0]));

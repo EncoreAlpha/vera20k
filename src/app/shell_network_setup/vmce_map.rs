@@ -82,6 +82,39 @@ pub(crate) fn host_vmce_identity(
     Ok((series, crate::util::sha256::sha256_hex(&bytes)))
 }
 
+/// One local series read for the whole-series content scan.
+///
+/// The returned bytes are the exact `campaign.ini` the scan hashes, so a
+/// caller can pair [`Self::manifest_sha256`] with an options identity without
+/// re-reading the file. The directory is canonical; every manifest map path
+/// resolves inside it.
+pub(crate) struct LocalVmceSeries {
+    /// Catalog series component (`Maps/VMCE/<directory>`).
+    pub(crate) directory: String,
+    pub(crate) directory_path: PathBuf,
+    pub(crate) manifest: Vec<u8>,
+}
+
+/// Read a local series' `campaign.ini` for the whole-series scan without
+/// loading any map. `map_file` is the selected catalog map
+/// (`VMCE/<series>/<relative>`), whose series component names the directory.
+/// Cheap next to [`host_vmce_identity`]/[`resolve_local_vmce_config`], which
+/// also load the selected map.
+pub(crate) fn local_vmce_series_manifest(
+    state: &AppState,
+    map_file: &str,
+) -> Result<LocalVmceSeries> {
+    let (_, vmce_root) = vmce_roots(state)?;
+    let (directory, _) = split_catalog_map(map_file)?;
+    let directory_path = series_root(&vmce_root, &directory)?;
+    let manifest = read_bounded(&directory_path.join(VMCE_MANIFEST_FILE))?;
+    Ok(LocalVmceSeries {
+        directory,
+        directory_path,
+        manifest,
+    })
+}
+
 /// Resolve the guest's preinstalled campaign by the host-advertised folder.
 /// Every manifest map must already exist, and the selected map must be the
 /// exact loose file under Maps/Vmce with the host's physical digest.
@@ -292,7 +325,7 @@ pub(crate) fn resolve_next_vmce_stage(
         player_capacity: 8,
         official: false,
         byte_length: i32::try_from(byte_length).unwrap_or(i32::MAX),
-        digest: String::new(),
+        digest: crate::app::scenario_catalog::network_map_digest(&loaded.ini),
         source_sha256,
         effective_digest: effective_digest.clone(),
     };
@@ -319,6 +352,24 @@ fn vmce_roots(state: &AppState) -> Result<(std::path::PathBuf, std::path::PathBu
     Ok((maps_root, vmce_root))
 }
 
+/// Persist one unlocked stage of a VMCE series. The caller decides when the
+/// unlock is earned; this owner only validates and stores it.
+pub(crate) fn unlock_catalog_stage(state: &AppState, map_file: &str) {
+    let result = (|| -> Result<()> {
+        let config = state
+            .platform
+            .game_config
+            .as_ref()
+            .context("VMCE progress requires profile paths")?;
+        let (series, map) = split_catalog_map(map_file)?;
+        crate::app::persistence::vmce_progress::unlock(config.paths.settings_dir(), &series, &map)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        log::warn!("Could not save VMCE stage unlock: {error:#}");
+    }
+}
+
 /// Refresh validated campaign Entry maps in the shared scenario catalog.
 /// Each direct child of `settings/Maps/VMCE` is one series campaign; its
 /// `campaign.ini` and all manifest-relative maps live in that child.
@@ -336,6 +387,14 @@ pub(crate) fn refresh_vmce_entries(state: &mut AppState) {
         return;
     };
     let maps_root = game_config.paths.settings_dir().join("Maps");
+    let progress =
+        match crate::app::persistence::vmce_progress::load(game_config.paths.settings_dir()) {
+            Ok(progress) => Some(progress),
+            Err(error) => {
+                log::warn!("Could not load VMCE stage unlocks: {error}");
+                None
+            }
+        };
     let vmce_root = maps_root.join(VMCE_ROOT);
     let Ok(canonical_root) = vmce_root.canonicalize() else {
         return;
@@ -384,29 +443,41 @@ pub(crate) fn refresh_vmce_entries(state: &mut AppState) {
                 continue;
             }
         };
-        let Ok(loaded) =
-            load_vmce_map_ini(&maps_root, &series_dir, &series, &manifest.entry, assets)
-        else {
-            continue;
-        };
         let display_name = resolve_series_display_name(state, &series_dir, &manifest.name, &series);
         log::debug!("VMCE series {series}: display name {display_name:?}");
-        let mut record = crate::map::skirmish_scenarios::SkirmishScenarioRecord::concrete_from_ini(
-            discovered.len(),
-            crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(series.clone()),
-            &catalog_map_file(&series, &manifest.entry),
-            &loaded.ini,
-        );
-        record.display_name = display_name;
-        if load_vmce_scenario(&series_dir, &manifest.entry, &loaded.ini).is_err() {
-            log::warn!(
-                "ignoring VMCE series {} with invalid entry configuration",
-                entry.path().display()
-            );
-            continue;
+        for map in &manifest.maps {
+            if !same_map_name(map, &manifest.entry)
+                && !progress
+                    .as_ref()
+                    .is_some_and(|progress| progress.is_unlocked(&series, map).unwrap_or(false))
+            {
+                continue;
+            }
+            let Ok(loaded) = load_vmce_map_ini(&maps_root, &series_dir, &series, map, assets)
+            else {
+                continue;
+            };
+            if load_vmce_scenario(&series_dir, map, &loaded.ini).is_err() {
+                log::warn!("ignoring VMCE stage {series}/{map} with invalid configuration");
+                continue;
+            }
+            let mut record =
+                crate::map::skirmish_scenarios::SkirmishScenarioRecord::concrete_from_ini(
+                    discovered.len(),
+                    crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(
+                        series.clone(),
+                    ),
+                    &catalog_map_file(&series, map),
+                    &loaded.ini,
+                );
+            record.display_name = if same_map_name(map, &manifest.entry) {
+                display_name.clone()
+            } else {
+                format!("{display_name} — {map}")
+            };
+            record.game_modes.clear();
+            discovered.push(record);
         }
-        record.game_modes.clear();
-        discovered.push(record);
     }
     let mut path_counts = std::collections::BTreeMap::<String, usize>::new();
     for record in &discovered {
@@ -688,6 +759,105 @@ fn validate_vmce_manifest_maps(series_dir: &Path, maps: &[String]) -> Result<()>
     Ok(())
 }
 
+/// Compute one bounded identity for a complete local campaign on a worker.
+///
+/// `manifest_bytes` is the already-admitted `campaign.ini`; the file is read
+/// again before and after the scan so a changed manifest cannot be paired with
+/// the wrong set of maps. The digest commits to the manifest, manifest order,
+/// logical names, lengths, and raw bytes. The caller owns cancellation and
+/// must discard results from obsolete setup generations. This does not freeze
+/// the files: the caller must revalidate at the next admission boundary.
+pub(crate) fn series_content_sha256(
+    series_dir: &Path,
+    manifest_bytes: &[u8],
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    use std::io::Read;
+    use std::sync::atomic::Ordering;
+
+    let check_cancelled = || -> Result<()> {
+        ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "VMCE series scan cancelled"
+        );
+        Ok(())
+    };
+    check_cancelled()?;
+    ensure!(
+        manifest_bytes.len() <= MAX_CAMPAIGN_BYTES,
+        "VMCE series INI exceeds 64 KiB"
+    );
+    let root = series_dir
+        .canonicalize()
+        .context("VMCE series directory is missing")?;
+    let manifest_path = root.join(VMCE_MANIFEST_FILE).canonicalize()?;
+    ensure!(
+        manifest_path.starts_with(&root),
+        "campaign.ini escapes the VMCE series directory"
+    );
+    ensure!(
+        read_bounded(&manifest_path)? == manifest_bytes,
+        "campaign.ini changed before series scan"
+    );
+    let ini = IniFile::from_bytes_preserving_empty_values(manifest_bytes)?;
+    let manifest = parse_vmce_manifest(&ini)?;
+    let mut sha = crate::util::sha256::Sha256::new();
+    sha.update(b"VMCE series content\0v1\0");
+    sha.update(&(manifest_bytes.len() as u64).to_le_bytes());
+    sha.update(manifest_bytes);
+    for map in &manifest.maps {
+        check_cancelled()?;
+        let relative = map.replace('\\', "/");
+        let path = root
+            .join(&relative)
+            .canonicalize()
+            .with_context(|| format!("campaign map is missing: {map}"))?;
+        ensure!(
+            path.starts_with(&root),
+            "campaign map escapes the VMCE series directory: {map}"
+        );
+        let mut file = std::fs::File::open(&path)?;
+        let before = file.metadata()?;
+        ensure!(before.is_file(), "campaign map is not a file: {map}");
+        let length = before.len();
+        ensure!(
+            length <= crate::map::source::MAX_TRANSFER_MAP_BYTES as u64,
+            "campaign map exceeds the network map size limit: {map}"
+        );
+        sha.update(&(relative.len() as u64).to_le_bytes());
+        sha.update(relative.as_bytes());
+        sha.update(&length.to_le_bytes());
+        let mut total = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            check_cancelled()?;
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            ensure!(
+                total <= length,
+                "campaign map changed during series scan: {map}"
+            );
+            sha.update(&buffer[..count]);
+        }
+        let after = file.metadata()?;
+        ensure!(
+            total == length
+                && after.len() == length
+                && before.modified().ok() == after.modified().ok(),
+            "campaign map changed during series scan: {map}"
+        );
+    }
+    check_cancelled()?;
+    ensure!(
+        read_bounded(&manifest_path)? == manifest_bytes,
+        "campaign.ini changed during series scan"
+    );
+    Ok(crate::util::sha256::digest_hex(sha.finalize()))
+}
+
 fn series_root(vmce_root: &Path, series: &str) -> Result<PathBuf> {
     ensure!(
         !series.is_empty()
@@ -857,6 +1027,57 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn series_identity_detects_changes_to_an_unselected_map() {
+        use crate::map::source::test_support::TestDirectory;
+        use std::sync::atomic::AtomicBool;
+
+        let series = TestDirectory::new("vmce-series-digest");
+        let manifest = b"[Campaign]\nEntry=first.map\nScenarioCount=2\nScenario1=first.map\nScenario2=second.map\n";
+        series.write("campaign.ini", manifest);
+        series.write("first.map", b"selected");
+        series.write("second.map", b"before");
+        let cancel = AtomicBool::new(false);
+        let original = series_content_sha256(series.path(), manifest, &cancel).unwrap();
+        assert_eq!(
+            original,
+            series_content_sha256(series.path(), manifest, &cancel).unwrap()
+        );
+        // Same length makes the difference depend on bytes, not file size.
+        series.write("second.map", b"after!");
+        assert_ne!(
+            original,
+            series_content_sha256(series.path(), manifest, &cancel).unwrap()
+        );
+        series.write("campaign.ini", b"changed");
+        assert!(series_content_sha256(series.path(), manifest, &cancel).is_err());
+    }
+
+    #[test]
+    fn series_identity_enforces_paths_size_and_cancellation() {
+        use crate::map::source::test_support::TestDirectory;
+        use std::sync::atomic::AtomicBool;
+
+        let series = TestDirectory::new("vmce-series-digest-bounds");
+        let manifest = b"[Campaign]\nEntry=first.map\nScenarioCount=1\nScenario1=first.map\n";
+        series.write("campaign.ini", manifest);
+        let file = std::fs::File::create(series.path().join("first.map")).unwrap();
+        file.set_len(crate::map::source::MAX_TRANSFER_MAP_BYTES as u64)
+            .unwrap();
+        let cancel = AtomicBool::new(false);
+        assert!(series_content_sha256(series.path(), manifest, &cancel).is_ok());
+        file.set_len(crate::map::source::MAX_TRANSFER_MAP_BYTES as u64 + 1)
+            .unwrap();
+        assert!(series_content_sha256(series.path(), manifest, &cancel).is_err());
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(series_content_sha256(series.path(), manifest, &cancel).is_err());
+        let escaping =
+            b"[Campaign]\nEntry=../outside.map\nScenarioCount=1\nScenario1=../outside.map\n";
+        series.write("campaign.ini", escaping);
+        cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(series_content_sha256(series.path(), escaping, &cancel).is_err());
+    }
 
     #[test]
     fn vmce_catalog_map_keeps_the_series_and_entry_separate() {

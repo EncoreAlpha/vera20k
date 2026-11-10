@@ -338,6 +338,9 @@ struct NetworkSession {
     /// Host-authoritative external VMCE map settings for this selection.
     #[cfg(feature = "vmce")]
     vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
+    /// Fixed next stage while this network visit is in a VMCE intermission.
+    #[cfg(feature = "vmce")]
+    vmce_intermission_map: Option<String>,
     /// Verified local content for the current advertised map. The lobby keeps
     /// the host's filename; only the frozen local load consumes this source.
     local_map_source: Option<crate::map::source::LoadedMapSource>,
@@ -569,6 +572,8 @@ impl MatchSession {
             map_metadata: None,
             #[cfg(feature = "vmce")]
             vmce_map_config: None,
+            #[cfg(feature = "vmce")]
+            vmce_intermission_map: None,
             local_map_source: None,
             local_map_effective_digest: None,
             local_random_map_preview: None,
@@ -726,6 +731,35 @@ impl MatchSession {
         }
     }
 
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_intermission_map(&self) -> Option<&str> {
+        self.network.as_ref()?.vmce_intermission_map.as_deref()
+    }
+
+    /// A verified host setup may announce its fixed intermission map once.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn accept_vmce_intermission_map(&mut self, map: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.network_setup()
+                .is_some_and(|launch| launch.mode.class.is_vmce()
+                    && launch
+                        .selected_map_file
+                        .as_deref()
+                        .is_some_and(|selected| selected.eq_ignore_ascii_case(map))),
+            "VMCE intermission identity does not match its selected map"
+        );
+        let network = self.network.as_mut().expect("verified network setup");
+        anyhow::ensure!(
+            network
+                .vmce_intermission_map
+                .as_deref()
+                .is_none_or(|previous| previous.eq_ignore_ascii_case(map)),
+            "VMCE intermission map changed"
+        );
+        network.vmce_intermission_map = Some(map.to_owned());
+        Ok(())
+    }
+
     /// The finished or active VMCE mission's frozen role-to-House assignments.
     #[cfg(feature = "vmce")]
     pub(crate) fn network_vmce_assignments(
@@ -733,7 +767,9 @@ impl MatchSession {
     ) -> Option<&crate::skirmish_launch::VmceHouseAssignments> {
         match &self.network.as_ref()?.phase {
             NetworkPhase::Frozen { startup, .. }
-            | NetworkPhase::CooperativeRound { previous: startup, .. } => startup.vmce_houses(),
+            | NetworkPhase::CooperativeRound {
+                previous: startup, ..
+            } => startup.vmce_houses(),
             _ => None,
         }
     }
@@ -2278,6 +2314,17 @@ impl MatchSession {
         capacity: i32,
     ) -> anyhow::Result<Vec<crate::skirmish_launch::SkirmishHumanSlot>> {
         anyhow::ensure!(self.host, "only host may choose the map");
+        #[cfg(feature = "vmce")]
+        if let Some(required) = self
+            .network
+            .as_ref()
+            .and_then(|network| network.vmce_intermission_map.as_deref())
+        {
+            anyhow::ensure!(
+                mode.class.is_vmce() && file.eq_ignore_ascii_case(required),
+                "VMCE intermission has a fixed next stage"
+            );
+        }
         anyhow::ensure!(
             !file.is_empty() && capacity > 0,
             "map requires a valid participant capacity"
@@ -3229,6 +3276,11 @@ impl MatchSession {
         network.endpoints.clear();
         network.loading_requests.clear();
         network.map_metadata = None;
+        #[cfg(feature = "vmce")]
+        {
+            network.vmce_map_config = None;
+            network.vmce_intermission_map = None;
+        }
         network.local_map_source = None;
         network.local_map_effective_digest = None;
         network.local_random_map_preview = None;
@@ -3706,27 +3758,35 @@ mod tests {
         let mut vmce = session.network_setup().unwrap().mode.clone();
         vmce.class = crate::skirmish_modes::MpModeClass::Vmce;
         let before = session.clone();
-        assert!(session
-            .select_network_map(vmce.clone(), "EIGHT.YRM".into(), 8)
-            .is_err());
+        assert!(
+            session
+                .select_network_map(vmce.clone(), "EIGHT.YRM".into(), 8)
+                .is_err()
+        );
         assert_eq!(session, before);
         session.remove_network_participant(2).unwrap();
         session
             .select_network_map(vmce, "EIGHT.YRM".into(), 8)
             .unwrap();
-        assert!(session
-            .network_setup()
-            .unwrap()
-            .humans
-            .iter()
-            .all(|human| !human.is_observer()));
+        assert!(
+            session
+                .network_setup()
+                .unwrap()
+                .humans
+                .iter()
+                .all(|human| !human.is_observer())
+        );
         assert_eq!(session.network_observer_row(), None);
         session.set_network_spectators(true).unwrap();
         assert!(!session.network_spectators_welcome());
         assert_eq!(session.network_join_row(true), None);
         assert!(session.add_network_participant(spectator).is_err());
         let choices = session.network_setup().unwrap().humans[1].slot.clone();
-        assert!(session.accept_lan_peer_choices(1, choices, true, None).is_err());
+        assert!(
+            session
+                .accept_lan_peer_choices(1, choices, true, None)
+                .is_err()
+        );
     }
 
     #[cfg(feature = "vmce")]
@@ -3987,7 +4047,9 @@ mod tests {
         session
             .choose_network_row_kind(2, NetworkRowKind::Open)
             .unwrap();
-        session.accept_lan_peer_choices(1, slot, false, None).unwrap();
+        session
+            .accept_lan_peer_choices(1, slot, false, None)
+            .unwrap();
         assert_eq!(guest(&session), (false, Some(2)));
         assert_eq!(observer_rows(&session), [4]);
     }

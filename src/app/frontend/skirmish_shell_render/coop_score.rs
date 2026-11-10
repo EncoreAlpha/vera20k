@@ -235,8 +235,32 @@ pub(crate) fn render_coop_score(
                 ));
             }
             for (row, cells) in statistics.rows.iter().zip(table.rows.iter()) {
+                // This page is reached only when every player lost; retain a
+                // separate visible verdict for each participant.
+                let player_cell = cells.cells[0];
+                let name_width = player_cell.w * 2 / 3;
+                let name_rect =
+                    RectPx::new(player_cell.x, player_cell.y, name_width, player_cell.h);
+                let result_rect = RectPx::new(
+                    player_cell.x + name_width,
+                    player_cell.y,
+                    player_cell.w - name_width,
+                    player_cell.h,
+                );
+                let color = rgb(row.rgb.unwrap_or([255, 255, 0]));
+                let name = super::vmce_panel::ellipsize_native(
+                    &state.renderer.bit_font,
+                    &row.player,
+                    scale.base_rect(name_rect).w,
+                );
+                texts.push(text(&name, name_rect, ShellAlign::NONE, color));
+                texts.push(text(
+                    &crate::i18n::tr("VERA:VmceResultLost"),
+                    result_rect,
+                    ShellAlign::H_CENTER,
+                    color,
+                ));
                 let values = [
-                    row.player.clone(),
                     row.kills.to_string(),
                     row.losses.to_string(),
                     row.built.to_string(),
@@ -244,16 +268,11 @@ pub(crate) fn render_coop_score(
                     row.income.to_string(),
                 ];
                 for (column, value) in values.iter().enumerate() {
-                    let row_align = if column == 0 {
-                        ShellAlign::NONE
-                    } else {
-                        ShellAlign::H_CENTER
-                    };
                     texts.push(text(
                         value,
-                        cells.cells[column],
-                        row_align,
-                        rgb(row.rgb.unwrap_or([255, 255, 0])),
+                        cells.cells[column + 1],
+                        ShellAlign::H_CENTER,
+                        color,
                     ));
                 }
             }

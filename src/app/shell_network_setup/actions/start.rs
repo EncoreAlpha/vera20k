@@ -483,7 +483,7 @@ fn mode_start(
                     log::warn!("VMCE map role configuration is invalid: {error}");
                     message(
                         state,
-                        "VMCE requires Basic Player entries that name distinct Houses in the selected map.",
+                        "VMCE cannot start: there may be more players than roles, or selected roles may be missing or duplicated.",
                         &[],
                     );
                     false

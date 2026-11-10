@@ -1851,6 +1851,12 @@ impl Simulation {
                 reason: "VMCE House grants do not match the House roster",
             });
         }
+        #[cfg(feature = "vmce")]
+        if !self.session.vmce_outcomes_valid(&self.outcome_viewpoints()) {
+            return Err(SnapshotRestoreError::InvalidMultiplayerSession {
+                reason: "VMCE outcomes do not match the player Houses",
+            });
+        }
         let scenario_names_admitted = self
             .houses
             .values()

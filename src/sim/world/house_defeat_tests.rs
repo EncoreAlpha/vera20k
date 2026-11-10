@@ -1351,7 +1351,7 @@ fn vmce_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
 
 #[cfg(feature = "vmce")]
 #[test]
-fn vmce_does_not_auto_defeat_empty_scenario_houses() {
+fn vmce_empty_houses_keep_their_view_and_control_without_ending_the_mission() {
     use crate::sim::world::SimSoundEvent;
 
     let (mut sim, houses, shared, rules) = vmce_fixture();
@@ -1360,12 +1360,13 @@ fn vmce_does_not_auto_defeat_empty_scenario_houses() {
     sim.houses
         .register(HouseState::new(scenario, 3, Some(country), false, 0, 10));
 
+    sim.session.set_binary_frame_for_test(100);
     sim.check_defeat(Some(&rules), None);
 
-    for owner in [shared, scenario] {
+    for owner in [houses[0], houses[1], shared, scenario] {
         assert!(
             !sim.houses[&owner].is_defeated(),
-            "an authored scenario house with no objects is not a skirmish player"
+            "an empty campaign house must not enter multiplayer defeat"
         );
         assert!(
             !sim.sound_events.iter().any(|event| {
@@ -1374,10 +1375,29 @@ fn vmce_does_not_auto_defeat_empty_scenario_houses() {
             "an empty scenario house must not announce a defeat at mission start"
         );
     }
-    assert!(
-        sim.houses[&houses[0]].is_defeated(),
-        "an admitted role primary House keeps the defeat gate"
-    );
+    assert!(!sim.local_player_defeated());
+    assert!(!sim.houses[&houses[0]].map_is_clear());
+    assert!(sim.house_is_locally_controlled_player(houses[0]));
+    assert!(sim.house_is_locally_controlled_player(shared));
+    assert!(sim.session.outcome_request().is_none());
+    let shared_unit = sim
+        .spawn_object_at_height("TANK", "shared", 12, 10, 0, 0, &rules)
+        .expect("the shared House can have units after the role House is empty");
+    sim.executing_record_sender = Some(0);
+    assert!(sim.apply_command(
+        "house0",
+        &crate::sim::command::Command::Stop {
+            entity_id: shared_unit
+        },
+        Some(&rules),
+    ));
+    sim.executing_record_sender = None;
+    let returned = sim
+        .spawn_object_at_height("TANK", "house0", 10, 10, 0, 0, &rules)
+        .expect("a trigger can create a new unit for the empty House");
+    assert!(sim.house_is_locally_controlled_player(sim.entities().get(returned).unwrap().owner()));
+    sim.check_defeat(Some(&rules), None);
+    assert!(!sim.houses[&houses[0]].is_defeated());
 }
 
 #[cfg(feature = "vmce")]
@@ -1476,19 +1496,121 @@ fn vmce_outcome_actions_flag_every_role_and_ignore_the_shared_house() {
         "the shared House takes no player outcome"
     );
 
-    // Action 1/2 style requests also resolve the whole team; the country
-    // parameter is not compared.
+    // Action 2 follows the native per-country defeat arm.
     let (mut sim, houses, shared, rules) = vmce_fixture();
     let defeat = PlayerOutcomeRequest::Country {
         country_index: 0,
         win_on_match: false,
     };
     assert!(sim.request_player_outcome(defeat, &rules, FrameEffects::empty()));
-    for owner in &houses {
-        assert!(sim.houses[owner].has_lost());
-        assert!(!sim.houses[owner].has_won());
-    }
+    assert!(sim.houses[&houses[0]].has_lost());
+    assert!(sim.houses[&houses[1]].has_won());
     assert!(!sim.houses[&shared].has_lost());
+}
+
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_country_victory_uses_the_triggering_house_alliance_even_for_ai() {
+    let (mut sim, houses, shared, rules) = vmce_fixture();
+    sim.houses
+        .get_mut(&shared)
+        .unwrap()
+        .set_is_human_for_test(false);
+    sim.house_alliances_mut_for_test()
+        .entry("SHARED".into())
+        .or_default()
+        .insert("HOUSE0".into());
+    assert!(sim.request_player_outcome(
+        PlayerOutcomeRequest::Country {
+            country_index: 2,
+            win_on_match: true
+        },
+        &rules,
+        Default::default(),
+    ));
+    assert!(sim.houses[&houses[0]].has_won());
+    assert!(sim.houses[&houses[1]].has_lost());
+    assert!(sim.houses[&shared].outcome().is_none());
+}
+
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_first_result_boundary_keeps_all_player_results_for_both_views() {
+    use crate::sim::timer::CdTimer;
+    let mut hashes = Vec::new();
+    for local in 0..2 {
+        let (mut sim, houses, _shared, rules) = vmce_fixture();
+        sim.session.set_current_house_for_test(Some(houses[local]));
+        assert!(sim.flag_house_to_die(houses[1]));
+        sim.request_player_outcome(
+            PlayerOutcomeRequest::Country {
+                country_index: 0,
+                win_on_match: true,
+            },
+            &rules,
+            Default::default(),
+        );
+        // The second result was blocked by native House state. Its candidate
+        // remains the one requested by the map, even though no flag was set.
+        sim.houses
+            .get_mut(&houses[0])
+            .unwrap()
+            .supply_result_flags_for_test(true, false, CdTimer::started(100, 0));
+        sim.houses
+            .get_mut(&houses[1])
+            .unwrap()
+            .supply_result_flags_for_test(false, false, CdTimer::started(100, 90));
+        sim.session.set_binary_frame_for_test(100);
+        sim.house_rung(&rules, None, false, Default::default(), None)
+            .unwrap();
+        assert_eq!(
+            sim.session.vmce_outcome(houses[0]),
+            Some(HouseOutcomeKind::Victory)
+        );
+        assert_eq!(
+            sim.session.vmce_outcome(houses[1]),
+            Some(HouseOutcomeKind::Defeat)
+        );
+        assert_eq!(
+            sim.ready_outcome_for_owner(houses[local]).unwrap().kind,
+            if local == 0 {
+                HouseOutcomeKind::Victory
+            } else {
+                HouseOutcomeKind::Defeat
+            }
+        );
+        assert_eq!(sim.sound_events.iter().filter(|event| matches!(
+            event, crate::sim::world::SimSoundEvent::MatchOutcome { owner, .. } if *owner == houses[local]
+        )).count(), 1, "each local player hears one verdict");
+        let saved = save_codec::serialize(&sim).unwrap();
+        let restored: Simulation = save_codec::deserialize(&saved).unwrap();
+        assert_eq!(
+            restored.session.vmce_outcomes(),
+            sim.session.vmce_outcomes()
+        );
+        hashes.push(sim.state_hash());
+    }
+    assert_eq!(hashes[0], hashes[1]);
+}
+
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_network_checksum_detects_a_different_terminal_result() {
+    let (mut left, owners, _, _) = vmce_fixture();
+    let (mut right, other_owners, _, _) = vmce_fixture();
+    assert_eq!(owners, other_owners);
+    left.session.latch_vmce_outcomes(vec![
+        (owners[0], HouseOutcomeKind::Victory),
+        (owners[1], HouseOutcomeKind::Defeat),
+    ]);
+    right.session.latch_vmce_outcomes(vec![
+        (owners[0], HouseOutcomeKind::Victory),
+        (owners[1], HouseOutcomeKind::Victory),
+    ]);
+    assert_ne!(
+        left.compute_multiplayer_frame_checksum().unwrap().value,
+        right.compute_multiplayer_frame_checksum().unwrap().value
+    );
 }
 
 /// Ares 3.0 `10024150` (hook `0x004FC731`): with `ReturnStructures=yes`, a

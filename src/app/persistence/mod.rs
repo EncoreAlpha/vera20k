@@ -15,6 +15,8 @@ pub(crate) mod phobos_settings;
 pub(crate) mod profile_file;
 mod resource_load;
 pub(crate) mod rules_profile;
+#[cfg(feature = "vmce")]
+pub(crate) mod vmce_progress;
 pub(crate) mod wol_profile;
 pub(crate) use resource_load::{PreparedSavedGame, SavedGamePreparationView};
 

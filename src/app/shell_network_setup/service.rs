@@ -687,7 +687,17 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             if mode_changed {
                 super::cooperative::mode_entered(state)?;
             }
-            if let Some(admission) = map_admission {
+            // A VMCE LAN guest may only report the map after its whole series
+            // produced the host's advertised content digest; the gate holds
+            // the authoritative status closed while the scan runs.
+            #[cfg(feature = "vmce")]
+            let vmce_series_admission = vmce && !dialog.host && !dialog.wol();
+            #[cfg(not(feature = "vmce"))]
+            let vmce_series_admission = false;
+            if vmce_series_admission {
+                #[cfg(feature = "vmce")]
+                apply_vmce_series_admission(state, map_admission);
+            } else if let Some(admission) = map_admission {
                 apply_local_map_admission(state, admission)?;
             }
             // 0x005E57DA → 0x005E74E0: a material change frees the preview
@@ -1278,6 +1288,45 @@ mod tests {
             "an unavailable map never makes the guest accept-eligible"
         );
     }
+
+    /// A VMCE LAN guest reports `K1` only for a whole series that produced the
+    /// host's advertised digest. A differing unselected map is a completed
+    /// mismatch (unavailable, status 0, so the host's Start gate refuses); a
+    /// still-running scan supports no admission at all.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_series_verification_decides_the_map_admission_status() {
+        use crate::app::lan_service::VmceSeriesState;
+        use crate::app::match_runtime::session::NetworkMapAdmission;
+
+        let present = super::vmce_series_admission(&VmceSeriesState::Verified {
+            digest: "a".repeat(64),
+        });
+        assert_eq!(present, Some(NetworkMapAdmission::Present));
+        assert_eq!(present.map(NetworkMapAdmission::status), Some(1));
+
+        let mismatch = super::vmce_series_admission(&VmceSeriesState::Mismatch {
+            local: "b".repeat(64),
+        });
+        assert_eq!(
+            mismatch.map(NetworkMapAdmission::status),
+            Some(0),
+            "a differing later mission must never look present"
+        );
+        assert_eq!(
+            super::vmce_series_admission(&VmceSeriesState::Failed(
+                "campaign map is missing: later.map".to_owned()
+            ))
+            .map(NetworkMapAdmission::status),
+            Some(0)
+        );
+        assert_eq!(
+            super::vmce_series_admission(&VmceSeriesState::Pending),
+            None,
+            "a running scan withholds the K answer"
+        );
+        assert_eq!(super::vmce_series_admission(&VmceSeriesState::Idle), None);
+    }
 }
 
 /// The host checks a guest's `R` (`0x007A8260`): its slot passes the bans,
@@ -1713,7 +1762,7 @@ pub(super) fn install_received_preview_image(
     Ok(())
 }
 
-fn apply_local_map_admission(
+pub(crate) fn apply_local_map_admission(
     state: &mut AppState,
     admission: crate::app::match_runtime::session::NetworkMapAdmission,
 ) -> anyhow::Result<()> {
@@ -1789,6 +1838,106 @@ fn queue_local_map_status(
         .requests
         .push(NetworkSetupRequest::MapStatus(status));
     status
+}
+
+/// In a VMCE LAN room a guest's map admission is only as good as its
+/// whole-series verification: `K1`/`A1` require it (`LanService::
+/// setup_maps_verified`), and this projection keeps the authoritative
+/// `MatchSession` status in step with the scan owner. While the scan runs the
+/// status is held closed without a `K`, so the host's missing-map line is not
+/// printed for a scan that has simply not finished.
+#[cfg(feature = "vmce")]
+fn gate_vmce_series_admission(
+    state: &mut AppState,
+    admission: Option<crate::app::match_runtime::session::NetworkMapAdmission>,
+) -> Option<crate::app::match_runtime::session::NetworkMapAdmission> {
+    let vmce_guest = state.match_state.session_mode()
+        == crate::app::match_runtime::session::SessionMode::Lan
+        && !state.match_state.session.host()
+        && state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vmce())
+        && state.match_state.lan_service.is_some();
+    if !vmce_guest
+        || state
+            .match_state
+            .session
+            .network_vmce_map_config()
+            .is_none()
+    {
+        return admission;
+    }
+    let admission = vmce_series_admission(&crate::app::lan_service::vmce_series_state(state));
+    if admission.is_none() {
+        withhold_local_map_admission(state);
+    }
+    admission
+}
+
+/// The map admission a whole-series verification state supports. Only a
+/// verified series may report `K` status 1; a completed mismatch or failure
+/// reports 0 (the host's Start gate then refuses the participant), while a
+/// running scan supports no admission yet.
+#[cfg(feature = "vmce")]
+fn vmce_series_admission(
+    verification: &crate::app::lan_service::VmceSeriesState,
+) -> Option<crate::app::match_runtime::session::NetworkMapAdmission> {
+    use crate::app::lan_service::VmceSeriesState;
+    use crate::app::match_runtime::session::NetworkMapAdmission;
+    match verification {
+        VmceSeriesState::Verified { .. } => Some(NetworkMapAdmission::Present),
+        VmceSeriesState::Mismatch { .. } | VmceSeriesState::Failed(_) => {
+            Some(NetworkMapAdmission::Unavailable)
+        }
+        VmceSeriesState::Pending | VmceSeriesState::Idle => None,
+    }
+}
+
+/// Hold a VMCE LAN guest's own map admission closed while its whole-series
+/// scan runs: the authoritative flag stays `0` and no `K` is queued, unlike
+/// `report_local_map_unavailable`, which the host would print as a missing map.
+#[cfg(feature = "vmce")]
+fn withhold_local_map_admission(state: &mut AppState) {
+    let Some(index) = state
+        .match_state
+        .session
+        .network_setup()
+        .map(|launch| launch.local_player_index)
+    else {
+        return;
+    };
+    if let Err(error) = state.match_state.session.set_network_map_status(index, 0) {
+        log::warn!("Could not withhold VMCE map admission: {error:#}");
+    }
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.accept_eligible = false;
+    }
+    state.platform.window.request_redraw();
+}
+
+/// Re-run a VMCE LAN guest's map admission from its whole-series verification
+/// state. The authoritative flag and its `K` request keep going through
+/// [`apply_local_map_admission`]; this only decides which admission the scan
+/// currently supports.
+#[cfg(feature = "vmce")]
+pub(crate) fn apply_vmce_series_admission(
+    state: &mut AppState,
+    admission: Option<crate::app::match_runtime::session::NetworkMapAdmission>,
+) {
+    let Some(admission) = gate_vmce_series_admission(state, admission) else {
+        return;
+    };
+    if let Err(error) = apply_local_map_admission(state, admission) {
+        log::warn!("Could not apply VMCE map admission: {error:#}");
+        return;
+    }
+    // This verdict reached the admission owner; the poll-driven reconciliation
+    // must not queue a second answer for the same scan.
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_series.mark_admission_applied();
+    }
 }
 
 fn without_coop_lan_transfer(

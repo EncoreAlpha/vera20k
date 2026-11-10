@@ -24,8 +24,8 @@ pub(crate) mod maps;
 mod service;
 pub(crate) use service::{
     HostOptions, NetworkSetupEvent, accept_network_map_source, accept_network_random_map_preview,
-    fail_go_handoff, fail_go_handoff_with, invalidate_network_agreement, poll,
-    prepare_lan_guest_handoff, refuse_local_acceptance, report_local_map_unavailable,
+    apply_local_map_admission, fail_go_handoff, fail_go_handoff_with, invalidate_network_agreement,
+    poll, prepare_lan_guest_handoff, refuse_local_acceptance, report_local_map_unavailable,
     service_event, set_network_map_progress, withdraw_local_acceptance,
 };
 pub(crate) mod view;
@@ -1066,6 +1066,67 @@ fn show_setup_dialog(state: &mut AppState, dialog: SetupDialog, quick_match: boo
     shell_transition::invalidate_main_menu_dialog_instance(state);
     state.platform.window.request_redraw();
     true
+}
+
+/// Reopen the existing LAN participants on the fixed next campaign stage.
+/// The LAN service owns the reliable old/new scope handoff before this call.
+#[cfg(feature = "vmce")]
+pub(crate) fn open_vmce_intermission(state: &mut AppState) -> anyhow::Result<()> {
+    // The next stage is a new options identity: the whole series is verified
+    // again for the intermission room instead of trusting the finished one.
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_series.cancel();
+    }
+    let stage = state.match_state.session.enter_vmce_intermission_setup()?;
+    vmce_map::refresh_vmce_entries(state);
+    let mut index = state
+        .frontend
+        .scenario_catalog
+        .records()
+        .iter()
+        .position(|record| record.file_name.eq_ignore_ascii_case(&stage.map_file));
+    if index.is_none() {
+        if let Some(series) = stage.config.series_directory.as_ref() {
+            let mut records = state.frontend.scenario_catalog.records_mut();
+            let mut record =
+                crate::map::skirmish_scenarios::SkirmishScenarioRecord::concrete_from_ini(
+                    records.len(),
+                    crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(
+                        series.clone(),
+                    ),
+                    &stage.map_file,
+                    &stage.map_ini,
+                );
+            record.game_modes.clear();
+            index = Some(records.len());
+            records.push(record);
+        }
+    }
+    if let Some(index) = index {
+        state
+            .frontend
+            .multiplayer_shell_runtime
+            .set_scenario_index(index);
+    } else {
+        log::warn!(
+            "VMCE intermission stage is not in the local map catalog: {}",
+            stage.map_file
+        );
+    }
+    let host = state.match_state.session.host();
+    let dialog = setup_dialog(state, host, SetupFlavor::Lan);
+    state.frontend.screen = super::GameScreen::MainMenu;
+    show_setup_dialog(state, dialog, false);
+    if host {
+        state
+            .match_state
+            .session
+            .set_network_people_limit(state.frontend.room_limits.players)?;
+        if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+            protocol.republish_setup();
+        }
+    }
+    Ok(())
 }
 
 /// Dev diagnostics: the VMCE lobby states a shell capture reviews without a

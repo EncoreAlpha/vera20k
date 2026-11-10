@@ -231,21 +231,14 @@ impl Simulation {
         let defeat_gate = defeat_pass
             && self.session.game_mode_nonzero()
             && (self.session.binary_frame() as i32) > 0;
-        // A VERA network world runs a game mode other than the campaign's
-        // mode 0, but its map is an authored campaign map: houses that carry
-        // scenario teams/triggers are not skirmish players. Native's defeat
-        // gate (`0x004F8E86`) is campaign-skipped, so keep it to the admitted
-        // role primary Houses; otherwise every empty scenario house is marked
-        // defeated and announces `TXT_PLAYER_DEFEATED` at mission start.
-        let vera_viewpoints = if self
+        // VMCE runs an authored campaign in a network mode. As in the native
+        // campaign gate (HouseClass::Update 0x004F8E86), an empty House does
+        // not enter MPlayer_Defeated: that path reveals the map and disables
+        // the player's controls even when triggers later create more units.
+        let campaign_defeat_gate = !self
             .session
             .multiplayer_mode_class()
-            .is_some_and(|class| class.mission_outcome_from_triggers_only())
-        {
-            Some(self.outcome_viewpoints())
-        } else {
-            None
-        };
+            .is_some_and(|class| class.mission_outcome_from_triggers_only());
         // Logic55B68D reloads the live House count after each complete body.
         // A House's power/radar and activation must precede its own teams,
         // EVA, defeat and production; no global half-body sweeps intervene.
@@ -268,11 +261,77 @@ impl Simulation {
                 })
             };
             if let Some(kind) = kind {
+                #[cfg(feature = "vmce")]
+                if !campaign_defeat_gate && self.outcome_viewpoints().contains(&owner) {
+                    // VMCE shares the first native House result boundary. The
+                    // other Houses keep their pending flags, or the latest map
+                    // request if a native flag was blocked (e.g. ToDie).
+                    if self.session.vmce_outcomes().is_none() {
+                        let outcomes = self
+                            .outcome_viewpoints()
+                            .into_iter()
+                            .map(|id| {
+                                self.houses[&id]
+                                    .outcome()
+                                    .map(|result| (id, result.kind))
+                                    .or_else(|| {
+                                        self.session
+                                            .vmce_outcome_candidate(id)
+                                            .map(|result| (id, result))
+                                    })
+                            })
+                            .collect::<Option<Vec<_>>>();
+                        if let Some(outcomes) = outcomes {
+                            self.session.latch_vmce_outcomes(outcomes);
+                            // A blocked native Flag did not announce its
+                            // candidate. VMCE's fallback supplies that one
+                            // local verdict before the existing Vox wait.
+                            if let Some((local, local_kind)) =
+                                self.session.current_house().and_then(|local| {
+                                    (self.houses[&local].outcome().is_none())
+                                        .then(|| {
+                                            self.session
+                                                .vmce_outcome(local)
+                                                .map(|kind| (local, kind))
+                                        })
+                                        .flatten()
+                                })
+                            {
+                                self.publish_accepted_house_outcome(
+                                    local,
+                                    local_kind,
+                                    rules,
+                                    frame_effects,
+                                );
+                            }
+                        }
+                    }
+                    if self.session.outcome_request().is_none() {
+                        if let Some((local, local_kind)) =
+                            self.session.current_house().and_then(|local| {
+                                self.session.vmce_outcome(local).map(|kind| (local, kind))
+                            })
+                        {
+                            frame_effects.consume_prefix_effects(&mut self.trigger_effects);
+                            frame_effects.flush_sound(self, rules);
+                            if !frame_effects.outcome_wait_complete(local, local_kind) {
+                                return Err(HouseOutcomeCursor {
+                                    index,
+                                    kind,
+                                    generated,
+                                });
+                            }
+                            self.session.admit_outcome(local_kind);
+                        }
+                    }
+                }
                 // HouseClass::Update4F860F/4F8736 pumps all preceding Vox
                 // before publishing the request and visiting later Houses.
                 // VERA's network state represents every human viewpoint;
                 // only this process's PlayerPtr owns its audio/exit wait.
-                if self.handles_house_outcome_locally(owner) {
+                if (campaign_defeat_gate || self.session.outcome_request().is_none())
+                    && self.handles_house_outcome_locally(owner)
+                {
                     frame_effects.consume_prefix_effects(&mut self.trigger_effects);
                     frame_effects.flush_sound(self, rules);
                     if !frame_effects.outcome_wait_complete(owner, kind) {
@@ -284,7 +343,9 @@ impl Simulation {
                     }
                 }
                 self.houses.get_mut(&owner).unwrap().complete_outcome(kind);
-                self.admit_house_outcome(owner, kind);
+                if campaign_defeat_gate || self.session.outcome_request().is_none() {
+                    self.admit_house_outcome(owner, kind);
+                }
             }
             // Original4F87C2..4F87FA runs even on frame zero and before
             // team/EVA/defeat work. Clear1F6 before entering ReceiveDamage.
@@ -310,10 +371,7 @@ impl Simulation {
             self.ares_degrade_buildings(owner, rules, registry, frame_effects);
             crate::sim::house_eva::update_house_eva(self, rules, owner);
             crate::sim::superweapon::tick_house_superweapon_instances(self, rules, owner);
-            let auto_defeat_house = vera_viewpoints
-                .as_ref()
-                .is_none_or(|viewpoints| viewpoints.contains(&owner));
-            if defeat_gate && auto_defeat_house && self.house_holds_nothing(owner, rules) {
+            if defeat_gate && campaign_defeat_gate && self.house_holds_nothing(owner, rules) {
                 self.house_blowup(
                     owner,
                     HouseBlowupSubset::All,
@@ -789,24 +847,22 @@ impl Simulation {
     /// and TeamAI Script7/23 at6E98C9/6E98E5. All target PlayerPtr, not
     /// the caller's House. Country compares +90 with its HouseType ordinal;
     /// Flag preserves the caller's skip-timer argument (scripts pass false).
-    /// In a VERA network world the cooperative team shares one outcome, so the
-    /// same decision flags every role primary House; current-only effects and
-    /// app routing stay separate.
+    /// VMCE evaluates the map request for each role primary House; its
+    /// country-victory alliance extension is described at that owner.
     pub(crate) fn request_player_outcome(
         &mut self,
         request: PlayerOutcomeRequest,
         rules: &RuleSet,
         effects: FrameEffects<'_>,
     ) -> bool {
-        // VMCE's authored missions decide the whole team. Original
-        // Cooperative and every other mode keep the per-PlayerPtr decision
-        // below, including its country comparison.
+        // Original Cooperative and every other mode keep the per-PlayerPtr
+        // decision below, including its country comparison.
         if self
             .session
             .multiplayer_mode_class()
             .is_some_and(|class| class.mission_outcome_from_triggers_only())
         {
-            return self.request_cooperative_team_outcome(request, rules, effects);
+            return self.request_vmce_outcome(request, rules, effects);
         }
         let mut handled = false;
         for owner in self.outcome_viewpoints() {
@@ -858,12 +914,11 @@ impl Simulation {
         handled
     }
 
-    /// VMCE's team outcome: one result for every role primary House.
-    /// Authored campaign actions name PlayerPtr's country, which a cooperative
-    /// team cannot split, so action 1/67 win the whole team and 2/68 lose it;
-    /// the country parameter is not compared. Action 69 keeps whatever result
-    /// an earlier action set, exactly like the single-player arm.
-    fn request_cooperative_team_outcome(
+    /// VMCE extends TAction1 (6DEA37): the named Country's first House and
+    /// its allies win, including when that House is AI. Native action 2
+    /// (6DEA67) instead compares each player's Country. Actions 67/68 and
+    /// 69 retain the native PlayerPtr result/timer rules for each viewpoint.
+    fn request_vmce_outcome(
         &mut self,
         request: PlayerOutcomeRequest,
         rules: &RuleSet,
@@ -873,33 +928,59 @@ impl Simulation {
         if viewpoints.is_empty() {
             return false;
         }
-        let (kind, skip_timer) = match request {
-            PlayerOutcomeRequest::Country { win_on_match, .. } => (
-                if win_on_match {
-                    HouseOutcomeKind::Victory
-                } else {
-                    HouseOutcomeKind::Defeat
-                },
-                false,
-            ),
-            PlayerOutcomeRequest::Flag { kind, skip_timer } => (kind, skip_timer),
-            PlayerOutcomeRequest::EndScenario => {
-                if viewpoints
-                    .iter()
-                    .any(|owner| self.houses[owner].has_won() || self.houses[owner].has_lost())
-                {
-                    let frame = self.session.binary_frame() as i32;
-                    for owner in viewpoints {
-                        if let Some(house) = self.houses.get_mut(&owner) {
-                            house.resume_result_timer(frame);
-                        }
-                    }
-                    return true;
-                }
-                (HouseOutcomeKind::Victory, false)
-            }
-        };
         for owner in viewpoints {
+            let (kind, skip_timer) = match request {
+                PlayerOutcomeRequest::Country {
+                    country_index,
+                    win_on_match: true,
+                } => {
+                    let winner = u16::try_from(country_index).ok().and_then(|index| {
+                        self.house_by_country_index(crate::rules::ruleset::CountryIdx(index), rules)
+                    });
+                    let allied = winner.is_some_and(|winner| {
+                        self.house_alliances()
+                            .is_allied(&self.interner, winner, owner)
+                    });
+                    (
+                        if allied {
+                            HouseOutcomeKind::Victory
+                        } else {
+                            HouseOutcomeKind::Defeat
+                        },
+                        false,
+                    )
+                }
+                PlayerOutcomeRequest::Country {
+                    country_index,
+                    win_on_match: false,
+                } => {
+                    let matches = self.houses[&owner]
+                        .country()
+                        .and_then(|country| rules.country_index(self.interner.resolve(country)))
+                        .is_some_and(|index| i32::from(index.0) == country_index);
+                    (
+                        if matches {
+                            HouseOutcomeKind::Defeat
+                        } else {
+                            HouseOutcomeKind::Victory
+                        },
+                        false,
+                    )
+                }
+                PlayerOutcomeRequest::Flag { kind, skip_timer } => (kind, skip_timer),
+                PlayerOutcomeRequest::EndScenario => {
+                    if self.houses[&owner].has_won() || self.houses[&owner].has_lost() {
+                        self.houses
+                            .get_mut(&owner)
+                            .unwrap()
+                            .resume_result_timer(self.session.binary_frame() as i32);
+                        continue;
+                    }
+                    (HouseOutcomeKind::Victory, false)
+                }
+            };
+            #[cfg(feature = "vmce")]
+            self.session.record_vmce_outcome_candidate(owner, kind);
             match kind {
                 HouseOutcomeKind::Victory => {
                     self.flag_house_to_win(owner, rules, skip_timer, effects);

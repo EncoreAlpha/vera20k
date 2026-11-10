@@ -62,6 +62,10 @@ pub(crate) fn apply_action(state: &mut AppState, action: SetupAction) {
             Ok(())
         }
         SetupAction::ChooseMap => {
+            #[cfg(feature = "vmce")]
+            if state.match_state.session.vmce_intermission_map().is_some() {
+                return;
+            }
             if state.match_state.session.host()
                 && state
                     .frontend

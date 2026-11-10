@@ -339,10 +339,22 @@ struct UdpIo {
     #[cfg(all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown"))]
     relay_gateway: Option<String>,
     lan_scope: Option<LanScopeState>,
+    // The old match and the new lobby have independent global sequence and
+    // deduplication histories while peers cross the intermission boundary.
+    #[cfg(feature = "vmce")]
+    lan_intermission: Option<LanIntermissionTransport>,
     pending_report: UdpServiceReport,
     // App play runs the IO pump: the relay session then times datagrams to
     // the millisecond. Manual-clock consumers time them by `service`.
     precise_relay_clock: bool,
+}
+
+#[cfg(feature = "vmce")]
+#[derive(Debug)]
+struct LanIntermissionTransport {
+    scope: SessionScope,
+    other: GlobalChannel,
+    entered: bool,
 }
 
 struct IoPump {
@@ -561,6 +573,38 @@ impl LanUdpTransport {
 
     pub fn clear_lan_scope(&mut self) {
         self.lock().clear_lan_scope();
+    }
+
+    /// Prepare a separate plain lobby channel while the match scope remains
+    /// active. Early lobby packets are buffered until `enter_lan_intermission`.
+    #[cfg(feature = "vmce")]
+    pub fn prepare_lan_intermission(&mut self) -> io::Result<()> {
+        self.lock().prepare_lan_intermission()
+    }
+
+    /// Switch application traffic to the buffered lobby channel without
+    /// dropping the previous scope's retry and duplicate-ACK state.
+    #[cfg(feature = "vmce")]
+    pub fn enter_lan_intermission(&mut self) -> io::Result<()> {
+        self.lock().enter_lan_intermission()
+    }
+
+    /// Retire the previous match only after the application has evidence that
+    /// the peer received its last scoped control and entered the new lobby.
+    #[cfg(feature = "vmce")]
+    pub fn finish_lan_intermission(&mut self) {
+        self.lock().finish_lan_intermission();
+    }
+
+    /// A guest that received Go no longer needs to retry prior result-dialog
+    /// sends, but must keep the old receive dedup state to ACK repeated Go.
+    #[cfg(feature = "vmce")]
+    pub fn cancel_retired_lan_sends_to(&mut self, endpoint: SocketAddrV4) {
+        if let Some(transition) = self.lock().lan_intermission.as_mut()
+            && transition.entered
+        {
+            transition.other.cancel_sends_to_endpoint(endpoint);
+        }
     }
 
     pub fn enable_relay(
@@ -1071,6 +1115,8 @@ impl UdpIo {
             #[cfg(all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown"))]
             relay_gateway: None,
             lan_scope: None,
+            #[cfg(feature = "vmce")]
+            lan_intermission: None,
             pending_report: UdpServiceReport::default(),
             precise_relay_clock: false,
         })
@@ -1092,6 +1138,23 @@ impl UdpIo {
                 io::ErrorKind::InvalidInput,
                 "invalid LAN match scope",
             ));
+        }
+        #[cfg(feature = "vmce")]
+        if let Some(transition) = self
+            .lan_intermission
+            .as_ref()
+            .filter(|transition| transition.entered)
+        {
+            if transition.scope.epoch == scope.epoch {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "new LAN match reused the previous epoch",
+                ));
+            }
+            // The app has accepted this new room's GO and its epoch. That
+            // proves the host crossed the previous GO/ACK boundary even if
+            // no setup heartbeat was observed before the room started.
+            self.lan_intermission = None;
         }
         if let Some(current) = self.lan_scope {
             if current.scope() == scope {
@@ -1125,8 +1188,66 @@ impl UdpIo {
     /// messages under an unscoped lobby or a later match. Reuse the same
     /// manager reset540A80/540B40; no second reliability history is introduced.
     fn clear_lan_scope(&mut self) {
-        if self.lan_scope.is_some() {
+        #[cfg(feature = "vmce")]
+        let transitioning = self.lan_intermission.is_some();
+        #[cfg(not(feature = "vmce"))]
+        let transitioning = false;
+        if self.lan_scope.is_some() || transitioning {
             self.reset_session();
+        }
+    }
+
+    #[cfg(feature = "vmce")]
+    fn prepare_lan_intermission(&mut self) -> io::Result<()> {
+        if self.lan_intermission.is_some() {
+            return Ok(());
+        }
+        let Some(LanScopeState::Active(scope)) = self.lan_scope else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no active LAN match scope",
+            ));
+        };
+        let other = GlobalChannel::new(
+            GlobalConfig {
+                product_id: self.connections.product_id(),
+                ..GlobalConfig::default()
+            },
+            self.connections.retry_timing(),
+        );
+        self.lan_intermission = Some(LanIntermissionTransport {
+            scope,
+            other,
+            entered: false,
+        });
+        Ok(())
+    }
+
+    #[cfg(feature = "vmce")]
+    fn enter_lan_intermission(&mut self) -> io::Result<()> {
+        let Some(transition) = self.lan_intermission.as_mut() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LAN intermission was not prepared",
+            ));
+        };
+        if !transition.entered {
+            std::mem::swap(&mut self.global, &mut transition.other);
+            transition.entered = true;
+            self.connections.reset();
+            self.lan_scope = None;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "vmce")]
+    fn finish_lan_intermission(&mut self) {
+        if self
+            .lan_intermission
+            .as_ref()
+            .is_some_and(|transition| transition.entered)
+        {
+            self.lan_intermission = None;
         }
     }
 
@@ -1368,6 +1489,10 @@ impl UdpIo {
         self.connections.reset();
         self.global.reset();
         self.lan_scope = None;
+        #[cfg(feature = "vmce")]
+        {
+            self.lan_intermission = None;
+        }
         self.pending_report = UdpServiceReport::default();
     }
 
@@ -1557,6 +1682,8 @@ impl UdpIo {
             UdpChannel::Primary,
             &mut self.connections,
             &mut self.global,
+            #[cfg(feature = "vmce")]
+            &mut self.lan_intermission,
             &self.broadcast_targets,
             now_ticks,
             receive_budget,
@@ -1571,6 +1698,8 @@ impl UdpIo {
             UdpChannel::Alternate,
             &mut self.connections,
             &mut self.global,
+            #[cfg(feature = "vmce")]
+            &mut self.lan_intermission,
             &self.broadcast_targets,
             now_ticks,
             receive_budget,
@@ -1592,6 +1721,28 @@ impl UdpIo {
             );
         }) {
             report.discarded_global_sends = self.global.discard_failed_sends();
+        }
+        #[cfg(feature = "vmce")]
+        if let Some(transition) = self.lan_intermission.as_mut() {
+            let scope = transition.entered.then_some(transition.scope);
+            if !transition
+                .other
+                .service(now_ticks, &mut |destination, frame| {
+                    send_global_frame(
+                        &self.primary,
+                        &mut self.relay,
+                        scope,
+                        UdpChannel::Primary,
+                        &mut self.primary_send,
+                        destination,
+                        &self.broadcast_targets,
+                        frame,
+                        &mut report,
+                    );
+                })
+            {
+                report.discarded_global_sends += transition.other.discard_failed_sends();
+            }
         }
         while let Some(response) = self.global.pop_response_time() {
             if let Some(probes) = self
@@ -1650,6 +1801,7 @@ fn drain_socket(
     channel: UdpChannel,
     connections: &mut LanConnections,
     global: &mut GlobalChannel,
+    #[cfg(feature = "vmce")] intermission: &mut Option<LanIntermissionTransport>,
     broadcast_targets: &[SocketAddrV4],
     now_ticks: u32,
     receive_budget: usize,
@@ -1797,7 +1949,11 @@ fn drain_socket(
         } else {
             let datagram = &bytes[..length];
             if datagram.starts_with(LAN_SCOPE_MAGIC) {
-                let Some(scope) = lan_scope.map(LanScopeState::scope) else {
+                let scope = lan_scope.map(LanScopeState::scope);
+                #[cfg(feature = "vmce")]
+                let scope =
+                    scope.or_else(|| intermission.as_ref().filter(|t| t.entered).map(|t| t.scope));
+                let Some(scope) = scope else {
                     // Retired match bytes never enter plain lobby receive state.
                     report.malformed_datagrams += 1;
                     continue;
@@ -1831,23 +1987,39 @@ fn drain_socket(
         let is_global = frame.get(..2).is_some_and(|bytes| {
             u16::from_le_bytes([bytes[0], bytes[1]]) == global.discriminator()
         });
-        let admitted = match lan_scope {
-            // No private connections belong to the new match until loading
-            // installs gameplay. In particular a late old plain packet must
-            // not initialize a fresh private receive sequence during loading.
-            Some(LanScopeState::Prepared(_)) => is_global,
-            Some(LanScopeState::Active(scope)) if received_scope.is_none() => {
-                // A peer may still be loading after we received its100. Its
-                // retry stays plain until it promotes the same route. Only
-                // reliable progress carrying the exact application scope may
-                // reach global dedup/ACK here; never plain ACKs or commands.
-                is_global
-                    && frame.get(2) == Some(&0)
-                    && frame.get(GLOBAL_HEADER_LEN..).is_some_and(|payload| {
-                        LoadingProgressMessage::decode_scoped(payload, scope).is_ok()
-                    })
+        #[cfg(feature = "vmce")]
+        let other_channel = intermission.as_ref().is_some_and(|transition| {
+            if transition.entered {
+                received_scope == Some(transition.scope)
+            } else {
+                received_scope.is_none()
             }
-            _ => true,
+        });
+        #[cfg(not(feature = "vmce"))]
+        let other_channel = false;
+        let admitted = if other_channel {
+            // Lobby ingress and the retired match may use only the global
+            // channel, never the other phase's private gameplay connections.
+            is_global
+        } else {
+            match lan_scope {
+                // No private connections belong to the new match until loading
+                // installs gameplay. In particular a late old plain packet must
+                // not initialize a fresh private receive sequence during loading.
+                Some(LanScopeState::Prepared(_)) => is_global,
+                Some(LanScopeState::Active(scope)) if received_scope.is_none() => {
+                    // A peer may still be loading after we received its100. Its
+                    // retry stays plain until it promotes the same route. Only
+                    // reliable progress carrying the exact application scope may
+                    // reach global dedup/ACK here; never plain ACKs or commands.
+                    is_global
+                        && frame.get(2) == Some(&0)
+                        && frame.get(GLOBAL_HEADER_LEN..).is_some_and(|payload| {
+                            LoadingProgressMessage::decode_scoped(payload, scope).is_ok()
+                        })
+                }
+                _ => true,
+            }
         };
         if !admitted {
             report.malformed_datagrams += 1;
@@ -1857,7 +2029,15 @@ fn drain_socket(
             //7B4038..408C stores a zero-port endpoint and the recvfrom port
             //separately;5418FB passes that override to53FCB0.
             let endpoint = SocketAddrV4::new(*source.ip(), 0);
-            if let Err(error) = global.receive(
+            #[cfg(feature = "vmce")]
+            let receiving = if other_channel {
+                &mut intermission.as_mut().expect("other channel").other
+            } else {
+                &mut *global
+            };
+            #[cfg(not(feature = "vmce"))]
+            let receiving = &mut *global;
+            if let Err(error) = receiving.receive(
                 endpoint,
                 source.port(),
                 frame,
@@ -1878,6 +2058,22 @@ fn drain_socket(
             ) {
                 report.rejected_global += 1;
                 report.last_global_rejection = Some(error);
+            }
+            #[cfg(feature = "vmce")]
+            if other_channel
+                && intermission
+                    .as_ref()
+                    .is_some_and(|transition| transition.entered)
+            {
+                // The old scope remains solely to ACK/retry its reliable
+                // control; no old payload reaches the new room.
+                while intermission
+                    .as_mut()
+                    .unwrap()
+                    .other
+                    .pop_received()
+                    .is_some()
+                {}
             }
         } else if let Err(error) = connections.receive(source, frame, &mut |endpoint, ack| {
             send_frame(

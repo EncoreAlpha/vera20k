@@ -25,7 +25,7 @@ pub(crate) struct VerifiedNetworkMap<'a> {
     pub source: LoadedMapSource,
 }
 
-fn network_map_digest(ini: &IniFile) -> String {
+pub(crate) fn network_map_digest(ini: &IniFile) -> String {
     // ReadString69536B/5E5339: original literals81BFE0/831898/83189C.
     ini.section_or_empty("Digest")
         .read_string("1", "No digest here mate. Nope.", 0x20)

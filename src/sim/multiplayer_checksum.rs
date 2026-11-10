@@ -249,6 +249,19 @@ impl Simulation {
         }
         self.trigger_runtime
             .fold_match_checksum(self.session.binary_frame() as i32, &mut checksum);
+        // VMCE's terminal result is a shared extension, not part of native
+        // 64DAB0. Check it on the actual wire checksum as well as state_hash.
+        #[cfg(feature = "vmce")]
+        if let Some(outcomes) = self.session.vmce_outcomes() {
+            checksum.fold_value(outcomes.len() as u32);
+            for (owner, kind) in outcomes {
+                checksum.fold_value(self.houses.index_of(*owner).unwrap_or(usize::MAX) as u32);
+                checksum.fold_value(match kind {
+                    crate::sim::house_state::HouseOutcomeKind::Victory => 1,
+                    crate::sim::house_state::HouseOutcomeKind::Defeat => 2,
+                });
+            }
+        }
         Ok(MultiplayerChecksumFrame {
             value: checksum.value(),
             ..frame

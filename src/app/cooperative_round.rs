@@ -169,14 +169,26 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
 /// Cooperative mode's BC6 path.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     #[cfg(feature = "vmce")]
-    if state
+    if let Some(sim) = state
         .match_state
         .sim_runtime
         .as_ref()
-        .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
-        .is_some_and(|class| class.is_vmce())
+        .map(|runtime| &runtime.simulation)
+        .filter(|sim| {
+            sim.session()
+                .multiplayer_mode_class()
+                .is_some_and(|class| class.is_vmce())
+        })
     {
-        if victory {
+        let Some(outcomes) = sim.session().vmce_outcomes() else {
+            log::error!("VMCE reached settlement without a shared result");
+            return_to_shell(state);
+            return;
+        };
+        if outcomes
+            .iter()
+            .any(|(_, kind)| *kind == crate::sim::house_state::HouseOutcomeKind::Victory)
+        {
             crate::app::vmce_result::open_victory(state);
         } else {
             crate::app::vmce_result::open_defeat(state);
@@ -771,9 +783,30 @@ pub(crate) fn run_step(state: &mut AppState, step: CooperativeRoundStep) {
             let name = participant_name(state, source);
             append_line(state, format!("{name}: {text}"), color);
         }
-        CooperativeRoundStep::Exit(true) => begin_next_mission(state),
+        CooperativeRoundStep::Exit(true) => {
+            #[cfg(feature = "vmce")]
+            if state.match_state.session_mode()
+                == crate::app::match_runtime::session::SessionMode::Lan
+                && state
+                    .match_state
+                    .session
+                    .cooperative_round()
+                    .is_some_and(|round| round.vmce_next_accepted())
+            {
+                unlock_confirmed_vmce_stage(state);
+                advance_vmce_intermission(state);
+                return;
+            }
+            begin_next_mission(state)
+        }
         CooperativeRoundStep::Exit(false) => finish(state),
-        CooperativeRoundStep::CampaignEnd => crate::app::App::vmce_campaign_end(state),
+        CooperativeRoundStep::CampaignEnd => {
+            #[cfg(feature = "vmce")]
+            if crate::app::lan_service::cooperative::defer_campaign_completion(state) {
+                return;
+            }
+            crate::app::App::vmce_campaign_end(state);
+        }
         CooperativeRoundStep::Retry => retry_last_mission(state),
         CooperativeRoundStep::ContinueInRoom => {
             // The room the host gets back takes the round's mode and the
@@ -811,6 +844,21 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no round roster"))?
         .clone();
     if launch.mode.class.is_vmce() {
+        #[cfg(feature = "vmce")]
+        if state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
+            && state
+                .match_state
+                .session
+                .cooperative_round()
+                .is_some_and(|round| {
+                    round.vera_ending() == crate::app::match_runtime::session::VmceRoundEnding::Next
+                })
+        {
+            crate::app::lan_service::cooperative::begin_vmce_intermission_transition(state)?;
+            if !crate::app::lan_service::cooperative::vmce_intermission_transition_ready(state)? {
+                return Ok(());
+            }
+        }
         // VMCE's next stage and role assignments were resolved from the
         // external campaign on both peers; only the BC6 begin/options
         // exchange remains before the next frozen start.
@@ -868,6 +916,55 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
         .match_state
         .session
         .cooperative_round_assigned(difficulty)
+}
+
+/// B35: unlock the next campaign stage locally once this round's continuation
+/// is confirmed by every online participant. Only the round's own confirmed
+/// advance step reaches here (Continue past the nonce-bound result and
+/// stage-digest agreement, or a deferred Go released by it), so merely opening
+/// the result page writes nothing and a peer whose result or next stage
+/// differed never confirms. The next mission need not be loaded.
+#[cfg(feature = "vmce")]
+fn unlock_confirmed_vmce_stage(state: &AppState) {
+    let Some(map) = state.match_state.session.vmce_round_next_stage_map() else {
+        return;
+    };
+    // A completed mission unlocks its resolved successor even if loading it
+    // later fails.
+    crate::app::shell_network_setup::vmce_map::unlock_catalog_stage(state, map);
+}
+
+#[cfg(feature = "vmce")]
+pub(crate) fn advance_vmce_intermission(state: &mut AppState) {
+    if state.match_state.session.host()
+        && state
+            .match_state
+            .session
+            .network_connected_source_indices()
+            .len()
+            == 1
+        && let Err(error) =
+            crate::app::lan_service::cooperative::begin_vmce_intermission_transition(state)
+    {
+        log::error!("VMCE solo intermission preparation failed: {error:#}");
+        return_to_shell(state);
+        return;
+    }
+    match crate::app::lan_service::cooperative::enter_vmce_intermission(state) {
+        Ok(false) => {}
+        Ok(true) => {
+            state.frontend.campaign_score_page = None;
+            state.frontend.campaign_score_art = None;
+            if let Err(error) = crate::app::shell_network_setup::open_vmce_intermission(state) {
+                log::error!("Could not open VMCE intermission: {error:#}");
+                return_to_shell(state);
+            }
+        }
+        Err(error) => {
+            log::error!("VMCE intermission handoff failed: {error:#}");
+            return_to_shell(state);
+        }
+    }
 }
 
 /// Result 1: `+0xAC` keeps the agreed seed and takes the continuation

@@ -84,7 +84,7 @@ pub(crate) fn forget(directory: &Path, lobby: &str) -> io::Result<Option<Remembe
 /// Write the whole file at once, readable only by its owner on Unix, so a
 /// failed write never leaves the earlier accounts half-replaced.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")))]
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     let temporary = path.with_extension("json.tmp");
     let mut options = std::fs::OpenOptions::new();
@@ -107,7 +107,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     crate::util::file_system::write(path, bytes)
 }
 

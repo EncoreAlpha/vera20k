@@ -250,9 +250,8 @@ pub(crate) fn render_campaign_score_page(
             &wave.button_draws(),
         ));
     }
-    // VMCE's result page owns its right-panel buttons: the host gets Continue
-    // stacked above Leave Room, a guest gets Ready (until pressed) and Leave
-    // Room with no bottom Continue. Stock pages keep the single Continue.
+    // VMCE's result page owns its right-panel buttons. Both roles see Continue;
+    // the guest's button records readiness. Stock pages keep their own button.
     #[cfg(feature = "vmce")]
     let vmce_buttons = state
         .frontend

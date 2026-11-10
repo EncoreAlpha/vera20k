@@ -89,6 +89,8 @@ pub(crate) struct DiplomacyRules<'a> {
     pub quick_coop: bool,
     /// `[0xA8B538]`: the local player is defeated (or observing).
     pub local_inactive: bool,
+    /// VMCE leaves alliance changes to the scenario's triggers.
+    pub manual_alliance_allowed: bool,
     /// GameMode is not 0: `IsControlledByHuman` reads only `+0x1EC`.
     pub game_mode_nonzero: bool,
     /// The chat mask `0xA8D108`, by House array index.
@@ -169,7 +171,7 @@ pub(crate) fn resolve_rows(
                 DiplomacyAlliesBox {
                     checked: allied(local, house),
                     partner: allied(house, local),
-                    enabled: !switches.local_inactive && human,
+                    enabled: !switches.local_inactive && switches.manual_alliance_allowed && human,
                 }
             });
             if row > 0 && human {
@@ -285,6 +287,10 @@ pub(crate) fn view(state: &AppState) -> DiplomacyView {
                 .network_wol_start()
                 .is_some_and(|terms| terms.quick_coop),
         local_inactive: sim.local_player_defeated(),
+        manual_alliance_allowed: !sim
+            .session()
+            .multiplayer_mode_class()
+            .is_some_and(|mode| mode.is_vmce()),
         game_mode_nonzero: mode.is_nonzero(),
         listeners: &listeners,
     };
@@ -470,6 +476,10 @@ pub(crate) fn ally(state: &mut AppState, house: InternedId) {
     let rules = &runtime.resources.rules;
     let sim = &mut runtime.simulation;
     if !sim.session().game_mode_nonzero()
+        || sim
+            .session()
+            .multiplayer_mode_class()
+            .is_some_and(|mode| mode.is_vmce())
         || sim.session().fixed_alliance()
         || !rules.general.allies_allowed
         || !rules.general.ally_change_allowed

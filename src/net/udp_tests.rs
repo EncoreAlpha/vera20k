@@ -1429,6 +1429,116 @@ fn scoped_lan_keeps_full_private_payload_and_retires_to_plain_discovery() {
     );
 }
 
+#[cfg(feature = "vmce")]
+#[test]
+fn intermission_buffers_early_setup_and_reacks_go_after_lost_ack() {
+    let mut host = transport();
+    let mut guest = transport();
+    let host_addr = host.primary_addr().unwrap();
+    let guest_addr = guest.primary_addr().unwrap();
+    let scope = SessionScope {
+        epoch: [47; 16],
+        revision: 4,
+    };
+    let timing = RetryTiming {
+        retry_delta: 20,
+        max_retries: 100,
+        timeout: u32::MAX,
+    };
+    for wire in [&mut host, &mut guest] {
+        wire.set_retry_timing(timing, true);
+        wire.set_lan_scope(scope).unwrap();
+        wire.prepare_lan_intermission().unwrap();
+    }
+    assert!(host.global_mut().send(
+        b"go",
+        GlobalDestination::direct(guest_addr),
+        Delivery::Reliable,
+        0
+    ));
+    assert_eq!(
+        host.service(21).sent_datagrams,
+        1,
+        "the initial Go was not sent"
+    );
+    let go = take_wire_datagrams(&guest, 1).pop().unwrap();
+    host.lock().primary.send_to(&go, guest_addr).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        guest.service(21);
+        if let Some(message) = guest.pop_global_received() {
+            assert_eq!(message.payload, b"go");
+            break;
+        }
+        assert!(Instant::now() < deadline, "initial Go was not received");
+        std::thread::yield_now();
+    }
+    let _lost_ack = take_wire_datagrams(&host, 1);
+    guest.enter_lan_intermission().unwrap();
+    assert!(guest.global_mut().send(
+        b"new setup",
+        GlobalDestination::direct(host_addr),
+        Delivery::Reliable,
+        0
+    ));
+    assert_eq!(
+        guest.service(22).sent_datagrams,
+        1,
+        "the early setup was not sent"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        host.service(22);
+        if host
+            .lock()
+            .lan_intermission
+            .as_ref()
+            .unwrap()
+            .other
+            .queued_receive_count()
+            != 0
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "early setup did not reach the transition buffer"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        host.pop_global_received().is_none(),
+        "early setup must stay on its own channel"
+    );
+
+    host.service(42);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        guest.service(42);
+        host.service(42);
+        if host.global().queued_send_count() == 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "lost Go ACK was not recovered");
+        std::thread::yield_now();
+    }
+    host.enter_lan_intermission().unwrap();
+    assert_eq!(host.pop_global_received().unwrap().payload, b"new setup");
+    host.lock().primary.send_to(&go, guest_addr).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if guest.service(43).received_datagrams != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "delayed Go was not received");
+        std::thread::yield_now();
+    }
+    assert!(
+        guest.pop_global_received().is_none(),
+        "old Go must not enter the new room"
+    );
+}
+
 #[test]
 fn loading_scope_bridge_survives_lost_progress_before_both_peers_activate() {
     let mut host = transport();

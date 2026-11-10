@@ -895,6 +895,14 @@ pub struct ScenarioSession {
     #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_trigger_difficulty: Option<i32>,
+    /// Latest map-requested result and the shared terminal decision. These
+    /// are independent of the process-local native result request below.
+    #[cfg(feature = "vmce")]
+    #[serde(default)]
+    vmce_outcome_candidates: Vec<(InternedId, crate::sim::house_state::HouseOutcomeKind)>,
+    #[cfg(feature = "vmce")]
+    #[serde(default)]
+    vmce_outcomes: Option<Vec<(InternedId, crate::sim::house_state::HouseOutcomeKind)>>,
     /// Scenario+35A0: SetDefaults6839C7 clears the raw stage word. MapSelect
     /// 5AE1FA/5AE0B8 writes the selected index; Scenario save/load retains it.
     campaign_map_stage: u16,
@@ -1966,6 +1974,91 @@ impl ScenarioSession {
         }
     }
 
+    #[cfg(feature = "vmce")]
+    pub(crate) fn record_vmce_outcome_candidate(
+        &mut self,
+        owner: InternedId,
+        kind: crate::sim::house_state::HouseOutcomeKind,
+    ) {
+        if self.vmce_outcomes.is_some() {
+            return;
+        }
+        if let Some((_, previous)) = self
+            .vmce_outcome_candidates
+            .iter_mut()
+            .find(|(id, _)| *id == owner)
+        {
+            *previous = kind;
+        } else {
+            self.vmce_outcome_candidates.push((owner, kind));
+        }
+    }
+
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_outcome_candidate(
+        &self,
+        owner: InternedId,
+    ) -> Option<crate::sim::house_state::HouseOutcomeKind> {
+        self.vmce_outcome_candidates
+            .iter()
+            .find_map(|(id, kind)| (*id == owner).then_some(*kind))
+    }
+
+    #[cfg(feature = "vmce")]
+    pub(crate) fn latch_vmce_outcomes(
+        &mut self,
+        outcomes: Vec<(InternedId, crate::sim::house_state::HouseOutcomeKind)>,
+    ) {
+        if self.vmce_outcomes.is_none() {
+            self.vmce_outcomes = Some(outcomes);
+        }
+    }
+
+    #[cfg(feature = "vmce")]
+    pub fn vmce_outcome(
+        &self,
+        owner: InternedId,
+    ) -> Option<crate::sim::house_state::HouseOutcomeKind> {
+        self.vmce_outcomes
+            .as_ref()?
+            .iter()
+            .find_map(|(id, kind)| (*id == owner).then_some(*kind))
+    }
+
+    #[cfg(feature = "vmce")]
+    pub fn vmce_outcomes(
+        &self,
+    ) -> Option<&[(InternedId, crate::sim::house_state::HouseOutcomeKind)]> {
+        self.vmce_outcomes.as_deref()
+    }
+
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_outcomes_valid(&self, viewpoints: &[InternedId]) -> bool {
+        let valid_candidates =
+            self.vmce_outcome_candidates
+                .iter()
+                .enumerate()
+                .all(|(i, (owner, _))| {
+                    viewpoints.contains(owner)
+                        && !self.vmce_outcome_candidates[..i]
+                            .iter()
+                            .any(|(previous, _)| previous == owner)
+                });
+        let valid_final = self.vmce_outcomes.as_ref().is_none_or(|outcomes| {
+            outcomes.len() == viewpoints.len()
+                && outcomes
+                    .iter()
+                    .zip(viewpoints)
+                    .all(|((owner, _), expected)| owner == expected)
+        });
+        let vmce = self
+            .multiplayer_mode_class
+            .is_some_and(|class| class.is_vmce());
+        valid_candidates
+            && valid_final
+            && (vmce || (self.vmce_outcome_candidates.is_empty() && self.vmce_outcomes.is_none()))
+    }
+
     pub const fn scenario_side(&self) -> i32 {
         self.scenario_side
     }
@@ -2013,6 +2106,12 @@ impl ScenarioSession {
         if let Some(difficulty) = s.vmce_trigger_difficulty {
             b"scenario-vera-campaign-trigger-difficulty-v1".hash(hasher);
             difficulty.hash(hasher);
+        }
+        #[cfg(feature = "vmce")]
+        if !s.vmce_outcome_candidates.is_empty() || s.vmce_outcomes.is_some() {
+            b"vmce-outcomes-v1".hash(hasher);
+            s.vmce_outcome_candidates.hash(hasher);
+            s.vmce_outcomes.hash(hasher);
         }
         if s.campaign_map_stage != 0 {
             b"scenario-map-stage-v1".hash(hasher);
@@ -2281,6 +2380,10 @@ impl ScenarioSession {
             campaign: None,
             #[cfg(feature = "vmce")]
             vmce_trigger_difficulty: None,
+            #[cfg(feature = "vmce")]
+            vmce_outcome_candidates: Vec::new(),
+            #[cfg(feature = "vmce")]
+            vmce_outcomes: None,
             campaign_map_stage: 0,
             input_locked: false,
             chrono_screen: crate::sim::superweapon::chrono_screen::ChronoScreenState::default(),

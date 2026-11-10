@@ -2484,7 +2484,15 @@ impl Simulation {
             Command::MoveFlash { rx, ry } => self.spawn_move_flash(rules, (*rx, *ry)),
             Command::Ally { house_index } => {
                 // EventClass::Execute 0x004C6DEE..0x004C6E23: no admission
-                // gate; the sender toggles on its own mask, announced.
+                // gate; the sender toggles on its own mask, announced. VMCE
+                // deliberately reserves diplomacy changes for map actions.
+                if self
+                    .session
+                    .multiplayer_mode_class()
+                    .is_some_and(|mode| mode.is_vmce())
+                {
+                    return false;
+                }
                 let (Some(owner), Some(other)) = (
                     self.interner.get(command_owner),
                     usize::try_from(*house_index)
@@ -3846,7 +3854,7 @@ mod tests {
         sim.substrate.entities.insert(entity);
     }
 
-#[cfg(feature = "vmce")]
+    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_unit_command_gate_uses_authenticated_source_grants() {
         use crate::sim::house_state::HouseState;

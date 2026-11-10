@@ -505,6 +505,32 @@ fn the_ally_event_toggles_and_announces_for_the_local_house() {
     );
 }
 
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_rejects_player_ally_events_but_accepts_map_alliances() {
+    let rules = rules();
+    let (mut sim, ids) = sim_with(
+        &rules,
+        &[
+            ("A", "Americans", true),
+            ("B", "Russians", true),
+            ("C", "Russians", true),
+        ],
+    );
+    sim.session
+        .set_game_mode(crate::sim::scenario_session::ScenarioGameMode::Lan);
+    sim.session
+        .install_multiplayer_house_identity(crate::skirmish_modes::MpModeClass::Vmce, Vec::new());
+    assert!(!sim.apply_command(
+        "A",
+        &crate::sim::command::Command::Ally { house_index: 1 },
+        Some(&rules),
+    ));
+    assert!(allies(&sim, "A").is_empty());
+    sim.make_ally(ids[0], ids[1], &rules, None, FrameEffects::default(), false);
+    assert_eq!(allies(&sim, "A"), set(&["B"]));
+}
+
 /// Without the announcement (Paranoid, triggers) a human sender still gets
 /// the line and no voice; a computer sender gets neither.
 #[test]

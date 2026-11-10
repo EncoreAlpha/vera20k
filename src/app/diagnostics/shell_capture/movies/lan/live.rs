@@ -1476,19 +1476,31 @@ impl LiveLanCapture {
             // Pick a high colour in the ordinary setup before entering VMCE,
             // where colour controls are hidden. This makes source order differ
             // from seat order and exercises the real result projection.
-            let row = state.match_state.session.network_setup()
+            let row = state
+                .match_state
+                .session
+                .network_setup()
                 .and_then(|launch| launch.local_player().raw_slot_index)
                 .context("host setup row")?;
             let control = setup_control_at_row(state, SetupColumn::Color, usize::from(row))?
                 .context("host colour control")?;
             let view = setup::view(state).context("host setup view")?;
-            ensure!(view.enabled(control) && view.combo(control)
-                .is_some_and(|combo| combo.choices.iter().any(|choice| choice.value == 7)),
-                "host cannot select the retry probe colour");
+            ensure!(
+                view.enabled(control)
+                    && view
+                        .combo(control)
+                        .is_some_and(|combo| combo.choices.iter().any(|choice| choice.value == 7)),
+                "host cannot select the retry probe colour"
+            );
             setup::apply_action(state, SetupAction::Select { control, value: 7 });
-            ensure!(state.match_state.session.network_setup()
-                .is_some_and(|launch| launch.local_player().slot.color_index == 7),
-                "retry probe colour was not accepted");
+            ensure!(
+                state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.local_player().slot.color_index == 7),
+                "retry probe colour was not accepted"
+            );
         }
         setup::commit_map_selection(state, mode_id, map_index, None)?;
         self.select_country(state)?;
@@ -1534,11 +1546,19 @@ impl LiveLanCapture {
             return Ok(());
         }
         if matches!(self.vera_outcome, Some(VmceOutcome::Retry)) {
-            let host = launch.humans.iter().find(|human| human.raw_slot_index == Some(0))
+            let host = launch
+                .humans
+                .iter()
+                .find(|human| human.raw_slot_index == Some(0))
                 .context("retry host seat")?;
-            ensure!(launch.humans.iter().any(|human| human.raw_slot_index != Some(0)
-                && human.slot.color_index < host.slot.color_index),
-                "retry probe did not reverse command-source and seat order");
+            ensure!(
+                launch
+                    .humans
+                    .iter()
+                    .any(|human| human.raw_slot_index != Some(0)
+                        && human.slot.color_index < host.slot.color_index),
+                "retry probe did not reverse command-source and seat order"
+            );
         }
         // Snapshot the real four-process lobby before the production Start
         // advances to loading; the UI review needs a native lobby frame from a
@@ -2403,34 +2423,62 @@ impl LiveLanCapture {
                             }),
                             "VMCE defeat table zeroed every live score row"
                         );
-                        let assignments = state.match_state.session.network_vmce_assignments()
+                        let assignments = state
+                            .match_state
+                            .session
+                            .network_vmce_assignments()
                             .context("VMCE defeat assignments")?;
-                        let sim = &state.match_state.sim_runtime.as_ref()
-                            .context("VMCE defeat simulation")?.simulation;
+                        let sim = &state
+                            .match_state
+                            .sim_runtime
+                            .as_ref()
+                            .context("VMCE defeat simulation")?
+                            .simulation;
                         let score_rows = sim.cooperative_score_rows();
-                        let first_seat = assignments.participants.iter()
+                        let first_seat = assignments
+                            .participants
+                            .iter()
                             .min_by_key(|assignment| assignment.raw_slot_index)
                             .context("VMCE defeat has no participants")?;
-                        ensure!(score_rows.first().is_some_and(|score|
-                            sim.interner().resolve(score.owner) != first_seat.owner_name),
-                            "retry probe did not reverse the actual score and seat order");
+                        ensure!(
+                            score_rows
+                                .first()
+                                .is_some_and(|score| sim.interner().resolve(score.owner)
+                                    != first_seat.owner_name),
+                            "retry probe did not reverse the actual score and seat order"
+                        );
                         let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
                             .context("VMCE defeat role metadata")?;
                         for row in &statistics.rows {
-                            let assignment = assignments.participants.iter()
+                            let assignment = assignments
+                                .participants
+                                .iter()
                                 .find(|assignment| assignment.participant_name == row.player)
                                 .context("VMCE defeat player has no frozen assignment")?;
-                            ensure!(row.owner == assignment.owner_name
-                                && row.rgb == roles[usize::from(assignment.player_index)].color,
-                                "VMCE defeat player {} has the wrong House or colour", row.player);
-                            let score = score_rows.iter()
-                                .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
+                            ensure!(
+                                row.owner == assignment.owner_name
+                                    && row.rgb == roles[usize::from(assignment.player_index)].color,
+                                "VMCE defeat player {} has the wrong House or colour",
+                                row.player
+                            );
+                            let score = score_rows
+                                .iter()
+                                .find(|score| {
+                                    sim.interner().resolve(score.owner) == assignment.owner_name
+                                })
                                 .context("VMCE defeat House has no score row")?;
                             ensure!(
                                 (row.kills, row.losses, row.built, row.score, row.income)
-                                    == (score.kills, score.losses, score.built, score.score, score.credits_earned),
+                                    == (
+                                        score.kills,
+                                        score.losses,
+                                        score.built,
+                                        score.score,
+                                        score.credits_earned
+                                    ),
                                 "VMCE defeat statistics for {} do not match House {}",
-                                row.player, assignment.owner_name
+                                row.player,
+                                assignment.owner_name
                             );
                         }
                         let rows_json = statistics
@@ -2731,46 +2779,105 @@ impl LiveLanCapture {
                         .network_vmce_assignments()
                         .context("VMCE result assignments")?;
                     for row in &board.rows {
-                        let (index, human) = launch.humans.iter().enumerate()
+                        let (index, human) = launch
+                            .humans
+                            .iter()
+                            .enumerate()
                             .find(|(_, human)| human.name == row.player)
                             .context("VMCE result player is not admitted")?;
-                        let assignment = assignments.participants.iter()
-                            .find(|assignment| Some(assignment.raw_slot_index) == human.raw_slot_index
-                                && assignment.participant_name == human.name)
+                        let assignment = assignments
+                            .participants
+                            .iter()
+                            .find(|assignment| {
+                                Some(assignment.raw_slot_index) == human.raw_slot_index
+                                    && assignment.participant_name == human.name
+                            })
                             .context("VMCE result player has no frozen assignment")?;
-                        ensure!(row.role == assignment.owner_name,
-                            "VMCE result player {} has the wrong House", row.player);
-                        ensure!(row.ready == Some(session.cooperative_round_slot_ready(index)),
-                            "VMCE result player {} has stale Ready status", row.player);
+                        ensure!(
+                            row.role == assignment.owner_name,
+                            "VMCE result player {} has the wrong House",
+                            row.player
+                        );
+                        ensure!(
+                            row.ready == Some(session.cooperative_round_slot_ready(index)),
+                            "VMCE result player {} has stale Ready status",
+                            row.player
+                        );
                     }
-                    ensure!(board.local_ready == session.cooperative_round_ready_progress()
-                        .is_some_and(|(_, _, local)| local),
-                        "VMCE result local Ready status is stale");
-                    let statistics = state.frontend.campaign_score_page.as_ref()
+                    ensure!(
+                        board.local_ready
+                            == session
+                                .cooperative_round_ready_progress()
+                                .is_some_and(|(_, _, local)| local),
+                        "VMCE result local Ready status is stale"
+                    );
+                    let statistics = state
+                        .frontend
+                        .campaign_score_page
+                        .as_ref()
                         .and_then(|page| page.vmce_statistics())
                         .context("VMCE victory statistics are missing")?;
-                    let sim = &state.match_state.sim_runtime.as_ref()
-                        .context("VMCE victory simulation")?.simulation;
+                    let sim = &state
+                        .match_state
+                        .sim_runtime
+                        .as_ref()
+                        .context("VMCE victory simulation")?
+                        .simulation;
                     let terminal = sim.terminal_score_snapshot();
                     let live_scores = sim.cooperative_score_rows();
-                    ensure!(statistics.rows.len() == self.expected_players,
-                        "VMCE victory statistics have the wrong number of rows");
+                    ensure!(
+                        statistics.rows.len() == self.expected_players,
+                        "VMCE victory statistics have the wrong number of rows"
+                    );
                     for row in &statistics.rows {
-                        let assignment = assignments.participants.iter()
+                        let assignment = assignments
+                            .participants
+                            .iter()
                             .find(|assignment| assignment.participant_name == row.player)
                             .context("VMCE victory player has no frozen assignment")?;
-                        let values = terminal.and_then(|snapshot| snapshot.rows.iter()
-                            .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
-                            .map(|score| (score.kills, score.losses, score.built, score.score, score.credits_earned)))
-                            .or_else(|| live_scores.iter()
-                                .find(|score| sim.interner().resolve(score.owner) == assignment.owner_name)
-                                .map(|score| (score.kills, score.losses, score.built, score.score, score.credits_earned)))
+                        let values = terminal
+                            .and_then(|snapshot| {
+                                snapshot
+                                    .rows
+                                    .iter()
+                                    .find(|score| {
+                                        sim.interner().resolve(score.owner) == assignment.owner_name
+                                    })
+                                    .map(|score| {
+                                        (
+                                            score.kills,
+                                            score.losses,
+                                            score.built,
+                                            score.score,
+                                            score.credits_earned,
+                                        )
+                                    })
+                            })
+                            .or_else(|| {
+                                live_scores
+                                    .iter()
+                                    .find(|score| {
+                                        sim.interner().resolve(score.owner) == assignment.owner_name
+                                    })
+                                    .map(|score| {
+                                        (
+                                            score.kills,
+                                            score.losses,
+                                            score.built,
+                                            score.score,
+                                            score.credits_earned,
+                                        )
+                                    })
+                            })
                             .context("VMCE victory House has no score")?;
-                        ensure!(row.owner == assignment.owner_name
-                            && (row.kills, row.losses, row.built, row.score, row.income)
-                                == values,
+                        ensure!(
+                            row.owner == assignment.owner_name
+                                && (row.kills, row.losses, row.built, row.score, row.income)
+                                    == values,
                             "VMCE victory statistics for {} do not match House {}",
-                            row.player, assignment.owner_name);
+                            row.player,
+                            assignment.owner_name
+                        );
                     }
                 }
                 if state.frontend.coop_score_page.is_none() && !native_victory_page {
@@ -2816,10 +2923,15 @@ impl LiveLanCapture {
                         App::handle_campaign_score_mouse_up(state);
                         MoviesCapture::restore_neutral_pointer(state);
                         if !self.host() {
-                            ensure!(state.frontend.campaign_score_page.as_ref()
-                                .and_then(|page| page.vmce_board())
-                                .is_some_and(|board| board.local_ready),
-                                "VMCE Ready click did not update the result page");
+                            ensure!(
+                                state
+                                    .frontend
+                                    .campaign_score_page
+                                    .as_ref()
+                                    .and_then(|page| page.vmce_board())
+                                    .is_some_and(|board| board.local_ready),
+                                "VMCE Ready click did not update the result page"
+                            );
                         }
                     }
                     native_victory_page
@@ -2884,10 +2996,13 @@ impl LiveLanCapture {
                     if entered.elapsed() < std::time::Duration::from_secs(3) {
                         return Ok(());
                     }
-                    ensure!(state.match_state.session.network_return_context().is_none()
-                        && state.frontend.lan.is_none()
-                        && state.frontend.shell_route == crate::app::shell_route::ShellRoute::MainMenu,
-                        "VMCE campaign completion returned to a network room");
+                    ensure!(
+                        state.match_state.session.network_return_context().is_none()
+                            && state.frontend.lan.is_none()
+                            && state.frontend.shell_route
+                                == crate::app::shell_route::ShellRoute::MainMenu,
+                        "VMCE campaign completion returned to a network room"
+                    );
                     let evidence = json!({
                         "kind": "end",
                         "completed": true,
@@ -2960,6 +3075,43 @@ impl LiveLanCapture {
                 }
             }
             VeraOutcomePhase::NextMission => {
+                if state.frontend.shell_route.network_setup()
+                    && state.match_state.session.vmce_intermission_map().is_some()
+                    && render_frame % 30 == 0
+                    && let Some(view) = setup::view(state)
+                {
+                    let session = &state.match_state.session;
+                    let launch = session
+                        .network_setup()
+                        .context("VMCE intermission roster")?;
+                    let local = launch.local_player_index;
+                    let ready = launch.humans.iter().enumerate().all(|(index, _)| {
+                        index == local
+                            || (session.network_player_ready(index)
+                                && session.network_map_status(index) == Some(1))
+                    });
+                    let local_ready = session.network_player_ready(local);
+                    if self.host()
+                        && ready
+                        && !view.start_requested
+                        && view.enabled(crate::ui::multiplayer_setup::START)
+                    {
+                        setup_button(state, crate::ui::multiplayer_setup::START)?;
+                        self.event(
+                            render_frame,
+                            "VMCE intermission: host started the next stage",
+                        );
+                    } else if !self.host()
+                        && !local_ready
+                        && view.enabled(crate::ui::multiplayer_setup::ACCEPT)
+                    {
+                        setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
+                        self.event(
+                            render_frame,
+                            "VMCE intermission: guest readied the next stage",
+                        );
+                    }
+                }
                 if state.frontend.screen == GameScreen::InGame
                     && state.frontend.coop_score_page.is_none()
                 {

@@ -126,6 +126,27 @@ pub(crate) struct LanService {
     /// VERA-only: co-op round records that arrived after the mission ended
     /// but before the round phase opened. The round owns them once it exists.
     pending_round: std::collections::VecDeque<GlobalMessage>,
+    /// A VMCE host must retain its scoped transport until its final Go is acknowledged.
+    #[cfg(feature = "vmce")]
+    vmce_campaign_completion_pending: bool,
+    #[cfg(feature = "vmce")]
+    vmce_campaign_completion_enqueue_failed: bool,
+    /// New room identity sent by the host over the current match scope.
+    #[cfg(feature = "vmce")]
+    vmce_intermission_epoch: Option<[u8; 16]>,
+    #[cfg(feature = "vmce")]
+    vmce_intermission_failed: bool,
+    #[cfg(feature = "vmce")]
+    vmce_intermission_go_queued: bool,
+    #[cfg(feature = "vmce")]
+    vmce_intermission_entered: bool,
+    /// Result challenges already used by this room, retained across retries.
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_used_result_nonces: std::collections::BTreeSet<[u8; 16]>,
+    /// Whole-series content verification (worker/cancel/result only; the
+    /// admitted map status stays in MatchSession).
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_series: vmce_series::VmceSeriesVerifier,
     // Browser loading suspends the native ACK drain between event-loop turns.
     // The same service retains the queue and deadline; no progress is duplicated.
     #[cfg(any(
@@ -254,6 +275,22 @@ impl LanService {
             maps: Default::default(),
             pending_setup: Default::default(),
             pending_round: Default::default(),
+            #[cfg(feature = "vmce")]
+            vmce_campaign_completion_pending: false,
+            #[cfg(feature = "vmce")]
+            vmce_campaign_completion_enqueue_failed: false,
+            #[cfg(feature = "vmce")]
+            vmce_intermission_epoch: None,
+            #[cfg(feature = "vmce")]
+            vmce_intermission_failed: false,
+            #[cfg(feature = "vmce")]
+            vmce_intermission_go_queued: false,
+            #[cfg(feature = "vmce")]
+            vmce_intermission_entered: false,
+            #[cfg(feature = "vmce")]
+            vmce_used_result_nonces: Default::default(),
+            #[cfg(feature = "vmce")]
+            vmce_series: vmce_series::VmceSeriesVerifier::new(),
             #[cfg(any(
                 test,
                 all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown")
@@ -337,8 +374,11 @@ impl LanService {
         {
             // Coop LAN never starts a transfer. The session's typed config is
             // created only from the host's campaign identity and this peer's
-            // locally verified campaign/map files.
-            return session.network_vmce_map_config().is_some();
+            // locally verified campaign/map files; the whole series behind
+            // those files must also have produced the advertised content
+            // digest, so a pending/failed scan keeps K1 and A1 unsent.
+            return session.network_vmce_map_config().is_some()
+                && self.vmce_series.state().verified();
         }
         // A direct spawn's map is the launcher's file beside spawn.ini; the
         // selected-mode agreement still compares the rules digest at GO.
@@ -446,6 +486,30 @@ impl LanService {
             response_time: observed.response_time,
             service_ok: service_ok && !observed.pending_delivery_failure,
         })
+    }
+
+    #[cfg(feature = "vmce")]
+    fn defer_vmce_campaign_completion(&mut self) {
+        self.vmce_campaign_completion_pending = true;
+        self.vmce_campaign_completion_enqueue_failed = false;
+    }
+
+    #[cfg(feature = "vmce")]
+    fn take_vmce_campaign_completion(&mut self, service_ok: bool) -> Option<Result<(), ()>> {
+        if !self.vmce_campaign_completion_pending {
+            return None;
+        }
+        let observation = self.go_transport_observation(service_ok);
+        let result = match observation {
+            _ if self.vmce_campaign_completion_enqueue_failed => Err(()),
+            Some(observation) if !observation.service_ok => Err(()),
+            Some(observation) if observation.queued != 0 => return None,
+            Some(_) => Ok(()),
+            None => Err(()),
+        };
+        self.vmce_campaign_completion_pending = false;
+        self.vmce_campaign_completion_enqueue_failed = false;
+        Some(result)
     }
 
     fn can_queue_go(&self, recipients: usize) -> bool {
@@ -906,6 +970,17 @@ impl LanService {
             now,
             SETUP_PEER_LEASE,
         ));
+        #[cfg(feature = "vmce")]
+        if !session.host() && self.vmce_intermission_entered {
+            // A validated keepalive under the new epoch proves that the host
+            // received Go's ACK and switched rooms. Until this point duplicate
+            // scoped Go packets must still receive their old-channel ACKs.
+            if let Some(transport) = self.transport.as_mut() {
+                transport.finish_lan_intermission();
+            }
+            self.vmce_intermission_entered = false;
+            self.vmce_intermission_epoch = None;
+        }
         Ok(true)
     }
 
@@ -1042,6 +1117,18 @@ impl LanService {
     /// BC/BD Back stays inside5DC350's lobby visit (5DC93E..5DC985).
     /// Admission and pending app work end; global transport history survives.
     fn clear_setup(&mut self) {
+        #[cfg(feature = "vmce")]
+        {
+            self.vmce_campaign_completion_pending = false;
+            self.vmce_campaign_completion_enqueue_failed = false;
+            self.vmce_intermission_epoch = None;
+            self.vmce_intermission_failed = false;
+            self.vmce_intermission_go_queued = false;
+            self.vmce_intermission_entered = false;
+            self.vmce_used_result_nonces.clear();
+            // A new visit's options identity is verified from scratch.
+            self.vmce_series.cancel();
+        }
         #[cfg(any(
             test,
             all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown")
@@ -1688,7 +1775,7 @@ pub(crate) fn poll(state: &mut AppState, now_ms: u64) {
         return;
     }
     let service_ok = service_transport(state, now);
-    if mode == Some(SessionMode::Lan) && cooperative::poll(state, now) {
+    if mode == Some(SessionMode::Lan) && cooperative::poll(state, now, service_ok) {
         return;
     }
     if mode == Some(SessionMode::Wol) {
@@ -1768,6 +1855,8 @@ pub(crate) fn poll(state: &mut AppState, now_ms: u64) {
     // bulk map window refills them; they add no reliable admission/retry queue.
     announce(state, now);
     maps::poll(state);
+    #[cfg(feature = "vmce")]
+    options::apply_finished_vmce_series_scan(state);
     if let Some(service) = state.match_state.lan_service.as_mut() {
         service.flush_setup();
     }
@@ -1775,6 +1864,17 @@ pub(crate) fn poll(state: &mut AppState, now_ms: u64) {
     drain_setup_requests(state, now);
     drain_match_requests(state);
     advance_go(state, now, true);
+}
+
+/// The active VMCE LAN whole-series verification state. Cheap: the scanner
+/// owns the state and this only projects it.
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_series_state(state: &AppState) -> VmceSeriesState {
+    state
+        .match_state
+        .lan_service
+        .as_ref()
+        .map_or(VmceSeriesState::Idle, |service| service.vmce_series.state())
 }
 
 fn accepts_online_application_packet(payload: &[u8], live: bool, loading: bool) -> bool {
@@ -3594,7 +3694,11 @@ pub(crate) mod cooperative;
 mod loading;
 mod maps;
 mod options;
+#[cfg(feature = "vmce")]
+mod vmce_series;
 pub(crate) use loading::LoadingNetworkService;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_series::VmceSeriesState;
 
 fn send_bytes(
     state: &mut AppState,
@@ -3974,6 +4078,45 @@ fn setup_request(
     }
     if let Some(admitted) = maps::setup_request(state, request)? {
         return Ok(admitted);
+    }
+    // Ready/GO re-check the whole series: the files behind the admitted
+    // options may have changed. The first boundary after admission starts one
+    // fresh scan; Ready waits for it (the deferred request retries) while GO
+    // and the guest handoff refuse, exactly like a failed campaign check.
+    #[cfg(feature = "vmce")]
+    if coop_lan
+        && matches!(
+            request,
+            NetworkSetupRequest::Ready(true)
+                | NetworkSetupRequest::Go { .. }
+                | NetworkSetupRequest::PrepareMapForHandoff { .. }
+        )
+    {
+        match options::vmce_series_boundary(state)? {
+            VmceSeriesState::Verified { .. } | VmceSeriesState::Idle => {}
+            VmceSeriesState::Pending
+                if matches!(
+                    request,
+                    NetworkSetupRequest::Ready(true) | NetworkSetupRequest::Go { .. }
+                ) =>
+            {
+                // The Ready click / host start waits for the revalidation
+                // scan; the deferred request retries in the same poll that
+                // collects the verdict.
+                return Ok(false);
+            }
+            state_now => {
+                log::warn!("VMCE whole-series verification refused a start: {state_now:?}");
+                options::report_coop_campaign_unavailable(state);
+                match request {
+                    NetworkSetupRequest::Ready(true) => {
+                        super::shell_network_setup::withdraw_local_acceptance(state)?;
+                    }
+                    _ => super::shell_network_setup::fail_go_handoff(state),
+                }
+                return Ok(true);
+            }
+        }
     }
     let validate_campaign = coop_lan
         && matches!(
@@ -4647,6 +4790,69 @@ mod tests {
         service
     }
 
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_campaign_completion_waits_for_reliable_go_acknowledgement() {
+        let mut host = service();
+        let mut guest = service();
+        let scope = host.setup_scope.unwrap();
+        let guest_addr = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        for service in [&mut host, &mut guest] {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .set_lan_scope(scope)
+                .unwrap();
+        }
+        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
+            .encode("Host")
+            .unwrap();
+        assert!(host.send(&go, direct(guest_addr), true));
+        host.defer_vmce_campaign_completion();
+        host.transport.as_mut().unwrap().service(1);
+        assert!(
+            host.take_vmce_campaign_completion(true).is_none(),
+            "a sent but unacknowledged Go must keep the scoped transport"
+        );
+        host.transport
+            .as_mut()
+            .unwrap()
+            .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+        assert!(
+            host.take_vmce_campaign_completion(true).is_none(),
+            "a retry without an acknowledgement must still wait"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            guest
+                .transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            host.transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            if let Some(result) = host.take_vmce_campaign_completion(true) {
+                assert!(result.is_ok());
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Go was not acknowledged"
+            );
+            std::thread::yield_now();
+        }
+        let received = guest
+            .transport
+            .as_mut()
+            .unwrap()
+            .pop_global_received()
+            .unwrap();
+        assert_eq!(received.payload, go);
+    }
+
     fn launch() -> crate::skirmish_launch::SkirmishLaunchSession {
         let profile: serde_json::Value = serde_json::from_str(crate::test_fixture::text(
             "tools/map_observation.command-bar.example.json",
@@ -5016,8 +5222,10 @@ mod tests {
     #[cfg(feature = "vmce")]
     #[test]
     fn coop_lan_readiness_uses_local_vmce_config_without_transfer_state() {
+        use crate::map::source::test_support::TestDirectory;
+
         let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1301);
-        let service = service();
+        let mut service = service();
         let mut host_session = session(true, endpoint);
         let mut launch = host_session.network_setup().unwrap().clone();
         launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
@@ -5051,6 +5259,29 @@ mod tests {
         host_session
             .accept_network_vmce_map_config(Some(config))
             .unwrap();
+        // The typed config is not enough: the whole series must have produced
+        // the digest the host advertises (`K`/`A1` now require it).
+        assert!(!service.setup_maps_verified(&host_session));
+        let series = TestDirectory::new("vmce-series-readiness");
+        series.write(
+            "campaign.ini",
+            b"[Campaign]\nEntry=01.map\nScenarioCount=1\nScenario1=01.map\n",
+        );
+        series.write("01.map", b"map bytes");
+        let directory_path = series.path().canonicalize().unwrap();
+        let manifest = std::fs::read(directory_path.join("campaign.ini")).unwrap();
+        let source = super::vmce_series::LocalSeries {
+            directory: "Campaign".into(),
+            directory_path,
+            manifest,
+        };
+        assert!(service.vmce_series.host_digest(&source).is_none());
+        for _ in 0..600 {
+            if service.vmce_series.poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert!(service.setup_maps_verified(&host_session));
         let mut guest = session(false, endpoint);
         let mut guest_launch = guest.network_setup().unwrap().clone();
