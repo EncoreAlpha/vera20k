@@ -1024,7 +1024,6 @@ fn paint_vmce_lobby_board(
         controls,
         atlas,
         board.header_rule,
-        scale,
         SHELL_PARENT_BACKGROUND_DEPTH,
     );
     for header in board.headers {

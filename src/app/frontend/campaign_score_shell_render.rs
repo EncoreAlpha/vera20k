@@ -610,7 +610,7 @@ fn paint_vmce_result_board(
     let depth = shell_paint::DIALOG_BACKGROUND_DEPTH;
     vmce_panel::push_fill(sprites, chrome, board_layout.fill, depth);
     vmce_panel::push_list_frame(sprites, chrome, board_layout.frame, scale, depth);
-    vmce_panel::push_rule(sprites, chrome, board_layout.header_rule, scale, depth);
+    vmce_panel::push_rule(sprites, chrome, board_layout.header_rule, depth);
     for header in board_layout.headers {
         labels.push(PaintLabel {
             text: crate::i18n::tr(header.key).into(),

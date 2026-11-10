@@ -82,10 +82,30 @@ pub(crate) fn push_fill(
     );
 }
 
+/// The bevel lines of one VMCE combo field, kept inside the cell so adjacent
+/// rows and the owner board never lose their gutter to the frame's outer ring.
+pub(crate) fn combo_field_lines(
+    rect: RectPx,
+    scale: ShellScale,
+) -> [(RectPx, crate::ui::shell::list::ListFrameTone); 12] {
+    let base = scale.base_rect(rect);
+    // `list_frame_lines` grows its outer ring one pixel past the given window, so
+    // the window is deflated by three to keep every ring line inside `rect`.
+    let inner = RectPx::new(
+        base.x + 1,
+        base.y + 1,
+        (base.w - 3).max(1),
+        (base.h - 3).max(1),
+    );
+    crate::ui::shell::list::list_frame_lines(inner)
+        .map(|(line, tone)| (scale.scale_rect(line), tone))
+}
+
 /// One editable field on VERA's native-toned panel chrome: the shared dark fill
 /// inside the native list frame's two-tone bevel. The stock combo faces only
 /// cover exact native widths (96 and 120 px have none), so VERA paints the field
-/// itself instead of leaving a flat block.
+/// itself instead of leaving a flat block. The bevel is inset so the field keeps
+/// its own rect's gutters.
 pub(crate) fn push_combo_field(
     out: &mut Vec<SpriteInstance>,
     atlas: &SkirmishShellChromeAtlas,
@@ -94,7 +114,15 @@ pub(crate) fn push_combo_field(
     background_depth: f32,
 ) {
     push_fill(out, atlas, rect, background_depth);
-    push_list_frame(out, atlas, rect, scale, background_depth);
+    for (line, tone) in combo_field_lines(rect, scale) {
+        crate::app::frontend::skirmish_shell_render::chrome::push_solid_rect(
+            out,
+            atlas,
+            line,
+            tone.rgb().map(|channel| f32::from(channel) / 255.0),
+            background_depth - FRAME_DEPTH_OFFSET,
+        );
+    }
 }
 
 /// The native owner-draw list frame (`0x00619230`) around `rect`.
@@ -116,18 +144,18 @@ pub(crate) fn push_list_frame(
     }
 }
 
-/// One native list-tone rule, used for caption separators.
+/// One native list-tone rule, used for caption separators. `rect` is already in
+/// device pixels, like [`push_fill`] and [`push_list_frame`].
 pub(crate) fn push_rule(
     out: &mut Vec<SpriteInstance>,
     atlas: &SkirmishShellChromeAtlas,
     rect: RectPx,
-    scale: ShellScale,
     background_depth: f32,
 ) {
     crate::app::frontend::skirmish_shell_render::chrome::push_solid_rect(
         out,
         atlas,
-        scale.scale_rect(rect),
+        rect,
         crate::ui::shell::list::ListFrameTone::Dark
             .rgb()
             .map(|channel| f32::from(channel) / 255.0),
@@ -250,5 +278,22 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[1].ends_with("..."), "{}", lines[1]);
         assert!(font.text_width(&lines[1]) <= 40);
+    }
+
+    #[test]
+    fn the_combo_field_bevel_stays_inside_its_cell() {
+        let scale = ShellScale::from_screen(1600, 1200);
+        let cell = scale.scale_rect(RectPx::new(74, 36, 96, 24));
+        let base = scale.base_rect(cell);
+        for (line, _) in combo_field_lines(cell, scale) {
+            let line = scale.base_rect(line);
+            assert!(
+                line.x >= base.x
+                    && line.y >= base.y
+                    && line.x + line.w <= base.x + base.w
+                    && line.y + line.h <= base.y + base.h,
+                "{line:?} outside {base:?}"
+            );
+        }
     }
 }
