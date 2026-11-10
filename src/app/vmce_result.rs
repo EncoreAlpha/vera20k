@@ -137,17 +137,26 @@ pub(crate) fn open_defeat(state: &mut AppState) {
             .sim_runtime
             .as_ref()
             .map(|runtime| &runtime.simulation);
-        // The shared grant table maps each source to its primary House. Score
-        // rows are ordered by the local world, so row order alone would swap
-        // host/guest between peers; project through the grant owner instead.
-        let source_owner = sim.map(|sim| {
-            let houses = sim.houses().order().to_vec();
-            sim.session()
-                .network_sources(houses.len())
-                .filter_map(|(source, primary)| {
-                    houses
-                        .get(primary)
-                        .map(|owner| (source, sim.interner().resolve(*owner).to_owned()))
+        // Network sources are assigned by the shared roster order (colour,
+        // then raw row), not by a peer's local `humans` order. Resolve each
+        // launch human to its source and House owner before matching scores.
+        let launch_owner = launch.map(|launch| {
+            let mut ordered = launch.humans.iter().enumerate().collect::<Vec<_>>();
+            ordered.sort_by_key(|(index, human)| {
+                (
+                    human.slot.color_index,
+                    human.raw_slot_index.unwrap_or(*index as u8),
+                )
+            });
+            ordered
+                .into_iter()
+                .enumerate()
+                .filter_map(|(source, (index, _))| {
+                    state
+                        .match_state
+                        .session
+                        .network_source_owner(source)
+                        .map(|owner| (index, owner))
                 })
                 .collect::<std::collections::BTreeMap<_, _>>()
         });
@@ -156,7 +165,7 @@ pub(crate) fn open_defeat(state: &mut AppState) {
                 .iter()
                 .enumerate()
                 .map(|(index, (_role, human))| {
-                    let human_source = launch
+                    let human_index = launch
                         .and_then(|launch| {
                             launch.humans.iter().position(|candidate| {
                                 candidate.raw_slot_index == human.raw_slot_index
@@ -164,9 +173,9 @@ pub(crate) fn open_defeat(state: &mut AppState) {
                             })
                         })
                         .unwrap_or(index);
-                    let owner = source_owner
+                    let owner = launch_owner
                         .as_ref()
-                        .and_then(|owners| owners.get(&(human_source as i8)))
+                        .and_then(|owners| owners.get(&human_index))
                         .map_or("", String::as_str);
                     let source = sim
                         .and_then(|sim| {

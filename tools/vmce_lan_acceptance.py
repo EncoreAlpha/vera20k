@@ -825,7 +825,26 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
             f"{len(baseline_checksums)} entries",
         )
     )
+    baseline_rows = None
     for label, receipt in receipts:
+        if vmce:
+            try:
+                rows = receipt_field(receipt, "lan.vmce_statistics_rows")
+            except KeyError:
+                rows = None
+            if isinstance(rows, list):
+                if baseline_rows is None:
+                    baseline_rows = {row.get("player"): row for row in rows if isinstance(row, Mapping)}
+                else:
+                    other = {row.get("player"): row for row in rows if isinstance(row, Mapping)}
+                    checks.append(
+                        Check(
+                            f"retry statistics {label}",
+                            other == baseline_rows,
+                            "host/guest live table rows differ: "
+                            f"{format_value(baseline_rows)} vs {format_value(other)}",
+                        )
+                    )
         if vmce:
             try:
                 victory = receipt_field(receipt, "lan.vera_outcome.dialog.victory")

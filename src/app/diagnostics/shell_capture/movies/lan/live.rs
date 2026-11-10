@@ -2374,6 +2374,23 @@ impl LiveLanCapture {
                             }),
                             "VMCE defeat table zeroed every live score row"
                         );
+                        let rows_json = statistics
+                            .rows
+                            .iter()
+                            .map(|row| {
+                                json!({
+                                    "player": row.player,
+                                    "kills": row.kills,
+                                    "losses": row.losses,
+                                    "built": row.built,
+                                    "score": row.score,
+                                    "income": row.income,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if let Some(receipt) = self.final_receipt.as_mut() {
+                            receipt["vmce_statistics_rows"] = json!(rows_json);
+                        }
                         if crate::i18n::selected_language() == "zh-CN" {
                             let scale = crate::app::input::coop_score::layout(state).page.scale;
                             let layout =
