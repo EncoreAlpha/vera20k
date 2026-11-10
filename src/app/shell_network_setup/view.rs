@@ -543,18 +543,31 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let mut listed = Vec::new();
     if several {
         let rows = 0..crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT as u8;
-        let watching = |row: u8| match launch
-            .humans
-            .iter()
-            .find(|human| human.raw_slot_index == Some(row))
-        {
-            Some(human) => Some(human.is_observer()),
-            None if session.network_display_ai(row).is_some() => Some(false),
-            None => match session.network_vacancy(row) {
-                Some(NetworkVacancy::Waiting) => Some(usize::from(row) >= visible_limit),
-                Some(NetworkVacancy::Open) if usize::from(row) < visible_limit => Some(false),
-                _ => None,
-            },
+        let watching = |row: u8| {
+            // A VMCE seat beyond the map's authored roles is not a slot: hide
+            // its AI/empty row so the player column matches the role board.
+            // A real participant that already occupies such a seat stays
+            // visible until the host moves or kicks it.
+            if mode.class.is_vmce() && usize::from(row) >= visible_limit {
+                return launch
+                    .humans
+                    .iter()
+                    .any(|human| human.raw_slot_index == Some(row))
+                    .then_some(false);
+            }
+            match launch
+                .humans
+                .iter()
+                .find(|human| human.raw_slot_index == Some(row))
+            {
+                Some(human) => Some(human.is_observer()),
+                None if session.network_display_ai(row).is_some() => Some(false),
+                None => match session.network_vacancy(row) {
+                    Some(NetworkVacancy::Waiting) => Some(usize::from(row) >= visible_limit),
+                    Some(NetworkVacancy::Open) if usize::from(row) < visible_limit => Some(false),
+                    _ => None,
+                },
+            }
         };
         listed.extend(rows.clone().filter(|row| watching(*row) == Some(false)));
         listed.extend(add_slot);
