@@ -1790,7 +1790,7 @@ impl LiveLanCapture {
         // ordinary prefix observation cannot span that reset. The retry phase
         // records its own 300-frame ring, and the other outcome phases were
         // already handled above; prefix mode keeps the shared recording below.
-        #[cfg(feature = "vmce")]
+        #[cfg(all(feature = "vmce", feature = "dev-overlays"))]
         if matches!(self.vera_outcome_phase, VeraOutcomePhase::Retrying)
             && self.vera_outcome.is_some()
         {
