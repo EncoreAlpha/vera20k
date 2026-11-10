@@ -110,6 +110,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   previous round (same per-slot outcomes) fails the digest and makes the receiver quit the round
   back to the main menu. Check the nonce first, drop foreign-round records and keep teardown only
   for real disagreement; see [audit A39](zh-CN/vmce-audit.md).
+- **B94 — round-phase liveness:** the VMCE result/intermission round sends no BC6 20 s keepalive
+  (`0x0046EADD`) and the LAN pass returns before the setup keepalives and lease polling, so an
+  idle page or a silently stopped peer is never detected and the wait can last forever. Send the
+  round keepalive and keep the existing silent-peer check running; see
+  [audit A40](zh-CN/vmce-audit.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
