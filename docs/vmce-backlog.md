@@ -80,7 +80,7 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   and AI takeover remain open.
 - **B02:** result-page timers and forced pulls were cancelled; do not introduce them.
 
-## Lobby UI review residuals (B37–B41)
+## Lobby UI review residuals (B37–B48)
 
 Static review of the VMCE lobby increment (the 53 commits since the upstream merge) found the
 following unfinished items; none blocks play today.
@@ -107,6 +107,36 @@ following unfinished items; none blocks play today.
   next stage is not found; the lookup ignores the series directory and the push bypasses the
   catalog owner, so a repeated open could duplicate the record. Deduplicate by
   `(series directory, map file)` or move the ensure-stage responsibility into the catalog owner.
+
+- **B42 — owner combo width:** the owner dropdown is 80 px wide with a 60 px text face and a 74 px,
+  23 px-high list row, so authored House names (`Americans House`, `YuriCountry House`) truncate in
+  the face and wrap/clip in the list; after the board's role column was removed no place shows the
+  full name. Widen the owner combo by reflowing the board's left edge, widen the open list to its
+  longest choice, or show the full name in the help/status line; assert at least 100 px of text width
+  at 800×600.
+- **B43 — Random roles invisible:** newly admitted participants default to Random, but the board
+  maps only concrete roles 0..3, so Random players have no row and no Ready glyph; a room can show
+  blank or partial rows while its players are present. Show a localized Random placeholder row per
+  Random participant, or an inline "N players use Random" line, without changing assignment timing.
+- **B44 — inline status clipping:** the status strip wraps exactly two lines and adds no ellipsis;
+  the role-conflict message with substituted names and the missing/mismatch messages exceed 362×2 px,
+  so the trailing instruction is cut. Allow a third line, or ellipsize the second and shorten the
+  text.
+- **B45 — briefing truncation:** the lobby briefing is drawn into a box that shrinks from 118 to
+  64 px when the status strip shows, with no ellipsis or scroll, so long `MISSIONMD.INI` briefings
+  lose their tail silently. Mark the cut with "..." as the enlarged preview does, or stop shrinking
+  the box.
+- **B46 — verification feedback:** a pending whole-series scan maps to no inline status and Ready is
+  gated by `accept_eligible`, so a guest sees an inert Ready button for the scan's duration. Show a
+  checking-campaign status while Pending and distinguish failed or cancelled.
+- **B47 — AI rows:** an AI-filled row keeps a visible, host-enabled owner combo whose pick fails with
+  "role row has no player" (log only), showing "Random" with no effect. Require `human.is_some()` for
+  the owner combo, or disable the row's control explicitly.
+- **B48 — board composition:** the board leaves a 66 px gap between Ready (440..520) and Color
+  (586..628), an 80 px Ready cell for a small glyph, and its header row about 3 px above the
+  Players/Owner labels (labels top-aligned at y 11, headers V-centred at y 14); the country column is
+  only 114 px. Rebalance the widths (Ready about 40–48 px, country about 170 px or more), align the
+  baselines and keep the native colour anchor.
 
 ## Completed work and limits
 
