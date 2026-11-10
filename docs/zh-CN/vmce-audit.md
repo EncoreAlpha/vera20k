@@ -198,7 +198,7 @@ lang: zh-CN
 
 ### A07 回到房间后随机玩家在角色板中消失 — P2，关联 B43
 
-- **触发与影响：** 切换到下一关房间时所有人重置为随机角色，右侧角色板可能全显示等待，甚至看不到已准备玩家的状态；实际参战者仍在左侧玩家列表。
+- **触发与影响：** 切换到下一关房间时所有人重置为随机角色，右侧角色板可能全显示等待，甚至看不到已准备玩家的状态；实际参战者仍在左侧玩家列表。本轮 2p-win/4p-win 真实采集的关间大厅截图显示两名/四名玩家的 Owner 都重置为 `隨機`，右侧角色板对应行均为 `等待 ...`、Ready/Color 空白，支持该现象。
 - **依据：** [关间重置](../../src/app/match_runtime/session/cooperative_round.rs#L574)将角色设为 `-2`；[角色板](../../src/app/shell_network_setup/view.rs#L395)只查找具体索引 `0..3`。
 - **方案：** 用独立的随机玩家列表或包含姓名和准备状态的汇总呈现；不要为显示而提前抽取或锁定随机角色。
 - **验收：** 两至四人全部随机、部分随机及角色更换后，房主和客人都能看到所有玩家与准备状态；开局时仍只分配未占角色。
@@ -226,7 +226,7 @@ lang: zh-CN
 
 ### A13 外部战役路径使零售任务简报查找失败 — P2，关联 B66
 
-- **触发与影响：** VMCE 地图使用 `VMCE/<系列>/<目录>/all01umd.map` 等目录路径时，大厅查找零售 `MISSIONMD.INI` 的任务简报会使用整条路径，无法匹配按文件名命名的节，显示简报不可用。
+- **触发与影响：** VMCE 地图使用 `VMCE/<系列>/<目录>/all01umd.map` 等目录路径时，大厅查找零售 `MISSIONMD.INI` 的任务简报会使用整条路径，无法匹配按文件名命名的节，显示简报不可用。本轮 2p-win/4p-win 关间大厅截图仍显示 `Mission briefing unavailable`。
 - **依据：** [简报查找](../../src/app/shell_network_setup/view.rs#L173)直接把目录形式的地图路径传给 INI；零售 `MISSIONMD.INI` 的对应节为 `[ALL01UMD.MAP]`。这与 B45 的长简报截尾是两个问题。
 - **方案：** 对零售简报查找取得地图文件名组件，同时正确处理两种路径分隔符，并继续使用现有简报键解析与缺失回退；不改变加载地图的完整路径身份。
 - **验收：** 用带目录的 `all01umd.map` 通过生产简报读取路径取得对应文本；覆盖 `/`、`\\`、大小写和真正缺少简报的情况，并采集当前界面。
@@ -275,7 +275,7 @@ lang: zh-CN
 
 ### A34 大厅角色板不显示共享 House 授权 — P3，关联 B86
 
-- **触发与影响：** 地图通过 `[Scenario:<map>:<House>]` 的 `PlayerNControl=yes` 把共享 House 授权给角色。大厅角色板只列主角色的 House、国家、旗帜和颜色，不显示每个角色额外控制的共享 House；玩家在准备和开局前无法确认谁控制哪些共享单位，容易重复操作或无人控制，地图作者也无法在大厅核对授权是否写对。
+- **触发与影响：** 地图通过 `[Scenario:<map>:<House>]` 的 `PlayerNControl=yes` 把共享 House 授权给角色。大厅角色板只列主角色的 House、国家、旗帜和颜色，不显示每个角色额外控制的共享 House；玩家在准备和开局前无法确认谁控制哪些共享单位，容易重复操作或无人控制，地图作者也无法在大厅核对授权是否写对。本轮 4p-win 关间大厅截图（`LDA-4p` 系列把 `French House` 的 `Player1Control`/`Player2Control` 授权给角色 1/2）只显示玩家 Owner 与角色板的 Country/Ready/Color，没有任何共享 House 名称或授权提示，支持该问题。
 - **依据：** [地图角色详情](../../src/app/shell_network_setup.rs#L144)只有 `owners`/`countries`/`colors`/`briefing`；[角色板](../../src/app/shell_network_setup/view.rs#L359)只用这些主角色字段生成行；共享授权只在[开局 House 授权](../../src/sim/scenario_bootstrap.rs#L3725)按地图 `campaign_player_controls` 生效。指南只说明共享控制存在，不说明其不在大厅显示。
 - **方案：** 在既有地图详情/角色板所有者中投影每个角色的共享 House（名称，必要时附国家/颜色），用紧凑行或提示展示；复用已解析的 `VmceMapConfig` 或 `load_vmce_scenario` 的同一控制段读取，不新增第二套 `campaign.ini` 解析。无授权时保持现状。
 - **验收：** `campaign.ini` 分别给单角色和多角色写共享 House 时，大厅对应角色显示共享 House；无授权地图不变；2–4 角色、800×600 与缩放布局不重叠。静态追踪，尚未实机与采集。
@@ -303,3 +303,5 @@ lang: zh-CN
 - 本轮尝试用现有合成检查点 `vmce-defeat-guest-voted`/`vmce-result-host-victory-stats` 采集 A37/A38 的截图证据：在本机 VMCE settings 树上运行 fast `vera20k.exe --shell-capture ...`，两者都在渲染前失败（`VMCE defeat fixture needs authored role metadata`）。原因是 [大厅 fixture](../../src/app/shell_network_setup.rs#L1368) 把角色缓存放在 `game_config.paths.ra2_dir` 下，而 [vmce_map_details](../../src/app/shell_network_setup/view.rs#L135) 按 `settings_dir/Maps` 查找；未命中后的第二次地图加载在采集状态中取不到角色。该采集阻塞已记为 B91；A37/A38 仍只有静态依据。
 - 本轮逐条校验审查页的 129 个 `src/` 行引用：重新打开被引文件并核对所在行内容，修正 A04、A07、A20、A28、A29、A33 的偏移引用（角色绑定 #L426、关间重置 #L574、结果板 #L401、确认框选择 #L28、清单校验与地图加载 #L748/#L519、清单路径校验 #L748）。其余引用行的内容与说明一致。
 - 本轮真实采集（A37，本机，未提交 receipts/截图）：用复制并只改测试数据的 `LDA-Retry` 系列运行 `python -m tools.vmce_lan_acceptance run --scenario 2p-retry --retail-source <带 .vera20k-lan-capture-root 标记的零售副本> --series <LDA-Retry> --exe <fast vera20k.exe>`，两端进程与 receipt 均 PASS：`lan.vera_outcome.kind=retry`、`dialog.victory=false`、两端重试加载 `VMCE/LDA-Retry/stage01/all01umd.map`、300 个 native checksums 一致、`checksum_failure=None`。截图 `vera-result-real-lose`（800×600）显示两行失败统计与 `重试`/`离开房间` 按钮，行内没有逐玩家投票/准备状态，支持 A37 的“只有本机/房主聚合状态”判断。限制：2 人、作者化测试系列、非零售战役数据；3–4 人与真实玩家名未采集。
+- 本轮真实采集（2p-win，本机，未提交 receipts/截图）：用 `LDA-Continue-real` 系列和同一带标记零售副本运行 `python -m tools.vmce_lan_acceptance run --scenario 2p-win`，两端进程与 receipt 均 PASS：`victory=true`、`rows=2`、`can_continue=true`、下一关为 `VMCE/LDA-Continue-real/stage02/all01umd.map`、300 个 native checksums 与 20 个 simulation hashes 两端一致。截图 `vera-result-real-win` 为两行胜利结算板（Player/Owner/Country/Result/Ready，含房主 H 与客人准备星），`vera-campaign-lobby` 为关间大厅：两名玩家 Owner 已重置为 `隨機`、右侧角色板两行为 `等待 ...`（Ready/Color 空白），并显示 `Mission briefing unavailable`；分别支持 A07 与 A13。限制：2 人、作者化测试系列、800×600；VERA 新增文本为英文而原版 CSF 为中文，属 B08/B22 已知本地化状态。
+- 本轮真实采集（4p-win，本机，未提交 receipts/截图）：用作者化 `LDA-4p` 系列（4 个主角色 + `French House` 由角色 1/2 共享控制）运行 `python -m tools.vmce_lan_acceptance run --scenario 4p-win --players 4`，4 个进程与 receipt 全部 PASS：`victory=true`、`rows=4`、`can_continue=true`、下一关为 stage02、300 个 native checksums 与 20 个 simulation hashes 四端一致。截图 `vera-result-real-win` 为四行胜利结算板（每行 Owner/Country/Result/Ready，房主 H 加三个准备星，长 Owner 带省略号）；`vera-campaign-lobby` 为四人关间大厅：四个角色行均为 `等待 ...`、Ready/Color 空白，且没有共享 House 授权显示。分别支持 A07、A13、A34 与四人结算板（B30–B32）。限制：作者化测试系列、800×600、本机；非零售战役数据。
