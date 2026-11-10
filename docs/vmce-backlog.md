@@ -175,6 +175,10 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 - **B89 — defeat-page retry vote feedback:** the BC6 failure page shows only the local Retry light
   and the host's all-voted aggregate, so 3–4 player rooms cannot see who has voted. Render per-row
   vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-audit.md).
+- **B90 — statistics-page name truncation:** the victory/campaign-end statistics page draws the
+  player name into a fixed cell without the native ellipsization the result board and failure page
+  already use, so long names run into the kills/losses columns. Reuse
+  `vmce_panel::ellipsize_native`; see [audit A38](zh-CN/vmce-audit.md).
 
 The lobby layout and chrome pass (see Completed work) fixed most review items; these remain open.
 

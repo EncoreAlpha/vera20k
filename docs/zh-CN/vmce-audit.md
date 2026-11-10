@@ -126,10 +126,10 @@ lang: zh-CN
 
 ### A27 原版战役 AllowWin 胜利门尚未用于 VMCE — P1，关联 B79
 
-- **触发与影响：** 地图依赖带动作 15 的 AllowWin 标签延迟某所属方的胜利时，VMCE 作为网络模式会绕过该所属方的标签计数门；倒计时到期后可能比原版单人战役更早进入共同结算。这是指南已公开的当前限制，但与用户要求按原版战役逻辑确定结束时机存在待解决差距。
+- **触发与影响：** 地图依赖带动作 15 的 AllowWin 标签延迟某所属方的胜利时，VMCE 作为网络模式会绕过该所属方的标签计数门；倒计时到期后可能比原版单人战役更早进入共同结算。这是指南已公开的当前限制；本轮扫描的 50 张零售战役/触发地图均未写动作 15，因此该差异对零售战役没有可复现的玩家可见影响，只有自定义 VMCE 系列地图写入该标签时才可能出现，仍需明确产品语义。
 - **依据：** 本轮已在零售 `gamemd.exe` 上做指令级核对：`HouseClass::Update`（0x004F8440，0x004F8448 `xor ebp,ebp`）在 0x004F85F7 比较全局 `GameMode`（0x00A8B238）与 0，非零跳 0x004F860B 绕过标签门；只有 `GameMode==0` 时 0x004F85FF 才以 `cmp dword ptr [esi+0x27C], ebp` / `jg 0x004F86FE` 跳过胜利路径。AllowWin 标签析构 0x006E50A0 递减 House+0x27C，0x006E50B1 起把 House+0x298 计时器设为 60 帧（0x3C）；计数清零、登记与析构入口见 [House 字段注释](../../src/sim/house_state.rs#L577)。[House 更新](../../src/sim/world/house_defeat.rs#L257)把非零网络模式传给 [pending_outcome](../../src/sim/house_state.rs#L2920)，后者在该模式下不要求 `allow_win_tags <= 0`。当前实现与原版网络模式分支一致；网络模式即 LAN/遭遇战，VMCE 也走该分支。
-- **方案：** 原版分支已确认后，先在现有 House 结果所有者中明确 VMCE 的产品选择：保持网络模式的最先到达各自可接受原版结算时点即共同结算，或显式采用战役门（`GameMode==0` 的 `+0x27C<=0` 条件）并同步计时器语义；不得让普通 LAN/遭遇战跟随改变。选择前先找到或构造一张使用动作 15 标签的零售/测试地图，确认玩家可见差异。
-- **验收：** 用真实触发路径构造持有 AllowWin 标签的胜利方，比较原版单人战役、原版网络模式和 VMCE 在标签移除前后的胜利时点、60 帧计时器与同帧顺序；另测敌对玩家失败先到期、多人一致性及地图未使用标签的普通胜利。本轮只完成静态指令核对；另从零售 `mapsmd03.mix`/`expandmd01.mix` 提取 8 张 YR 战役地图（ALL01/02/03/05/06UMD、SOV01/03/05UMD），按 [Actions 8 字段规则](../../src/map/actions.rs#L235)扫描未发现动作 15 的 AllowWin 标签；其余战役地图在已挂载档案中未找到，零售地图实际使用动作 15 的证据仍缺，实机对照未做。
+- **方案：** 原版分支已确认后，先在现有 House 结果所有者中明确 VMCE 的产品选择：保持网络模式的最先到达各自可接受原版结算时点即共同结算，或显式采用战役门（`GameMode==0` 的 `+0x27C<=0` 条件）并同步计时器语义；不得让普通 LAN/遭遇战跟随改变。零售战役没有使用该标签，因此需要构造使用动作 15 的测试地图确认玩家可见差异。
+- **验收：** 用真实触发路径构造持有 AllowWin 标签的胜利方，比较原版单人战役、原版网络模式和 VMCE 在标签移除前后的胜利时点、60 帧计时器与同帧顺序；另测敌对玩家失败先到期、多人一致性及地图未使用标签的普通胜利。本轮只完成静态指令核对；另按 `MISSIONMD.INI` 的 24 个战役段与 `MISSION.INI` 的 26 个 ALL/SOV/TRN 段提取并扫描 50 张零售地图（按 [Actions 8 字段规则](../../src/map/actions.rs#L235)），未发现动作 15 的 AllowWin 标签；`MAPS01/02.MIX` 里其余 `C*M*` 条目是多人地图，没有 `[Actions]`。因此零售战役内容不触发该门，实机对照需构造测试地图，仍未做。
 
 ### A29 反斜杠清单路径在部分平台无法加载 — P2，关联 B81
 
@@ -176,7 +176,7 @@ lang: zh-CN
 ### A36 下一关身份记录未绑定轮次，迟到记录可让新轮次全员退回大厅 — P2，关联 B88
 
 - **触发与影响：** 每轮开始时各端用 `0x36` 广播自己解析到的下一关身份，接收端只比较身份是否相同。记录本身不携带轮次/关间 epoch/nonce；退役期到达的记录还会被暂存并在新轮次重放。旧轮次迟到的 `0x36`（可靠传输重发、关间处理窗口）如果在下一轮到达，会被当成“对端解析到不同关卡”，触发退回大厅，即使本轮各端身份一致；错误或恶意客户端也可以发送任意身份强制全员退出。
-- **依据：** [记录结构](../../src/net/lan_messages/cooperative.rs#L246)只有 `map_file`/`source_sha256`/`effective_digest`/`config_sha256`，[编码/解码](../../src/net/lan_messages/cooperative.rs#L254)没有轮次字段；[接收](../../src/app/lan_service/cooperative.rs#L683)直接解码为 StageIdentity 事件，既不校验发送者也不校验所属轮次（对照同文件 [关间 epoch 检查](../../src/app/lan_service/cooperative.rs#L646)要求发送者是房主且 epoch 不得复用）；[身份比较](../../src/app/match_runtime/session/cooperative_round.rs#L1175)不同即调用 [reject_vera_stage](../../src/app/match_runtime/session/cooperative_round.rs#L1523)发送拒绝并退出；[退役期暂存](../../src/app/lan_service.rs#L1929)与[新轮次重放](../../src/app/lan_service/cooperative.rs#L174)保留到达顺序。
+- **依据：** [记录结构](../../src/net/lan_messages/cooperative.rs#L246)只有 `map_file`/`source_sha256`/`effective_digest`/`config_sha256`，[编码/解码](../../src/net/lan_messages/cooperative.rs#L254)没有轮次字段；[接收](../../src/app/lan_service/cooperative.rs#L684)直接解码为 StageIdentity 事件，既不校验发送者也不校验所属轮次（对照同文件 [关间 epoch 检查](../../src/app/lan_service/cooperative.rs#L646)要求发送者是房主且 epoch 不得复用）；[身份比较](../../src/app/match_runtime/session/cooperative_round.rs#L1175)不同即调用 [reject_vera_stage](../../src/app/match_runtime/session/cooperative_round.rs#L1523)发送拒绝并退出；[退役期暂存](../../src/app/lan_service.rs#L1929)与[新轮次重放](../../src/app/lan_service/cooperative.rs#L174)保留到达顺序。
 - **方案：** 给 `0x36` 增加轮次绑定（本关结果 nonce、关间 epoch 或每轮递增 ID），接收端丢弃不属于当前轮次的记录，并限制每轮每端只接受一次；保留“双方解析不一致则退回大厅”的原语义，但只对当前轮次的身份生效。
 - **验收：** 构造上一轮的 `0x36` 延迟/重复送达下一轮（覆盖退役期暂存和可靠重发），确认新轮次不再被误退回大厅；真实身份不一致仍退回；丢包、乱序、四人与关间新人场景不回归。静态追踪，尚未实机复现。
 
@@ -273,9 +273,16 @@ lang: zh-CN
 - **方案：** 在失败页的统计行或标题行显示“已投票”字形/“已投票 N/M”，数据复用现有 `retry_votes`，不新增消息或状态；房主仍按现有聚合启用 Retry。保持四行与 800×600/缩放布局。
 - **验收：** 2/3/4 人失败页中任一端投票后各端对应行出现已投票状态且计数一致；房主在全票后启用 Retry、未全票不启用；胜利页与普通 LAN 不变。静态追踪，尚未实机与采集。
 
+### A38 统计页玩家名未做原生截断 — P3，关联 B90
+
+- **触发与影响：** 胜利/战役完成页的“统计数据”页用固定列宽绘制每行玩家名，但没有像结算板、失败页那样按列宽截断；长玩家名会压到击杀/损失列，四列数值可能被覆盖，3–4 人时更难核对。
+- **依据：** [统计页行绘制](../../src/app/frontend/campaign_score_shell_render.rs#L560)直接把 `row.player` 推入固定 `cells`，未调用 `ellipsize_native`；同一渲染器的[结算板](../../src/app/frontend/campaign_score_shell_render.rs#L641)和[失败页](../../src/app/frontend/skirmish_shell_render/coop_score.rs#L251)都对名字调用 `vmce_panel::ellipsize_native`。
+- **方案：** 统计页玩家名列复用 `vmce_panel::ellipsize_native` 与同一字体宽度测量；数值列保持右/居中对齐。保持四行、800×600 与缩放布局。
+- **验收：** 最长玩家名（含中文/双宽字符）在 2–4 行、各缩放与 800×600 下显示省略号且不覆盖数值列；普通长度名字不变；失败页与结算板行为不回归。静态追踪，尚未实机与采集。
+
 ## 验证范围与未决项
 
 - 此前审查已在相同 HEAD 运行 `app::match_runtime::session::cooperative_round::tests::`（33 项）与 `app::lan_service::vmce_series::tests::`（8 项），均通过；本轮未重跑。本轮运行 `app::shell_network_setup::actions::start::tests::`（6 项）通过，其中最低人数测试只覆盖普通单人与 AI/观察者情况，没有覆盖 VMCE 单人真实开局。这些测试不覆盖上面列出的全部失败场景。
 - 本轮使用本机现有 fast 可执行文件进行了隔离双人胜利切关采集：300 个校验点一致；大厅截图中两名随机玩家均在左侧列表、右侧角色板均显示等待，且带目录的零售任务显示简报不可用。该文件的修改时间晚于当前 HEAD，但没有核验二进制与 HEAD 的精确对应关系；采集支持 A07/A13 的表现，不证明其他问题或跨机器表现。其他界面路径及各缩放仍需真实采集。
 - 仍须按 B36 做跨机器 2/3/4 人、关间新人加入和离开、混合胜负、地图动态外交、重生、文件不一致、丢包与完整片尾验证；原版时序和相同帧竞争仍需对应证据。不要把静态审查或本机测试当作完整验收。
-- 本轮用 `tools/native_inspect` 对零售 `gamemd.exe` 做指令级核对（A27）：`HouseClass::Update` 从 0x004F8440 开始，0x004F8448 `xor ebp,ebp`；0x004F85F7 比较全局 `GameMode` 0x00A8B238 与 0，非零跳 0x004F860B；仅 `GameMode==0` 时 0x004F85FF 才比较 House+0x27C>0 并跳过胜利路径；0x006E50A0 递减 +0x27C，0x006E50B1 起把 House+0x298 计时器设为 60 帧。该读取只证明文件字节与线性反汇编，不证明活动 YR 可达、运行期初值/重定位或零售地图确实使用动作 15；A27 仍需实机对照，A34–A37 为静态追踪。随后用 fast `asset extract` 从零售 `mapsmd03.mix`/`expandmd01.mix` 提取 8 张 YR 战役地图（ALL01/02/03/05/06UMD、SOV01/03/05UMD），按 `src/map/actions.rs` 的 8 字段动作块解析 `[Actions]`，未发现动作 15 的 AllowWin 标签；其余战役地图在已挂载档案中未找到，零售地图使用动作 15 的证据仍缺。
+- 本轮用 `tools/native_inspect` 对零售 `gamemd.exe` 做指令级核对（A27）：`HouseClass::Update` 从 0x004F8440 开始，0x004F8448 `xor ebp,ebp`；0x004F85F7 比较全局 `GameMode` 0x00A8B238 与 0，非零跳 0x004F860B；仅 `GameMode==0` 时 0x004F85FF 才比较 House+0x27C>0 并跳过胜利路径；0x006E50A0 递减 +0x27C，0x006E50B1 起把 House+0x298 计时器设为 60 帧。该读取只证明文件字节与线性反汇编，不证明活动 YR 可达、运行期初值/重定位；A34–A38 为静态追踪。随后用 fast `asset extract` 提取零售 `MISSIONMD.INI` 的 24 个战役段与 `MISSION.INI` 的 26 个 ALL/SOV/TRN 段共 50 张地图，按 `src/map/actions.rs` 的 8 字段动作块解析 `[Actions]`，未发现动作 15（AllowWin）；`MAPS01/02.MIX` 的其余 `C*M*` 条目是多人地图，没有 `[Actions]`。因此零售战役内容不触发该门，A27 的实机对照需构造测试地图。

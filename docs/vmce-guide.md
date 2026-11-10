@@ -338,7 +338,9 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
 - `<Player @ X>` selectors, `<random>`/`<none>` role owners and event 33 ("selected by player")
   are not suitable for VMCE role logic. Use country selectors and `67`/`68` where applicable.
   Network mode currently bypasses the action 15 `AllowWin` tag-count victory gate; `67`/`68`
-  do not replace its delay semantics. Native campaign timing remains open under B79.
+  do not replace its delay semantics. A scan of the retail campaign maps found no action-15 tags,
+  so this affects maps that author the tag (custom series) rather than the retail campaigns.
+  Native campaign timing remains open under B79.
 - Reinforcement teams, task forces and base vehicles are not duplicated automatically. Write
   one copy per role when each role needs its own.
 - AI-only actions usually do nothing on a role House because VMCE marks role Houses as human.
