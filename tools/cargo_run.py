@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -99,6 +100,39 @@ def file_lock(path: Path, deadline: float):
             else:
                 import fcntl
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def temporary_directory(prefix: str, dir: Path | None = None):
+    """Create a temporary directory that inherits its parent's Windows DACL.
+
+    CPython maps a directory's POSIX mode onto its Windows security descriptor:
+    ``tempfile.mkdtemp`` asks for 0o700, so the directory gets a protected,
+    owner-only DACL that drops the write grant inherited from the enclosing
+    workspace or the harness's private temp root. Under the harness's Windows
+    sandbox the confined child then cannot write the directory it just created
+    (the test recorder fails with PermissionError and the cleanup fails too).
+    Creating with the default mode inherits the parent DACL; on POSIX the
+    private 0o700 mode stays.
+    """
+    if os.name != 'nt':
+        with tempfile.TemporaryDirectory(prefix=prefix, dir=dir) as path:
+            yield Path(path)
+        return
+    base = Path(dir) if dir is not None else Path(tempfile.gettempdir())
+    for _ in range(tempfile.TMP_MAX):
+        path = base / (prefix + secrets.token_hex(4))
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        break
+    else:
+        raise FileExistsError(f'No usable temporary directory name under {base}')
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @contextmanager
@@ -499,7 +533,7 @@ def _run(root: Path, args: list[str], label: str | None, timeout: float, policy,
             checkout.enter_context(file_lock(store / 'checkouts' / f'{namespace}.lock', deadline))
         record = None
         if args[0] == 'test' and '--no-run' not in options:
-            record = Path(checkout.enter_context(tempfile.TemporaryDirectory(prefix='cargo-tests-'))) / 'tests.jsonl'
+            record = Path(checkout.enter_context(temporary_directory('cargo-tests-'))) / 'tests.jsonl'
             args = [args[0], '--config', test_runner_config(record), *args[1:]]
         with times.timing('waiting for the build lock'):
             shared.enter_context(build_lock(store / 'cargo.lock', deadline - time.monotonic()))
@@ -583,7 +617,7 @@ def _run(root: Path, args: list[str], label: str | None, timeout: float, policy,
                 if not artifacts:
                     raise ValueError('Cargo succeeded but emitted no executable to preserve')
                 output.parent.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory(prefix='.pending-', dir=output.parent) as staging_name:
+                with temporary_directory('.pending-', dir=output.parent) as staging_name:
                     staging = Path(staging_name)
                     records = []
                     for i, path in enumerate(sorted(artifacts)):
