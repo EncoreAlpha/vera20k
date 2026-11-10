@@ -1,6 +1,6 @@
 # VMCE backlog
 
-This is the English engineering ledger; the [Chinese backlog](zh-CN/vmce-backlog.md) uses the
+This is the English engineering ledger; the [Chinese consolidated review](zh-CN/vmce-review.md) uses the
 same numbering. It lists only **unfinished** work, locked decisions and acceptance boundaries.
 Implemented paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits);
 an implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md) describes current behavior.
@@ -37,13 +37,13 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 
 - **B57 — unlock timing:** agreement alone does not persist the next-stage unlock; leaving or
   waiting on the result page can lose it. Persist idempotently when the round's result and stage
-  identity are agreed. See the [Chinese audit](zh-CN/vmce-audit.md).
+  identity are agreed. See the [Chinese audit](zh-CN/vmce-review.md).
 - **B58 — Ready/Go revalidation:** a single series rescan is reused across distinct boundaries;
   changing an unselected map after Ready can pass Go. Use a consumable revision-bound scan result.
 - **B59 — distinct role countries:** launch verifies distinct Houses but not distinct Countries;
   validate country identity in the shared launch owner and report the conflicting roles. Also
   resolve the ambiguity when an AI and a player share a Country: the first House selected for
-  an alliance victory can differ from the player. See [audit A04](zh-CN/vmce-audit.md).
+  an alliance victory can differ from the player. See [audit A04](zh-CN/vmce-review.md).
 - **B61 — retry a failed series scan:** the same identity retains mismatch/failure after the guest
   fixes a later map. Offer an explicit retry or invalidate the failed result on a user action.
 - **B62 — local unlock failure feedback:** corrupt or unwritable progress is logged only. Preserve
@@ -72,49 +72,49 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   without lobby AI. Admit the supported solo campaign through the authoritative start path.
 - **B75 — shared-unit deployment and unloading:** self-click actions and some D-key unloads
   require the primary House despite a shared grant. Reuse the grant for input and retain command
-  authorization. See [audit A23](zh-CN/vmce-audit.md).
+  authorization. See [audit A23](zh-CN/vmce-review.md).
 - **B76 — retry-load failure admission:** the failure signal is not tied to an admitted sender,
   VMCE loading phase or attempt and may abort an unrelated network load. Validate all three;
-  exercise invalid and stale signals. See [audit A24](zh-CN/vmce-audit.md).
+  exercise invalid and stale signals. See [audit A24](zh-CN/vmce-review.md).
 - **B77 — load-failure delivery:** the reliable queue is reset immediately after enqueueing a
   local load-failure notice, racing delivery and acknowledgement. Drain it with a bounded failure
-  path before cleanup. See [audit A25](zh-CN/vmce-audit.md).
+  path before cleanup. See [audit A25](zh-CN/vmce-review.md).
 - **B79 — campaign AllowWin gate:** VMCE currently follows the network-mode bypass of the
   campaign tag-count gate, potentially ending earlier than the native campaign. Verify the native
-  lifecycle and reconcile it with the agreed earliest shared boundary; see [audit A27](zh-CN/vmce-audit.md).
+  lifecycle and reconcile it with the agreed earliest shared boundary; see [audit A27](zh-CN/vmce-review.md).
 - **B81 — cross-platform map paths:** manifest validation normalizes backslashes, but loading may
   treat them literally on Linux/macOS. Normalize consistently and retain path containment checks.
-  See [audit A29](zh-CN/vmce-audit.md).
+  See [audit A29](zh-CN/vmce-review.md).
 - **B82 — equivalent INI sections:** case/separator variants of the same logical stage or House
   control section can pass duplicate checks and silently select the first. Reject ambiguity;
-  see [audit A30](zh-CN/vmce-audit.md).
+  see [audit A30](zh-CN/vmce-review.md).
 - **B83 — construction failure notification:** failed construction can consume the loading
   session before VMCE failure detection, so no notification is queued. Preserve the frozen
-  attempt identity; see [audit A31](zh-CN/vmce-audit.md).
+  attempt identity; see [audit A31](zh-CN/vmce-review.md).
 - **B84 — final installation failure:** a failed network installation shows a local error without
-  notifying peers. Use the reliable shared failure/exit path; see [audit A32](zh-CN/vmce-audit.md).
+  notifying peers. Use the reliable shared failure/exit path; see [audit A32](zh-CN/vmce-review.md).
 - **B85 — non-ASCII map filenames:** external configuration widens bytes rather than decoding
   UTF-8, so manifest filenames may not match disk. Define VMCE configuration encoding and peer
-  identities; see [audit A33](zh-CN/vmce-audit.md).
+  identities; see [audit A33](zh-CN/vmce-review.md).
 - **B87 — out-of-range control role:** a `PlayerNControl` key whose role number exceeds the
   stage's `PlayerCount` is accepted and then never reaches a role, so a map-author typo silently
   leaves a shared House AI. Validate the control index against `PlayerCount` at admission and name
-  the stage/House/key; see [audit A35](zh-CN/vmce-audit.md).
+  the stage/House/key; see [audit A35](zh-CN/vmce-review.md).
 - **B88 — stale next-stage identity records:** the VERA `0x36` stage record carries no round or
   epoch binding, and the retire-phase hold queue replays records after a later round opens. An old
   record therefore rejects a valid stage and returns everyone to the lobby, and any peer can send
   one. Bind the record to the round and accept one per peer per round; see
-  [audit A36](zh-CN/vmce-audit.md).
+  [audit A36](zh-CN/vmce-review.md).
 - **B92 — stale result records before the nonce check:** the result record compares per-slot
   entries and the stage digest before checking the round nonce, so a replayed record from the
   previous round (same per-slot outcomes) fails the digest and makes the receiver quit the round
   back to the main menu. Check the nonce first, drop foreign-round records and keep teardown only
-  for real disagreement; see [audit A39](zh-CN/vmce-audit.md).
+  for real disagreement; see [audit A39](zh-CN/vmce-review.md).
 - **B94 — round-phase liveness:** the VMCE result/intermission round sends no BC6 20 s keepalive
   (`0x0046EADD`) and the LAN pass returns before the setup keepalives and lease polling, so an
   idle page or a silently stopped peer is never detected and the wait can last forever. Send the
   round keepalive and keep the existing silent-peer check running; see
-  [audit A40](zh-CN/vmce-audit.md).
+  [audit A40](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
@@ -156,8 +156,8 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   (`install_vmce_lobby_fixture`), while `vmce_map_details` looks the cache up under
   `settings_dir/Maps`; the miss then depends on a second map load that does not resolve in a
   score capture. Fix the fixture cache root/file identity and recapture, then use those shots to
-  close the visual part of [A37](zh-CN/vmce-audit.md) (defeat retry state) and
-  [A38](zh-CN/vmce-audit.md) (statistics name truncation).
+  close the visual part of [A37](zh-CN/vmce-review.md) (defeat retry state) and
+  [A38](zh-CN/vmce-review.md) (statistics name truncation).
 - **B93 — acceptance runner retail marker:** `vmce_lan_acceptance run` writes the
   `.vera20k-lan-capture-root` marker into each per-process settings directory, but the capture
   path checks the marker under `assets.ra2_dir()`, so a plain `--retail-source` fails with
@@ -189,22 +189,22 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   and occupy seats without matching campaign roles. Clear lobby AI while preserving map AI.
 - **B78 — next-stage failure feedback:** if resolving the next stage fails after victory, players
   can leave without seeing results or a reason. Preserve the outcome, explain the error and exit
-  reliably. See [audit A26](zh-CN/vmce-audit.md).
+  reliably. See [audit A26](zh-CN/vmce-review.md).
 - **B80 — in-mission Observe:** the abort dialog may offer Observe and queue local destruction.
-  Exclude that action in VMCE while preserving ordinary LAN; see [audit A28](zh-CN/vmce-audit.md).
+  Exclude that action in VMCE while preserving ordinary LAN; see [audit A28](zh-CN/vmce-review.md).
 - **B86 — lobby shared-House visibility:** the role board lists the primary role House and country
   only, so the shared Houses granted through `PlayerNControl` are invisible before the mission.
   Project each role's granted Houses from the parsed `campaign.ini` control owner; keep the 2–4
-  role layouts and scales clear. See [audit A34](zh-CN/vmce-audit.md).
+  role layouts and scales clear. See [audit A34](zh-CN/vmce-review.md).
 - **B89 — defeat-page retry vote feedback:** the BC6 failure page shows only the local Retry light
   and the host's all-voted aggregate, so 3–4 player rooms cannot see who has voted. Render per-row
-  vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-audit.md). A real
+  vote state from the existing `retry_votes` data; see [audit A37](zh-CN/vmce-review.md). A real
   two-process `2p-retry` capture confirmed the page has no per-row state; 3–4 player capture
   remains.
 - **B90 — statistics-page name truncation:** the victory/campaign-end statistics page draws the
   player name into a fixed cell without the native ellipsization the result board and failure page
   already use, so long names run into the kills/losses columns. Reuse
-  `vmce_panel::ellipsize_native`; see [audit A38](zh-CN/vmce-audit.md).
+  `vmce_panel::ellipsize_native`; see [audit A38](zh-CN/vmce-review.md).
 
 The lobby layout and chrome pass (see Completed work) fixed most review items; these remain open.
 

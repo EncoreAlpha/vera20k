@@ -41,7 +41,7 @@ acceptance work (cross-machine sessions, mid-intermission joins, packet loss, B1
 - [VMCE player and map-author guide](vmce-guide.md) — campaign directories,
   `campaign.ini`, LAN flow, result pages, testing and troubleshooting.
 - [VMCE backlog](vmce-backlog.md) — engineering task ledger, locked decisions and residuals.
-- [Chinese backlog](zh-CN/vmce-backlog.md).
+- [Chinese consolidated review](zh-CN/vmce-review.md) — merged findings ordered by fix priority.
 - [VMCE baseline](vmce-baseline.md) — upstream sync, version and real-capture baseline.
 - [Chinese guide](zh-CN/vmce.md).
 

@@ -46,7 +46,7 @@ lang: zh-CN
 ## 游戏模式
 
 - [VERA Multiplayer Campaign Expansion 说明书](vmce.md)
-- [VMCE 中文待办事项](vmce-backlog.md)
+- [VMCE 中文待办事项](vmce-review.md)
 
 ## 扩展与原作者
 

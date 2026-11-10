@@ -31,15 +31,13 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 | 结果页 | `0x103` 胜利板 + 统计页；原生 BC6 失败统计页；结果页无计时器 |
 | i18n | en/zh-CN 真值；其余语言英文占位 |
 
-未完成的缺陷与真实联机验收（跨机器、关间中途加入、丢包、B10 送达）见
-[中文待办](vmce-backlog.md)。
+未完成的缺陷见[审查总文档](vmce-review.md)；跨机器与异常场景验收见[英文台账](../vmce-backlog.md)。
 
 ## 从这里开始
 
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
-- [VMCE 待办（中文）](vmce-backlog.md) — 已确认目标、修复顺序和验收范围。
-- [VMCE 代码与界面审查](vmce-audit.md) — 已确认问题、解决方案和验证条件。
+- [VMCE 审查总文档](vmce-review.md) — 合并后的待修复项，按修复优先级排列。
 - [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。
 - [English hub](../vmce.md)。
