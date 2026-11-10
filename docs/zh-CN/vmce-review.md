@@ -1,4 +1,4 @@
----
+﻿---
 layout: default
 title: VMCE 审查总文档
 lang: zh-CN
@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 20 | 11 | 9 |
-| 合计 | 54 | 43 | 11 |
+| P3 | 22 | 13 | 9 |
+| 合计 | 56 | 45 | 11 |
 
 ## P1 — 优先修复
 
@@ -339,6 +339,20 @@ lang: zh-CN
 - **依据：** [Campaign 清单读取](../../src/app/shell_network_setup/vmce_map.rs#L722)按 `ScenarioCount` 循环读 `Scenario1..=count`，没有检查额外 `ScenarioN` 或未知键；[场景段白名单](../../src/app/shell_network_setup/vmce_map.rs#L592)对 `PlayerN` 超出 `PlayerCount` 会显式拒绝，两处校验力度不一致；[控制段白名单](../../src/app/shell_network_setup/vmce_map.rs#L624)同样逐键校验。
 - **修正：** 在 `parse_vmce_manifest` 中增加 `[Campaign]` 键白名单（`Name`/`Entry`/`ScenarioCount`/`Scenario1..=ScenarioCount`），并拒绝 `ScenarioN` 中 N 超过 `ScenarioCount` 的显式键；错误包含段名与键名。保留 `ScenarioCount` 上限和 `Entry` 必须属于清单的现有校验。
 - **验收：** `ScenarioCount=1` 同时写 `Scenario1`/`Scenario2`、未知键（如拼错的 `Scenariocount` 或额外 `Foo=`）都在准入被拒并指出段/键；合法系列行为不变；B05 的逐关预校验与整套字节身份不受影响。
+
+### A44 · B99 关间房间的客人看不到下一关预览，也收不到简报提示 — P3
+
+- **问题与影响：** 结果页 Continue 后进入关间房间时，每个 peer 先由 `enter_vmce_intermission_setup` 把下一关的 `map_metadata`/`selected_map_file` 写进会话，再用新 protocol 打开 setup。客人收到房主 options 时，`network_map_requires_verification` 比较本地已保留的下一关 metadata 与收到的相同，于是 `map_changed=false`；而 `local_map_verified` 只在 `map_changed` 分支里更新，客人的 `local_preview()` 因此一直是 false，`local_map_index()` 返回 None。渲染层随后走“收到房主预览图”的路径，但 VMCE LAN 从不请求/发送预览，客人的预览框为空；同一 `local_map_index()` 也驱动“该地图有简报”的聊天提示，所以客人也收不到该提示。房主因 `session.host()` 短路仍看到预览。另一个独立成因：第一次在关间中途加入的客人走 `open_lan_joined_setup`，它不调用 `refresh_vmce_entries`，而进程启动时场景目录只扫描零售根目录，VMCE 系列记录可能根本不存在，所以即使地图验证通过，`local_map_index()` 也找不到记录。
+- **依据：** [关间房间打开](../../src/app/shell_network_setup.rs#L1110)先 `enter_vmce_intermission_setup`（[写入手选地图/元数据](../../src/app/match_runtime/session/cooperative_round.rs#L572)）再新建 setup；[地图变化判定](../../src/app/match_runtime/session.rs#L1646)在 metadata/地图/mode 相同时返回 false；[只在 map_changed 分支更新](../../src/app/shell_network_setup/service.rs#L707) `local_map_verified`；[新 protocol 初始为 false](../../src/app/shell_network_setup.rs#L428) 与 [local_preview 判定](../../src/app/shell_network_setup.rs#L554)；[local_map_index 的非房主门槛](../../src/app/shell_network_setup/view.rs#L460)；[渲染选择预览的路径](../../src/app/frontend/skirmish_shell_render/multiplayer_setup.rs#L110)；[新加入者路径不刷新目录](../../src/app/shell_network_setup.rs#L871) 与 [刷新所有者](../../src/app/shell_network_setup/vmce_map.rs#L376)；[简报提示消费 local_map_index](../../src/app/shell_network_setup/service.rs#L2192)。
+- **修正：** 在 `open_vmce_intermission` 建好新 protocol 后，用会话里已保留的本地已验证地图源（`network_local_map_source()` 与 metadata 摘要）播种 `local_map_verified`/`local_map_loose`，或让 `local_map_index`/`local_preview` 直接消费该已验证来源，而不是依赖一次 `map_changed` 解析；同时把“确保关间下一关在场景目录中”放到任何 peer 应用带 `vmce_intermission` 的 options 的共同路径，不要只在 `open_vmce_intermission` 里做。普通 LAN 与初始房间行为不变。
+- **验收：** 2/3/4 人关间房间里，房间打开时已在场的每个客人，以及房间打开后才加入、此前从未进过 VMCE 关间房间的客户端，都看到与房主相同的下一关预览和“该地图有简报”提示；初始 VMCE 房间与普通 LAN 客人不回归；房主预览不变。基于生产调用链静态核对，尚无客人侧关间大厅截图。
+
+### A45 · B100 满员的关间房间在 LAN 浏览器里仍显示可加入 — P3
+
+- **问题与影响：** 关间房间的人数上限按下一关主角色数 clamp(2,4)，但房主回复 LAN Discovery 时固定发送 `advertisement(name, true)`，`open` 位恒为 1。2/2、4/4 已满（或 GO 已锁定）的关间房间仍以可加入状态出现在 LAN 游戏列表；新加入者点击 Join 后被 `join_denial` 以 reason 1 拒绝并弹出 `TXT_GAME_FULL`。这是通用 VERA 房间的状态问题，但关间房间的小上限让 2/2、4/4 成为常见路径。
+- **依据：** [Discovery 固定 open=true](../../src/app/lan_service.rs#L2429)；[advertisement 的 open 位](../../src/net/lan_messages.rs#L362)；[人数上限](../../src/app/match_runtime/session.rs#L2113) 已有 `network_room_full()`；[join 拒绝的满员分支](../../src/app/lan_service.rs#L3058) 与 [拒绝原因映射](../../src/app/shell_lan.rs#L337)（reason 1 = `TXT_GAME_FULL`）；[LAN 浏览器只拒绝关闭的房间](../../src/app/shell_lan.rs#L328)；[关间房间上限设置](../../src/app/shell_network_setup.rs#L1156)。
+- **修正：** Discovery 回复用 `!session.network_room_full()`（必要时再叠加 `protocol.editable()` 以处理 GO 锁定）作为 `open` 位；房主对每次 Discovery 都重新回答，成员/上限变化后无需额外状态刷新。
+- **验收：** 2/2、4/4 的关间房间在 LAN 列表中不可加入（或以关闭态显示）；有人离开后恢复可加入；普通 8 人 LAN 房间的 open 语义与 GO 锁定拒绝不回归。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 

@@ -130,6 +130,19 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   the scenario sections already reject `PlayerN` beyond `PlayerCount`. A low `ScenarioCount` or a
   stray/typoed key therefore drops a stage without an admission error. Whitelist `[Campaign]` keys
   and reject out-of-range `ScenarioN`; see [audit A43](zh-CN/vmce-review.md).
+- **B99 — intermission preview and briefing hint for guests:** a new intermission setup protocol
+  starts with `local_map_verified=false`; the next stage metadata is already in the session, so a
+  guest's first host options compare equal and `map_changed=false`, leaving the preview flag false
+  and `local_map_index()` empty. VMCE LAN never sends a received preview, so the guest's preview is
+  blank and the "map has a briefing" chat hint is skipped. A newcomer's `open_lan_joined_setup`
+  also skips `refresh_vmce_entries`. Seed the verified local map source into the new protocol and
+  ensure the intermission stage record whenever options carry `vmce_intermission`; see
+  [audit A44](zh-CN/vmce-review.md).
+- **B100 — full VERA room advertised as open:** the host answers LAN Discovery with
+  `advertisement(name, true)` regardless of `network_room_full()`, so a full intermission room
+  (2/2 or 4/4) still looks joinable and a click ends in `TXT_GAME_FULL`. Use
+  `!session.network_room_full()` (plus the editability state) for the open bit; see
+  [audit A45](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery
