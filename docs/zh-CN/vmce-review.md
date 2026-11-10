@@ -449,4 +449,5 @@ lang: zh-CN
 - **GO/下一关加载身份：** 客人 Ready 的系列边界会先启动 revalidation，GO 后的 handoff boundary 取其已验证结果；A03/B58 的边界复用仍是已知弱点，未发现额外缺口。
 - **seed 与随机角色：** 下一关 seed 由上一关 seed 与双方已同意的 stage identity 派生；随机角色分配按 `raw_slot_index` 排序，与 humans 顺序无关。
 - **结果页/计分美术泄漏到关间或加载：** `advance_vmce_intermission` 会清 campaign score page/art；失败页只进重试，不进入关间，故不会把上一页残留带进房间或加载。
+- **`Start_Scenario` 的加载重试循环：** VMCE 网络加载失败已经由 `fail_loading_with` 通知对端并回到 LAN 大厅（`RetryNetworkShell`），大厅/关间房间保留，房主可再次 Start；原生 `0x00685C47` 的自动重试只是把重试位置放在加载器内，未发现会让玩家卡住或丢状态的独立缺口（失败通知本身见 A25/A31/A32）。
 
