@@ -143,6 +143,14 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   (2/2 or 4/4) still looks joinable and a click ends in `TXT_GAME_FULL`. Use
   `!session.network_room_full()` (plus the editability state) for the open bit; see
   [audit A45](zh-CN/vmce-review.md).
+- **B101 — primary House names validate only at Start:** `load_vmce_scenario` checks that
+  `Player1..N` are present and writes them into the synthetic `[Basic]`, but never compares them
+  with the map's `[Houses]`. Admission and Ready/Go pass; only `resolve_vmce_houses` at Start runs
+  `validate_against_roster` with an exact-name match and reports a generic "role configuration is
+  invalid" message. A typo or case difference therefore fails after everyone is ready, while the
+  control-section membership check in the same file is case-insensitive. Validate the primary
+  Houses at admission with the same matching policy and name the stage/player/House; see
+  [audit A46](zh-CN/vmce-review.md).
 - **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
   scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
   existing transport and retry owner until the relevant records are acknowledged or a delivery

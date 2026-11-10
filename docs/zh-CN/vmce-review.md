@@ -18,8 +18,8 @@ lang: zh-CN
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
 | P2 | 24 | 22 | 2 |
-| P3 | 22 | 13 | 9 |
-| 合计 | 56 | 45 | 11 |
+| P3 | 23 | 14 | 9 |
+| 合计 | 57 | 46 | 11 |
 
 ## P1 — 优先修复
 
@@ -353,6 +353,13 @@ lang: zh-CN
 - **依据：** [Discovery 固定 open=true](../../src/app/lan_service.rs#L2429)；[advertisement 的 open 位](../../src/net/lan_messages.rs#L362)；[人数上限](../../src/app/match_runtime/session.rs#L2113) 已有 `network_room_full()`；[join 拒绝的满员分支](../../src/app/lan_service.rs#L3058) 与 [拒绝原因映射](../../src/app/shell_lan.rs#L337)（reason 1 = `TXT_GAME_FULL`）；[LAN 浏览器只拒绝关闭的房间](../../src/app/shell_lan.rs#L328)；[关间房间上限设置](../../src/app/shell_network_setup.rs#L1156)。
 - **修正：** Discovery 回复用 `!session.network_room_full()`（必要时再叠加 `protocol.editable()` 以处理 GO 锁定）作为 `open` 位；房主对每次 Discovery 都重新回答，成员/上限变化后无需额外状态刷新。
 - **验收：** 2/2、4/4 的关间房间在 LAN 列表中不可加入（或以关闭态显示）；有人离开后恢复可加入；普通 8 人 LAN 房间的 open 语义与 GO 锁定拒绝不回归。
+
+### A46 · B101 主角色 House 名直到开局才校验，准入可放过错误战役 — P3
+
+- **问题与影响：** `load_vmce_scenario` 读取 `Player1..N` 时只要求非空并写入合成 `[Basic]`，不把 House 名与地图 `[Houses]` 对照；联机准入和 Ready/Go 都会通过。真正的校验在开局 `resolve_vmce_houses` 的 `validate_against_roster`，且按字符串精确匹配（大小写不同即视为不同 House）；失败后只显示“角色配置无效/可能人数超过角色或角色缺失、重复”的笼统提示。结果是：作者把 `Player2=Americans House` 误写为不同大小写或写错 House，系列看起来通过准入、客人也已 Ready，房主点开始时才失败，玩家不知道为什么不能开始。同一文件的控制段成员检查却使用大小写不敏感比较，校验策略不一致。
+- **依据：** [准入读取 PlayerN](../../src/app/shell_network_setup/vmce_map.rs#L648)只检查存在性并写入合成段；[角色 House 去重](../../src/app/shell_network_setup/vmce_map.rs#L651)也是精确字符串；[控制段成员检查](../../src/app/shell_network_setup/vmce_map.rs#L615)已经用大小写不敏感比较；[开局校验调用](../../src/app/match_bootstrap.rs#L437)在 Start 时才 `validate_against_roster`；[名字精确匹配](../../src/map/basic.rs#L45)；[开局失败提示](../../src/app/shell_network_setup/actions/start.rs#L482)只给笼统原因。
+- **修正：** 在 `load_vmce_scenario`（以及 B05 的逐关预校验）中按地图 `[Houses]` 解析主角色 House，并用与开局 `validate_against_roster` 相同的匹配策略（若开局改为大小写不敏感，两处一起改）在准入时拒绝未知/重复 House；错误包含关卡、PlayerN 和 House 名。确保“准入通过”的系列不会在 Start 再因 House 名失败。
+- **验收：** `PlayerN` 指向不存在 House、大小写不同、重复 House 的 `campaign.ini` 在准入/Ready 前被拒并指出关卡与玩家；合法系列与初始 VMCE 房间不回归；控制段与主角色使用一致的 House 匹配策略；Start 不再出现该迟到错误。
 
 ### B40 地图详情缓存依赖协议存在 — P3
 
