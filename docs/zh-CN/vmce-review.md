@@ -308,7 +308,7 @@ lang: zh-CN
 ### A38 · B90 统计页玩家名未做原生截断 — P3
 
 - **问题与影响：** 胜利/战役完成页的“统计数据”页用固定列宽绘制每行玩家名，但没有像结算板、失败页那样按列宽截断；长玩家名会压到击杀/损失列，四列数值可能被覆盖，3–4 人时更难核对。
-- **依据：** [统计页行绘制](../../src/app/frontend/campaign_score_shell_render.rs#L560)直接把 `row.player` 推入固定 `cells`，未调用 `ellipsize_native`；同一渲染器的[结算板](../../src/app/frontend/campaign_score_shell_render.rs#L641)和[失败页](../../src/app/frontend/skirmish_shell_render/coop_score.rs#L251)都对名字调用 `vmce_panel::ellipsize_native`。
+- **依据：** [统计页行绘制](../../src/app/frontend/campaign_score_shell_render.rs#L560)直接把 `row.player` 推入固定 `cells`，未调用 `ellipsize_native`；同一渲染器的[结算板](../../src/app/frontend/campaign_score_shell_render.rs#L641)和[失败页](../../src/app/frontend/skirmish_shell_render/coop_score.rs#L251)都对名字调用 `vmce_panel::ellipsize_native`。 B91 的合成页在放入 `settings/Maps` 角色地图后已能启动，但 fixture 玩家名固定为 `LiveHost`/`LiveGuest1-3`，长名字仍无法验证，需要 fixture 支持自定义名字或真机长名。
 - **修正：** 统计页玩家名列复用 `vmce_panel::ellipsize_native` 与同一字体宽度测量；数值列保持右/居中对齐。保持四行、800×600 与缩放布局。
 - **验收：** 最长玩家名（含中文/双宽字符）在 2–4 行、各缩放与 800×600 下显示省略号且不覆盖数值列；普通长度名字不变；失败页与结算板行为不回归。
 
@@ -405,10 +405,10 @@ lang: zh-CN
 
 ### B91 合成结算/失败页采集 fixture 无法启动 — P3
 
-- **问题与影响：** `vmce-result-*` 与 `vmce-defeat-*` 采集检查点以 `VMCE defeat fixture needs authored role metadata` 失败：大厅 fixture 把角色详情缓存在 `game_config.paths.ra2_dir` 下，而 `vmce_map_details` 按 `settings_dir/Maps` 查找。
-- **依据：** [大厅 fixture 缓存根](../../src/app/shell_network_setup.rs#L1368)与[地图详情查询](../../src/app/shell_network_setup/view.rs#L135)不一致。
-- **修正：** 统一 fixture 与投影的缓存根/文件身份后重新采集，用于关闭 A37/A38 的视觉部分。
-- **验收：** 两个合成检查点都能生成截图并区分投票/长名字状态，不再报角色元数据缺失。
+- **问题与影响：** `vmce-result-*` 与 `vmce-defeat-*` 采集检查点曾以 `VMCE defeat fixture needs authored role metadata` 失败：大厅 fixture 把角色详情缓存在 `game_config.paths.ra2_dir` 下，而 `vmce_map_details` 按 `settings_dir/Maps` 查找。
+- **依据：** [大厅 fixture 缓存根](../../src/app/shell_network_setup.rs#L1368)与[地图详情查询](../../src/app/shell_network_setup/view.rs#L135)不一致。本轮验证：在 `settings_dir/Maps/XMP29U2.MAP` 放一份带 4 个主角色 `[Basic]` 的地图后，`vmce_map_details` 的 fallback 能加载角色，10 个 `vmce-result-*`/`vmce-defeat-*` 检查点全部产出截图（`.scratch/vmce-synth/`，未提交）；说明失败只缺 settings/Maps 下的角色地图，缓存根/文件身份不一致仍是根因。
+- **修正：** 统一 fixture 与投影的缓存根/文件身份（或用独立 fixture 地图放在 settings/Maps 规避），并让 fixture 支持自定义玩家名，以便关闭 A38 的长名字部分。
+- **验收：** 两个合成检查点无需 workaround 就能生成截图；A37 能区分投票/未投票状态；A38 能用 fixture 提供的长名字验证截断。
 
 ### B93 采集运行器零售标记位置不一致 — P3
 
@@ -431,6 +431,7 @@ lang: zh-CN
 
 - 原版依据：`tools/native_inspect` 在零售 `gamemd.exe` 上指令级核对 AllowWin 门（`HouseClass::Update` 0x004F8440，`GameMode` 0x00A8B238，House+0x27C，0x006E50A0 起的 60 帧计时器）。
 - 零售数据扫描：`MISSIONMD.INI` 24 个战役段 + `MISSION.INI` 26 个 ALL/SOV/TRN 段共 50 张地图按 8 字段动作块解析 `[Actions]`，动作 15 为 0；`MAPS01/02.MIX` 的 `C*M*` 条目是多人地图，没有 `[Actions]`。
+- 合成结算/失败页采集（B91 workaround）：把带 4 个主角色的地图放到 `settings/Maps/XMP29U2.MAP` 后，10 个 `vmce-result-*`/`vmce-defeat-*` 检查点全部产出截图；失败页 Retry 的禁用/点亮外观可区分（A37 的聚合状态），统计页短名字布局正常；长名字仍缺 fixture 支持（A38）。
 - 预览能力对照：把零售 `XMP29U2.MAP`（带 `[Preview]`/`[PreviewPack]`）作为 VMCE 阶段地图后，2p-win 房主大厅显示地图预览（截图）；该 run 在任务阶段因该地图没有可用机动单位而失败（测试数据原因），但大厅已确认 host 预览路径正常，A44 的 host/guest 差异仍需带预览地图的关间截图。
 - 本机真实双进程：`2p-win`、`2p-retry`（作者化失败系列）均通过；300 个 native checksums 与 20 个 simulation hashes 两端一致；失败页无逐玩家投票状态，初始 VMCE 大厅随机 Owner/等待角色板/简报不可用，与 A07/A13/A37 对应。
 - 本机真实三进程：`4p-win --players 3`（`LDA-4p` 四人角色地图）通过；3 个 receipt 的 300 checksums/20 hashes 一致，`dialog.rows=3`、下一关 stage02；大厅截图显示 3 名玩家加 1 个「開放」席位/4 个角色行，结算板 3 行；房主地图预览为空（该系列地图无可解码预览数据）。

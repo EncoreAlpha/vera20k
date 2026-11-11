@@ -187,6 +187,10 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   score capture. Fix the fixture cache root/file identity and recapture, then use those shots to
   close the visual part of [A37](zh-CN/vmce-review.md) (defeat retry state) and
   [A38](zh-CN/vmce-review.md) (statistics name truncation).
+  Workaround verified: placing an authored-role map at `settings/Maps/XMP29U2.MAP` makes the
+  fallback load resolve and all ten result/defeat checkpoints render. The cache root/file identity
+  mismatch remains the fix target; the fixtures also need configurable player names before they
+  can close A38.
 - **B93 — acceptance runner retail marker:** `vmce_lan_acceptance run` writes the
   `.vera20k-lan-capture-root` marker into each per-process settings directory, but the capture
   path checks the marker under `assets.ra2_dir()`, so a plain `--retail-source` fails with
