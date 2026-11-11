@@ -22,13 +22,24 @@ fn select_abort_secondary(state: &AppState) -> AbortSecondary {
             .sim_runtime
             .as_ref()
             .map(|runtime| &runtime.simulation),
+        vmce_active(state),
     )
+}
+
+/// VMCE's admitted launch owns the match mode even after loading.
+pub(crate) fn vmce_active(state: &AppState) -> bool {
+    state
+        .match_state
+        .session
+        .network_setup()
+        .is_some_and(|launch| launch.mode.class.is_vmce())
 }
 
 fn secondary_for(
     mode: SessionMode,
     campaign_installed: bool,
     sim: Option<&crate::sim::world::Simulation>,
+    vmce: bool,
 ) -> AbortSecondary {
     let live_humans = sim.map_or(0, |sim| {
         sim.houses()
@@ -46,7 +57,7 @@ fn secondary_for(
     // VERA shared control: Observe would leave this player controlling the
     // House their teammate still plays, so B6 offers a plain Leave (EXIT).
     if secondary == AbortSecondary::Observe
-        && sim.is_some_and(crate::sim::world::Simulation::local_house_has_teammate)
+        && (vmce || sim.is_some_and(crate::sim::world::Simulation::local_house_has_teammate))
     {
         AbortSecondary::Hidden
     } else {
@@ -147,15 +158,20 @@ mod tests {
         }
         sim.session_mut_for_test()
             .set_current_house_for_test(Some(ids[0]));
-        let secondary = |sim: &Simulation, mode| secondary_for(mode, false, Some(sim));
+        let secondary = |sim: &Simulation, mode| secondary_for(mode, false, Some(sim), false);
         assert_eq!(secondary(&sim, SessionMode::Lan), AbortSecondary::Observe);
         assert_eq!(secondary(&sim, SessionMode::Wol), AbortSecondary::Observe);
+        assert_eq!(
+            secondary_for(SessionMode::Lan, false, Some(&sim), true),
+            AbortSecondary::Hidden,
+            "VMCE never offers Observe even with two distinct live Houses"
+        );
         assert_eq!(
             secondary(&sim, SessionMode::Skirmish),
             AbortSecondary::Hidden
         );
         assert_eq!(
-            secondary_for(SessionMode::Campaign, true, Some(&sim)),
+            secondary_for(SessionMode::Campaign, true, Some(&sim), false),
             AbortSecondary::Restart
         );
         // A defeated peer leaves one live human: the AI House never counts.
@@ -192,7 +208,7 @@ mod tests {
                 std::num::NonZeroU8::new(5).unwrap(),
                 admitted.iter().copied(),
             );
-            secondary_for(SessionMode::Lan, false, Some(&sim))
+            secondary_for(SessionMode::Lan, false, Some(&sim), false)
         };
         assert_eq!(secondary(&[0, 1, 2]), AbortSecondary::Hidden);
         // Once the teammate has left, the last player may Observe again.

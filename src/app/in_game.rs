@@ -525,12 +525,16 @@ impl App {
             ModalOutcome::Stay => {}
             ModalOutcome::Enter(next) => Self::enter_in_game_menu_state(state, next),
             ModalOutcome::LeaveMatch { destruct } => {
-                if destruct {
+                if destruct && !crate::app::input::abort::vmce_active(state) {
                     Self::queue_local_destruct(state);
                 }
                 Self::exit_match_to_shell(state)
             }
             ModalOutcome::Observe => {
+                if crate::app::input::abort::vmce_active(state) {
+                    Self::exit_match_to_shell(state);
+                    return;
+                }
                 // 0x0048CAB2: DESTRUCT and the latch clear; no EXIT. The
                 // latch keeps every modal closed until the House is
                 // Defeated, which re-arms it (0x0048C911).
