@@ -108,6 +108,9 @@ pub struct PreparedNetworkStartup {
     /// The exact host-authoritative coop overlay used to resolve those Houses.
     #[cfg(feature = "vmce")]
     vmce_map_config: Option<NetworkVmceMapConfig>,
+    /// Result agreement identity for a retry; the initial load uses its LAN scope.
+    #[cfg(feature = "vmce")]
+    vmce_retry_attempt: Option<[u8; 16]>,
 }
 
 /// Typed local campaign projection plus the physical map identity it was
@@ -335,6 +338,8 @@ impl PreparedNetworkStartup {
             vmce_houses: None,
             #[cfg(feature = "vmce")]
             vmce_map_config: None,
+            #[cfg(feature = "vmce")]
+            vmce_retry_attempt: None,
         }
     }
 
@@ -356,6 +361,17 @@ impl PreparedNetworkStartup {
     #[cfg(feature = "vmce")]
     pub(crate) fn vmce_map_config(&self) -> Option<&NetworkVmceMapConfig> {
         self.vmce_map_config.as_ref()
+    }
+
+    #[cfg(feature = "vmce")]
+    pub(crate) fn with_vmce_retry_attempt(mut self, nonce: [u8; 16]) -> Self {
+        self.vmce_retry_attempt = Some(nonce);
+        self
+    }
+
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_retry_attempt(&self) -> Option<[u8; 16]> {
+        self.vmce_retry_attempt
     }
 
     pub(crate) fn with_carry_over(mut self, record: CampaignCarryOver) -> Self {

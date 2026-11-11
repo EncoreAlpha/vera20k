@@ -1398,6 +1398,18 @@ impl MatchSession {
             anyhow::bail!("no co-op round to continue");
         };
         anyhow::ensure!(round.outcome == Some(true), "the round did not continue");
+        #[cfg(feature = "vmce")]
+        let retry_attempt = if round.vera && round.vera_ending == VmceRoundEnding::Retry {
+            Some(
+                round
+                    .result_agreement
+                    .as_ref()
+                    .and_then(|agreement| agreement.nonce)
+                    .ok_or_else(|| anyhow::anyhow!("VMCE retry has no result identity"))?,
+            )
+        } else {
+            None
+        };
         super::admit_network_start_roster(launch)?;
         #[cfg(feature = "vmce")]
         let seed = match vera_next.as_ref() {
@@ -1486,6 +1498,9 @@ impl MatchSession {
         .with_carry_over(carry_over);
         #[cfg(feature = "vmce")]
         {
+            if let Some(nonce) = retry_attempt {
+                prepared = prepared.with_vmce_retry_attempt(nonce);
+            }
             if let Some(houses) = next_assignments {
                 prepared = prepared.with_vmce_houses(houses);
             } else if let Some(houses) = previous_vera_houses {
@@ -2425,6 +2440,7 @@ mod tests {
         let first_houses = first.vmce_houses().cloned();
         let first_seed = first.seed;
         let first_launch = first.launch_session().clone();
+        assert_eq!(session.vmce_frozen_loading_attempt([3; 16]), Some([3; 16]));
         assert!(
             first_config.is_some(),
             "fixture startup carries the map config"
@@ -2466,6 +2482,34 @@ mod tests {
         assert_eq!(next.local_map_source().cloned(), first_source);
         assert_eq!(next.effective_map_digest().map(str::to_owned), first_digest);
         assert_eq!(next.vmce_houses().cloned(), first_houses);
+        assert_eq!(session.vmce_frozen_loading_attempt([3; 16]), Some([9; 16]));
+        let peer: std::net::SocketAddrV4 = "127.0.0.1:12002".parse().unwrap();
+        let stranger: std::net::SocketAddrV4 = "127.0.0.1:12003".parse().unwrap();
+        let peer_name = session.network_setup().unwrap().humans[1].name.clone();
+        session
+            .network
+            .as_mut()
+            .unwrap()
+            .endpoints
+            .insert(peer_name, peer);
+        let scope = crate::net::lan_messages::SessionScope {
+            epoch: [3; 16],
+            revision: 4,
+        };
+        let admitted = |source, attempt, active| {
+            crate::app::lan_service::vmce_load_failure_admitted(
+                &session,
+                Some(scope),
+                active,
+                source,
+                scope,
+                attempt,
+            )
+        };
+        assert!(admitted(peer, [9; 16], true));
+        assert!(!admitted(stranger, [9; 16], true));
+        assert!(!admitted(peer, [8; 16], true));
+        assert!(!admitted(peer, [9; 16], false));
         assert_eq!(next.seed, first_seed, "retry reuses the frozen seed");
         // Roles, countries and colours are the frozen roster; start positions
         // and derived pre-fill order may be resolved by the finished mission.

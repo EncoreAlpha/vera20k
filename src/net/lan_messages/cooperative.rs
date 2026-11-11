@@ -371,7 +371,7 @@ fn digest_is_valid(digest: &str) -> bool {
 #[cfg(feature = "vmce")]
 pub const RETRY_LOAD_FAILED_KIND: u32 = 0x3A;
 #[cfg(feature = "vmce")]
-const RETRY_LOAD_FAILED_REASON_OFFSET: usize = SIGNAL_LEN - 1;
+const RETRY_LOAD_FAILED_REASON_OFFSET: usize = SIGNAL_LEN;
 
 /// Why a retry load stopped. The numeric codes are wire values, not CSF keys.
 #[cfg(feature = "vmce")]
@@ -404,22 +404,32 @@ impl RetryLoadFailureReason {
 pub fn encode_retry_load_failure(
     name: &str,
     reason: RetryLoadFailureReason,
-) -> Result<[u8; SIGNAL_LEN], LanMessageError> {
+    scope: super::SessionScope,
+    attempt: [u8; 16],
+) -> Result<LanMessage, LanMessageError> {
+    if attempt == [0; 16] || scope.epoch == [0; 16] {
+        return Err(LanMessageError::InvalidStageRecord);
+    }
     let mut message = LanMessage::with_name(LanMessageKind::Unknown(RETRY_LOAD_FAILED_KIND), name)?;
     message.bytes[RETRY_LOAD_FAILED_REASON_OFFSET] = reason.code();
-    Ok(message.as_bytes()[..SIGNAL_LEN]
-        .try_into()
-        .expect("retry failure prefix"))
+    message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].copy_from_slice(&attempt);
+    message.bytes[SIGNAL_LEN + 17..SIGNAL_LEN + 41].copy_from_slice(&scope.encode());
+    Ok(message)
 }
 
 #[cfg(feature = "vmce")]
-pub fn decode_retry_load_failure(bytes: &[u8]) -> Option<RetryLoadFailureReason> {
-    if bytes.len() != SIGNAL_LEN
+pub fn decode_retry_load_failure(
+    bytes: &[u8],
+) -> Option<(RetryLoadFailureReason, super::SessionScope, [u8; 16])> {
+    if bytes.len() != LAN_MESSAGE_LEN
         || u32::from_le_bytes(bytes[..4].try_into().ok()?) != RETRY_LOAD_FAILED_KIND
     {
         return None;
     }
-    RetryLoadFailureReason::from_code(bytes[RETRY_LOAD_FAILED_REASON_OFFSET])
+    let reason = RetryLoadFailureReason::from_code(bytes[RETRY_LOAD_FAILED_REASON_OFFSET])?;
+    let attempt: [u8; 16] = bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].try_into().ok()?;
+    let scope = super::SessionScope::decode(&bytes[SIGNAL_LEN + 17..SIGNAL_LEN + 41])?;
+    (attempt != [0; 16] && scope.epoch != [0; 16]).then_some((reason, scope, attempt))
 }
 
 /// One raw slot's human words: `-1` in all three for an empty or AI slot.
@@ -531,19 +541,32 @@ mod tests {
     #[test]
     fn retry_load_failure_round_trips_every_reason() {
         use super::{RetryLoadFailureReason, decode_retry_load_failure, encode_retry_load_failure};
+        let scope = super::super::SessionScope {
+            epoch: [2; 16],
+            revision: 7,
+        };
+        let attempt = [3; 16];
         for reason in [
             RetryLoadFailureReason::MissingMap,
             RetryLoadFailureReason::ConfigMismatch,
             RetryLoadFailureReason::IdentityMismatch,
             RetryLoadFailureReason::LoadFailed,
         ] {
-            let bytes = encode_retry_load_failure("Host", reason).unwrap();
-            assert_eq!(decode_retry_load_failure(&bytes), Some(reason));
-            assert_eq!(u32::from_le_bytes(bytes[..4].try_into().unwrap()), 0x3A);
+            let message = encode_retry_load_failure("Host", reason, scope, attempt).unwrap();
+            assert_eq!(
+                decode_retry_load_failure(message.as_bytes()),
+                Some((reason, scope, attempt))
+            );
+            assert_eq!(
+                u32::from_le_bytes(message.as_bytes()[..4].try_into().unwrap()),
+                0x3A
+            );
         }
         let mut bytes =
-            encode_retry_load_failure("Host", RetryLoadFailureReason::MissingMap).unwrap();
-        bytes[SIGNAL_LEN - 1] = 0x7F;
+            encode_retry_load_failure("Host", RetryLoadFailureReason::MissingMap, scope, attempt)
+                .unwrap()
+                .into_bytes();
+        bytes[SIGNAL_LEN] = 0x7F;
         assert_eq!(decode_retry_load_failure(&bytes), None);
         assert_eq!(decode_retry_load_failure(&bytes[..SIGNAL_LEN - 1]), None);
     }

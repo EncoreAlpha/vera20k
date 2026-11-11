@@ -35,6 +35,10 @@ enum DepartureReason {
     CancelJoin { game_id: u64 },
     #[cfg(feature = "vmce")]
     CooperativeRound,
+    #[cfg(feature = "vmce")]
+    VmceLoading {
+        reason: u8,
+    },
 }
 
 struct DepartureWait {
@@ -43,6 +47,8 @@ struct DepartureWait {
     receipt: bool,
     completed: bool,
     failed: bool,
+    #[cfg(feature = "vmce")]
+    failure_detail: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -696,6 +702,7 @@ impl LanService {
             receipt: true,
             completed: false,
             failed: false,
+            failure_detail: None,
         });
         true
     }
@@ -750,6 +757,8 @@ impl LanService {
             receipt,
             completed: false,
             failed: false,
+            #[cfg(feature = "vmce")]
+            failure_detail: None,
         });
         Ok(())
     }
@@ -778,7 +787,10 @@ impl LanService {
         }
         let expired = wait.deadline.remaining(now) == 0;
         #[cfg(feature = "vmce")]
-        let round_exit = wait.reason == DepartureReason::CooperativeRound;
+        let round_exit = matches!(
+            wait.reason,
+            DepartureReason::CooperativeRound | DepartureReason::VmceLoading { .. }
+        );
         #[cfg(not(feature = "vmce"))]
         let round_exit = false;
         // Peers may have lost our first ACK of their exit record. Keep the
@@ -786,7 +798,8 @@ impl LanService {
         if round_exit && !expired && !wait.failed && service_ok {
             return None;
         }
-        let failed = wait.failed || !service_ok
+        let failed = wait.failed
+            || !service_ok
             || (expired && (!round_exit || self.queued_setup_count() != 0));
         if !failed && (!wait.receipt || self.queued_setup_count() != 0) {
             return None;
@@ -1919,6 +1932,25 @@ fn accepts_online_application_packet(payload: &[u8], live: bool, loading: bool) 
                 .is_some_and(|kind| kind == LanMessageKind::Departure.raw().to_le_bytes()))
 }
 
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_load_failure_admitted(
+    session: &super::match_runtime::session::MatchSession,
+    admitted_scope: Option<SessionScope>,
+    active: bool,
+    source: SocketAddrV4,
+    scope: SessionScope,
+    attempt: [u8; 16],
+) -> bool {
+    let source = session.network_endpoint_source(source);
+    active
+        && admitted_scope == Some(scope)
+        && session.vmce_frozen_loading_attempt(scope.epoch) == Some(attempt)
+        && source.is_some_and(|source| {
+            session.network_connected_source_indices().contains(&source)
+                && session.network_setup().is_some_and(|launch| source != launch.local_player_index)
+        })
+}
+
 fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::Result<()> {
     anyhow::ensure!(incoming.product_id == 0xaa04, "different LAN product");
     if state
@@ -1950,10 +1982,21 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
         return options::receive_extended(state, incoming.source, &incoming.payload, now);
     }
     #[cfg(feature = "vmce")]
-    if let Some(reason) =
+    if let Some((reason, scope, attempt)) =
         crate::net::lan_messages::cooperative::decode_retry_load_failure(&incoming.payload)
         && state.match_state.session_mode() == SessionMode::Lan
     {
+        let admitted_scope = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .and_then(LanService::setup_scope);
+        let active = matches!(state.frontend.screen, crate::app::GameScreen::Loading)
+            || (matches!(state.frontend.screen, crate::app::GameScreen::InGame)
+                && state.match_state.live_network.as_ref().is_some_and(|live| live.startup_pending()));
+        if !vmce_load_failure_admitted(&state.match_state.session, admitted_scope, active, incoming.source, scope, attempt) {
+            return Ok(());
+        }
         crate::app::loading::pump::peer_vmce_retry_load_failed(state, reason);
         return Ok(());
     }
@@ -3672,7 +3715,7 @@ pub(crate) fn install_gameplay(state: &mut AppState) -> anyhow::Result<()> {
     }
     // LAN5DD2DF/5DD49F is independent of game speed. WOL794F6F uses
     // the same agreed timing owner; the manifest binds that initial cadence.
-    let mut live = crate::net::live_commands::LiveCommandSession::new(
+    let live = crate::net::live_commands::LiveCommandSession::new_recoverable(
         agreement,
         transport,
         local_house,
@@ -3683,7 +3726,19 @@ pub(crate) fn install_gameplay(state: &mut AppState) -> anyhow::Result<()> {
         } else {
             crate::net::live_commands::LiveCommandMode::Lan
         },
-    )?;
+    );
+    let mut live = match live {
+        Ok(live) => live,
+        Err((error, transport)) => {
+            state
+                .match_state
+                .lan_service
+                .as_mut()
+                .expect("visit")
+                .transport = Some(transport);
+            return Err(error.into());
+        }
+    };
     if state
         .match_state
         .lan_service
@@ -3766,8 +3821,72 @@ fn send_sources(state: &mut AppState, bytes: &[u8], sources: impl IntoIterator<I
 pub(crate) fn notify_vmce_retry_load_failed(
     state: &mut AppState,
     reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
-) {
-    cooperative::send_retry_load_failure(state, reason);
+) -> bool {
+    cooperative::send_retry_load_failure(state, reason)
+}
+
+#[cfg(feature = "vmce")]
+pub(crate) fn defer_vmce_loading_failure(
+    state: &mut AppState,
+    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+    notify: bool,
+    detail: String,
+) -> bool {
+    let now = super::match_runtime::frame_pacer::frame_bucket(
+        super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
+    if state
+        .match_state
+        .lan_service
+        .as_ref()
+        .is_none_or(|service| {
+            service.departure.is_some()
+                || (state.match_state.live_network.is_some() && service.transport.is_some())
+        })
+    {
+        return false;
+    }
+    if let Some(live) = state.match_state.live_network.take() {
+        let Some(service) = state.match_state.lan_service.as_mut() else {
+            state.match_state.live_network = Some(live);
+            return false;
+        };
+        if service.transport.is_some() {
+            state.match_state.live_network = Some(live);
+            return false;
+        }
+        service.transport = Some(live.into_transport());
+    }
+    let Some(service) = state.match_state.lan_service.as_mut() else {
+        return false;
+    };
+    if service.departure.is_some() || !service.begin_vmce_round_departure(now) {
+        return false;
+    }
+    let wait = service.departure.as_mut().expect("loading departure");
+    wait.reason = DepartureReason::VmceLoading {
+        reason: reason.code(),
+    };
+    wait.failure_detail = Some(detail);
+    if notify
+        && !notify_vmce_retry_load_failed(state, reason)
+        && let Some(wait) = state
+            .match_state
+            .lan_service
+            .as_mut()
+            .and_then(|service| service.departure.as_mut())
+    {
+        wait.failed = true;
+    }
+    state.platform.window.request_redraw();
+    true
+}
+
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_loading_failure_pending(state: &AppState) -> bool {
+    state.match_state.lan_service.as_ref().is_some_and(|service| {
+        service.departure.as_ref().is_some_and(|wait| matches!(wait.reason, DepartureReason::VmceLoading { .. }))
+    })
 }
 
 fn drain_match_requests(state: &mut AppState) {
@@ -5653,6 +5772,33 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vmce")]
+    fn vmce_loading_departure_waits_for_each_target() {
+        let mut host = service();
+        let mut guest1 = service();
+        let mut guest2 = service();
+        let host_address = host.transport.as_ref().unwrap().primary_addr().unwrap();
+        let first = guest1.transport.as_ref().unwrap().primary_addr().unwrap();
+        let second = guest2.transport.as_ref().unwrap().primary_addr().unwrap();
+        assert!(host.begin_vmce_round_departure(1));
+        host.departure.as_mut().unwrap().reason = DepartureReason::VmceLoading { reason: 3 };
+        assert!(host.queue_setup([
+            (b"load failed".to_vec(), direct(first)),
+            (b"load failed".to_vec(), direct(second)),
+        ].into_iter()).unwrap());
+        let packets = global_frames(&mut host, 31);
+        assert_eq!(packets.len(), 2);
+        let ack1 = global_receive(&mut guest1, host_address, &packets[0]).pop().unwrap();
+        let ack2 = global_receive(&mut guest2, host_address, &packets[1]).pop().unwrap();
+        global_receive(&mut host, first, &ack1);
+        global_frames(&mut host, 32);
+        assert!(host.departure_ready(600, true).is_none());
+        global_receive(&mut host, second, &ack2);
+        global_frames(&mut host, 600);
+        assert_eq!(host.departure_ready(601, true), Some(DepartureReason::VmceLoading { reason: 3 }));
+    }
+
+    #[test]
     fn departure_fifo_survives_full_global_and_waits_for_every_ack() {
         let mut host = service();
         let mut guest = service();
@@ -6483,6 +6629,8 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         || service
             .go_transport_observation(service_ok)
             .is_some_and(|observation| !observation.service_ok);
+    #[cfg(feature = "vmce")]
+    let failure_detail = wait.failure_detail.clone();
     service.flush_setup();
     let Some(reason) = service.departure_ready(now, service_ok) else {
         return !canceling;
@@ -6522,6 +6670,45 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
                 } else {
                     crate::app::shell_lan::report_error(state, "VERA:VmceRoundSendFailed");
                 }
+            }
+        }
+        #[cfg(feature = "vmce")]
+        DepartureReason::VmceLoading { reason } => {
+            if let Some(transport) = state
+                .match_state
+                .lan_service
+                .as_mut()
+                .and_then(|service| service.transport.as_mut())
+            {
+                transport.global_mut().use_native_acknowledgments();
+            }
+            crate::app::App::return_to_main_menu(state);
+            let reason =
+                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+                    .unwrap_or(
+                        crate::net::lan_messages::cooperative::RetryLoadFailureReason::LoadFailed,
+                    );
+            let mut message = crate::app::loading::pump::vmce_load_failure_message(reason);
+            if let Some(detail) =
+                failure_detail.filter(|detail| !detail.is_empty() && *detail != message)
+            {
+                message.push_str("\n");
+                message.push_str(&detail);
+            }
+            if round_failed {
+                message.push_str("\n");
+                message.push_str(&crate::i18n::tr("VERA:VmceRoundSendFailed"));
+            }
+            if state.frontend.multiplayer_setup.is_some() {
+                crate::app::shell_network_setup::show_blocking_notice(state, message);
+            } else {
+                crate::app::shell_lan::append_chat(
+                    state,
+                    crate::ui::lan_shell::LanChatLine {
+                        text: message.encode_utf16().collect(),
+                        color: u32::MAX,
+                    },
+                );
             }
         }
     }

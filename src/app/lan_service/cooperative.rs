@@ -1207,9 +1207,12 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
 /// Retry-load failure from one peer: one record to every other node. Called
 /// by the loading failure owner before the transport is retired.
 #[cfg(feature = "vmce")]
-pub(super) fn send_retry_load_failure(state: &mut AppState, reason: RetryLoadFailureReason) {
+pub(super) fn send_retry_load_failure(
+    state: &mut AppState,
+    reason: RetryLoadFailureReason,
+) -> bool {
     if state.match_state.session_mode() != SessionMode::Lan {
-        return;
+        return false;
     }
     let name = local_name(state);
     let peers: Vec<_> =
@@ -1217,8 +1220,37 @@ pub(super) fn send_retry_load_failure(state: &mut AppState, reason: RetryLoadFai
             .into_iter()
             .skip(1)
             .collect();
-    if let Ok(bytes) = encode_retry_load_failure(&name, reason) {
-        send_sources(state, &bytes, peers);
+    let Some(scope) = state
+        .match_state
+        .lan_service
+        .as_ref()
+        .and_then(LanService::setup_scope)
+    else {
+        return false;
+    };
+    let Some(attempt) = state
+        .match_state
+        .session
+        .vmce_frozen_loading_attempt(scope.epoch)
+    else {
+        return false;
+    };
+    let Ok(message) = encode_retry_load_failure(&name, reason, scope, attempt) else {
+        return false;
+    };
+    let endpoints: Option<Vec<_>> = peers
+        .iter()
+        .map(|source| state.match_state.session.network_endpoint(*source))
+        .collect();
+    match (endpoints, state.match_state.lan_service.as_mut()) {
+        (Some(endpoints), Some(service)) => service
+            .queue_setup(
+                endpoints
+                    .into_iter()
+                    .map(|endpoint| (message.as_bytes().to_vec(), direct(endpoint))),
+            )
+            .unwrap_or(false),
+        _ => false,
     }
 }
 

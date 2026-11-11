@@ -3364,23 +3364,37 @@ fn fail_loading(state: &mut AppState, policy: LoadingFailurePolicy, err: anyhow:
     fail_loading_with(state, policy, err, None);
 }
 
+#[cfg(feature = "vmce")]
+pub(crate) fn vmce_installation_failed(state: &mut AppState, error: &str) -> bool {
+    if !vmce_network_loading(state) {
+        return false;
+    }
+    fail_loading(
+        state,
+        LoadingFailurePolicy::RetryNetworkShell,
+        anyhow::anyhow!(error.to_owned()),
+    );
+    true
+}
+
 /// VERA VMCE retry/start loading stores the admitted VMCE map identity on the
 /// frozen startup. A failure here is reported to every peer with one native
 /// box and both return to the LAN lobby.
 #[cfg(feature = "vmce")]
 fn vmce_network_loading(state: &AppState) -> bool {
-    network_loading_active(state)
-        && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
+    matches!(state.frontend.screen, GameScreen::Loading)
         && state
-            .frontend
-            .loading_session
+            .match_state
+            .lan_service
             .as_ref()
-            .is_some_and(|loading| {
-                matches!(
-                    loading.stage.startup(),
-                    LoadingStartup::Network(startup) if startup.vmce_map_config().is_some()
-                )
+            .and_then(|service| service.setup_scope())
+            .and_then(|scope| {
+                state
+                    .match_state
+                    .session
+                    .vmce_frozen_loading_attempt(scope.epoch)
             })
+            .is_some()
 }
 
 #[cfg(feature = "vmce")]
@@ -3410,7 +3424,7 @@ fn vmce_load_failure_reason(
 }
 
 #[cfg(feature = "vmce")]
-fn vmce_load_failure_message(
+pub(crate) fn vmce_load_failure_message(
     reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
 ) -> String {
     use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
@@ -3431,13 +3445,23 @@ pub(crate) fn peer_vmce_retry_load_failed(
     reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
 ) {
     let message = vmce_load_failure_message(reason);
-    if network_loading_active(state) {
+    if vmce_network_loading(state) {
         fail_loading_with(
             state,
             LoadingFailurePolicy::RetryNetworkShell,
             anyhow::anyhow!("{message}"),
             Some((reason.code(), false)),
         );
+    } else if matches!(state.frontend.screen, GameScreen::InGame)
+        && crate::app::lan_service::defer_vmce_loading_failure(
+            state,
+            reason,
+            false,
+            message.clone(),
+        )
+    {
+        state.match_state.frame_stopped = true;
+        state.frontend.screen = GameScreen::Loading;
     } else if state.frontend.native_shell_ui || state.frontend.external_launch {
         log::warn!("VMCE retry load failed on a peer: {message}");
     } else {
@@ -3462,14 +3486,18 @@ fn fail_loading_with(
     #[cfg(not(feature = "vmce"))]
     let vmce_failure: Option<(u8, bool)> = None;
     #[cfg(feature = "vmce")]
-    if let Some((reason, notify)) = vmce_failure {
-        if notify
-            && let Some(reason) =
-                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
-        {
-            crate::app::lan_service::notify_vmce_retry_load_failed(state, reason);
-        }
-    }
+    let vmce_deferred = !state.frontend.external_launch
+        && vmce_failure.is_some_and(|(reason, notify)| {
+            crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+                .is_some_and(|reason| {
+                    crate::app::lan_service::defer_vmce_loading_failure(
+                        state,
+                        reason,
+                        notify,
+                        format!("{err:#}"),
+                    )
+                })
+        });
     let policy = retire_failed_loading_attempt(
         &mut state.frontend.loading_session,
         &mut state.match_state.startup,
@@ -3477,6 +3505,10 @@ fn fail_loading_with(
         policy,
     );
     reset_loading_presentation(state);
+    #[cfg(feature = "vmce")]
+    if vmce_deferred {
+        return;
+    }
     if state.frontend.external_launch {
         state.frontend.external_launch_error = Some(format!("CnCNet map loading failed: {err:#}"));
         crate::app::App::return_to_main_menu(state);

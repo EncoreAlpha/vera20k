@@ -1540,6 +1540,76 @@ fn intermission_buffers_early_setup_and_reacks_go_after_lost_ack() {
 }
 
 #[test]
+#[cfg(feature = "vmce")]
+fn vmce_failure_crosses_prepared_to_active_scope() {
+    use crate::net::lan_messages::cooperative::{
+        RetryLoadFailureReason, encode_retry_load_failure,
+    };
+    let mut host = transport();
+    let mut guest = transport();
+    let host_address = host.primary_addr().unwrap();
+    let guest_address = guest.primary_addr().unwrap();
+    let scope = SessionScope {
+        epoch: [91; 16],
+        revision: 7,
+    };
+    for (wire, peer, address) in [(&mut host, 1, guest_address), (&mut guest, 0, host_address)] {
+        wire.prepare_lan_scope(scope).unwrap();
+        wire.connections_mut().add_peer(peer, address).unwrap();
+    }
+    host.set_lan_scope(scope).unwrap();
+    let message =
+        encode_retry_load_failure("Guest", RetryLoadFailureReason::LoadFailed, scope, [8; 16])
+            .unwrap();
+    assert!(guest.global_mut().send(
+        message.as_bytes(),
+        GlobalDestination::direct(host_address),
+        Delivery::Reliable,
+        0
+    ));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut tick = 1;
+    let mut received = false;
+    loop {
+        guest.service(tick);
+        host.service(tick);
+        if let Some(incoming) = host.pop_global_received() {
+            assert_eq!(incoming.payload, message.as_bytes());
+            received = true;
+        }
+        if received && guest.global().queued_send_count() == 0 {
+            break;
+        }
+        tick += 1;
+        assert!(
+            Instant::now() < deadline,
+            "failure notice did not cross the loading boundary"
+        );
+        std::thread::yield_now();
+    }
+    let stale_scope = SessionScope {
+        revision: scope.revision + 1,
+        ..scope
+    };
+    let stale = encode_retry_load_failure(
+        "Guest",
+        RetryLoadFailureReason::LoadFailed,
+        stale_scope,
+        [8; 16],
+    )
+    .unwrap();
+    assert!(guest.global_mut().send(
+        stale.as_bytes(),
+        GlobalDestination::direct(host_address),
+        Delivery::Reliable,
+        0
+    ));
+    guest.service(tick + 31);
+    assert_eq!(malformed_after_receipt(&mut host, tick + 31, 1), 1);
+    assert!(host.pop_global_received().is_none());
+}
+
+#[test]
 fn loading_scope_bridge_survives_lost_progress_before_both_peers_activate() {
     let mut host = transport();
     let mut guest = transport();

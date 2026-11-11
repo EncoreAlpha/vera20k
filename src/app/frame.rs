@@ -320,6 +320,15 @@ impl App {
             };
         }
         crate::app::lan_service::poll(state, scenario_now_ms);
+        #[cfg(feature = "vmce")]
+        if crate::app::lan_service::vmce_loading_failure_pending(state) {
+            crate::app::match_runtime::sim_tick::pump_audio_service(state, scenario_now_ms);
+            return RuntimeServiceResult {
+                main_tick_admitted,
+                screen_shake_offset,
+                ..Default::default()
+            };
+        }
         Self::poll_external_launch_progress(state);
         Self::poll_spawn_actions(state);
         // Resume receipts must release only the relay clock hold even while

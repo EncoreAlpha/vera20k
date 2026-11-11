@@ -179,57 +179,85 @@ impl LiveCommandSession {
         frame_send_rate: NonZeroU32,
         mode: LiveCommandMode,
     ) -> Result<Self, LiveCommandError> {
-        if local_house < 0 {
-            return Err(LiveCommandError::InvalidLocalHouse(local_house));
-        }
-        let mut houses = Vec::new();
-        for (id, endpoint) in transport.connections().peers() {
-            let house = i8::try_from(id)
-                .ok()
-                .filter(|&house| house >= 0 && house != local_house)
-                .ok_or(LiveCommandError::InvalidRemoteHouse(id))?;
-            if endpoint.port() == 0
-                || endpoint.ip().is_unspecified()
-                || endpoint.ip().is_broadcast()
-                || endpoint.ip().is_multicast()
-            {
-                return Err(LiveCommandError::UnboundPeer {
-                    house_id: id,
-                    endpoint,
-                });
-            }
-            houses.push(house);
-        }
-        // Intentional modern online policy: solo AI needs no command lead
-        // time. The original admission is immutable; losing remote players
-        // later must never switch an existing multiplayer game to local input.
-        let policy = if mode == LiveCommandMode::Wol && agreement.is_original_singleton() {
-            NetworkSendPolicy::Local
-        } else {
-            NetworkSendPolicy::FrameSendRate2 { frame_send_rate }
-        };
-        let sequenced = if mode == LiveCommandMode::Wol
-            && !agreement.is_original_singleton()
-            && transport.ordering_certificate().is_some()
-        {
-            Some(sequenced::SequencedSession::new(
-                &agreement,
-                &transport,
-                local_house,
-            )?)
-        } else {
-            None
-        };
-        let startup = startup::StartupHandshake::new(
+        Self::new_recoverable(
             agreement,
+            transport,
             local_house,
-            houses.iter().copied(),
             initial_seed,
             frame_send_rate,
-        )?;
+            mode,
+        )
+        .map_err(|(error, _transport)| error)
+    }
+
+    /// Keep the sole transport available to the caller if installation fails.
+    pub fn new_recoverable(
+        agreement: StartupAgreement,
+        transport: LanUdpTransport,
+        local_house: i8,
+        initial_seed: u32,
+        frame_send_rate: NonZeroU32,
+        mode: LiveCommandMode,
+    ) -> Result<Self, (LiveCommandError, LanUdpTransport)> {
+        let prepared = (|| -> Result<_, LiveCommandError> {
+            if local_house < 0 {
+                return Err(LiveCommandError::InvalidLocalHouse(local_house));
+            }
+            let mut houses = Vec::new();
+            for (id, endpoint) in transport.connections().peers() {
+                let house = i8::try_from(id)
+                    .ok()
+                    .filter(|&house| house >= 0 && house != local_house)
+                    .ok_or(LiveCommandError::InvalidRemoteHouse(id))?;
+                if endpoint.port() == 0
+                    || endpoint.ip().is_unspecified()
+                    || endpoint.ip().is_broadcast()
+                    || endpoint.ip().is_multicast()
+                {
+                    return Err(LiveCommandError::UnboundPeer {
+                        house_id: id,
+                        endpoint,
+                    });
+                }
+                houses.push(house);
+            }
+            // Intentional modern online policy: solo AI needs no command lead
+            // time. The original admission is immutable; losing remote players
+            // later must never switch an existing multiplayer game to local input.
+            let policy = if mode == LiveCommandMode::Wol && agreement.is_original_singleton() {
+                NetworkSendPolicy::Local
+            } else {
+                NetworkSendPolicy::FrameSendRate2 { frame_send_rate }
+            };
+            let sequenced = if mode == LiveCommandMode::Wol
+                && !agreement.is_original_singleton()
+                && transport.ordering_certificate().is_some()
+            {
+                Some(sequenced::SequencedSession::new(
+                    &agreement,
+                    &transport,
+                    local_house,
+                )?)
+            } else {
+                None
+            };
+            let startup = startup::StartupHandshake::new(
+                agreement,
+                local_house,
+                houses.iter().copied(),
+                initial_seed,
+                frame_send_rate,
+            )?;
+            let exchange = CommandExchange::new(houses)?;
+            Ok((policy, sequenced, startup, exchange))
+        })();
+        let (policy, sequenced, startup, exchange) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return Err((error, transport)),
+        };
         Ok(Self {
             transport,
-            exchange: CommandExchange::new(houses)?,
+            exchange,
             startup,
             local_house,
             initial_seed,

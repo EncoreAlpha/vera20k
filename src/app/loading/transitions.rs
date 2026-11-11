@@ -830,6 +830,10 @@ pub(crate) fn apply_map_load_result(state: &mut AppState, result: init::MapLoadR
             log::info!("Transitioned to InGame after scenario installation");
         }
         Err(err) => {
+            #[cfg(feature = "vmce")]
+            if crate::app::loading::pump::vmce_installation_failed(state, &err) {
+                return;
+            }
             state.match_state.startup.clear();
             state.frontend.screen = GameScreen::MissionResult {
                 title: crate::i18n::tr("VERA:StartupRejected"),

@@ -2016,6 +2016,13 @@ fn drain_socket(
                         && frame.get(2) == Some(&0)
                         && frame.get(GLOBAL_HEADER_LEN..).is_some_and(|payload| {
                             LoadingProgressMessage::decode_scoped(payload, scope).is_ok()
+                                || {
+                                    #[cfg(feature = "vmce")]
+                                    { crate::net::lan_messages::cooperative::decode_retry_load_failure(payload)
+                                        .is_some_and(|(_, message_scope, _)| message_scope == scope) }
+                                    #[cfg(not(feature = "vmce"))]
+                                    { false }
+                                }
                         })
                 }
                 _ => true,

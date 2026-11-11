@@ -112,6 +112,27 @@ fn fixture_agreement(
     .unwrap()
 }
 
+#[test]
+fn failed_install_returns_the_original_transport() {
+    let wire = transport();
+    let address = wire.primary_addr().unwrap();
+    let rate = NonZeroU32::new(5).unwrap();
+    let agreement = fixture_agreement(&wire, 0, 73, rate);
+    let (error, recovered) = match LiveCommandSession::new_recoverable(
+        agreement,
+        wire,
+        -1,
+        73,
+        rate,
+        LiveCommandMode::Lan,
+    ) {
+        Ok(_) => panic!("invalid local house must fail"),
+        Err(failure) => failure,
+    };
+    assert!(matches!(error, LiveCommandError::InvalidLocalHouse(-1)));
+    assert_eq!(recovered.primary_addr().unwrap(), address);
+}
+
 /// The following four tests isolate native probe/history timing after the
 /// modern reliable certificate is a satisfied precondition. Use the same
 /// control codec, admission and reliable ACK/retirement owners; no simulation

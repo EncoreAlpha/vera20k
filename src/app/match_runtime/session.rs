@@ -306,7 +306,9 @@ pub(crate) enum NetworkLoadingRequest {
     CooperativeGo,
     /// VMCE Go retains its result identity when retry changes the phase before send.
     #[cfg(feature = "vmce")]
-    CooperativeVmceGo { nonce: [u8; 16] },
+    CooperativeVmceGo {
+        nonce: [u8; 16],
+    },
     /// VERA-only, before the native begin: the host's resolved next stage
     /// identity, so a guest can refuse a different mission before loading.
     #[cfg(feature = "vmce")]
@@ -775,6 +777,17 @@ impl MatchSession {
             } => startup.vmce_houses(),
             _ => None,
         }
+    }
+
+    /// The current VMCE loading attempt survives the frontend loader's moves.
+    /// A retry uses the agreed result nonce; an initial start uses its LAN scope.
+    #[cfg(feature = "vmce")]
+    pub(crate) fn vmce_frozen_loading_attempt(&self, scope_epoch: [u8; 16]) -> Option<[u8; 16]> {
+        let NetworkPhase::Frozen { startup, .. } = &self.network.as_ref()?.phase else {
+            return None;
+        };
+        (startup.mode() == SessionMode::Lan && startup.launch_session().mode.class.is_vmce())
+            .then(|| startup.vmce_retry_attempt().unwrap_or(scope_epoch))
     }
 
     fn editable_network_setup(&mut self) -> anyhow::Result<&mut SkirmishLaunchSession> {
