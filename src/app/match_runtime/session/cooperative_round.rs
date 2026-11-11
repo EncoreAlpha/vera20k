@@ -517,7 +517,8 @@ impl MatchSession {
             round,
             ..
         } = round_parts(self)?;
-        if !Self::vmce_result_agreed(connected, launch, round)
+        if round.outcome.is_some()
+            || !Self::vmce_result_agreed(connected, launch, round)
             || !round
                 .result_agreement
                 .as_ref()
@@ -1785,6 +1786,41 @@ mod tests {
         Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
     ) {
         frozen_vera_rows(local, 2)
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_late_agreement_cannot_undo_a_queued_exit() {
+        let (mut guest, _) = frozen_vera(1);
+        guest
+            .enter_vmce_round(Some(next_stage("mission02.map")), true, 2)
+            .unwrap();
+        let entries = [4, 5, 0xff, 0xff];
+        guest
+            .initialize_vmce_result_agreement(entries, None)
+            .unwrap();
+        let proposal = result_record(&guest, [9; 16], entries, false);
+        guest.vmce_result_received(0, proposal).unwrap();
+        guest.vmce_result_record_queued(false).unwrap();
+        guest.vmce_result_record_queued(true).unwrap();
+        let options = round_options(guest.network_setup().unwrap(), 0);
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Begin, 0)
+            .unwrap();
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Options(options), 0)
+            .unwrap();
+        assert_eq!(
+            guest
+                .cooperative_round_event(CooperativeRoundEvent::Go, 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+        guest.quit_cooperative_round().unwrap();
+        let confirmation = result_record(&guest, [9; 16], entries, true);
+        guest.vmce_result_received(0, confirmation).unwrap();
+        assert_eq!(guest.vmce_result_take_deferred_go().unwrap(), None);
+        assert_eq!(guest.cooperative_round().unwrap().outcome, Some(false));
     }
 
     #[cfg(feature = "vmce")]

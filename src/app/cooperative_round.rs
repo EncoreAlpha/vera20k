@@ -1064,6 +1064,14 @@ fn finish(state: &mut AppState) {
 /// Main_Game's return after GameExit: the session toggles persist, then
 /// the mode's shell (LAN: a new BB).
 pub(crate) fn return_to_shell(state: &mut AppState) {
+    #[cfg(feature = "vmce")]
+    if crate::app::lan_service::cooperative::defer_vmce_round_exit(state) {
+        return;
+    }
+    finish_return_to_shell(state);
+}
+
+pub(crate) fn finish_return_to_shell(state: &mut AppState) {
     crate::app::lan_service::cooperative::release_transport(state);
     leave_result(state);
 }

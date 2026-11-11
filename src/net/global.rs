@@ -217,6 +217,12 @@ impl GlobalChannel {
         self.config.acknowledgments = GlobalAcknowledgments::AuthenticatedSource;
     }
 
+    /// Restore the LAN channel's native IP-based acknowledgement policy after
+    /// a scoped operation requiring distinct endpoint acknowledgements.
+    pub fn use_native_acknowledgments(&mut self) {
+        self.config.acknowledgments = GlobalAcknowledgments::Native;
+    }
+
     /// Read-only capture fact from the actual ACK matching policy.
     pub fn authenticated_acknowledgments(&self) -> bool {
         self.config.acknowledgments == GlobalAcknowledgments::AuthenticatedSource

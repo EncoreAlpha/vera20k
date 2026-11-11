@@ -33,6 +33,8 @@ enum DepartureReason {
     Kicked,
     Back,
     CancelJoin { game_id: u64 },
+    #[cfg(feature = "vmce")]
+    CooperativeRound,
 }
 
 struct DepartureWait {
@@ -40,6 +42,7 @@ struct DepartureWait {
     deadline: super::match_runtime::session::WallBucketTimer,
     receipt: bool,
     completed: bool,
+    failed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -678,6 +681,25 @@ impl LanService {
         self.queue_setup(packets.into_iter())
     }
 
+    #[cfg(feature = "vmce")]
+    fn begin_vmce_round_departure(&mut self, now: u32) -> bool {
+        if self.departure.is_some() {
+            return true;
+        }
+        let Some(transport) = self.transport.as_mut() else {
+            return false;
+        };
+        transport.global_mut().require_authenticated_acknowledgments();
+        self.departure = Some(DepartureWait {
+            reason: DepartureReason::CooperativeRound,
+            deadline: super::match_runtime::session::WallBucketTimer::start(now, 600),
+            receipt: true,
+            completed: false,
+            failed: false,
+        });
+        true
+    }
+
     fn begin_departure(
         &mut self,
         session: &super::match_runtime::session::MatchSession,
@@ -727,6 +749,7 @@ impl LanService {
             deadline: super::match_runtime::session::WallBucketTimer::start(now, 600),
             receipt,
             completed: false,
+            failed: false,
         });
         Ok(())
     }
@@ -753,7 +776,18 @@ impl LanService {
         if wait.completed {
             return None;
         }
-        let failed = !service_ok || wait.deadline.remaining(now) == 0;
+        let expired = wait.deadline.remaining(now) == 0;
+        #[cfg(feature = "vmce")]
+        let round_exit = wait.reason == DepartureReason::CooperativeRound;
+        #[cfg(not(feature = "vmce"))]
+        let round_exit = false;
+        // Peers may have lost our first ACK of their exit record. Keep the
+        // old scope alive for its retry window, even after our own sends retire.
+        if round_exit && !expired && !wait.failed && service_ok {
+            return None;
+        }
+        let failed = wait.failed || !service_ok
+            || (expired && (!round_exit || self.queued_setup_count() != 0));
         if !failed && (!wait.receipt || self.queued_setup_count() != 0) {
             return None;
         }
@@ -5586,6 +5620,39 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vmce")]
+    fn vmce_round_departure_waits_for_the_peer_ack_and_times_out() {
+        let mut host = service();
+        let mut guest = service();
+        let host_address = host.transport.as_ref().unwrap().primary_addr().unwrap();
+        let guest_address = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        assert!(host.begin_vmce_round_departure(1));
+        assert!(host.queue_setup(std::iter::once((b"round exit".to_vec(), direct(guest_address)))).unwrap());
+        let _lost_first = global_frames(&mut host, 31).pop().unwrap();
+        // Lose the first notification, then the first acknowledgement.
+        assert!(host.departure_ready(32, true).is_none());
+        let retry = global_frames(&mut host, 62).pop().unwrap();
+        let ack = global_receive(&mut guest, host_address, &retry).pop().unwrap();
+        let retry = global_frames(&mut host, 93).pop().unwrap();
+        let retry_ack = global_receive(&mut guest, host_address, &retry).pop().unwrap();
+        assert_eq!(ack, retry_ack);
+        let wrong_port = SocketAddrV4::new(*guest_address.ip(), guest_address.port().wrapping_add(1));
+        assert!(host.transport.as_mut().unwrap().global_mut()
+            .receive(wrong_port, 0, &retry_ack, 94, &mut |_, _| {}).is_err());
+        assert!(host.departure_ready(94, true).is_none());
+        global_receive(&mut host, guest_address, &retry_ack);
+        global_frames(&mut host, 95);
+        assert!(host.departure_ready(95, true).is_none(), "retain the scope for a peer's lost ACK");
+        assert_eq!(host.departure_ready(601, true), Some(DepartureReason::CooperativeRound));
+
+        let mut stalled = service();
+        assert!(stalled.begin_vmce_round_departure(1));
+        assert!(stalled.queue_setup(std::iter::once((b"round exit".to_vec(), direct(guest_address)))).unwrap());
+        assert!(stalled.departure_ready(600, true).is_none());
+        assert_eq!(stalled.departure_ready(601, true), Some(DepartureReason::CooperativeRound));
+    }
+
+    #[test]
     fn departure_fifo_survives_full_global_and_waits_for_every_ack() {
         let mut host = service();
         let mut guest = service();
@@ -6409,6 +6476,13 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         return false;
     };
     let canceling = matches!(wait.reason, DepartureReason::CancelJoin { .. });
+    #[cfg(feature = "vmce")]
+    let round_failed = wait.failed
+        || !service_ok
+        || (wait.deadline.remaining(now) == 0 && service.queued_setup_count() != 0)
+        || service
+            .go_transport_observation(service_ok)
+            .is_some_and(|observation| !observation.service_ok);
     service.flush_setup();
     let Some(reason) = service.departure_ready(now, service_ok) else {
         return !canceling;
@@ -6434,6 +6508,20 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
                 super::shell_network_setup::NetworkSetupEvent::Kicked,
             ) {
                 log::error!("LAN kick cleanup failed: {error:#}");
+            }
+        }
+        #[cfg(feature = "vmce")]
+        DepartureReason::CooperativeRound => {
+            crate::app::cooperative_round::finish_return_to_shell(state);
+            if round_failed {
+                if state.frontend.multiplayer_setup.is_some() {
+                    crate::app::shell_network_setup::show_blocking_notice(
+                        state,
+                        crate::i18n::tr("VERA:VmceRoundSendFailed"),
+                    );
+                } else {
+                    crate::app::shell_lan::report_error(state, "VERA:VmceRoundSendFailed");
+                }
             }
         }
     }

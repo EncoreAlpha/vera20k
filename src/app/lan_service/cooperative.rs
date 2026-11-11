@@ -58,8 +58,17 @@ pub(crate) fn release_transport(state: &mut AppState) {
     );
     service_transport(state, now);
     if let Some(service) = state.match_state.lan_service.as_mut() {
+        #[cfg(feature = "vmce")]
+        let vmce_exit = service
+            .departure
+            .as_ref()
+            .is_some_and(|wait| wait.reason == DepartureReason::CooperativeRound);
         if let Some(transport) = service.transport.as_mut() {
             transport.connections_mut().reset();
+            #[cfg(feature = "vmce")]
+            if vmce_exit {
+                transport.global_mut().use_native_acknowledgments();
+            }
             transport.clear_lan_scope();
         }
         service.pending_round.clear();
@@ -69,6 +78,20 @@ pub(crate) fn release_transport(state: &mut AppState) {
 
 /// One service pass while the round is open; false outside it.
 pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
+    #[cfg(feature = "vmce")]
+    if state
+        .match_state
+        .lan_service
+        .as_ref()
+        .is_some_and(|service| {
+            service
+                .departure
+                .as_ref()
+                .is_some_and(|wait| wait.reason == DepartureReason::CooperativeRound)
+        })
+    {
+        return false;
+    }
     #[cfg(feature = "vmce")]
     if let Some(service) = state.match_state.lan_service.as_mut()
         && (service.vmce_intermission_epoch.is_some()
@@ -191,6 +214,10 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
             log::debug!("Ignored queued co-op round packet: {error:#}");
         }
         #[cfg(feature = "vmce")]
+        if vmce_round_exit_pending(state) {
+            return true;
+        }
+        #[cfg(feature = "vmce")]
         if state
             .match_state
             .lan_service
@@ -214,6 +241,10 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         };
         if let Err(error) = receive(state, incoming) {
             log::debug!("Ignored co-op round packet: {error:#}");
+        }
+        #[cfg(feature = "vmce")]
+        if vmce_round_exit_pending(state) {
+            return true;
         }
         #[cfg(feature = "vmce")]
         if state
@@ -270,6 +301,33 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
     true
 }
 
+/// Keep the current scope and reliable queue until the result-page exit
+/// records have been acknowledged or the bounded departure wait fails.
+#[cfg(feature = "vmce")]
+pub(crate) fn defer_vmce_round_exit(state: &mut AppState) -> bool {
+    if state.match_state.session_mode() != SessionMode::Lan
+        || !state
+            .match_state
+            .session
+            .cooperative_round()
+            .is_some_and(|round| round.vera())
+    {
+        return false;
+    }
+    let Some(service) = state.match_state.lan_service.as_mut() else {
+        return false;
+    };
+    let now = super::super::match_runtime::frame_pacer::frame_bucket(
+        super::super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
+    if !service.begin_vmce_round_departure(now) {
+        return false;
+    }
+    drain_match_requests(state);
+    state.platform.window.request_redraw();
+    true
+}
+
 #[cfg(feature = "vmce")]
 fn fail_vmce_round_delivery(state: &mut AppState) -> bool {
     if !state
@@ -283,11 +341,42 @@ fn fail_vmce_round_delivery(state: &mut AppState) -> bool {
     log::error!("VMCE round delivery failed; returning to the lobby");
     let _ = state.match_state.session.quit_cooperative_round();
     crate::app::cooperative_round::return_to_shell(state);
-    crate::app::shell_network_setup::show_blocking_notice(
-        state,
-        crate::i18n::tr("VERA:VmceRoundSendFailed"),
-    );
+    report_vmce_round_failure(state);
     true
+}
+
+#[cfg(feature = "vmce")]
+fn report_vmce_round_failure(state: &mut AppState) {
+    if let Some(wait) = state
+        .match_state
+        .lan_service
+        .as_mut()
+        .and_then(|service| service.departure.as_mut())
+        .filter(|wait| wait.reason == DepartureReason::CooperativeRound)
+    {
+        wait.failed = true;
+    } else if state.frontend.multiplayer_setup.is_some() {
+        crate::app::shell_network_setup::show_blocking_notice(
+            state,
+            crate::i18n::tr("VERA:VmceRoundSendFailed"),
+        );
+    } else {
+        crate::app::shell_lan::report_error(state, "VERA:VmceRoundSendFailed");
+    }
+}
+
+#[cfg(feature = "vmce")]
+fn vmce_round_exit_pending(state: &AppState) -> bool {
+    state
+        .match_state
+        .lan_service
+        .as_ref()
+        .is_some_and(|service| {
+            service
+                .departure
+                .as_ref()
+                .is_some_and(|wait| wait.reason == DepartureReason::CooperativeRound)
+        })
 }
 
 #[cfg(feature = "vmce")]
@@ -897,6 +986,54 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             .skip(1)
             .collect();
     #[cfg(feature = "vmce")]
+    if state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| round.vera())
+        && matches!(
+            request,
+            NetworkLoadingRequest::CooperativeLeave
+                | NetworkLoadingRequest::CooperativeStageRejected
+        )
+    {
+        let signal = if matches!(request, NetworkLoadingRequest::CooperativeLeave) {
+            CooperativeSignal::Left
+        } else {
+            CooperativeSignal::StageRejected
+        };
+        let endpoints: Option<Vec<_>> = peers
+            .iter()
+            .map(|source| state.match_state.session.network_endpoint(*source))
+            .collect();
+        let queued = match (
+            signal.encode(&name),
+            endpoints,
+            state.match_state.lan_service.as_mut(),
+        ) {
+            (Ok(bytes), Some(endpoints), Some(service)) => service
+                .queue_setup(
+                    endpoints
+                        .into_iter()
+                        .map(|endpoint| (bytes.to_vec(), direct(endpoint))),
+                )
+                .unwrap_or(false),
+            _ => false,
+        };
+        if !queued {
+            if let Some(wait) = state
+                .match_state
+                .lan_service
+                .as_mut()
+                .and_then(|service| service.departure.as_mut())
+            {
+                wait.failed = true;
+            }
+            log::error!("VMCE exit record could not be queued");
+        }
+        return;
+    }
+    #[cfg(feature = "vmce")]
     let vmce_wire = if let NetworkLoadingRequest::CooperativeVmceGo { nonce } = &request {
         Some(
             crate::net::lan_messages::cooperative::VmceRoundControl::Go
@@ -1014,10 +1151,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             log::error!("VMCE round control could not be queued; returning to the lobby");
             let _ = state.match_state.session.quit_cooperative_round();
             crate::app::cooperative_round::return_to_shell(state);
-            crate::app::shell_network_setup::show_blocking_notice(
-                state,
-                crate::i18n::tr("VERA:VmceRoundSendFailed"),
-            );
+            report_vmce_round_failure(state);
         }
         return;
     }
