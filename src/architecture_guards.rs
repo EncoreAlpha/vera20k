@@ -203,6 +203,9 @@ fn engine_production_files() -> Vec<(&'static str, &'static str)> {
 const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
     "app/diagnostics/shell_capture/movies/lan.rs",
     "app/diagnostics/shell_capture/movies/lan/live.rs",
+    "app/lan_service/vmce_round.rs",
+    "app/match_runtime/session/cooperative_round/vmce_round.rs",
+    "app/vmce_round.rs",
     "app/vmce_result.rs",
     "skirmish_modes.rs",
 ];
@@ -223,14 +226,13 @@ const VMCE_LOADER_VARIANT_DECLARATIONS: &[(&str, &str, usize)] = &[
 /// separately named policy covers them. Values are function-local counts of
 /// `is_vmce` and whole-token `Vmce` references.
 const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
-    ("app/cooperative_round.rs", "assign", 1, 0),
     ("app/cooperative_round.rs", "build_model_rows", 1, 0),
     ("app/cooperative_round.rs", "mission_ended", 1, 0),
     ("app/cooperative_round.rs", "open_result", 1, 0),
     ("app/input/abort.rs", "vmce_active", 1, 0),
     ("app/input/multiplayer_setup.rs", "layout", 1, 0),
-    ("app/lan_service.rs", "receive", 4, 0),
     ("app/lan_service.rs", "reject_setup_compatibility", 1, 0),
+    ("app/lan_service.rs", "receive", 3, 0),
     ("app/lan_service.rs", "setup_maps_verified", 1, 0),
     ("app/lan_service.rs", "setup_request", 1, 0),
     ("app/lan_service/maps.rs", "poll", 1, 0),
@@ -360,12 +362,6 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
     (
         "app/match_runtime/session.rs",
         "vmce_frozen_loading_attempt",
-        1,
-        0,
-    ),
-    (
-        "app/match_runtime/session/cooperative_round.rs",
-        "enter_cooperative_round_with_vera",
         1,
         0,
     ),
@@ -567,7 +563,7 @@ fn shared_vmce_mode_checks_have_pinned_policy_callers() {
         .map(|((file, _), _)| file.as_str())
         .collect();
     println!(
-        "VMCE shared direct references: 112/27 at d94e9992b -> {shared_count}/{} now",
+        "VMCE shared direct references: 85/21 at cc0f2caca -> {shared_count}/{} now",
         shared_files.len()
     );
     println!("VMCE specialized references (separate): 7 diagnostics + 1 result");

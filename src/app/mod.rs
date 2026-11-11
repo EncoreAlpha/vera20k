@@ -128,6 +128,8 @@ pub(crate) mod types;
 pub(crate) mod updater;
 #[cfg(feature = "vmce")]
 pub(crate) mod vmce_result;
+#[cfg(feature = "vmce")]
+pub(crate) mod vmce_round;
 pub(crate) mod web_link;
 mod window_icon;
 

@@ -2364,7 +2364,7 @@ impl LiveLanCapture {
                             .match_state
                             .session
                             .cooperative_round()
-                            .is_some_and(|round| round.vera())
+                            .is_some_and(|round| round.vmce_active())
                     });
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         let statistics = page
@@ -2553,10 +2553,10 @@ impl LiveLanCapture {
                                     .cooperative_round_slot_ready(index)
                             })
                             .collect();
-                        let continue_enabled =
-                            crate::app::match_runtime::session::vmce_round::continue_enabled(
-                                &state.match_state.session,
-                            );
+                        let continue_enabled = state
+                            .match_state
+                            .session
+                            .cooperative_round_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2635,10 +2635,10 @@ impl LiveLanCapture {
                                     .cooperative_round_slot_ready(index)
                             })
                             .collect();
-                        let continue_enabled =
-                            crate::app::match_runtime::session::vmce_round::continue_enabled(
-                                &state.match_state.session,
-                            );
+                        let continue_enabled = state
+                            .match_state
+                            .session
+                            .cooperative_round_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2759,7 +2759,7 @@ impl LiveLanCapture {
                         .match_state
                         .session
                         .cooperative_round()
-                        .is_some_and(|round| round.vera());
+                        .is_some_and(|round| round.vmce_active());
                 if native_victory_page {
                     let board = state
                         .frontend
@@ -2888,13 +2888,16 @@ impl LiveLanCapture {
                     render_frame < opened.saturating_add(1_200),
                     "VMCE round did not become ready: host={}, continue_enabled={}",
                     self.host(),
-                    crate::app::match_runtime::session::vmce_round::continue_enabled(
-                        &state.match_state.session,
-                    )
+                    state
+                        .match_state
+                        .session
+                        .cooperative_round_continue_enabled()
                 );
-                if !crate::app::match_runtime::session::vmce_round::continue_enabled(
-                    &state.match_state.session,
-                ) {
+                if !state
+                    .match_state
+                    .session
+                    .cooperative_round_continue_enabled()
+                {
                     return Ok(());
                 }
                 // On the VMCE retry page the host's Retry record is only
@@ -2902,10 +2905,11 @@ impl LiveLanCapture {
                 // exposes that gate separately from Continue's enabled state.
                 if matches!(outcome, VmceOutcome::Retry)
                     && self.host()
-                    && !crate::app::match_runtime::session::vmce_round::retry_state(
-                        &state.match_state.session,
-                    )
-                    .is_some_and(|(_, lit, enabled)| lit && enabled)
+                    && !state
+                        .match_state
+                        .session
+                        .cooperative_round_retry_state()
+                        .is_some_and(|(_, lit, enabled)| lit && enabled)
                 {
                     return Ok(());
                 }

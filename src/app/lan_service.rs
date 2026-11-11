@@ -32,7 +32,9 @@ const LOBBY_RETRY_TIMING: RetryTiming = RetryTiming {
 enum DepartureReason {
     Kicked,
     Back,
-    CancelJoin { game_id: u64 },
+    CancelJoin {
+        game_id: u64,
+    },
     #[cfg(feature = "vmce")]
     CooperativeRound,
     #[cfg(feature = "vmce")]
@@ -132,26 +134,9 @@ pub(crate) struct LanService {
     setup_reassembly: crate::net::lan_messages::extended_setup::Reassembly,
     maps: maps::Transfers,
     pending_setup: std::collections::VecDeque<(Vec<u8>, GlobalDestination)>,
-    /// VERA-only: co-op round records that arrived after the mission ended
-    /// but before the round phase opened. The round owns them once it exists.
-    pending_round: std::collections::VecDeque<GlobalMessage>,
-    /// A VMCE host must retain its scoped transport until its final Go is acknowledged.
+    /// VMCE result and intermission transport state stays grouped in its LAN owner.
     #[cfg(feature = "vmce")]
-    vmce_campaign_completion_pending: bool,
-    #[cfg(feature = "vmce")]
-    vmce_campaign_completion_enqueue_failed: bool,
-    /// New room identity sent by the host over the current match scope.
-    #[cfg(feature = "vmce")]
-    vmce_intermission_epoch: Option<[u8; 16]>,
-    #[cfg(feature = "vmce")]
-    vmce_intermission_failed: bool,
-    #[cfg(feature = "vmce")]
-    vmce_intermission_go_queued: bool,
-    #[cfg(feature = "vmce")]
-    vmce_intermission_entered: bool,
-    /// Result challenges already used by this room, retained across retries.
-    #[cfg(feature = "vmce")]
-    pub(super) vmce_used_result_nonces: std::collections::BTreeSet<[u8; 16]>,
+    vmce_round: vmce_round::VmceLanRoundState,
     /// Whole-series content verification (worker/cancel/result only; the
     /// admitted map status stays in MatchSession).
     #[cfg(feature = "vmce")]
@@ -283,21 +268,8 @@ impl LanService {
             setup_reassembly: Default::default(),
             maps: Default::default(),
             pending_setup: Default::default(),
-            pending_round: Default::default(),
             #[cfg(feature = "vmce")]
-            vmce_campaign_completion_pending: false,
-            #[cfg(feature = "vmce")]
-            vmce_campaign_completion_enqueue_failed: false,
-            #[cfg(feature = "vmce")]
-            vmce_intermission_epoch: None,
-            #[cfg(feature = "vmce")]
-            vmce_intermission_failed: false,
-            #[cfg(feature = "vmce")]
-            vmce_intermission_go_queued: false,
-            #[cfg(feature = "vmce")]
-            vmce_intermission_entered: false,
-            #[cfg(feature = "vmce")]
-            vmce_used_result_nonces: Default::default(),
+            vmce_round: Default::default(),
             #[cfg(feature = "vmce")]
             vmce_series: vmce_series::VmceSeriesVerifier::new(),
             #[cfg(any(
@@ -497,30 +469,6 @@ impl LanService {
         })
     }
 
-    #[cfg(feature = "vmce")]
-    fn defer_vmce_campaign_completion(&mut self) {
-        self.vmce_campaign_completion_pending = true;
-        self.vmce_campaign_completion_enqueue_failed = false;
-    }
-
-    #[cfg(feature = "vmce")]
-    fn take_vmce_campaign_completion(&mut self, service_ok: bool) -> Option<Result<(), ()>> {
-        if !self.vmce_campaign_completion_pending {
-            return None;
-        }
-        let observation = self.go_transport_observation(service_ok);
-        let result = match observation {
-            _ if self.vmce_campaign_completion_enqueue_failed => Err(()),
-            Some(observation) if !observation.service_ok => Err(()),
-            Some(observation) if observation.queued != 0 => return None,
-            Some(_) => Ok(()),
-            None => Err(()),
-        };
-        self.vmce_campaign_completion_pending = false;
-        self.vmce_campaign_completion_enqueue_failed = false;
-        Some(result)
-    }
-
     fn can_queue_go(&self, recipients: usize) -> bool {
         self.queued_setup_count() == 0
             && self
@@ -695,7 +643,9 @@ impl LanService {
         let Some(transport) = self.transport.as_mut() else {
             return false;
         };
-        transport.global_mut().require_authenticated_acknowledgments();
+        transport
+            .global_mut()
+            .require_authenticated_acknowledgments();
         self.departure = Some(DepartureWait {
             reason: DepartureReason::CooperativeRound,
             deadline: super::match_runtime::session::WallBucketTimer::start(now, 600),
@@ -705,6 +655,45 @@ impl LanService {
             failure_detail: None,
         });
         true
+    }
+
+    #[cfg(feature = "vmce")]
+    fn begin_vmce_loading_departure(
+        &mut self,
+        now: u32,
+        reason: crate::net::lan_messages::ingame::LoadingFailureReason,
+        detail: String,
+    ) -> bool {
+        if self.departure.is_some() || !self.begin_vmce_round_departure(now) {
+            return false;
+        }
+        let wait = self.departure.as_mut().expect("VMCE departure was started");
+        wait.reason = DepartureReason::VmceLoading {
+            reason: reason.code(),
+        };
+        wait.failure_detail = Some(detail);
+        true
+    }
+
+    #[cfg(feature = "vmce")]
+    fn mark_departure_failed(&mut self) {
+        if let Some(wait) = self.departure.as_mut() {
+            wait.failed = true;
+        }
+    }
+
+    #[cfg(feature = "vmce")]
+    fn vmce_loading_failure_pending(&self) -> bool {
+        self.departure
+            .as_ref()
+            .is_some_and(|wait| matches!(wait.reason, DepartureReason::VmceLoading { .. }))
+    }
+
+    #[cfg(feature = "vmce")]
+    fn vmce_round_exit_pending(&self) -> bool {
+        self.departure
+            .as_ref()
+            .is_some_and(|wait| wait.reason == DepartureReason::CooperativeRound)
     }
 
     fn begin_departure(
@@ -1018,15 +1007,8 @@ impl LanService {
             SETUP_PEER_LEASE,
         ));
         #[cfg(feature = "vmce")]
-        if !session.host() && self.vmce_intermission_entered {
-            // A validated keepalive under the new epoch proves that the host
-            // received Go's ACK and switched rooms. Until this point duplicate
-            // scoped Go packets must still receive their old-channel ACKs.
-            if let Some(transport) = self.transport.as_mut() {
-                transport.finish_lan_intermission();
-            }
-            self.vmce_intermission_entered = false;
-            self.vmce_intermission_epoch = None;
+        if !session.host() {
+            vmce_round::host_heartbeat_validated(self);
         }
         Ok(true)
     }
@@ -1166,13 +1148,7 @@ impl LanService {
     fn clear_setup(&mut self) {
         #[cfg(feature = "vmce")]
         {
-            self.vmce_campaign_completion_pending = false;
-            self.vmce_campaign_completion_enqueue_failed = false;
-            self.vmce_intermission_epoch = None;
-            self.vmce_intermission_failed = false;
-            self.vmce_intermission_go_queued = false;
-            self.vmce_intermission_entered = false;
-            self.vmce_used_result_nonces.clear();
+            self.vmce_round.clear_visit();
             // A new visit's options identity is verified from scratch.
             self.vmce_series.cancel();
         }
@@ -1932,25 +1908,6 @@ fn accepts_online_application_packet(payload: &[u8], live: bool, loading: bool) 
                 .is_some_and(|kind| kind == LanMessageKind::Departure.raw().to_le_bytes()))
 }
 
-#[cfg(feature = "vmce")]
-pub(crate) fn vmce_load_failure_admitted(
-    session: &super::match_runtime::session::MatchSession,
-    admitted_scope: Option<SessionScope>,
-    active: bool,
-    source: SocketAddrV4,
-    scope: SessionScope,
-    attempt: [u8; 16],
-) -> bool {
-    let source = session.network_endpoint_source(source);
-    active
-        && admitted_scope == Some(scope)
-        && session.vmce_frozen_loading_attempt(scope.epoch) == Some(attempt)
-        && source.is_some_and(|source| {
-            session.network_connected_source_indices().contains(&source)
-                && session.network_setup().is_some_and(|launch| source != launch.local_player_index)
-        })
-}
-
 fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::Result<()> {
     anyhow::ensure!(incoming.product_id == 0xaa04, "different LAN product");
     if state
@@ -1993,30 +1950,28 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
             .and_then(LanService::setup_scope);
         let active = matches!(state.frontend.screen, crate::app::GameScreen::Loading)
             || (matches!(state.frontend.screen, crate::app::GameScreen::InGame)
-                && state.match_state.live_network.as_ref().is_some_and(|live| live.startup_pending()));
-        if !vmce_load_failure_admitted(&state.match_state.session, admitted_scope, active, incoming.source, scope, attempt) {
+                && state
+                    .match_state
+                    .live_network
+                    .as_ref()
+                    .is_some_and(|live| live.startup_pending()));
+        if !vmce_round::load_failure_admitted(
+            &state.match_state.session,
+            admitted_scope,
+            active,
+            incoming.source,
+            scope,
+            attempt,
+        ) {
             return Ok(());
         }
         crate::app::loading::pump::peer_vmce_retry_load_failed(state, reason);
         return Ok(());
     }
-    // A VMCE peer can send its round's records while this peer is still
-    // retiring the mission and before the round phase exists. Hold them; the
-    // round's service pass applies them in arrival order once it opens.
-    if cooperative::is_round_record(&incoming.payload)
-        && state.match_state.session_mode() == SessionMode::Lan
-        && state.match_state.session.cooperative_round().is_none()
-        && state
-            .match_state
-            .session
-            .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce())
-        && let Some(service) = state.match_state.lan_service.as_mut()
-    {
-        service.pending_round.push_back(incoming);
-        if service.pending_round.len() > 64 {
-            service.pending_round.pop_front();
-        }
+    // Retain co-op packets received while the prior mission is retiring; the
+    // VMCE LAN owner applies them once its shared round phase opens.
+    #[cfg(feature = "vmce")]
+    if vmce_round::defer_pending_round_record(state, &incoming) {
         return Ok(());
     }
     if loading::is_progress(&incoming.payload) {
@@ -3784,8 +3739,15 @@ mod loading;
 mod maps;
 mod options;
 #[cfg(feature = "vmce")]
+pub(crate) mod vmce_round;
+#[cfg(feature = "vmce")]
 mod vmce_series;
 pub(crate) use loading::LoadingNetworkService;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_round::{
+    defer_loading_failure as defer_vmce_loading_failure,
+    loading_failure_pending as vmce_loading_failure_pending,
+};
 #[cfg(feature = "vmce")]
 pub(crate) use vmce_series::VmceSeriesState;
 
@@ -3812,81 +3774,6 @@ fn send_sources(state: &mut AppState, bytes: &[u8], sources: impl IntoIterator<I
             send_bytes(state, bytes, direct(endpoint), true);
         }
     }
-}
-
-/// Tell every peer why this peer stopped a retry load. Uses the same LAN
-/// transport as the round records; the receiving loader shows one box and
-/// returns to the lobby too.
-#[cfg(feature = "vmce")]
-pub(crate) fn notify_vmce_retry_load_failed(
-    state: &mut AppState,
-    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
-) -> bool {
-    cooperative::send_retry_load_failure(state, reason)
-}
-
-#[cfg(feature = "vmce")]
-pub(crate) fn defer_vmce_loading_failure(
-    state: &mut AppState,
-    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
-    notify: bool,
-    detail: String,
-) -> bool {
-    let now = super::match_runtime::frame_pacer::frame_bucket(
-        super::match_runtime::frame_pacer::wall_clock_ms(),
-    );
-    if state
-        .match_state
-        .lan_service
-        .as_ref()
-        .is_none_or(|service| {
-            service.departure.is_some()
-                || (state.match_state.live_network.is_some() && service.transport.is_some())
-        })
-    {
-        return false;
-    }
-    if let Some(live) = state.match_state.live_network.take() {
-        let Some(service) = state.match_state.lan_service.as_mut() else {
-            state.match_state.live_network = Some(live);
-            return false;
-        };
-        if service.transport.is_some() {
-            state.match_state.live_network = Some(live);
-            return false;
-        }
-        service.transport = Some(live.into_transport());
-    }
-    let Some(service) = state.match_state.lan_service.as_mut() else {
-        return false;
-    };
-    if service.departure.is_some() || !service.begin_vmce_round_departure(now) {
-        return false;
-    }
-    let wait = service.departure.as_mut().expect("loading departure");
-    wait.reason = DepartureReason::VmceLoading {
-        reason: reason.code(),
-    };
-    wait.failure_detail = Some(detail);
-    if notify
-        && !notify_vmce_retry_load_failed(state, reason)
-        && let Some(wait) = state
-            .match_state
-            .lan_service
-            .as_mut()
-            .and_then(|service| service.departure.as_mut())
-    {
-        wait.failed = true;
-    }
-    state.platform.window.request_redraw();
-    true
-}
-
-#[cfg(feature = "vmce")]
-pub(crate) fn vmce_loading_failure_pending(state: &AppState) -> bool {
-    state.match_state.lan_service.as_ref().is_some_and(|service| {
-        service.departure.as_ref().is_some_and(|wait| matches!(wait.reason, DepartureReason::VmceLoading { .. }))
-    })
 }
 
 fn drain_match_requests(state: &mut AppState) {
@@ -4962,10 +4849,10 @@ mod tests {
             .encode("Host")
             .unwrap();
         assert!(host.send(&go, direct(guest_addr), true));
-        host.defer_vmce_campaign_completion();
+        host.vmce_round.defer_campaign_completion();
         host.transport.as_mut().unwrap().service(1);
         assert!(
-            host.take_vmce_campaign_completion(true).is_none(),
+            vmce_round::take_campaign_completion_from_service(&mut host, true).is_none(),
             "a sent but unacknowledged Go must keep the scoped transport"
         );
         host.transport
@@ -4973,7 +4860,7 @@ mod tests {
             .unwrap()
             .service(LOBBY_RETRY_TIMING.retry_delta + 2);
         assert!(
-            host.take_vmce_campaign_completion(true).is_none(),
+            vmce_round::take_campaign_completion_from_service(&mut host, true).is_none(),
             "a retry without an acknowledgement must still wait"
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -4987,7 +4874,8 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .service(LOBBY_RETRY_TIMING.retry_delta + 2);
-            if let Some(result) = host.take_vmce_campaign_completion(true) {
+            if let Some(result) = vmce_round::take_campaign_completion_from_service(&mut host, true)
+            {
                 assert!(result.is_ok());
                 break;
             }
@@ -5746,29 +5634,62 @@ mod tests {
         let host_address = host.transport.as_ref().unwrap().primary_addr().unwrap();
         let guest_address = guest.transport.as_ref().unwrap().primary_addr().unwrap();
         assert!(host.begin_vmce_round_departure(1));
-        assert!(host.queue_setup(std::iter::once((b"round exit".to_vec(), direct(guest_address)))).unwrap());
+        assert!(
+            host.queue_setup(std::iter::once((
+                b"round exit".to_vec(),
+                direct(guest_address)
+            )))
+            .unwrap()
+        );
         let _lost_first = global_frames(&mut host, 31).pop().unwrap();
         // Lose the first notification, then the first acknowledgement.
         assert!(host.departure_ready(32, true).is_none());
         let retry = global_frames(&mut host, 62).pop().unwrap();
-        let ack = global_receive(&mut guest, host_address, &retry).pop().unwrap();
+        let ack = global_receive(&mut guest, host_address, &retry)
+            .pop()
+            .unwrap();
         let retry = global_frames(&mut host, 93).pop().unwrap();
-        let retry_ack = global_receive(&mut guest, host_address, &retry).pop().unwrap();
+        let retry_ack = global_receive(&mut guest, host_address, &retry)
+            .pop()
+            .unwrap();
         assert_eq!(ack, retry_ack);
-        let wrong_port = SocketAddrV4::new(*guest_address.ip(), guest_address.port().wrapping_add(1));
-        assert!(host.transport.as_mut().unwrap().global_mut()
-            .receive(wrong_port, 0, &retry_ack, 94, &mut |_, _| {}).is_err());
+        let wrong_port =
+            SocketAddrV4::new(*guest_address.ip(), guest_address.port().wrapping_add(1));
+        assert!(
+            host.transport
+                .as_mut()
+                .unwrap()
+                .global_mut()
+                .receive(wrong_port, 0, &retry_ack, 94, &mut |_, _| {})
+                .is_err()
+        );
         assert!(host.departure_ready(94, true).is_none());
         global_receive(&mut host, guest_address, &retry_ack);
         global_frames(&mut host, 95);
-        assert!(host.departure_ready(95, true).is_none(), "retain the scope for a peer's lost ACK");
-        assert_eq!(host.departure_ready(601, true), Some(DepartureReason::CooperativeRound));
+        assert!(
+            host.departure_ready(95, true).is_none(),
+            "retain the scope for a peer's lost ACK"
+        );
+        assert_eq!(
+            host.departure_ready(601, true),
+            Some(DepartureReason::CooperativeRound)
+        );
 
         let mut stalled = service();
         assert!(stalled.begin_vmce_round_departure(1));
-        assert!(stalled.queue_setup(std::iter::once((b"round exit".to_vec(), direct(guest_address)))).unwrap());
+        assert!(
+            stalled
+                .queue_setup(std::iter::once((
+                    b"round exit".to_vec(),
+                    direct(guest_address)
+                )))
+                .unwrap()
+        );
         assert!(stalled.departure_ready(600, true).is_none());
-        assert_eq!(stalled.departure_ready(601, true), Some(DepartureReason::CooperativeRound));
+        assert_eq!(
+            stalled.departure_ready(601, true),
+            Some(DepartureReason::CooperativeRound)
+        );
     }
 
     #[test]
@@ -5782,20 +5703,33 @@ mod tests {
         let second = guest2.transport.as_ref().unwrap().primary_addr().unwrap();
         assert!(host.begin_vmce_round_departure(1));
         host.departure.as_mut().unwrap().reason = DepartureReason::VmceLoading { reason: 3 };
-        assert!(host.queue_setup([
-            (b"load failed".to_vec(), direct(first)),
-            (b"load failed".to_vec(), direct(second)),
-        ].into_iter()).unwrap());
+        assert!(
+            host.queue_setup(
+                [
+                    (b"load failed".to_vec(), direct(first)),
+                    (b"load failed".to_vec(), direct(second)),
+                ]
+                .into_iter()
+            )
+            .unwrap()
+        );
         let packets = global_frames(&mut host, 31);
         assert_eq!(packets.len(), 2);
-        let ack1 = global_receive(&mut guest1, host_address, &packets[0]).pop().unwrap();
-        let ack2 = global_receive(&mut guest2, host_address, &packets[1]).pop().unwrap();
+        let ack1 = global_receive(&mut guest1, host_address, &packets[0])
+            .pop()
+            .unwrap();
+        let ack2 = global_receive(&mut guest2, host_address, &packets[1])
+            .pop()
+            .unwrap();
         global_receive(&mut host, first, &ack1);
         global_frames(&mut host, 32);
         assert!(host.departure_ready(600, true).is_none());
         global_receive(&mut host, second, &ack2);
         global_frames(&mut host, 600);
-        assert_eq!(host.departure_ready(601, true), Some(DepartureReason::VmceLoading { reason: 3 }));
+        assert_eq!(
+            host.departure_ready(601, true),
+            Some(DepartureReason::VmceLoading { reason: 3 })
+        );
     }
 
     #[test]
@@ -6683,11 +6617,8 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
                 transport.global_mut().use_native_acknowledgments();
             }
             crate::app::App::return_to_main_menu(state);
-            let reason =
-                crate::net::lan_messages::ingame::LoadingFailureReason::from_code(reason)
-                    .unwrap_or(
-                        crate::net::lan_messages::ingame::LoadingFailureReason::LoadFailed,
-                    );
+            let reason = crate::net::lan_messages::ingame::LoadingFailureReason::from_code(reason)
+                .unwrap_or(crate::net::lan_messages::ingame::LoadingFailureReason::LoadFailed);
             let mut message = crate::app::loading::pump::vmce_load_failure_message(reason);
             if let Some(detail) =
                 failure_detail.filter(|detail| !detail.is_empty() && *detail != message)

@@ -35,12 +35,11 @@ use std::sync::Arc;
 pub(crate) use crate::sim::scenario_session::ScenarioGameMode as SessionMode;
 
 mod cooperative_round;
-#[cfg(feature = "vmce")]
-pub(crate) mod vmce_round;
 pub(crate) use cooperative_round::{
     CooperativeRoundEvent, CooperativeRoundOptions, CooperativeRoundState, CooperativeRoundStep,
-    VmceRoundEnding,
 };
+#[cfg(feature = "vmce")]
+pub(crate) use cooperative_round::{VmceRoundEnding, VmceRoundStep};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NetworkReturnContext {
@@ -258,10 +257,6 @@ enum NetworkPhase {
         connected: Vec<usize>,
         launch: SkirmishLaunchSession,
         round: CooperativeRoundState,
-        /// VMCE's next stage, resolved from its external campaign on
-        /// both peers when BC6 opened. Stock Cooperative leaves this empty.
-        #[cfg(feature = "vmce")]
-        vera_next: Option<crate::app::match_bootstrap::VmceNextStage>,
     },
 }
 

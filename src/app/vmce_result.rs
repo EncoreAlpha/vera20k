@@ -76,11 +76,10 @@ pub(crate) fn open_defeat(state: &mut AppState) {
     let side = model.side;
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) = crate::app::match_runtime::session::vmce_round::enter_ending(
-        &mut state.match_state.session,
+    if let Err(error) = state.match_state.session.enter_vmce_round_ending(
         None,
         true,
-        crate::app::match_runtime::session::vmce_round::VmceRoundEnding::Retry,
+        crate::app::match_runtime::session::VmceRoundEnding::Retry,
         rows,
     ) {
         log::error!("Could not open the VMCE defeat round: {error:#}");
@@ -143,7 +142,7 @@ pub(crate) fn owns_page(state: &AppState) -> bool {
                 .match_state
                 .session
                 .cooperative_round()
-                .is_some_and(|round| round.vera()))
+                .is_some_and(|round| round.vmce_active()))
 }
 
 /// Run the VMCE result page's Continue. Returns false when the open page is
@@ -160,7 +159,10 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
         App::leave_mission_result_screen(state);
         return true;
     }
-    if !crate::app::match_runtime::session::vmce_round::continue_enabled(&state.match_state.session)
+    if !state
+        .match_state
+        .session
+        .cooperative_round_continue_enabled()
     {
         state.platform.window.request_redraw();
         return true;
@@ -207,7 +209,7 @@ pub(crate) fn result_board(
 ) -> Option<crate::ui::campaign_score_shell::VmceResultBoard> {
     use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
     let round = state.match_state.session.cooperative_round()?;
-    if !round.vera() {
+    if !round.vmce_active() {
         return None;
     }
     let launch = state.match_state.session.network_setup()?;
@@ -354,13 +356,12 @@ fn open_page(
     state.frontend.coop_score_page = None;
     crate::app::lan_service::cooperative::hold_transport(state);
     App::retire_finished_scenario(state);
-    if let Err(error) = crate::app::match_runtime::session::vmce_round::enter_ending(
-        &mut state.match_state.session,
-        next,
-        can_continue,
-        ending,
-        rows,
-    ) {
+    if let Err(error) =
+        state
+            .match_state
+            .session
+            .enter_vmce_round_ending(next, can_continue, ending, rows)
+    {
         log::error!("Could not open the VMCE {what} result: {error:#}");
         crate::app::cooperative_round::return_to_shell(state);
         return;
