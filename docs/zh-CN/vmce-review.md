@@ -6,9 +6,11 @@ lang: zh-CN
 
 # VMCE 审查总文档
 
-[中文说明书](vmce-guide.md) · [中文首页](vmce.md) · [English backlog](../vmce-backlog.md)
+[玩家与地图作者指南](vmce-guide.md) · [中文总览](vmce.md) · [English hub](../vmce.md) · [English backlog](../vmce-backlog.md)
 
-本页合并此前的中文审查页与中文待办，只保留**需要修复**的缺陷与实现时必须遵守的已锁定决定，并按修复优先级排列；A/B 编号保持不变，供提交、测试和旧页交叉引用。已实现项、纯验收任务与暂缓项不进入本页。
+本页合并此前的中文审查页与中文待办，是 VMCE 待修复项的**权威清单**：正文只保留需要修复的缺陷与实现时必须遵守的已锁定决定，按修复优先级排列；末尾保留验证证据与已核对但不构成问题的路径，供后续审查避免重复。`A##` 为审查条目，括号内 `B##` 为英文台账对应编号；只有 B 编号的条目是仅英文台账记录、本页正式纳入的残余项。
+
+**审阅基线：** 游戏代码基于 `feature/vmce` 的审查基线 `bef2cbc90`，此后只有文档提交。证据分两类：带场景名的现场采集（本机双/三/四进程）和条目标注的静态分析；静态分析不等于实机验证，本机采集也不代表跨机器或零售战役数据验收。
 
 - **P1**：可能让整场联机卡死、错误结束、丢失胜利或解锁、无法继续，先修。
 - **P2**：常见路径上的错误结果、错误阻挡或明显不一致，P1 后修。
@@ -17,9 +19,9 @@ lang: zh-CN
 | 优先级 | 条目 | 来自 A 审查 | 仅 B 待办 |
 |---|---:|---:|---:|
 | P1 | 10 | 10 | 0 |
-| P2 | 24 | 22 | 2 |
+| P2 | 23 | 22 | 1 |
 | P3 | 22 | 13 | 9 |
-| 合计 | 56 | 45 | 11 |
+| 合计 | 55 | 45 | 10 |
 
 ## P1 — 优先修复
 
@@ -255,12 +257,6 @@ lang: zh-CN
 - **修正：** 在系列发现/准入阶段逐关调用 `load_vmce_scenario` 校验每关配置，缓存结果并纳入现有性能预算；错误在开局或 Ready 前列出具体关卡。
 - **验收：** 构造后续关 PlayerCount 越界、NextScenario 缺失、控制段非法等系列；所有端在开局前一致拒绝并指出关卡；合法系列的准入耗时与现有校验一致。
 
-### B46 系列校验进行中缺少 Ready 反馈 — P2
-
-- **问题与影响：** 整套系列后台校验未完成时，大厅不显示内联状态，而 Ready 由 `accept_eligible` 门控，客人看到的是一个没有反应的按钮。
-- **依据：** [校验状态映射](../../src/app/lan_service/options.rs#L424)没有 Pending 状态；[准备准入](../../src/app/shell_network_setup/actions/start.rs#L365)由 `accept_eligible` 门控。
-- **修正：** 为 Pending 增加本地化「正在校验战役文件」状态并解释 Ready 暂不可用；区分失败、取消与完成。
-- **验收：** 慢速校验期间中英文都显示状态，Ready 不会静默失效；失败/取消给出可行动原因；完成后按钮与状态及时恢复。
 ## P3 — 最后修复
 
 ### A05 · B61 房间内修复战役文件后无法重试校验 — P3
@@ -403,7 +399,7 @@ lang: zh-CN
 - **修正：** 用结构化错误身份代替翻译字符串匹配，让设置/冻结失败指出真正原因和行动。
 - **验收：** 无效战役、地图缺失、系列不一致、冻结失败各自显示明确原因；不把其他玩家误记为本地席位。
 
-### B91 合成结算/失败页采集 fixture 无法启动 — P3
+### B91 合成结算/失败页采集 fixture 角色元数据缺失 — P3
 
 - **问题与影响：** `vmce-result-*` 与 `vmce-defeat-*` 采集检查点曾以 `VMCE defeat fixture needs authored role metadata` 失败：大厅 fixture 把角色详情缓存在 `game_config.paths.ra2_dir` 下，而 `vmce_map_details` 按 `settings_dir/Maps` 查找。
 - **依据：** [大厅 fixture 缓存根](../../src/app/shell_network_setup.rs#L1368)与[地图详情查询](../../src/app/shell_network_setup/view.rs#L135)不一致。本轮验证：在 `settings_dir/Maps/XMP29U2.MAP` 放一份带 4 个主角色 `[Basic]` 的地图后，`vmce_map_details` 的 fallback 能加载角色，10 个 `vmce-result-*`/`vmce-defeat-*` 检查点全部产出截图（`.scratch/vmce-synth/`，未提交）；说明失败只缺 settings/Maps 下的角色地图，缓存根/文件身份不一致仍是根因。
@@ -440,9 +436,9 @@ lang: zh-CN
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 无效战役探测：`Player2=alliance house`（地图 `[Houses]` 为 `Alliance House`）的 2p 系列在发现阶段被过滤（主机日志 `ignoring VMCE stage ... with invalid configuration`），大厅没有原因提示；该行为归入既有的 B14/B16，而不是开局迟到失败。
 - 合成 VMCE 大厅 UI 采集（本机，未提交，输出在 `.scratch/guest-lobby-capture/`）：`vmce-lobby-guest-waiting`、`vmce-lobby-inline-error`、`vmce-lobby-blocking-error` 均产出 800×600 截图。guest 等待页右侧没有 Change Map 按钮（A42 的范围据此改为房主侧）；fixture 强制 `local_map_verified=true` 时下一关预览正常显示（A44 的机制证据）；缺地图的内联橙框与无效战役阻塞框都能正常绘制（弹窗呈现本身不构成问题，静默过滤/归因仍见 B14/B16）。这些是合成 UI，不是原生等价证据。
-- 说明：上述采集使用作者化测试系列和本机双/四进程，不代表跨机器或零售战役数据验收。
+- 说明：上述采集使用作者化测试系列和本机双/三/四进程，不代表跨机器或零售战役数据验收。
 
-## 已核对但不构成问题
+## 已核对但不构成问题的路径
 
 以下路径按当前生产调用链核对，未发现需要修复的玩家可见问题；列出以避免重复追查（新增证据推翻时再改回缺陷）：
 

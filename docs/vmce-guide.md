@@ -20,8 +20,12 @@ This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
 This guide describes the current working tree. Per-player outcomes, the intermission room and
-local unlocks are implemented and have focused plus local multi-process coverage; the backlog
-lists the connected (cross-machine) scenarios that have not yet been exercised.
+local unlocks are implemented, and the local multi-process captures pass; the
+[Chinese consolidated review](zh-CN/vmce-review.md) is the authoritative open-defect list, and
+the [backlog](vmce-backlog.md) tracks connected (cross-machine) acceptance and residuals.
+Prominent open defects include the guest intermission preview/briefing hint (A44), the full-room
+LAN listing (A45) and statistics-page name truncation (A38); the synthetic result/defeat capture
+fixtures also need the backlog's B91 workaround.
 
 ## Relation to the original
 
@@ -289,16 +293,20 @@ Actions `67`/`68` set the same outcome for every role; use the table when design
 Do not rely on one primary House being wiped out to end the mission. Add explicit trigger
 conditions for each role. There is no automatic "all roles failed" fallback.
 
-## Campaign redesign — validation in progress
+## Campaign redesign — locked decisions and local validation
 
-The accepted direction is one integrated feature covering per-player outcomes, surviving
-participation, intermission role selection and locally persistent stage unlocks. Its detailed
-requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
+The locked direction is one integrated feature covering per-player outcomes, surviving
+participation, intermission role selection and locally persistent stage unlocks. Evidence and
+remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md) and the
+[VMCE backlog](vmce-backlog.md).
 
-- A country-index victory should make its allies winners and non-allied players losers,
-  including when an AI House triggers it. The trigger timing, competing outcomes and defeat
-  action behavior require original-engine investigation; they are not yet established here.
-  Map triggers, not players, change diplomacy during a mission.
+- A country-index victory makes its allies winners and non-allied players losers, including
+  when an AI House triggers it. VMCE follows the native network-mode settlement branch: the
+  earliest common native settlement edge ends the mission and the other results are derived
+  from map/House state at that edge. The campaign-only AllowWin tag gate is bypassed in network
+  mode (0x004F85F7); retail campaign maps do not author action 15, so the difference only
+  affects custom series maps and still needs a product decision and a tagged test map
+  (A27/B79). Map triggers, not players, change diplomacy during a mission.
 - Players whose primary House is eliminated retain authorized shared control and normal fog;
   map-spawned units belonging to that House become controllable again. Even if all primary
   Houses are eliminated, the mission waits for the map's outcome actions. `PlayerNControl`
@@ -320,7 +328,7 @@ requirements and validation work are in the [VMCE backlog](vmce-backlog.md).
   New hosts may select their locally unlocked stages; guests need matching files, not prior unlocks.
 - The final stage uses the common result gate, followed by the completion presentation and a
   return to the main menu. No observers are introduced. Cross-mission money and branching keys
-  remain separate deferred work; if branches are added, only the actually chosen branch unlocks.
+  remain separate follow-up work; if branches are added, only the actually chosen branch unlocks.
 
 ## Map-author notes
 
@@ -355,7 +363,9 @@ real-process captures:
   and stops as soon as either peer exits non-zero, so a development probe
   cannot idle for the release timeout.
 - `--suite fast`: `4p-win`; `--suite smoke` and `--suite full`: `4p-win`,
-  `2p-win` and `2p-retry`, with the full 300-frame checksum comparison.
+  `2p-win` and `2p-retry`, with the full 300-frame checksum comparison. `4p-win` accepts
+  `--players 2|3|4`; `2p-final` needs a series whose `Entry` is the last stage (use `--entry`),
+  and the manifest-extra probe reuses the 2p-final flow.
 - `VMCE_CAPTURE_TIMEOUT=<seconds>` overrides the per-capture cap (default
   300 s outside `dev`).
 - `compare` runs offline over receipts; the `run` command only launches the
@@ -388,7 +398,15 @@ real-process captures:
   `0.2.9-vmce.6` is the current fork release.
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
   five-column result board, the right-panel statistics button/page, and the BC6 defeat page.
-  HUD and loading/transition UI are deferred.
+  HUD and loading/transition presentation are not implemented in this cycle (B20/B21).
+- Guest intermission preview and briefing hint can be missing (A44/B99); the host renders the
+  preview when its local map carries decodable preview data. A full 2/2 or 4/4 intermission room
+  is still advertised as joinable in the LAN browser (A45/B100).
+- The statistics page does not ellipsize long player names like the result board and defeat page
+  do (A38/B90). The synthetic result/defeat fixtures render only with the B91 settings/Maps
+  workaround and use fixed short names, so the long-name case is still open.
+- Map `[Basic]` cinematics (`Intro`/`Brief`/`Action`/`Win`/`Lose`/`PostScore`/`PreMapSelect`)
+  are skipped on the VMCE mission-start and continuation paths (A41/B95).
 - Unclaimed role rows show the native `Waiting` text in the country cell and a muted grey swatch;
   the Owner cell names the whole authored House, and a room problem (role conflict, missing or
   mismatched campaign) appears in the full-width warning strip in orange rather than yellow.
@@ -402,7 +420,7 @@ real-process captures:
   English placeholders and are translated later (B08). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that
   mismatch is expected.
-- Known gaps and their evidence live in [the VMCE backlog](vmce-backlog.md).
+- Known gaps and their evidence live in the [Chinese consolidated review](zh-CN/vmce-review.md) and [the VMCE backlog](vmce-backlog.md).
 - `AltNextScenario` and `SkipMapSelect` execution are not implemented. Cross-mission money
   is not implemented either.
 - Pause follows native multiplayer: ESC opens a local menu, the modal pump keeps

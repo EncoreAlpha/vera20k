@@ -1,16 +1,19 @@
 # VMCE backlog
 
-This is the English engineering ledger; the [Chinese consolidated review](zh-CN/vmce-review.md) uses the
-same numbering. It lists only **unfinished** work, locked decisions and acceptance boundaries.
-Implemented paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits);
-an implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md) describes current behavior.
-**Planned** items are not implemented promises.
+This is the English engineering ledger. The [Chinese consolidated review](zh-CN/vmce-review.md) is
+authoritative for priorities and currently holds 55 entries (45 `A` findings plus 10 B-only
+residuals); this ledger keeps the same numbering and records unfinished work, locked decisions
+and acceptance boundaries. Implemented paths appear under
+[Implementation and evidence limits](#implementation-and-evidence-limits); an implemented path
+can still have an open defect. The [player and map-author guide](vmce-guide.md) describes current
+behavior. Planned or follow-up items are not implementation promises.
 
 ## Connected validation (B36)
 
-B33–B35 have working implementations with focused tests and local multi-process coverage, but
-review found the open defects B57–B59 and B61–B62. Before delivery, fix those defects and complete connected validation with real
-two-, three- and four-player sessions. VMCE has up to four human roles and no observers.
+B33–B35 have working implementations with focused tests and local multi-process coverage. The
+authoritative open-defect list is the [Chinese consolidated review](zh-CN/vmce-review.md); before
+delivery, fix its current P1/P2 items and complete connected validation with real two-, three-
+and four-player sessions. VMCE has up to four human roles and no observers.
 
 - Exercise allied and hostile roles, map-driven alliance changes, AI-triggered wins, simultaneous
   outcomes, elimination and respawn, mixed results, and all-loss retry.
@@ -30,7 +33,11 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 - Locally the current build passes two-, three- and four-player win → next-mission captures,
   two-player retry and a two-player mixed-outcome advance with 300 matching checksums, and each
   peer's local `VmceProgress.json` contains only the designated next stage; the standard runner
-  accepts `--players 2|3|4` and a `2p-final` scenario. These are not cross-machine runs.
+  accepts `--players 2|3|4` and a `2p-final` scenario. Fresh audit captures also include
+  `4p-win --players 3`, `2p-final` and the manifest-extra probe. These are not cross-machine
+  runs, and a preview-capable host lobby was captured with `XMP29U2.MAP` as a series stage.
+  Guest-side intermission preview, the full-room LAN listing and long-name statistics remain
+  unobserved (A44/A45/A38).
 - The complete credits roll and network failures remain unverified.
 
 ## Required reliability and admission work
@@ -123,8 +130,9 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 - **B97 — disabled Change Map paints enabled:** in an intermission room `vmce_intermission_map` locks
   the map and `SetupAction::ChooseMap` returns early, but the setup renderer passes a hard-coded
   `false` disabled flag for the button, so it keeps the enabled red face and bright caption and
-  clicks silently do nothing (guests use the same paint path). Drive paint from the same
-  `enabled(CHOOSE_MAP)` test; see [audit A42](zh-CN/vmce-review.md).
+  clicks silently do nothing. The guest dialog does not show Change Map at all, so the defect is
+  host-side. Drive paint from the same `enabled(CHOOSE_MAP)` test; see
+  [audit A42](zh-CN/vmce-review.md).
 - **B98 — manifest key validation:** the `[Campaign]` section reads only known keys and silently
   ignores unknown ones, and `ScenarioN` rows beyond `ScenarioCount` are neither read nor rejected;
   the scenario sections already reject `PlayerN` beyond `PlayerCount`. A low `ScenarioCount` or a
@@ -180,17 +188,16 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
 - **B08/B22:** English and zh-CN have VMCE text; other shipped languages currently use English
   placeholders. A translation pass is later work; native CSF follows its installed language.
 - **B91 — synthetic result/defeat capture fixtures:** the `vmce-result-*` and `vmce-defeat-*`
-  shell-capture checkpoints fail with `VMCE defeat fixture needs authored role metadata` in this
-  build. The lobby fixture caches role details under `game_config.paths.ra2_dir`
-  (`install_vmce_lobby_fixture`), while `vmce_map_details` looks the cache up under
-  `settings_dir/Maps`; the miss then depends on a second map load that does not resolve in a
-  score capture. Fix the fixture cache root/file identity and recapture, then use those shots to
-  close the visual part of [A37](zh-CN/vmce-review.md) (defeat retry state) and
-  [A38](zh-CN/vmce-review.md) (statistics name truncation).
-  Workaround verified: placing an authored-role map at `settings/Maps/XMP29U2.MAP` makes the
-  fallback load resolve and all ten result/defeat checkpoints render. The cache root/file identity
-  mismatch remains the fix target; the fixtures also need configurable player names before they
-  can close A38.
+  shell-capture checkpoints fail with `VMCE defeat fixture needs authored role metadata` in a
+  default captured settings tree. The lobby fixture caches role details under
+  `game_config.paths.ra2_dir` (`install_vmce_lobby_fixture`), while `vmce_map_details` looks the
+  cache up under `settings_dir/Maps`; the miss then depends on a second map load that does not
+  resolve in a score capture. Workaround verified: an authored-role map at
+  `settings/Maps/<catalog map>` (in the audit run, `settings/Maps/XMP29U2.MAP`) makes the fallback
+  resolve and all ten result/defeat checkpoints render. The cache root/file identity mismatch
+  remains the fix target; the fixtures also need configurable player names before they can close
+  [A38](zh-CN/vmce-review.md), and the shots can still close the visual part of
+  [A37](zh-CN/vmce-review.md).
 - **B93 — acceptance runner retail marker:** `vmce_lan_acceptance run` writes the
   `.vera20k-lan-capture-root` marker into each per-process settings directory, but the capture
   path checks the marker under `assets.ra2_dir()`, so a plain `--retail-source` fails with
@@ -198,7 +205,9 @@ two-, three- and four-player sessions. VMCE has up to four human roles and no ob
   retail copy (or require and validate a marked source) and document the requirement. The real
   `2p-retry` capture used a previously marked retail copy as a workaround.
 
-## Deferred work
+## Not implemented / follow-up work
+
+These are implementation gaps and follow-up work, not deferred audit items.
 
 - **B20/B21:** HUD and loading/transition presentation, including useful wait/failure status.
 - **B23:** `AltNextScenario`, `SkipMapSelect` and cross-mission money are not implemented or

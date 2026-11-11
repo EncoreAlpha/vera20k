@@ -61,3 +61,14 @@ Run one scenario per invocation on machines with limited shared GPU memory: an e
 capture process can still hold its device allocation, and a following scenario may fail
 inside wgpu with "Out of Memory" although each scenario passes separately. Bundles stay
 under `.scratch/`; older pre-merge receipts do not prove the current build.
+
+## Audit checkpoint
+
+The [Chinese consolidated review](zh-CN/vmce-review.md) is the authoritative open-defect list;
+it currently holds 55 entries (45 `A` findings plus 10 B-only residuals). The current audit's
+local capture set is `2p-win`, `2p-retry`, `4p-win` with 2, 3 and 4 players, `2p-final` and the
+manifest-extra 2p-final probe; a preview-capable host lobby was also captured with
+`XMP29U2.MAP` as a series stage. These establish local multi-process behavior only.
+Cross-machine play, guest-side intermission preview (A44), the full-room LAN listing (A45) and
+long-name statistics (A38) remain uncovered; the synthetic result/defeat fixtures additionally
+need the backlog's B91 workaround.

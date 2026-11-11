@@ -33,8 +33,26 @@ the same VMCE build.
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers |
 | i18n | English and zh-CN real; other shipped languages use English placeholders |
 
-The [VMCE backlog](vmce-backlog.md) lists the remaining defects and the connected
-acceptance work (cross-machine sessions, mid-intermission joins, packet loss, B10 delivery).
+## Known open findings
+
+The authoritative priority list is the [Chinese consolidated review](zh-CN/vmce-review.md), currently
+55 entries (45 `A` findings plus 10 B-only residuals). Player-visible gaps that matter to this
+overview:
+
+- **A44/B99:** an intermission-room guest can miss the next-stage map preview and the "map has a
+  briefing" chat hint; the host shows the preview when its local map carries decodable preview
+  data, which was captured with a preview-capable series map.
+- **A45/B100:** a full 2/2 or 4/4 VERA intermission room is still advertised as joinable in the LAN
+  browser; the join ends in `TXT_GAME_FULL`.
+- **A38/B90:** the victory/campaign-end statistics page does not ellipsize long player names the
+  way the result board and defeat page do.
+- **A41/B95:** map cinematics (`Intro`/`Brief`/`Action`/`Win`/`Lose`/`PostScore`/`PreMapSelect`)
+  are not played on the VMCE mission-start and continuation paths.
+
+The synthetic result/defeat capture fixtures need the B91 workaround recorded in the backlog;
+that is a tooling issue, not a player-facing defect. The [VMCE backlog](vmce-backlog.md) also
+tracks connected acceptance work (cross-machine sessions, mid-intermission joins, packet loss,
+B10 delivery) and implementation residuals.
 
 ## Start here
 
@@ -43,7 +61,7 @@ acceptance work (cross-machine sessions, mid-intermission joins, packet loss, B1
 - [VMCE backlog](vmce-backlog.md) — engineering task ledger, locked decisions and residuals.
 - [Chinese consolidated review](zh-CN/vmce-review.md) — merged findings ordered by fix priority.
 - [VMCE baseline](vmce-baseline.md) — upstream sync, version and real-capture baseline.
-- [Chinese guide](zh-CN/vmce.md).
+- [Chinese hub](zh-CN/vmce.md).
 
 ## Relationship to the stock Cooperative mode
 
