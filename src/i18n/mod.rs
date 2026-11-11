@@ -1452,6 +1452,7 @@ mod tests {
             "VERA:VmceLoadConfigMismatch",
             "VERA:VmceLoadIdentityMismatch",
             "VERA:VmceLoadFailed",
+            "VERA:VmceRoundSendFailed",
             "VERA:VmceBack",
             "VERA:VmceRetry",
             "VERA:VmceResultColumn",

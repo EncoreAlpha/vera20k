@@ -304,6 +304,9 @@ pub(crate) enum NetworkLoadingRequest {
     CooperativeAck,
     /// The master's `0x31`.
     CooperativeGo,
+    /// VMCE Go retains its result identity when retry changes the phase before send.
+    #[cfg(feature = "vmce")]
+    CooperativeVmceGo { nonce: [u8; 16] },
     /// VERA-only, before the native begin: the host's resolved next stage
     /// identity, so a guest can refuse a different mission before loading.
     #[cfg(feature = "vmce")]

@@ -43,6 +43,10 @@ pub(crate) struct CooperativeRoundState {
     acked: [bool; 8],
     /// The loop's local begin flag (`[ESP+0x13]`), set by `0x34`.
     begin: bool,
+    #[cfg(feature = "vmce")]
+    options_received: bool,
+    #[cfg(feature = "vmce")]
+    ack_queued: bool,
     /// Quit `0x5C0`'s enable state: the `0x32` arm disables it once the
     /// begin arrived (`0x0047086E`), and the `0x24` arm enables it again
     /// (`0x00470583`).
@@ -701,6 +705,10 @@ impl MatchSession {
             assigned: false,
             acked: [false; 8],
             begin: false,
+            #[cfg(feature = "vmce")]
+            options_received: false,
+            #[cfg(feature = "vmce")]
+            ack_queued: false,
             quit_enabled: true,
             can_continue,
             rows,
@@ -1247,16 +1255,34 @@ impl MatchSession {
             }
             CooperativeRoundEvent::Begin => {
                 round.begin = true;
+                #[cfg(feature = "vmce")]
+                if round.vera && !host && round.options_received && !round.ack_queued {
+                    round.quit_enabled = false;
+                    round.ack_queued = true;
+                    requests.push(NetworkLoadingRequest::CooperativeAck);
+                }
                 Ok(tail(requests, host, round))
             }
             CooperativeRoundEvent::Options(options) => {
+                #[cfg(feature = "vmce")]
+                if round.vera && round.options_received {
+                    return Ok(CooperativeRoundStep::None);
+                }
                 let changed = apply_round_options(launch, &options, difficulty)?;
                 if changed {
                     round.local_ready = false;
                     clear_human_readiness(launch, round);
                 }
-                if round.begin {
+                #[cfg(feature = "vmce")]
+                if round.vera {
+                    round.options_received = true;
+                }
+                if round.begin && (!round.vera || !host) {
                     round.quit_enabled = false;
+                    #[cfg(feature = "vmce")]
+                    if round.vera {
+                        round.ack_queued = true;
+                    }
                     requests.push(NetworkLoadingRequest::CooperativeAck);
                     log::info!("VMCE retry diagnostic: Options received host={host}; Ack queued");
                 }
@@ -1266,8 +1292,15 @@ impl MatchSession {
                 })
             }
             CooperativeRoundEvent::Ack { source } => {
-                if let Some(row) = slot_of(launch, source) {
-                    round.acked[row] = true;
+                #[cfg(feature = "vmce")]
+                if round.vera
+                    && (!host
+                        || !round.assigned
+                        || !Self::vmce_result_agreed(connected, launch, round)
+                        || source == launch.local_player_index
+                        || !connected.contains(&source))
+                {
+                    return Ok(CooperativeRoundStep::None);
                 }
                 if let Some(row) = slot_of(launch, source) {
                     round.acked[row] = true;
@@ -1276,12 +1309,30 @@ impl MatchSession {
                 // `rows` early and never overshoots it after the real ones.
                 if round.acked.iter().filter(|acked| **acked).count() >= round.rows {
                     round.outcome = Some(true);
+                    #[cfg(feature = "vmce")]
+                    if round.vera {
+                        let nonce = round
+                            .result_agreement
+                            .as_ref()
+                            .and_then(|agreement| agreement.nonce)
+                            .expect("an agreed VMCE round has a nonce");
+                        requests.push(NetworkLoadingRequest::CooperativeVmceGo { nonce });
+                    } else {
+                        requests.push(NetworkLoadingRequest::CooperativeGo);
+                    }
+                    #[cfg(not(feature = "vmce"))]
                     requests.push(NetworkLoadingRequest::CooperativeGo);
                     return Ok(vera_result_step(round));
                 }
                 Ok(tail(requests, host, round))
             }
             CooperativeRoundEvent::Go => {
+                #[cfg(feature = "vmce")]
+                if round.vera
+                    && (host || !round.begin || !round.options_received || !round.ack_queued)
+                {
+                    return Ok(CooperativeRoundStep::None);
+                }
                 #[cfg(feature = "vmce")]
                 if round.vera && !Self::vmce_result_agreed(connected, launch, round) {
                     if let Some(agreement) = round.result_agreement.as_mut() {
@@ -1666,9 +1717,14 @@ mod tests {
                 entries[usize::from(row)] = row | 4;
             }
         }
+        let host = session.host();
         session
-            .initialize_vmce_result_agreement(entries, Some([9; 16]))
+            .initialize_vmce_result_agreement(entries, host.then_some([9; 16]))
             .unwrap();
+        if !host {
+            let record = result_record(session, [9; 16], entries, false);
+            session.vmce_result_received(0, record).unwrap();
+        }
         session.vmce_result_record_queued(false).unwrap();
         for source in sources
             .iter()
@@ -1947,6 +2003,22 @@ mod tests {
                     agreement.confirmed.iter().filter(|seen| **seen).count() == 4
                 })
             }));
+            if index == 0 {
+                assert_eq!(
+                    session
+                        .cooperative_round_event(CooperativeRoundEvent::Go, 0)
+                        .unwrap(),
+                    CooperativeRoundStep::None
+                );
+                continue;
+            }
+            let options = round_options(session.network_setup().unwrap(), 0);
+            session
+                .cooperative_round_event(CooperativeRoundEvent::Begin, 0)
+                .unwrap();
+            session
+                .cooperative_round_event(CooperativeRoundEvent::Options(options), 0)
+                .unwrap();
             assert_eq!(
                 session
                     .cooperative_round_event(CooperativeRoundEvent::Go, 0)
@@ -2568,7 +2640,64 @@ mod tests {
         );
         assert!(
             host.take_network_loading_requests()
-                .contains(&NetworkLoadingRequest::CooperativeGo)
+                .contains(&NetworkLoadingRequest::CooperativeVmceGo { nonce: [9; 16] })
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_options_before_begin_still_acknowledges_once() {
+        let (mut guest, _) = frozen_vera(1);
+        guest
+            .enter_vmce_round(Some(next_stage("mission02.map")), true, 2)
+            .unwrap();
+        agree_for_existing_round_test(&mut guest);
+        guest.take_network_loading_requests();
+        let options = round_options(guest.network_setup().unwrap(), 0);
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Options(options), 0)
+            .unwrap();
+        assert!(guest.take_network_loading_requests().is_empty());
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Begin, 0)
+            .unwrap();
+        assert_eq!(
+            guest.take_network_loading_requests(),
+            vec![NetworkLoadingRequest::CooperativeAck]
+        );
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Begin, 0)
+            .unwrap();
+        assert!(guest.take_network_loading_requests().is_empty());
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_early_acks_do_not_count_toward_the_assigned_round() {
+        let (mut host, _) = frozen_vera_rows(0, 4);
+        host.enter_vmce_round(Some(next_stage_players("mission02.map", 4)), true, 4)
+            .unwrap();
+        agree_for_existing_round_test(&mut host);
+        host.take_network_loading_requests();
+        for source in 1..=3 {
+            host.cooperative_round_event(CooperativeRoundEvent::PeerReady { source }, 0)
+                .unwrap();
+        }
+        for source in 1..=2 {
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source }, 0)
+                .unwrap();
+        }
+        host.cooperative_round_assigned(0).unwrap();
+        host.take_network_loading_requests();
+        assert_eq!(
+            host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 3 }, 0)
+                .unwrap(),
+            CooperativeRoundStep::None
+        );
+        assert!(
+            !host
+                .take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeVmceGo { nonce: [9; 16] })
         );
     }
 
@@ -2726,6 +2855,11 @@ mod tests {
             host.cooperative_round_event(CooperativeRoundEvent::Ack { source: 1 }, 0)
                 .unwrap(),
             CooperativeRoundStep::Retry
+        );
+        host.freeze_cooperative_round(30, 1, None).unwrap();
+        assert!(
+            host.take_network_loading_requests()
+                .contains(&NetworkLoadingRequest::CooperativeVmceGo { nonce: [9; 16] })
         );
 
         // Campaign end: the normal all-ready gate, then the completion step.

@@ -116,6 +116,10 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         return false;
     }
     #[cfg(feature = "vmce")]
+    if !service_ok && fail_vmce_round_delivery(state) {
+        return true;
+    }
+    #[cfg(feature = "vmce")]
     if state
         .match_state
         .session
@@ -220,7 +224,13 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         {
             return true;
         }
-        service_transport(state, now);
+        let service_ok = service_transport(state, now);
+        #[cfg(feature = "vmce")]
+        if !service_ok && fail_vmce_round_delivery(state) {
+            return true;
+        }
+        #[cfg(not(feature = "vmce"))]
+        let _ = service_ok;
         // Go or Quit closed the round: later packets (the next mission's
         // loading) belong to the ordinary service.
         if state.match_state.session.cooperative_round().is_none() {
@@ -257,6 +267,26 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
             return false;
         }
     }
+    true
+}
+
+#[cfg(feature = "vmce")]
+fn fail_vmce_round_delivery(state: &mut AppState) -> bool {
+    if !state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| round.vera())
+    {
+        return false;
+    }
+    log::error!("VMCE round delivery failed; returning to the lobby");
+    let _ = state.match_state.session.quit_cooperative_round();
+    crate::app::cooperative_round::return_to_shell(state);
+    crate::app::shell_network_setup::show_blocking_notice(
+        state,
+        crate::i18n::tr("VERA:VmceRoundSendFailed"),
+    );
     true
 }
 
@@ -560,6 +590,25 @@ pub(crate) fn defer_campaign_completion(state: &mut AppState) -> bool {
     true
 }
 
+#[cfg(feature = "vmce")]
+fn vmce_round_control_admitted(
+    host: bool,
+    from_host: bool,
+    sender: std::net::SocketAddrV4,
+    admitted_host: Option<std::net::SocketAddrV4>,
+    source: usize,
+    local: usize,
+    nonce: [u8; 16],
+    expected_nonce: Option<[u8; 16]>,
+) -> bool {
+    expected_nonce == Some(nonce)
+        && if from_host {
+            !host && admitted_host == Some(sender)
+        } else {
+            host && source != local
+        }
+}
+
 /// The loop's dispatch (`0x0047009F`) for a packet from a round participant.
 fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> {
     anyhow::ensure!(incoming.product_id == 0xaa04, "different LAN product");
@@ -575,7 +624,76 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
                 .contains(source)
         })
         .ok_or_else(|| anyhow::anyhow!("not a round participant"))?;
+    #[cfg(feature = "vmce")]
+    let vmce = state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| round.vera());
+    #[cfg(feature = "vmce")]
+    if vmce && incoming.payload.len() == crate::net::lan_messages::LAN_MESSAGE_LEN {
+        use crate::net::lan_messages::cooperative::VmceRoundControl;
+        let message = LanMessage::decode(&incoming.payload)?;
+        let control = VmceRoundControl::decode(&message);
+        let options = CooperativeOptionsRecord::decode_vmce(&message);
+        if control.is_some() || options.is_some() {
+            let (nonce, from_host) = if let Some((_, nonce)) = control {
+                (nonce, !matches!(control, Some((VmceRoundControl::Ack, _))))
+            } else {
+                (options.as_ref().expect("options").1, true)
+            };
+            let host = state.match_state.session.host();
+            let admitted_host = state
+                .match_state
+                .lan_service
+                .as_ref()
+                .and_then(|service| service.admitted_host.as_ref())
+                .map(|(_, endpoint)| *endpoint);
+            if !vmce_round_control_admitted(
+                host,
+                from_host,
+                incoming.source,
+                admitted_host,
+                source,
+                state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .map_or(usize::MAX, |launch| launch.local_player_index),
+                nonce,
+                state.match_state.session.vmce_result_nonce(),
+            ) {
+                return Ok(());
+            }
+            let event = match control {
+                Some((VmceRoundControl::Begin, _)) => CooperativeRoundEvent::Begin,
+                Some((VmceRoundControl::Ack, _)) => CooperativeRoundEvent::Ack { source },
+                Some((VmceRoundControl::Go, _)) => CooperativeRoundEvent::Go,
+                None => {
+                    let launch = state
+                        .match_state
+                        .session
+                        .network_setup()
+                        .ok_or_else(|| anyhow::anyhow!("no round roster"))?;
+                    CooperativeRoundEvent::Options(round_options(
+                        launch,
+                        &options.expect("options").0,
+                    )?)
+                }
+            };
+            return crate::app::cooperative_round::service_event(state, event);
+        }
+    }
     let event = if let Some(signal) = CooperativeSignal::decode(&incoming.payload) {
+        #[cfg(feature = "vmce")]
+        if vmce
+            && matches!(
+                signal,
+                CooperativeSignal::Begin | CooperativeSignal::Ack | CooperativeSignal::Go
+            )
+        {
+            return Ok(());
+        }
         match signal {
             CooperativeSignal::Ack => CooperativeRoundEvent::Ack { source },
             CooperativeSignal::Left => CooperativeRoundEvent::PeerLeft { source },
@@ -694,6 +812,10 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
         if let Some(event) = stage_event {
             event
         } else if let Some(record) = CooperativeOptionsRecord::decode(&message) {
+            #[cfg(feature = "vmce")]
+            if vmce {
+                return Ok(());
+            }
             let launch = state
                 .match_state
                 .session
@@ -730,6 +852,9 @@ pub(super) fn is_round_record(payload: &[u8]) -> bool {
             #[cfg(feature = "vmce")]
             {
                 VmceStageRecord::decode(&message).is_some()
+                    || crate::net::lan_messages::cooperative::VmceRoundControl::decode(&message)
+                        .is_some()
+                    || CooperativeOptionsRecord::decode_vmce(&message).is_some()
                     || crate::net::lan_messages::cooperative::decode_intermission_epoch(&message)
                         .is_some()
                     || crate::net::lan_messages::cooperative::VmceResultRecord::decode(&message)
@@ -772,7 +897,40 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             .skip(1)
             .collect();
     #[cfg(feature = "vmce")]
-    if matches!(request, NetworkLoadingRequest::CooperativeGo)
+    let vmce_wire = if let NetworkLoadingRequest::CooperativeVmceGo { nonce } = &request {
+        Some(
+            crate::net::lan_messages::cooperative::VmceRoundControl::Go
+                .encode(&name, *nonce)
+                .ok(),
+        )
+    } else if state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| round.vera())
+    {
+        use crate::net::lan_messages::cooperative::VmceRoundControl;
+        let nonce = state.match_state.session.vmce_result_nonce();
+        match &request {
+            NetworkLoadingRequest::CooperativeBegin => {
+                Some(nonce.and_then(|nonce| VmceRoundControl::Begin.encode(&name, nonce).ok()))
+            }
+            NetworkLoadingRequest::CooperativeAck => {
+                Some(nonce.and_then(|nonce| VmceRoundControl::Ack.encode(&name, nonce).ok()))
+            }
+            NetworkLoadingRequest::CooperativeGo => {
+                Some(nonce.and_then(|nonce| VmceRoundControl::Go.encode(&name, nonce).ok()))
+            }
+            NetworkLoadingRequest::CooperativeOptions(options) => {
+                Some(nonce.and_then(|nonce| options_record(options).encode_vmce(&name, nonce).ok()))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    #[cfg(feature = "vmce")]
+    if matches!(request, NetworkLoadingRequest::CooperativeVmceGo { .. })
         && state
             .match_state
             .lan_service
@@ -781,7 +939,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
                 service.vmce_intermission_epoch.is_some() && !service.vmce_intermission_entered
             })
     {
-        let encoded = CooperativeSignal::Go.encode(&name);
+        let encoded = vmce_wire.as_ref().and_then(|message| message.as_ref());
         let endpoints: Option<Vec<_>> = peers
             .iter()
             .map(|source| state.match_state.session.network_endpoint(*source))
@@ -792,11 +950,11 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             .as_mut()
             .expect("intermission service");
         let queued = match (encoded, endpoints) {
-            (Ok(bytes), Some(endpoints)) => service
+            (Some(bytes), Some(endpoints)) => service
                 .queue_setup(
                     endpoints
                         .into_iter()
-                        .map(|endpoint| (bytes.to_vec(), direct(endpoint))),
+                        .map(|endpoint| (bytes.as_bytes().to_vec(), direct(endpoint))),
                 )
                 .unwrap_or(false),
             _ => false,
@@ -806,14 +964,14 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
         return;
     }
     #[cfg(feature = "vmce")]
-    if matches!(request, NetworkLoadingRequest::CooperativeGo)
+    if matches!(request, NetworkLoadingRequest::CooperativeVmceGo { .. })
         && state
             .match_state
             .lan_service
             .as_ref()
             .is_some_and(|service| service.vmce_campaign_completion_pending)
     {
-        let encoded = CooperativeSignal::Go.encode(&name);
+        let encoded = vmce_wire.as_ref().and_then(|message| message.as_ref());
         let endpoints: Option<Vec<_>> = peers
             .iter()
             .map(|source| state.match_state.session.network_endpoint(*source))
@@ -824,16 +982,43 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
             .as_mut()
             .expect("pending service");
         let queued = match (encoded, endpoints) {
-            (Ok(bytes), Some(endpoints)) => service
+            (Some(bytes), Some(endpoints)) => service
                 .queue_setup(
                     endpoints
                         .into_iter()
-                        .map(|endpoint| (bytes.to_vec(), direct(endpoint))),
+                        .map(|endpoint| (bytes.as_bytes().to_vec(), direct(endpoint))),
                 )
                 .unwrap_or(false),
             _ => false,
         };
         service.vmce_campaign_completion_enqueue_failed = !queued;
+        return;
+    }
+    #[cfg(feature = "vmce")]
+    if let Some(message) = vmce_wire {
+        let endpoints: Option<Vec<_>> = peers
+            .iter()
+            .map(|source| state.match_state.session.network_endpoint(*source))
+            .collect();
+        let queued = match (message, endpoints, state.match_state.lan_service.as_mut()) {
+            (Some(message), Some(endpoints), Some(service)) => service
+                .queue_setup(
+                    endpoints
+                        .into_iter()
+                        .map(|endpoint| (message.as_bytes().to_vec(), direct(endpoint))),
+                )
+                .unwrap_or(false),
+            _ => false,
+        };
+        if !queued {
+            log::error!("VMCE round control could not be queued; returning to the lobby");
+            let _ = state.match_state.session.quit_cooperative_round();
+            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::shell_network_setup::show_blocking_notice(
+                state,
+                crate::i18n::tr("VERA:VmceRoundSendFailed"),
+            );
+        }
         return;
     }
     let signal = match request {
@@ -1025,6 +1210,74 @@ mod tests {
     use super::*;
     use crate::skirmish_launch::AiDifficulty;
 
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_control_admission_checks_the_host_and_round() {
+        let master = "127.0.0.1:1000".parse().unwrap();
+        let guest = "127.0.0.1:1001".parse().unwrap();
+        let nonce = [5; 16];
+        assert!(vmce_round_control_admitted(
+            false,
+            true,
+            master,
+            Some(master),
+            0,
+            1,
+            nonce,
+            Some(nonce)
+        ));
+        assert!(!vmce_round_control_admitted(
+            false,
+            true,
+            guest,
+            Some(master),
+            2,
+            1,
+            nonce,
+            Some(nonce)
+        ));
+        assert!(!vmce_round_control_admitted(
+            false,
+            true,
+            master,
+            Some(master),
+            0,
+            1,
+            [6; 16],
+            Some(nonce)
+        ));
+        assert!(!vmce_round_control_admitted(
+            true,
+            true,
+            guest,
+            None,
+            1,
+            0,
+            nonce,
+            Some(nonce)
+        ));
+        assert!(vmce_round_control_admitted(
+            true,
+            false,
+            guest,
+            None,
+            1,
+            0,
+            nonce,
+            Some(nonce)
+        ));
+        assert!(!vmce_round_control_admitted(
+            false,
+            false,
+            guest,
+            Some(master),
+            2,
+            1,
+            nonce,
+            Some(nonce)
+        ));
+    }
+
     fn round_roster() -> SkirmishLaunchSession {
         let profile: serde_json::Value = serde_json::from_str(crate::test_fixture::text(
             "tools/map_observation.command-bar.example.json",
@@ -1089,6 +1342,18 @@ mod tests {
         // A random country's placeholder is not on the wire.
         received.humans[1].1.country = options.humans[1].1.country;
         assert_eq!(received, options);
+        #[cfg(feature = "vmce")]
+        {
+            let encoded = options_record(&options)
+                .encode_vmce("Host", [7; 16])
+                .unwrap();
+            let (record, nonce) = CooperativeOptionsRecord::decode_vmce(&encoded).unwrap();
+            assert_eq!(nonce, [7; 16]);
+            let mut received = round_options(&launch, &record).unwrap();
+            received.humans[1].1.country = options.humans[1].1.country;
+            assert_eq!(received, options);
+            assert!(CooperativeOptionsRecord::decode(&encoded).is_none());
+        }
     }
 
     /// The pre-round hold must recognize exactly the round's records, so a
@@ -1123,6 +1388,16 @@ mod tests {
         ));
         #[cfg(feature = "vmce")]
         {
+            use crate::net::lan_messages::cooperative::VmceRoundControl;
+            assert!(is_round_record(
+                VmceRoundControl::Begin
+                    .encode("Host", [7; 16])
+                    .unwrap()
+                    .as_bytes()
+            ));
+            assert!(is_round_record(
+                options.encode_vmce("Host", [7; 16]).unwrap().as_bytes()
+            ));
             let stage = VmceStageRecord {
                 map_file: "mission02.map".into(),
                 source_sha256: "a".repeat(64),

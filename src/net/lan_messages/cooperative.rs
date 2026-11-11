@@ -17,6 +17,56 @@ pub const INTERMISSION_KIND: u32 = 0x3B;
 #[cfg(feature = "vmce")]
 pub const RESULT_KIND: u32 = 0x3C;
 
+/// VMCE control messages carry the result agreement's round nonce. These
+/// kinds are distinct from the native BC6 records, which remain unchanged.
+#[cfg(feature = "vmce")]
+pub const VMCE_CONTROL_KIND: u32 = 0x3D;
+#[cfg(feature = "vmce")]
+pub const VMCE_OPTIONS_KIND: u32 = 0x3E;
+#[cfg(feature = "vmce")]
+const VMCE_OPTIONS_NONCE: usize = 0x130;
+
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmceRoundControl {
+    Begin,
+    Ack,
+    Go,
+}
+
+#[cfg(feature = "vmce")]
+impl VmceRoundControl {
+    pub fn encode(self, name: &str, nonce: [u8; 16]) -> Result<LanMessage, LanMessageError> {
+        if nonce == [0; 16] {
+            return Err(LanMessageError::InvalidStageRecord);
+        }
+        let mut message = LanMessage::with_name(LanMessageKind::Unknown(VMCE_CONTROL_KIND), name)?;
+        message.bytes[SIGNAL_LEN] = match self {
+            Self::Begin => 0,
+            Self::Ack => 1,
+            Self::Go => 2,
+        };
+        message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].copy_from_slice(&nonce);
+        Ok(message)
+    }
+
+    pub fn decode(message: &LanMessage) -> Option<(Self, [u8; 16])> {
+        if message.u32(0) != VMCE_CONTROL_KIND {
+            return None;
+        }
+        let control = match message.bytes[SIGNAL_LEN] {
+            0 => Self::Begin,
+            1 => Self::Ack,
+            2 => Self::Go,
+            _ => return None,
+        };
+        let nonce: [u8; 16] = message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17]
+            .try_into()
+            .ok()?;
+        (nonce != [0; 16]).then_some((control, nonce))
+    }
+}
+
 /// The result record's fields end before the LAN message's payload does, so
 /// the digest never truncates on the wire.
 #[cfg(feature = "vmce")]
@@ -403,6 +453,33 @@ pub struct CooperativeOptionsRecord {
 }
 
 impl CooperativeOptionsRecord {
+    #[cfg(feature = "vmce")]
+    pub fn encode_vmce(&self, name: &str, nonce: [u8; 16]) -> Result<LanMessage, LanMessageError> {
+        if nonce == [0; 16] {
+            return Err(LanMessageError::InvalidStageRecord);
+        }
+        let mut message = self.encode(name)?;
+        message.put_u32(0, VMCE_OPTIONS_KIND);
+        message.bytes[VMCE_OPTIONS_NONCE..VMCE_OPTIONS_NONCE + 16].copy_from_slice(&nonce);
+        Ok(message)
+    }
+
+    #[cfg(feature = "vmce")]
+    pub fn decode_vmce(message: &LanMessage) -> Option<(Self, [u8; 16])> {
+        if message.u32(0) != VMCE_OPTIONS_KIND {
+            return None;
+        }
+        let nonce: [u8; 16] = message.bytes[VMCE_OPTIONS_NONCE..VMCE_OPTIONS_NONCE + 16]
+            .try_into()
+            .ok()?;
+        if nonce == [0; 16] {
+            return None;
+        }
+        let mut original = message.clone();
+        original.put_u32(0, OPTIONS_KIND);
+        Some((Self::decode(&original)?, nonce))
+    }
+
     /// New records zero the native buffer's uninitialised tail.
     pub fn encode(&self, name: &str) -> Result<LanMessage, LanMessageError> {
         let mut message = LanMessage::with_name(LanMessageKind::Unknown(OPTIONS_KIND), name)?;

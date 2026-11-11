@@ -44,6 +44,87 @@ fn channel(send_capacity: usize, receive_capacity: usize) -> GlobalChannel {
     )
 }
 
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_round_records_survive_lost_begin_and_ack() {
+    use crate::net::lan_messages::cooperative::{
+        CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, VmceRoundControl,
+    };
+    let host = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12001);
+    let guest = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12002);
+    let nonce = [7; 16];
+    let begin = VmceRoundControl::Begin.encode("Host", nonce).unwrap();
+    let options = CooperativeOptionsRecord {
+        difficulty: 1,
+        humans: [CooperativeHumanWords {
+            start: -1,
+            country: -1,
+            color: -1,
+        }; 8],
+        ai: [CooperativeAiWords {
+            country: -1,
+            color: -1,
+            difficulty: 0,
+            start: -2,
+            team: -2,
+        }; 8],
+    }
+    .encode_vmce("Host", nonce)
+    .unwrap();
+    let mut sender = channel(8, 8);
+    let mut receiver = channel(8, 8);
+    for payload in [begin.as_bytes(), options.as_bytes()] {
+        assert!(sender.send(
+            payload,
+            GlobalDestination::direct(guest),
+            Delivery::Reliable,
+            0
+        ));
+    }
+    let mut sent = Vec::new();
+    sender.service(3, &mut |_, frame| sent.push(frame.to_vec()));
+    assert_eq!(sent.len(), 2);
+    let mut ack = Vec::new();
+    receiver
+        .receive(host, 0, &sent[1], 3, &mut |_, frame| {
+            ack.push(frame.to_vec())
+        })
+        .unwrap();
+    assert_eq!(receiver.pop_received().unwrap().payload, options.as_bytes());
+    receiver.retire_consumed();
+    sender
+        .receive(guest, 0, &ack[0], 3, &mut |_, _| {})
+        .unwrap();
+    sent.clear();
+    sender.service(6, &mut |_, frame| sent.push(frame.to_vec()));
+    assert_eq!(sent.len(), 1);
+    ack.clear();
+    receiver
+        .receive(host, 0, &sent[0], 6, &mut |_, frame| {
+            ack.push(frame.to_vec())
+        })
+        .unwrap();
+    assert_eq!(receiver.pop_received().unwrap().payload, begin.as_bytes());
+    receiver.retire_consumed();
+    sent.clear();
+    sender.service(9, &mut |_, frame| sent.push(frame.to_vec()));
+    assert_eq!(sent.len(), 1);
+    ack.clear();
+    assert_eq!(
+        receiver
+            .receive(host, 0, &sent[0], 9, &mut |_, frame| ack
+                .push(frame.to_vec()))
+            .unwrap(),
+        GlobalReceiveOutcome::DuplicateAcknowledged
+    );
+    assert!(receiver.pop_received().is_none());
+    sender
+        .receive(guest, 0, &ack[0], 9, &mut |_, _| {})
+        .unwrap();
+    sender.service(10, &mut |_, _| panic!("acknowledged Begin retransmitted"));
+    assert_eq!(sender.queued_send_count(), 0);
+}
+
 #[test]
 fn online_ack_requires_its_sent_destination_and_exposes_one_actual_response_sample() {
     let target = SocketAddrV4::new(Ipv4Addr::new(127, 77, 0, 30), 1234);
