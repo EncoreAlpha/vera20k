@@ -301,12 +301,11 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
 [VMCE backlog](vmce-backlog.md).
 
 - A country-index victory makes its allies winners and non-allied players losers, including
-  when an AI House triggers it. VMCE follows the native network-mode settlement branch: the
-  earliest common native settlement edge ends the mission and the other results are derived
-  from map/House state at that edge. The campaign-only AllowWin tag gate is bypassed in network
-  mode (0x004F85F7); retail campaign maps do not author action 15, so the difference only
-  affects custom series maps and still needs a product decision and a tagged test map
-  (A27/B79). Map triggers, not players, change diplomacy during a mission.
+  when an AI House triggers it. The earliest acceptable player result ends the mission and the
+  other results are derived from map/House state at that edge. VMCE applies the campaign
+  AllowWin tag gate (0x004F85F7) to each House's victory; another player's ready result can
+  still end the mission. An action-15 test map and multiplayer acceptance remain open (A27/B79).
+  Map triggers, not players, change diplomacy during a mission.
 - Players whose primary House is eliminated retain authorized shared control and normal fog;
   map-spawned units belonging to that House become controllable again. Even if all primary
   Houses are eliminated, the mission waits for the map's outcome actions. `PlayerNControl`
@@ -345,10 +344,9 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
   is still open).
 - `<Player @ X>` selectors, `<random>`/`<none>` role owners and event 33 ("selected by player")
   are not suitable for VMCE role logic. Use country selectors and `67`/`68` where applicable.
-  Network mode currently bypasses the action 15 `AllowWin` tag-count victory gate; `67`/`68`
-  do not replace its delay semantics. A scan of the retail campaign maps found no action-15 tags,
-  so this affects maps that author the tag (custom series) rather than the retail campaigns.
-  Native campaign timing remains open under B79.
+  VMCE applies the campaign action 15 `AllowWin` tag-count victory gate; `67`/`68` do not replace
+  its delay semantics. A scan of retail campaign maps found no action-15 tags. End-to-end
+  testing with a tagged custom map remains open under B79.
 - Reinforcement teams, task forces and base vehicles are not duplicated automatically. Write
   one copy per role when each role needs its own.
 - AI-only actions usually do nothing on a role House because VMCE marks role Houses as human.

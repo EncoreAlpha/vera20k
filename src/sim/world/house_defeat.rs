@@ -254,10 +254,14 @@ impl Simulation {
                 self.assess_house_derived_state(owner, rules, frame_effects);
                 self.update_house_anger_and_activation(owner, rules);
                 self.houses.get(&owner).and_then(|house| {
-                    house.pending_outcome(
-                        self.session.binary_frame() as i32,
-                        self.session.game_mode_nonzero(),
-                    )
+                    // VMCE adopts the campaign AllowWin victory gate from
+                    // HouseClass::Update 0x004F85F7, despite using LAN mode.
+                    let bypass_allow_win = self.session.game_mode_nonzero()
+                        && !self
+                            .session
+                            .multiplayer_mode_class()
+                            .is_some_and(|class| class.is_vmce());
+                    house.pending_outcome(self.session.binary_frame() as i32, bypass_allow_win)
                 })
             };
             if let Some(kind) = kind {

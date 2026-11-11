@@ -86,9 +86,10 @@ and four-player sessions. VMCE has up to four human roles and no observers.
 - **B77 — load-failure delivery:** the reliable queue is reset immediately after enqueueing a
   local load-failure notice, racing delivery and acknowledgement. Drain it with a bounded failure
   path before cleanup. See [audit A25](zh-CN/vmce-review.md).
-- **B79 — campaign AllowWin gate:** VMCE currently follows the network-mode bypass of the
-  campaign tag-count gate, potentially ending earlier than the native campaign. Verify the native
-  lifecycle and reconcile it with the agreed earliest shared boundary; see [audit A27](zh-CN/vmce-review.md).
+- **B79 — campaign AllowWin gate:** VMCE now applies the campaign tag-count gate to each
+  House's victory, while another player's ready result can end the mission first. House-level
+  regression tests pass; an action-15 test map and native/multiplayer acceptance remain open.
+  See [audit A27](zh-CN/vmce-review.md).
 - **B81 — cross-platform map paths:** manifest validation normalizes backslashes, but loading may
   treat them literally on Linux/macOS. Normalize consistently and retain path containment checks.
   See [audit A29](zh-CN/vmce-review.md).

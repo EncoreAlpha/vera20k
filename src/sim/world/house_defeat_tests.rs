@@ -1535,6 +1535,117 @@ fn vmce_country_victory_uses_the_triggering_house_alliance_even_for_ai() {
 
 #[cfg(feature = "vmce")]
 #[test]
+fn vmce_allow_win_delays_victory_until_the_tag_and_timer_clear() {
+    let (mut sim, houses, _, rules) = vmce_fixture();
+    let map = crate::map::map_file::MapFile::from_bytes(
+        b"[Map]\nTheater=TEMPERATE\nSize=0,0,2,1\nLocalSize=0,0,2,1\n\
+          [IsoMapPack5]\n1=DwALABwBAAIA/////wAAABEAAA==\n[Basic]\nNewINIFormat=4\n\
+          [Triggers]\nA=Country0,<none>,A,0,1,1,1,0\nB=Country1,<none>,B,0,1,1,1,0\n\
+          [Events]\nA=1,47,0,0\nB=1,47,0,0\n\
+          [Actions]\nA=1,15,0,0,0,0,0,0,0\nB=1,15,0,0,0,0,0,0,0\n\
+          [Tags]\nAT=0,A,A\nBT=0,B,B\n",
+    )
+    .unwrap();
+    let teams = crate::rules::team_ai_ini::TeamAiIniRegistry::from_sources(
+        &crate::rules::ini_parser::IniFile::empty(),
+        &map.ini,
+        true,
+    );
+    sim.initialize_trigger_definitions(&map, &teams, None, None, None);
+    sim.classify_map_triggers(&rules);
+    for owner in &houses {
+        assert_eq!(sim.houses[owner].allow_win_tag_state().0, 1);
+    }
+    sim.request_player_outcome(
+        PlayerOutcomeRequest::Flag {
+            kind: HouseOutcomeKind::Victory,
+            skip_timer: true,
+        },
+        &rules,
+        Default::default(),
+    );
+    sim.session.set_binary_frame_for_test(100);
+    sim.house_rung(&rules, None, false, Default::default(), None)
+        .unwrap();
+    assert!(
+        sim.session.vmce_outcomes().is_none(),
+        "the tag blocks victory"
+    );
+
+    sim.delete_live_tag(0, &rules, 1, true);
+    sim.delete_live_tag(1, &rules, 1, true);
+    sim.session.set_binary_frame_for_test(159);
+    sim.house_rung(&rules, None, false, Default::default(), None)
+        .unwrap();
+    assert!(
+        sim.session.vmce_outcomes().is_none(),
+        "removal restarts the 60-frame timer"
+    );
+    sim.session.set_binary_frame_for_test(160);
+    sim.house_rung(&rules, None, false, Default::default(), None)
+        .unwrap();
+    assert_eq!(
+        sim.session.vmce_outcome(houses[0]),
+        Some(HouseOutcomeKind::Victory)
+    );
+}
+
+#[cfg(feature = "vmce")]
+#[test]
+fn vmce_other_player_can_end_match_before_a_blocked_victory() {
+    use crate::sim::timer::CdTimer;
+    for other_wins in [false, true] {
+        let (mut sim, houses, _, rules) = vmce_fixture();
+        sim.houses
+            .get_mut(&houses[0])
+            .unwrap()
+            .register_allow_win_tag_type();
+        let request = if other_wins {
+            PlayerOutcomeRequest::Flag {
+                kind: HouseOutcomeKind::Victory,
+                skip_timer: true,
+            }
+        } else {
+            PlayerOutcomeRequest::Country {
+                country_index: 0,
+                win_on_match: true,
+            }
+        };
+        sim.request_player_outcome(request, &rules, Default::default());
+        for (index, owner) in houses.iter().enumerate() {
+            sim.houses
+                .get_mut(owner)
+                .unwrap()
+                .supply_result_flags_for_test(
+                    index == 0 || other_wins,
+                    index == 1 && !other_wins,
+                    CdTimer::started(100, 0),
+                );
+        }
+        sim.session.set_binary_frame_for_test(100);
+        sim.house_rung(&rules, None, false, Default::default(), None)
+            .unwrap();
+        assert!(
+            sim.houses[&houses[0]].has_won(),
+            "the tagged victory must not be the result that ends the match"
+        );
+        assert_eq!(
+            sim.session.vmce_outcome(houses[0]),
+            Some(HouseOutcomeKind::Victory)
+        );
+        assert_eq!(
+            sim.session.vmce_outcome(houses[1]),
+            Some(if other_wins {
+                HouseOutcomeKind::Victory
+            } else {
+                HouseOutcomeKind::Defeat
+            })
+        );
+    }
+}
+
+#[cfg(feature = "vmce")]
+#[test]
 fn vmce_first_result_boundary_keeps_all_player_results_for_both_views() {
     use crate::sim::timer::CdTimer;
     let mut hashes = Vec::new();
