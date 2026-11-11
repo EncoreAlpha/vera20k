@@ -1030,10 +1030,29 @@ fn install_setup(
             .and_then(|launch| launch.selected_map_file.clone())
         {
             let metadata = local_map_metadata(state, &file)?;
+            #[cfg(feature = "vmce")]
+            let vmce_map_config = if !dialog.wol()
+                && state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.mode.class.is_vmce())
+            {
+                Some(resolve_host_vmce_map_config(state, &file)?)
+            } else {
+                None
+            };
             state
                 .match_state
                 .session
                 .accept_network_map_metadata(metadata, None, true)?;
+            #[cfg(feature = "vmce")]
+            if let Some(config) = vmce_map_config {
+                state
+                    .match_state
+                    .session
+                    .accept_network_vmce_map_config(Some(config))?;
+            }
         }
     }
     show_setup_dialog(state, dialog, quick_match);
