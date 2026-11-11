@@ -1,5 +1,6 @@
 use super::*;
 use crate::net::global::GlobalDestination;
+use crate::net::lan_messages::ingame::LoadingProgressMessage;
 use crate::net::reliable::{Delivery, LanConnectionConfig, RetryTiming};
 use std::time::{Duration, Instant};
 
@@ -1542,9 +1543,7 @@ fn intermission_buffers_early_setup_and_reacks_go_after_lost_ack() {
 #[test]
 #[cfg(feature = "vmce")]
 fn vmce_failure_crosses_prepared_to_active_scope() {
-    use crate::net::lan_messages::cooperative::{
-        RetryLoadFailureReason, encode_retry_load_failure,
-    };
+    use crate::net::lan_messages::ingame::{LoadingFailureReason, encode_loading_failure};
     let mut host = transport();
     let mut guest = transport();
     let host_address = host.primary_addr().unwrap();
@@ -1559,7 +1558,7 @@ fn vmce_failure_crosses_prepared_to_active_scope() {
     }
     host.set_lan_scope(scope).unwrap();
     let message =
-        encode_retry_load_failure("Guest", RetryLoadFailureReason::LoadFailed, scope, [8; 16])
+        encode_loading_failure("Guest", LoadingFailureReason::LoadFailed, scope, [8; 16])
             .unwrap();
     assert!(guest.global_mut().send(
         message.as_bytes(),
@@ -1591,9 +1590,9 @@ fn vmce_failure_crosses_prepared_to_active_scope() {
         revision: scope.revision + 1,
         ..scope
     };
-    let stale = encode_retry_load_failure(
+    let stale = encode_loading_failure(
         "Guest",
-        RetryLoadFailureReason::LoadFailed,
+        LoadingFailureReason::LoadFailed,
         stale_scope,
         [8; 16],
     )

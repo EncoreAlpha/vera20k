@@ -1983,7 +1983,7 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
     }
     #[cfg(feature = "vmce")]
     if let Some((reason, scope, attempt)) =
-        crate::net::lan_messages::cooperative::decode_retry_load_failure(&incoming.payload)
+        crate::net::lan_messages::ingame::decode_loading_failure(&incoming.payload)
         && state.match_state.session_mode() == SessionMode::Lan
     {
         let admitted_scope = state
@@ -3820,7 +3820,7 @@ fn send_sources(state: &mut AppState, bytes: &[u8], sources: impl IntoIterator<I
 #[cfg(feature = "vmce")]
 pub(crate) fn notify_vmce_retry_load_failed(
     state: &mut AppState,
-    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
 ) -> bool {
     cooperative::send_retry_load_failure(state, reason)
 }
@@ -3828,7 +3828,7 @@ pub(crate) fn notify_vmce_retry_load_failed(
 #[cfg(feature = "vmce")]
 pub(crate) fn defer_vmce_loading_failure(
     state: &mut AppState,
-    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
     notify: bool,
     detail: String,
 ) -> bool {
@@ -6684,9 +6684,9 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
             }
             crate::app::App::return_to_main_menu(state);
             let reason =
-                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+                crate::net::lan_messages::ingame::LoadingFailureReason::from_code(reason)
                     .unwrap_or(
-                        crate::net::lan_messages::cooperative::RetryLoadFailureReason::LoadFailed,
+                        crate::net::lan_messages::ingame::LoadingFailureReason::LoadFailed,
                     );
             let mut message = crate::app::loading::pump::vmce_load_failure_message(reason);
             if let Some(detail) =

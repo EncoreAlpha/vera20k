@@ -18,9 +18,9 @@ use crate::net::lan_messages::cooperative::{
     OPTIONS_KIND,
 };
 #[cfg(feature = "vmce")]
-use crate::net::lan_messages::cooperative::{
-    RetryLoadFailureReason, VmceStageRecord, encode_retry_load_failure,
-};
+use crate::net::lan_messages::cooperative::VmceStageRecord;
+#[cfg(feature = "vmce")]
+use crate::net::lan_messages::ingame::{LoadingFailureReason, encode_loading_failure};
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
     SkirmishLocalSlot,
@@ -1209,7 +1209,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
 #[cfg(feature = "vmce")]
 pub(super) fn send_retry_load_failure(
     state: &mut AppState,
-    reason: RetryLoadFailureReason,
+    reason: LoadingFailureReason,
 ) -> bool {
     if state.match_state.session_mode() != SessionMode::Lan {
         return false;
@@ -1235,7 +1235,7 @@ pub(super) fn send_retry_load_failure(
     else {
         return false;
     };
-    let Ok(message) = encode_retry_load_failure(&name, reason, scope, attempt) else {
+    let Ok(message) = encode_loading_failure(&name, reason, scope, attempt) else {
         return false;
     };
     let endpoints: Option<Vec<_>> = peers

@@ -212,3 +212,73 @@ fn scoped_loading_rejects_a_prior_match_and_prior_final_options() {
     );
     assert!(LoadingProgressMessage::decode_scoped(progress.as_bytes(), scope).is_err());
 }
+
+#[cfg(feature = "vmce")]
+#[test]
+fn loading_failure_round_trips_every_reason() {
+    use super::{LoadingFailureReason, decode_loading_failure, encode_loading_failure};
+    let scope = SessionScope {
+        epoch: [2; 16],
+        revision: 7,
+    };
+    let attempt = [3; 16];
+    for reason in [
+        LoadingFailureReason::MissingMap,
+        LoadingFailureReason::ConfigMismatch,
+        LoadingFailureReason::IdentityMismatch,
+        LoadingFailureReason::LoadFailed,
+    ] {
+        let message = encode_loading_failure("Host", reason, scope, attempt).unwrap();
+        assert_eq!(
+            decode_loading_failure(message.as_bytes()),
+            Some((reason, scope, attempt))
+        );
+        assert_eq!(
+            u32::from_le_bytes(message.as_bytes()[..4].try_into().unwrap()),
+            0x3A
+        );
+    }
+    let mut bytes =
+        encode_loading_failure("Host", LoadingFailureReason::MissingMap, scope, attempt)
+            .unwrap()
+            .into_bytes();
+    bytes[RELAY_OFFSET] = 0x7F;
+    assert_eq!(decode_loading_failure(&bytes), None);
+    assert_eq!(decode_loading_failure(&bytes[..RELAY_OFFSET - 1]), None);
+}
+
+#[test]
+fn loading_control_bridge_rejects_unscoped_and_unrelated_records() {
+    let scope = SessionScope {
+        epoch: [7; 16],
+        revision: 9,
+    };
+    let other = SessionScope {
+        revision: 10,
+        ..scope
+    };
+    let progress = LoadingProgressMessage::new("Host", 100).unwrap();
+    assert!(is_scoped_loading_control(
+        &progress.scoped_bytes(scope),
+        scope
+    ));
+    assert!(!is_scoped_loading_control(
+        &progress.scoped_bytes(other),
+        scope
+    ));
+    assert!(!is_scoped_loading_control(progress.as_bytes(), scope));
+    let unrelated = LanMessage::with_name(LanMessageKind::Departure, "Host").unwrap();
+    assert!(!is_scoped_loading_control(unrelated.as_bytes(), scope));
+
+    #[cfg(feature = "vmce")]
+    {
+        let failure =
+            encode_loading_failure("Host", LoadingFailureReason::LoadFailed, scope, [3; 16])
+                .unwrap();
+        assert!(is_scoped_loading_control(failure.as_bytes(), scope));
+        assert!(!is_scoped_loading_control(failure.as_bytes(), other));
+        let mut invalid = failure.into_bytes();
+        invalid[LOADING_FAILURE_REASON_OFFSET] = 0x7f;
+        assert!(!is_scoped_loading_control(&invalid, scope));
+    }
+}

@@ -197,6 +197,86 @@ impl LoadingProgressMessage {
     }
 }
 
+/// VERA loading-failure control (`0x3A`), scoped to an admitted attempt.
+/// The application decides who may send it and how to present its reason.
+#[cfg(feature = "vmce")]
+pub const LOADING_FAILURE_KIND: u32 = 0x3A;
+#[cfg(feature = "vmce")]
+const LOADING_FAILURE_REASON_OFFSET: usize = RELAY_OFFSET;
+
+/// Why loading stopped. The numeric codes are wire values, not CSF keys.
+#[cfg(feature = "vmce")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadingFailureReason {
+    MissingMap = 0,
+    ConfigMismatch = 1,
+    IdentityMismatch = 2,
+    LoadFailed = 3,
+}
+
+#[cfg(feature = "vmce")]
+impl LoadingFailureReason {
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => Self::MissingMap,
+            1 => Self::ConfigMismatch,
+            2 => Self::IdentityMismatch,
+            3 => Self::LoadFailed,
+            _ => return None,
+        })
+    }
+}
+
+#[cfg(feature = "vmce")]
+pub fn encode_loading_failure(
+    name: &str,
+    reason: LoadingFailureReason,
+    scope: SessionScope,
+    attempt: [u8; 16],
+) -> Result<LanMessage, LanMessageError> {
+    if attempt == [0; 16] || scope.epoch == [0; 16] {
+        return Err(LanMessageError::InvalidStageRecord);
+    }
+    let mut message = LanMessage::with_name(LanMessageKind::Unknown(LOADING_FAILURE_KIND), name)?;
+    message.bytes[LOADING_FAILURE_REASON_OFFSET] = reason.code();
+    message.bytes[RELAY_OFFSET + 1..RELAY_OFFSET + 17].copy_from_slice(&attempt);
+    message.bytes[RELAY_OFFSET + 17..RELAY_OFFSET + 41].copy_from_slice(&scope.encode());
+    Ok(message)
+}
+
+#[cfg(feature = "vmce")]
+pub fn decode_loading_failure(
+    bytes: &[u8],
+) -> Option<(LoadingFailureReason, SessionScope, [u8; 16])> {
+    if bytes.len() != LAN_MESSAGE_LEN
+        || u32::from_le_bytes(bytes[..4].try_into().ok()?) != LOADING_FAILURE_KIND
+    {
+        return None;
+    }
+    let reason = LoadingFailureReason::from_code(bytes[LOADING_FAILURE_REASON_OFFSET])?;
+    let attempt: [u8; 16] = bytes[RELAY_OFFSET + 1..RELAY_OFFSET + 17].try_into().ok()?;
+    let scope = SessionScope::decode(&bytes[RELAY_OFFSET + 17..RELAY_OFFSET + 41])?;
+    (attempt != [0; 16] && scope.epoch != [0; 16]).then_some((reason, scope, attempt))
+}
+
+/// The transport admits only loading records scoped to the current session
+/// while one peer has installed gameplay and another is still loading. Source
+/// and attempt admission remain the application's responsibility.
+pub(crate) fn is_scoped_loading_control(bytes: &[u8], scope: SessionScope) -> bool {
+    if LoadingProgressMessage::decode_scoped(bytes, scope).is_ok() {
+        return true;
+    }
+    #[cfg(feature = "vmce")]
+    return decode_loading_failure(bytes)
+        .is_some_and(|(_, message_scope, _)| message_scope == scope);
+    #[cfg(not(feature = "vmce"))]
+    false
+}
+
 /// Borrowed Type0C fields. The raw owner retains all455 bytes, including
 /// unpaired UTF-16 surrogates and bytes after the first text terminator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

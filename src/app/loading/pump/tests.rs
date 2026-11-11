@@ -2656,37 +2656,37 @@ fn cancelled_admission_cannot_release_a_ready_result_and_returns_the_same_asset_
 #[cfg(feature = "vmce")]
 #[test]
 fn vmce_retry_load_failures_are_classified_for_the_peer() {
-    use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
+    use crate::net::lan_messages::ingame::LoadingFailureReason;
     let classify = |text: &str| super::vmce_load_failure_reason(&anyhow::anyhow!("{text}"));
     assert_eq!(
         classify("frozen VMCE startup has no map config"),
-        RetryLoadFailureReason::ConfigMismatch
+        LoadingFailureReason::ConfigMismatch
     );
     assert_eq!(
         classify("VMCE map has no physical identity"),
-        RetryLoadFailureReason::IdentityMismatch
+        LoadingFailureReason::IdentityMismatch
     );
     assert_eq!(
         classify("VMCE network startup changed before terminal transfer"),
-        RetryLoadFailureReason::IdentityMismatch
+        LoadingFailureReason::IdentityMismatch
     );
     assert_eq!(
         classify("reading XMP03T4.MAP failed: No such file or directory (os error 2)"),
-        RetryLoadFailureReason::MissingMap
+        LoadingFailureReason::MissingMap
     );
     assert_eq!(
         classify("frozen VMCE startup has no selected map"),
-        RetryLoadFailureReason::MissingMap
+        LoadingFailureReason::MissingMap
     );
     assert_eq!(
         classify("rules rebuild failed"),
-        RetryLoadFailureReason::LoadFailed
+        LoadingFailureReason::LoadFailed
     );
     for reason in [
-        RetryLoadFailureReason::MissingMap,
-        RetryLoadFailureReason::ConfigMismatch,
-        RetryLoadFailureReason::IdentityMismatch,
-        RetryLoadFailureReason::LoadFailed,
+        LoadingFailureReason::MissingMap,
+        LoadingFailureReason::ConfigMismatch,
+        LoadingFailureReason::IdentityMismatch,
+        LoadingFailureReason::LoadFailed,
     ] {
         assert!(!super::vmce_load_failure_message(reason).is_empty());
     }

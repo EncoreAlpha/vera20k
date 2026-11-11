@@ -365,73 +365,6 @@ fn digest_is_valid(digest: &str) -> bool {
     digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// VERA-only retry-load failure record (`0x3A`, not a native BC6 kind): the
-/// reason a peer aborted the retry load, so both peers can show one native
-/// box before returning to the LAN lobby.
-#[cfg(feature = "vmce")]
-pub const RETRY_LOAD_FAILED_KIND: u32 = 0x3A;
-#[cfg(feature = "vmce")]
-const RETRY_LOAD_FAILED_REASON_OFFSET: usize = SIGNAL_LEN;
-
-/// Why a retry load stopped. The numeric codes are wire values, not CSF keys.
-#[cfg(feature = "vmce")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetryLoadFailureReason {
-    MissingMap = 0,
-    ConfigMismatch = 1,
-    IdentityMismatch = 2,
-    LoadFailed = 3,
-}
-
-#[cfg(feature = "vmce")]
-impl RetryLoadFailureReason {
-    pub const fn code(self) -> u8 {
-        self as u8
-    }
-
-    pub const fn from_code(code: u8) -> Option<Self> {
-        Some(match code {
-            0 => Self::MissingMap,
-            1 => Self::ConfigMismatch,
-            2 => Self::IdentityMismatch,
-            3 => Self::LoadFailed,
-            _ => return None,
-        })
-    }
-}
-
-#[cfg(feature = "vmce")]
-pub fn encode_retry_load_failure(
-    name: &str,
-    reason: RetryLoadFailureReason,
-    scope: super::SessionScope,
-    attempt: [u8; 16],
-) -> Result<LanMessage, LanMessageError> {
-    if attempt == [0; 16] || scope.epoch == [0; 16] {
-        return Err(LanMessageError::InvalidStageRecord);
-    }
-    let mut message = LanMessage::with_name(LanMessageKind::Unknown(RETRY_LOAD_FAILED_KIND), name)?;
-    message.bytes[RETRY_LOAD_FAILED_REASON_OFFSET] = reason.code();
-    message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].copy_from_slice(&attempt);
-    message.bytes[SIGNAL_LEN + 17..SIGNAL_LEN + 41].copy_from_slice(&scope.encode());
-    Ok(message)
-}
-
-#[cfg(feature = "vmce")]
-pub fn decode_retry_load_failure(
-    bytes: &[u8],
-) -> Option<(RetryLoadFailureReason, super::SessionScope, [u8; 16])> {
-    if bytes.len() != LAN_MESSAGE_LEN
-        || u32::from_le_bytes(bytes[..4].try_into().ok()?) != RETRY_LOAD_FAILED_KIND
-    {
-        return None;
-    }
-    let reason = RetryLoadFailureReason::from_code(bytes[RETRY_LOAD_FAILED_REASON_OFFSET])?;
-    let attempt: [u8; 16] = bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].try_into().ok()?;
-    let scope = super::SessionScope::decode(&bytes[SIGNAL_LEN + 17..SIGNAL_LEN + 41])?;
-    (attempt != [0; 16] && scope.epoch != [0; 16]).then_some((reason, scope, attempt))
-}
-
 /// One raw slot's human words: `-1` in all three for an empty or AI slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CooperativeHumanWords {
@@ -536,40 +469,6 @@ const _: () = assert!(AI_TEAM_OFFSET + ROWS * 4 <= LAN_MESSAGE_LEN);
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn retry_load_failure_round_trips_every_reason() {
-        use super::{RetryLoadFailureReason, decode_retry_load_failure, encode_retry_load_failure};
-        let scope = super::super::SessionScope {
-            epoch: [2; 16],
-            revision: 7,
-        };
-        let attempt = [3; 16];
-        for reason in [
-            RetryLoadFailureReason::MissingMap,
-            RetryLoadFailureReason::ConfigMismatch,
-            RetryLoadFailureReason::IdentityMismatch,
-            RetryLoadFailureReason::LoadFailed,
-        ] {
-            let message = encode_retry_load_failure("Host", reason, scope, attempt).unwrap();
-            assert_eq!(
-                decode_retry_load_failure(message.as_bytes()),
-                Some((reason, scope, attempt))
-            );
-            assert_eq!(
-                u32::from_le_bytes(message.as_bytes()[..4].try_into().unwrap()),
-                0x3A
-            );
-        }
-        let mut bytes =
-            encode_retry_load_failure("Host", RetryLoadFailureReason::MissingMap, scope, attempt)
-                .unwrap()
-                .into_bytes();
-        bytes[SIGNAL_LEN] = 0x7F;
-        assert_eq!(decode_retry_load_failure(&bytes), None);
-        assert_eq!(decode_retry_load_failure(&bytes[..SIGNAL_LEN - 1]), None);
-    }
 
     #[cfg(feature = "vmce")]
     #[test]

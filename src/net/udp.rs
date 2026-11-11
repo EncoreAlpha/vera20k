@@ -50,7 +50,7 @@ use super::global::{
     GLOBAL_HEADER_LEN, GlobalChannel, GlobalConfig, GlobalDestination, GlobalMessage,
     GlobalReceiveError,
 };
-use super::lan_messages::{SessionScope, ingame::LoadingProgressMessage};
+use super::lan_messages::{SessionScope, ingame::is_scoped_loading_control};
 use super::reliable::{LanConnections, ReceiveError, ReceivedMessage, udp_checksum};
 use crate::util::time::Instant;
 
@@ -2015,14 +2015,7 @@ fn drain_socket(
                     is_global
                         && frame.get(2) == Some(&0)
                         && frame.get(GLOBAL_HEADER_LEN..).is_some_and(|payload| {
-                            LoadingProgressMessage::decode_scoped(payload, scope).is_ok()
-                                || {
-                                    #[cfg(feature = "vmce")]
-                                    { crate::net::lan_messages::cooperative::decode_retry_load_failure(payload)
-                                        .is_some_and(|(_, message_scope, _)| message_scope == scope) }
-                                    #[cfg(not(feature = "vmce"))]
-                                    { false }
-                                }
+                            is_scoped_loading_control(payload, scope)
                         })
                 }
                 _ => true,

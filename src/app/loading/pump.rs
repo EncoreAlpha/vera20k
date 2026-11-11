@@ -3400,39 +3400,39 @@ fn vmce_network_loading(state: &AppState) -> bool {
 #[cfg(feature = "vmce")]
 fn vmce_load_failure_reason(
     err: &anyhow::Error,
-) -> crate::net::lan_messages::cooperative::RetryLoadFailureReason {
-    use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
+) -> crate::net::lan_messages::ingame::LoadingFailureReason {
+    use crate::net::lan_messages::ingame::LoadingFailureReason;
     let text = format!("{err:#}");
     if text.contains("frozen VMCE startup has no map config")
         || text.contains("frozen VMCE startup has no House assignments")
     {
-        RetryLoadFailureReason::ConfigMismatch
+        LoadingFailureReason::ConfigMismatch
     } else if text.contains("VMCE map has no physical identity")
         || text.contains("VMCE network startup changed before terminal transfer")
     {
-        RetryLoadFailureReason::IdentityMismatch
+        LoadingFailureReason::IdentityMismatch
     } else if text.contains("frozen VMCE startup has no selected map")
         || text.contains("VMCE startup has no selected map")
         || text.contains("selected map")
         || text.contains("No such file")
         || text.contains("os error 2")
     {
-        RetryLoadFailureReason::MissingMap
+        LoadingFailureReason::MissingMap
     } else {
-        RetryLoadFailureReason::LoadFailed
+        LoadingFailureReason::LoadFailed
     }
 }
 
 #[cfg(feature = "vmce")]
 pub(crate) fn vmce_load_failure_message(
-    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
 ) -> String {
-    use crate::net::lan_messages::cooperative::RetryLoadFailureReason;
+    use crate::net::lan_messages::ingame::LoadingFailureReason;
     crate::i18n::tr(match reason {
-        RetryLoadFailureReason::MissingMap => "VERA:VmceLoadMapMissing",
-        RetryLoadFailureReason::ConfigMismatch => "VERA:VmceLoadConfigMismatch",
-        RetryLoadFailureReason::IdentityMismatch => "VERA:VmceLoadIdentityMismatch",
-        RetryLoadFailureReason::LoadFailed => "VERA:VmceLoadFailed",
+        LoadingFailureReason::MissingMap => "VERA:VmceLoadMapMissing",
+        LoadingFailureReason::ConfigMismatch => "VERA:VmceLoadConfigMismatch",
+        LoadingFailureReason::IdentityMismatch => "VERA:VmceLoadIdentityMismatch",
+        LoadingFailureReason::LoadFailed => "VERA:VmceLoadFailed",
     })
 }
 
@@ -3442,7 +3442,7 @@ pub(crate) fn vmce_load_failure_message(
 #[cfg(feature = "vmce")]
 pub(crate) fn peer_vmce_retry_load_failed(
     state: &mut AppState,
-    reason: crate::net::lan_messages::cooperative::RetryLoadFailureReason,
+    reason: crate::net::lan_messages::ingame::LoadingFailureReason,
 ) {
     let message = vmce_load_failure_message(reason);
     if vmce_network_loading(state) {
@@ -3488,7 +3488,7 @@ fn fail_loading_with(
     #[cfg(feature = "vmce")]
     let vmce_deferred = !state.frontend.external_launch
         && vmce_failure.is_some_and(|(reason, notify)| {
-            crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+            crate::net::lan_messages::ingame::LoadingFailureReason::from_code(reason)
                 .is_some_and(|reason| {
                     crate::app::lan_service::defer_vmce_loading_failure(
                         state,
@@ -3526,7 +3526,7 @@ fn fail_loading_with(
         #[cfg(feature = "vmce")]
         if let Some((reason, _)) = vmce_failure
             && let Some(reason) =
-                crate::net::lan_messages::cooperative::RetryLoadFailureReason::from_code(reason)
+                crate::net::lan_messages::ingame::LoadingFailureReason::from_code(reason)
         {
             let message = vmce_load_failure_message(reason);
             if state.frontend.multiplayer_setup.is_some() {
