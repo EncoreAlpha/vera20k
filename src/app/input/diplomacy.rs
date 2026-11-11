@@ -287,10 +287,10 @@ pub(crate) fn view(state: &AppState) -> DiplomacyView {
                 .network_wol_start()
                 .is_some_and(|terms| terms.quick_coop),
         local_inactive: sim.local_player_defeated(),
-        manual_alliance_allowed: !sim
+        manual_alliance_allowed: sim
             .session()
             .multiplayer_mode_class()
-            .is_some_and(|mode| mode.is_vmce()),
+            .is_none_or(|mode| mode.policy().manual_alliance_changes_allowed),
         game_mode_nonzero: mode.is_nonzero(),
         listeners: &listeners,
     };
@@ -320,7 +320,7 @@ pub(crate) fn view(state: &AppState) -> DiplomacyView {
                 crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
             })
             .map(|mode| {
-                if mode.class.is_vmce() {
+                if mode.class.policy().literal_mode_display_name {
                     mode.ui_name_key.clone()
                 } else {
                     crate::app::frontend::shell_pass::resolve_csf(state, &mode.ui_name_key)
@@ -479,7 +479,7 @@ pub(crate) fn ally(state: &mut AppState, house: InternedId) {
         || sim
             .session()
             .multiplayer_mode_class()
-            .is_some_and(|mode| mode.is_vmce())
+            .is_some_and(|mode| !mode.policy().manual_alliance_changes_allowed)
         || sim.session().fixed_alliance()
         || !rules.general.allies_allowed
         || !rules.general.ally_change_allowed

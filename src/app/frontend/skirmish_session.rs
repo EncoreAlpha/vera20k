@@ -506,7 +506,7 @@ impl MultiplayerShellRuntime {
         local.set_observer(observe);
         // A VMCE room starts every seat at Random: the Team column is the
         // role chooser there, never a remembered team value.
-        if mode.class.is_vmce() && !observe {
+        if mode.class.policy().authored_campaign_roles && !observe {
             local.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
         }
         local.slot.team = if mode.must_ally {
@@ -2172,6 +2172,51 @@ mod tests {
             scenario_start_staging: Default::default(),
             gameplay_scenario_return_pending: false,
         }
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn authored_campaign_role_setup_starts_random_and_preserves_observer_choice() {
+        use crate::app::match_runtime::session::NetworkRoom;
+        use crate::map::skirmish_scenarios::{SkirmishScenarioRecord, SkirmishScenarioSource};
+        use crate::skirmish_launch::LaunchHumanRole;
+        use crate::skirmish_modes::MpModeClass;
+
+        let catalog = crate::app::scenario_catalog::ScenarioCatalog::from_records(vec![
+            SkirmishScenarioRecord::concrete_from_ini(
+                0,
+                SkirmishScenarioSource::VmceSeries("Sample".to_owned()),
+                "Vmce/Sample/01.map",
+                &IniFile::from_str("[Basic]\nName=Campaign Entry\n"),
+            ),
+        ]);
+        let mut authored_mode = mode();
+        authored_mode.class = MpModeClass::Vmce;
+        let modes = [authored_mode];
+        let setup = |observe| {
+            runtime(
+                MultiplayerSetupSnapshot::from_global_defaults(defaults(), SetupProfile::Lan),
+                1,
+            )
+            .new_network_setup(
+                SetupProfile::Lan,
+                false,
+                &catalog,
+                &modes,
+                SkirmishLaunchOptions::default(),
+                Default::default(),
+                observe,
+                NetworkRoom::default(),
+            )
+            .unwrap()
+            .0
+        };
+
+        assert_eq!(
+            setup(false).local_player().role,
+            LaunchHumanRole::Player { group: -2 }
+        );
+        assert_eq!(setup(true).local_player().role, LaunchHumanRole::Observer);
     }
 
     fn runtime(snapshot: MultiplayerSetupSnapshot, seed: u32) -> MultiplayerShellRuntime {

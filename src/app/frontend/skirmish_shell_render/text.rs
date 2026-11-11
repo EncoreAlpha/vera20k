@@ -452,7 +452,7 @@ pub(crate) fn skirmish_right_panel_label_strings(state: &AppState) -> (String, S
         .iter()
         .find(|mode| mode.id == shell.selected_mode_id)
         .map(|mode| {
-            if mode.class.is_vmce() {
+            if mode.class.policy().literal_mode_display_name {
                 mode.ui_name_key.clone()
             } else {
                 localized_label(state, &mode.ui_name_key, &mode.ui_name_key)
@@ -1257,7 +1257,7 @@ pub(super) fn push_choose_map_modal_text_draws(
             let Some(mode) = mode_by_id(&state.frontend.skirmish_modes, *mode_id) else {
                 continue;
             };
-            if mode.class.is_vmce() {
+            if mode.class.policy().literal_mode_display_name {
                 mode.ui_name_key.clone()
             } else {
                 localized_label(state, &mode.ui_name_key, &mode.ui_name_key)

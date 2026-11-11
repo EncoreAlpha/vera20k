@@ -306,7 +306,7 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce())
+            .is_some_and(|launch| launch.mode.class.policy().authored_campaign_roles)
     {
         let launch = state.match_state.session.network_setup().unwrap();
         let index = launch
@@ -748,7 +748,7 @@ pub(crate) fn commit_map_selection(
         map.player_capacity,
     )?;
     #[cfg(feature = "vmce")]
-    if role_assignments_reset && mode.class.is_vmce() {
+    if role_assignments_reset && mode.class.policy().authored_campaign_roles {
         let count = state
             .match_state
             .session

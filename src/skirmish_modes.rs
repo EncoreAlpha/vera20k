@@ -22,6 +22,32 @@ pub enum MpModeClass {
     Vmce,
 }
 
+/// Shared decisions owned by the multiplayer mode class. Keep independently
+/// named capabilities separate even when they currently have the same values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModePolicy {
+    /// Whether the mode admits observer players.
+    pub observers_allowed: bool,
+    /// An additional mode limit composed with the map's seat count.
+    pub extra_player_cap: Option<usize>,
+    /// Whether mission completion must come from authored outcome triggers.
+    pub trigger_only_outcome: bool,
+    /// Whether mission end follows the Cooperative result route.
+    pub cooperative_result: bool,
+    /// Whether this mode uses the campaign's authored map catalog.
+    pub authored_campaign_map_catalog: bool,
+    /// Whether a modern guest must accept manually before becoming ready.
+    pub modern_guest_manual_accept: bool,
+    /// Whether the mode exposes roles authored by its campaign map.
+    pub authored_campaign_roles: bool,
+    /// Whether ordinary campaign start options stay locked in the lobby.
+    pub campaign_start_options_locked: bool,
+    /// Whether manual alliance changes are available during the match.
+    pub manual_alliance_changes_allowed: bool,
+    /// Whether the mode's display name is a literal string rather than a CSF key.
+    pub literal_mode_display_name: bool,
+}
+
 impl MpModeClass {
     const SECTIONS: [(Self, &'static str); 6] = [
         (Self::Battle, "Battle"),
@@ -31,6 +57,52 @@ impl MpModeClass {
         (Self::FreeForAll, "FreeForAll"),
         (Self::Cooperative, "Cooperative"),
     ];
+
+    /// Shared gameplay and shell capabilities for this multiplayer mode.
+    /// The mode mapping is exhaustive so a new class must choose each policy
+    /// explicitly.
+    pub const fn policy(self) -> ModePolicy {
+        match self {
+            Self::Battle | Self::ManBattle | Self::Siege | Self::Unholy | Self::FreeForAll => {
+                ModePolicy {
+                    observers_allowed: true,
+                    extra_player_cap: None,
+                    trigger_only_outcome: false,
+                    cooperative_result: false,
+                    authored_campaign_map_catalog: false,
+                    modern_guest_manual_accept: false,
+                    authored_campaign_roles: false,
+                    campaign_start_options_locked: false,
+                    manual_alliance_changes_allowed: true,
+                    literal_mode_display_name: false,
+                }
+            }
+            Self::Cooperative => ModePolicy {
+                observers_allowed: false,
+                extra_player_cap: Some(2),
+                trigger_only_outcome: false,
+                cooperative_result: true,
+                authored_campaign_map_catalog: false,
+                modern_guest_manual_accept: false,
+                authored_campaign_roles: false,
+                campaign_start_options_locked: false,
+                manual_alliance_changes_allowed: true,
+                literal_mode_display_name: false,
+            },
+            Self::Vmce => ModePolicy {
+                observers_allowed: false,
+                extra_player_cap: Some(4),
+                trigger_only_outcome: true,
+                cooperative_result: true,
+                authored_campaign_map_catalog: true,
+                modern_guest_manual_accept: true,
+                authored_campaign_roles: true,
+                campaign_start_options_locked: true,
+                manual_alliance_changes_allowed: false,
+                literal_mode_display_name: true,
+            },
+        }
+    }
 
     /// Vtable `+0x40`, which Skirmish's game-type list requires
     /// (`0x005D6130` at `0x005D6263`). Battle (`0x005C0E20`) and FreeForAll
@@ -49,14 +121,14 @@ impl MpModeClass {
     /// `0x108`). Original Cooperative (`0x005C4EE0`) and VERA's authored coop
     /// mode share the route even though their outcome sources differ.
     pub const fn shares_cooperative_result(self) -> bool {
-        matches!(self, Self::Cooperative | Self::Vmce)
+        self.policy().cooperative_result
     }
 
     /// VMCE's mission outcome comes from the map's own outcome actions
     /// (and the host leaving), never from the multiplayer completion scan.
     /// Eliminating every player House does not end the mission.
     pub const fn mission_outcome_from_triggers_only(self) -> bool {
-        matches!(self, Self::Vmce)
+        self.policy().trigger_only_outcome
     }
 
     /// Vtable `+0x4` and `+0x8`, which the sidebar Diplomacy button asks
@@ -84,7 +156,7 @@ impl MpModeClass {
     /// Active original vtable+BC:5C0FD0 for ordinary modes,5C4F00 for Coop.
     /// VMCE is an authored four-player campaign and does not admit observers.
     pub const fn allows_observers(self) -> bool {
-        !matches!(self, Self::Cooperative | Self::Vmce)
+        self.policy().observers_allowed
     }
 
     /// Active original vtable+4:5C4EE0 is true only for Cooperative.
@@ -97,11 +169,7 @@ impl MpModeClass {
     /// `5C0F30` returns-1 (no extra cap). VMCE's four-seat cap is a
     /// separate product rule, not native Cooperative behavior.
     pub const fn setup_player_limit(self) -> Option<usize> {
-        match self {
-            Self::Cooperative => Some(2),
-            Self::Vmce => Some(4),
-            _ => None,
-        }
+        self.policy().extra_player_cap
     }
 
     ///5C21D0/5C2500 show Cooperative's description/difficulty controls and
@@ -393,6 +461,61 @@ pub fn mode_by_id(modes: &[SkirmishGameMode], id: i32) -> Option<&SkirmishGameMo
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mode_policy_maps_each_mode_without_combining_independent_capabilities() {
+        use super::{ModePolicy, MpModeClass};
+
+        let ordinary = ModePolicy {
+            observers_allowed: true,
+            extra_player_cap: None,
+            trigger_only_outcome: false,
+            cooperative_result: false,
+            authored_campaign_map_catalog: false,
+            modern_guest_manual_accept: false,
+            authored_campaign_roles: false,
+            campaign_start_options_locked: false,
+            manual_alliance_changes_allowed: true,
+            literal_mode_display_name: false,
+        };
+        for class in [
+            MpModeClass::Battle,
+            MpModeClass::ManBattle,
+            MpModeClass::Siege,
+            MpModeClass::Unholy,
+            MpModeClass::FreeForAll,
+        ] {
+            assert_eq!(class.policy(), ordinary);
+        }
+
+        let cooperative = ModePolicy {
+            observers_allowed: false,
+            extra_player_cap: Some(2),
+            trigger_only_outcome: false,
+            cooperative_result: true,
+            authored_campaign_map_catalog: false,
+            modern_guest_manual_accept: false,
+            authored_campaign_roles: false,
+            campaign_start_options_locked: false,
+            manual_alliance_changes_allowed: true,
+            literal_mode_display_name: false,
+        };
+        assert_eq!(MpModeClass::Cooperative.policy(), cooperative);
+
+        let vmce = ModePolicy {
+            observers_allowed: false,
+            extra_player_cap: Some(4),
+            trigger_only_outcome: true,
+            cooperative_result: true,
+            authored_campaign_map_catalog: true,
+            modern_guest_manual_accept: true,
+            authored_campaign_roles: true,
+            campaign_start_options_locked: true,
+            manual_alliance_changes_allowed: false,
+            literal_mode_display_name: true,
+        };
+        assert_eq!(MpModeClass::Vmce.policy(), vmce);
+    }
 
     #[test]
     fn cooperative_result_and_trigger_owned_outcomes_are_mode_capabilities() {

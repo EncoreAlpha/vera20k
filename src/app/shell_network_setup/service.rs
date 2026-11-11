@@ -2178,7 +2178,7 @@ fn auto_accept(state: &mut AppState) {
 }
 
 fn mode_allows_automatic_accept(class: crate::skirmish_modes::MpModeClass) -> bool {
-    !class.is_vmce()
+    !class.policy().modern_guest_manual_accept
 }
 
 /// VERA's line pointing a player in its game room at the map's briefing

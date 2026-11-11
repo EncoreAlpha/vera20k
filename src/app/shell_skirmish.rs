@@ -444,13 +444,13 @@ impl App {
         #[cfg(not(feature = "verax"))]
         let current_record_index = current_record_index;
         #[cfg(feature = "vmce")]
-        let vmce_mode =
+        let authored_catalog_mode =
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, selected_mode_id)
-                .is_some_and(|mode| mode.class.is_vmce());
+                .is_some_and(|mode| mode.class.policy().authored_campaign_map_catalog);
         let current_record_index = {
             #[cfg(feature = "vmce")]
             {
-                if vmce_mode {
+                if authored_catalog_mode {
                     crate::app::shell_network_setup::refresh_vmce_entries(state);
                     state
                         .frontend
@@ -476,7 +476,7 @@ impl App {
         };
         let layout = Self::skirmish_choose_map_layout(state);
         let network_setup = state.frontend.shell_route.network_setup();
-        let vmce_enabled =
+        let authored_catalog_enabled =
             cfg!(feature = "vmce") && network_setup && state.match_state.session.host();
         state.frontend.skirmish_shell_state.choose_map_modal = Some(
             crate::ui::skirmish_shell::ChooseMapModalState::open_with_vmce(
@@ -501,7 +501,7 @@ impl App {
                 &state.frontend.skirmish_modes,
                 state.frontend.scenario_catalog.records(),
                 &layout,
-                vmce_enabled,
+                authored_catalog_enabled,
             ),
         );
         // VERA: online rooms list the online map library under its own row.

@@ -264,7 +264,7 @@ pub fn is_valid_map(
 
 pub fn record_matches_mode(record: &SkirmishScenarioRecord, mode: &SkirmishGameMode) -> bool {
     #[cfg(feature = "vmce")]
-    if mode.class.is_vmce() {
+    if mode.class.policy().authored_campaign_map_catalog {
         return record.kind == SkirmishScenarioKind::ConcreteMap
             && matches!(&record.source, SkirmishScenarioSource::VmceSeries(_));
     }

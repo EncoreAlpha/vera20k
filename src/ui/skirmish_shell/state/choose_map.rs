@@ -209,7 +209,7 @@ pub enum ChooseMapContext {
 impl ChooseMapContext {
     /// `FillModeList` (`0x005D6130`), with its room tests at
     /// `0x005D6203..0x005D6237`.
-    fn permits(self, mode: &SkirmishGameMode, vmce_enabled: bool) -> bool {
+    fn permits(self, mode: &SkirmishGameMode, authored_catalog_enabled: bool) -> bool {
         let context_allows = match self {
             Self::Skirmish => mode.class.lists_in_skirmish(),
             Self::Network {
@@ -222,7 +222,8 @@ impl ChooseMapContext {
                     && (mode.wonline_clan_tournament_allowed || !clan_room)
             }
         };
-        context_allows && (!mode.class.is_vmce() || vmce_enabled)
+        context_allows
+            && (!mode.class.policy().authored_campaign_map_catalog || authored_catalog_enabled)
     }
 
     /// `IsValidMap`'s room test (`0x005D6409`): a tournament or clan room
@@ -266,9 +267,9 @@ impl ChooseMapModalState {
         )
     }
 
-    /// Opens the chooser with the user preference controlling whether VERA's
-    /// independent cooperative mode is offered as a selectable row. The mode
-    /// remains in `modes` so a guest can resolve the host's selected id.
+    /// Opens the chooser with the host's catalog availability controlling
+    /// whether authored campaign modes are offered as selectable rows. The
+    /// mode remains in `modes` so a guest can resolve the host's selected id.
     pub fn open_with_vmce(
         context: ChooseMapContext,
         current_mode_id: i32,
@@ -276,7 +277,7 @@ impl ChooseMapModalState {
         modes: &[SkirmishGameMode],
         records: &[SkirmishScenarioRecord],
         layout: &ChooseMapModalLayout,
-        vmce_enabled: bool,
+        authored_catalog_enabled: bool,
     ) -> Self {
         let selected_mode_id = mode_by_id(modes, current_mode_id)
             .or_else(|| modes.first())
@@ -289,7 +290,7 @@ impl ChooseMapModalState {
             },
             mode_rows: modes
                 .iter()
-                .filter(|mode| context.permits(mode, vmce_enabled))
+                .filter(|mode| context.permits(mode, authored_catalog_enabled))
                 .map(|mode| mode.id)
                 .collect(),
             selected_mode_id,

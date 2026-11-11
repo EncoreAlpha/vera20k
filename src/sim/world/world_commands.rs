@@ -2489,7 +2489,7 @@ impl Simulation {
                 if self
                     .session
                     .multiplayer_mode_class()
-                    .is_some_and(|mode| mode.is_vmce())
+                    .is_some_and(|mode| !mode.policy().manual_alliance_changes_allowed)
                 {
                     return false;
                 }

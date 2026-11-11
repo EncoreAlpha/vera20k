@@ -200,6 +200,441 @@ fn engine_production_files() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
+    "app/diagnostics/shell_capture/movies/lan.rs",
+    "app/diagnostics/shell_capture/movies/lan/live.rs",
+    "app/vmce_result.rs",
+    "skirmish_modes.rs",
+];
+
+/// VMCE enum declarations owned by the generic fresh-load handoff. These are
+/// not mode-class dispatch and stay separate from imports/usages.
+const VMCE_LOADER_VARIANT_DECLARATIONS: &[(&str, &str, usize)] = &[
+    (
+        "app/loading/fresh_scenario.rs",
+        "FreshScenarioPrefixReceipt",
+        1,
+    ),
+    ("app/loading/fresh_scenario.rs", "FreshScenarioParts", 1),
+    ("sim/scenario_bootstrap.rs", "FreshScenarioPrefix", 1),
+];
+
+/// Shared-mode identity references retained until their own owner or a
+/// separately named policy covers them. Values are function-local counts of
+/// `is_vmce` and whole-token `Vmce` references.
+const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
+    ("app/cooperative_round.rs", "assign", 1, 0),
+    ("app/cooperative_round.rs", "build_model_rows", 1, 0),
+    ("app/cooperative_round.rs", "mission_ended", 1, 0),
+    ("app/cooperative_round.rs", "open_result", 1, 0),
+    ("app/input/abort.rs", "vmce_active", 1, 0),
+    ("app/input/multiplayer_setup.rs", "layout", 1, 0),
+    ("app/lan_service.rs", "receive", 4, 0),
+    ("app/lan_service.rs", "reject_setup_compatibility", 1, 0),
+    ("app/lan_service.rs", "setup_maps_verified", 1, 0),
+    ("app/lan_service.rs", "setup_request", 1, 0),
+    ("app/lan_service/maps.rs", "poll", 1, 0),
+    ("app/lan_service/maps.rs", "receive", 1, 0),
+    ("app/lan_service/maps.rs", "received_options", 1, 0),
+    ("app/lan_service/maps.rs", "setup_request", 1, 0),
+    (
+        "app/lan_service/options.rs",
+        "apply_finished_vmce_series_scan",
+        1,
+        0,
+    ),
+    ("app/lan_service/options.rs", "apply_vmce_roles", 1, 0),
+    (
+        "app/lan_service/options.rs",
+        "current_vmce_series_identity",
+        1,
+        0,
+    ),
+    (
+        "app/lan_service/options.rs",
+        "prevalidate_received_options",
+        2,
+        0,
+    ),
+    ("app/lan_service/options.rs", "publish_options", 2, 0),
+    (
+        "app/lan_service/options.rs",
+        "published_vmce_series_identity",
+        1,
+        0,
+    ),
+    ("app/lan_service/options.rs", "receive_options_text", 2, 0),
+    (
+        "app/lan_service/options.rs",
+        "validate_current_coop_campaign",
+        1,
+        0,
+    ),
+    ("app/lan_service/options.rs", "validate_vmce_series", 1, 0),
+    ("app/lan_service/options.rs", "vmce_series_boundary", 1, 0),
+    ("app/loading/fresh_scenario.rs", "admit", 3, 1),
+    ("app/loading/fresh_scenario.rs", "into_parts", 0, 2),
+    (
+        "app/loading/fresh_scenario.rs",
+        "loading_prefix_launch_session",
+        0,
+        1,
+    ),
+    (
+        "app/loading/fresh_scenario.rs",
+        "stock_offline_launch",
+        0,
+        1,
+    ),
+    (
+        "app/loading/fresh_scenario.rs",
+        "stock_offline_projection",
+        0,
+        1,
+    ),
+    (
+        "app/loading/fresh_scenario.rs",
+        "validate_terminal_transfer",
+        0,
+        1,
+    ),
+    ("app/loading/init.rs", "load_map_first_step", 1, 3),
+    (
+        "app/match_runtime/session.rs",
+        "accept_lan_peer_choices",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "accept_network_host_setup",
+        2,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "accept_network_peer_choices",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "accept_network_roster",
+        1,
+        0,
+    ),
+    ("app/match_runtime/session.rs", "accept_network_setup", 2, 0),
+    (
+        "app/match_runtime/session.rs",
+        "accept_network_vmce_map_config",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "accept_vmce_intermission_map",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "add_network_participant",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "freeze_network_start_with_vmce",
+        1,
+        0,
+    ),
+    ("app/match_runtime/session.rs", "network_join_row", 1, 0),
+    ("app/match_runtime/session.rs", "select_network_map", 3, 0),
+    ("app/match_runtime/session.rs", "set_network_row_kind", 1, 0),
+    (
+        "app/match_runtime/session.rs",
+        "validate_network_vmce_role",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session.rs",
+        "vmce_frozen_loading_attempt",
+        1,
+        0,
+    ),
+    (
+        "app/match_runtime/session/cooperative_round.rs",
+        "enter_cooperative_round_with_vera",
+        1,
+        0,
+    ),
+    ("app/shell_network_setup.rs", "install_setup", 1, 0),
+    (
+        "app/shell_network_setup.rs",
+        "install_vmce_lobby_fixture",
+        1,
+        0,
+    ),
+    ("app/shell_network_setup.rs", "vmce_solo_hint_key", 1, 0),
+    (
+        "app/shell_network_setup/actions.rs",
+        "commit_map_selection",
+        3,
+        0,
+    ),
+    ("app/shell_network_setup/actions.rs", "commit_start", 1, 0),
+    (
+        "app/shell_network_setup/actions/start.rs",
+        "has_minimum_players",
+        1,
+        0,
+    ),
+    (
+        "app/shell_network_setup/actions/start.rs",
+        "mode_start",
+        1,
+        0,
+    ),
+    (
+        "app/shell_network_setup/service.rs",
+        "apply_local_map_admission",
+        1,
+        0,
+    ),
+    (
+        "app/shell_network_setup/service.rs",
+        "gate_vmce_series_admission",
+        1,
+        0,
+    ),
+    ("app/shell_network_setup/service.rs", "service_event", 7, 0),
+    ("app/shell_network_setup/view.rs", "view", 7, 0),
+    ("app/shell_network_setup/wol.rs", "send_first_choices", 1, 0),
+    ("app/shell_skirmish.rs", "commit_choose_map_selection", 2, 0),
+    (
+        "sim/scenario_bootstrap.rs",
+        "into_fresh_staged_simulation",
+        0,
+        1,
+    ),
+    ("sim/scenario_session.rs", "vmce_outcomes_valid", 1, 0),
+    ("sim/score.rs", "cooperative_score_rows", 1, 0),
+    ("sim/world/house_defeat.rs", "house_rung", 1, 0),
+    ("skirmish_launch.rs", "all_allied", 1, 0),
+];
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct VmceFunctionReferences {
+    is_vmce: usize,
+    vmce_tokens: usize,
+    qualified_mode_variant: usize,
+    vmce_imports: usize,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct VmceModeReferenceInventory {
+    functions: BTreeMap<(String, String), VmceFunctionReferences>,
+    enum_variants: BTreeMap<(String, String), usize>,
+    unscoped: BTreeMap<(String, &'static str), usize>,
+}
+
+/// Count mode checks in the production projection. Exact file/function pins
+/// keep residual identity checks reviewable; whole-token `Vmce` catches
+/// qualified, whitespace-separated, and grouped-import forms.
+fn shared_vmce_mode_references(files: &[SourceFile]) -> VmceModeReferenceInventory {
+    let gated = test_gated_files(files);
+    let mut inventory = VmceModeReferenceInventory::default();
+    for file in files
+        .iter()
+        .filter(|file| file.production.is_some() && !gated.contains(&file.rel))
+        .filter(|file| !VMCE_REFERENCE_EXEMPT_FILES.contains(&file.rel.as_str()))
+    {
+        let production = file.production.as_deref().expect("filtered production");
+        let source_is_vmce = count_identifier(production, "is_vmce");
+        let source_vmce = count_identifier(production, "Vmce");
+        let source_qualified = count_qualified_identifier(production, "MpModeClass", "Vmce");
+        let source_imports = count_vmce_imports(production);
+        if source_is_vmce + source_vmce == 0 {
+            continue;
+        }
+
+        let mut function_total = VmceFunctionReferences::default();
+        for item in fn_items(production) {
+            let Some(body) = item.body else {
+                continue;
+            };
+            let references = VmceFunctionReferences {
+                is_vmce: count_identifier(&body, "is_vmce"),
+                vmce_tokens: count_identifier(&body, "Vmce"),
+                qualified_mode_variant: count_qualified_identifier(&body, "MpModeClass", "Vmce"),
+                vmce_imports: count_vmce_imports(&body),
+            };
+            if references != VmceFunctionReferences::default() {
+                let key = (file.rel.clone(), item.name.clone());
+                let stored = inventory.functions.entry(key).or_default();
+                stored.is_vmce += references.is_vmce;
+                stored.vmce_tokens += references.vmce_tokens;
+                stored.qualified_mode_variant += references.qualified_mode_variant;
+                stored.vmce_imports += references.vmce_imports;
+                function_total.is_vmce += references.is_vmce;
+                function_total.vmce_tokens += references.vmce_tokens;
+                function_total.qualified_mode_variant += references.qualified_mode_variant;
+                function_total.vmce_imports += references.vmce_imports;
+            }
+        }
+        let enum_variants = enum_vmce_variants(production);
+        for (enum_name, count) in &enum_variants {
+            *inventory
+                .enum_variants
+                .entry((file.rel.clone(), enum_name.clone()))
+                .or_default() += count;
+        }
+
+        let enum_total: usize = enum_variants.values().sum();
+        let unscoped = [
+            (
+                "is_vmce",
+                source_is_vmce.saturating_sub(function_total.is_vmce),
+            ),
+            (
+                "Vmce",
+                source_vmce.saturating_sub(function_total.vmce_tokens + enum_total),
+            ),
+            (
+                "MpModeClass::Vmce",
+                source_qualified.saturating_sub(function_total.qualified_mode_variant),
+            ),
+            (
+                "Vmce import",
+                source_imports.saturating_sub(function_total.vmce_imports),
+            ),
+        ];
+        for (symbol, count) in unscoped {
+            if count > 0 {
+                inventory.unscoped.insert((file.rel.clone(), symbol), count);
+            }
+        }
+    }
+    inventory
+}
+
+#[test]
+fn shared_vmce_mode_checks_have_pinned_policy_callers() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let inventory = shared_vmce_mode_references(files);
+    assert!(
+        inventory.unscoped.is_empty(),
+        "unscoped VMCE references must be function-local or an exact loader enum variant; use ModePolicy for shared dispatch: {:#?}",
+        inventory.unscoped
+    );
+    assert_eq!(
+        inventory.enum_variants,
+        VMCE_LOADER_VARIANT_DECLARATIONS
+            .iter()
+            .map(|&(file, item, count)| ((file.to_string(), item.to_string()), count))
+            .collect(),
+        "VMCE loader variant declarations changed; keep them separate from mode imports"
+    );
+    let expected_functions: BTreeMap<_, _> = VMCE_SHARED_REFERENCE_CEILINGS
+        .iter()
+        .map(|&(file, function, is_vmce, vmce_tokens)| {
+            (
+                (file.to_string(), function.to_string()),
+                VmceFunctionReferences {
+                    is_vmce,
+                    vmce_tokens,
+                    qualified_mode_variant: 0,
+                    vmce_imports: 0,
+                },
+            )
+        })
+        .collect();
+    assert_eq!(
+        inventory.functions, expected_functions,
+        "shared files added or changed direct VMCE mode checks; move shared dispatch to a named ModePolicy field and pin only exact residual callers"
+    );
+    let shared_count: usize = inventory
+        .functions
+        .values()
+        .map(|refs| refs.is_vmce + refs.qualified_mode_variant)
+        .sum();
+    let shared_files: BTreeSet<_> = inventory
+        .functions
+        .iter()
+        .filter(|(_, refs)| refs.is_vmce + refs.qualified_mode_variant > 0)
+        .map(|((file, _), _)| file.as_str())
+        .collect();
+    println!(
+        "VMCE shared direct references: 112/27 at d94e9992b -> {shared_count}/{} now",
+        shared_files.len()
+    );
+    println!("VMCE specialized references (separate): 7 diagnostics + 1 result");
+}
+
+#[test]
+fn vmce_mode_scan_covers_test_projection_grouped_imports_and_qualifiers() {
+    let source = "#[cfg(test)] fn test_only() { mode.is_vmce(); }\n";
+    let blanked = blank_comments_and_literals(source);
+    let production = strip_test_items(source, &blanked);
+    let test_refs = shared_vmce_mode_references(&[SourceFile {
+        path: PathBuf::new(),
+        rel: "fixture.rs".to_string(),
+        source: source.to_string(),
+        blanked,
+        production: Some(production),
+    }]);
+    assert!(
+        test_refs.functions.is_empty(),
+        "test-only use leaked into production"
+    );
+
+    let live = "fn grouped() { use crate::skirmish_modes::MpModeClass::{Battle, Vmce}; }\n\
+                fn qualified() { let _ = MpModeClass :: Vmce; }\n\
+                fn identity() { mode.is_vmce(); }\n";
+    let live_blanked = blank_comments_and_literals(live);
+    let live_refs = shared_vmce_mode_references(&[SourceFile {
+        path: PathBuf::new(),
+        rel: "fixture.rs".to_string(),
+        source: live.to_string(),
+        production: Some(live_blanked.clone()),
+        blanked: live_blanked,
+    }]);
+    assert_eq!(
+        live_refs.functions[&("fixture.rs".to_string(), "grouped".to_string())].vmce_imports,
+        1
+    );
+    assert_eq!(
+        live_refs.functions[&("fixture.rs".to_string(), "qualified".to_string())]
+            .qualified_mode_variant,
+        1
+    );
+    assert_eq!(
+        live_refs.functions[&("fixture.rs".to_string(), "identity".to_string())].is_vmce,
+        1
+    );
+    assert!(
+        !live_refs.functions.is_empty(),
+        "new shared identity checks must fail closed until pinned"
+    );
+
+    let module_import = "use crate::skirmish_modes::MpModeClass::{Battle, Vmce};\nfn clean() {}\n";
+    let module_blanked = blank_comments_and_literals(module_import);
+    let module_refs = shared_vmce_mode_references(&[SourceFile {
+        path: PathBuf::new(),
+        rel: "fixture.rs".to_string(),
+        source: module_import.to_string(),
+        production: Some(module_blanked.clone()),
+        blanked: module_blanked,
+    }]);
+    assert_eq!(module_refs.unscoped[&("fixture.rs".to_string(), "Vmce")], 1);
+    assert_eq!(
+        module_refs.unscoped[&("fixture.rs".to_string(), "Vmce import")],
+        1
+    );
+}
+
 /// Float functions whose last bits differ by platform, since Rust calls the
 /// host's libm for them. Arithmetic and `sqrt` round exactly everywhere, and
 /// the `libm` crate is the portable replacement.
@@ -573,6 +1008,107 @@ fn count_identifier(text: &str, ident: &str) -> usize {
                 && bytes.get(at + ident.len()).is_none_or(|&b| !is_ident(b))
         })
         .count()
+}
+
+/// Whole-token identifier with a Rust path separator; whitespace around the
+/// separator is accepted so formatting cannot evade the architecture guard.
+fn count_qualified_identifier(text: &str, qualifier: &str, ident: &str) -> usize {
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    text.match_indices(qualifier)
+        .filter(|&(at, _)| {
+            if (at > 0 && is_ident(bytes[at - 1]))
+                || bytes
+                    .get(at + qualifier.len())
+                    .is_some_and(|&b| is_ident(b))
+            {
+                return false;
+            }
+            let mut next = at + qualifier.len();
+            while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
+                next += 1;
+            }
+            if !text[next..].starts_with("::") {
+                return false;
+            }
+            next += 2;
+            while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
+                next += 1;
+            }
+            text[next..].starts_with(ident)
+                && (next == 0 || !is_ident(bytes[next - 1]))
+                && bytes.get(next + ident.len()).is_none_or(|&b| !is_ident(b))
+        })
+        .count()
+}
+
+/// Count any `use` statement that imports a `Vmce` token. This catches grouped
+/// imports that do not spell the `MpModeClass::Vmce` path at the use site.
+fn count_vmce_imports(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    text.match_indices("use")
+        .filter(|&(at, _)| {
+            let end = at + 3;
+            (at == 0 || !is_ident(bytes[at - 1]))
+                && bytes.get(end).is_some_and(u8::is_ascii_whitespace)
+        })
+        .filter_map(|(at, _)| text[at..].find(';').map(|end| &text[at..at + end]))
+        .map(|statement| count_identifier(statement, "Vmce"))
+        .sum()
+}
+
+/// VMCE variants declared by production enums, keyed by enum name. The exact
+/// inventory distinguishes the loading handoff's type variants from imports
+/// and mode-class checks elsewhere.
+fn enum_vmce_variants(code: &str) -> BTreeMap<String, usize> {
+    let bytes = code.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut variants = BTreeMap::new();
+    for (at, _) in code.match_indices("enum") {
+        let end = at + 4;
+        if (at > 0 && is_ident(bytes[at - 1]))
+            || !bytes.get(end).is_some_and(u8::is_ascii_whitespace)
+        {
+            continue;
+        }
+        let name_start = end + code[end..].len() - code[end..].trim_start().len();
+        let name_len = code[name_start..]
+            .bytes()
+            .take_while(|&b| is_ident(b))
+            .count();
+        if name_len == 0 {
+            continue;
+        }
+        let name = &code[name_start..name_start + name_len];
+        let mut depth = 0i32;
+        let mut previous = 0u8;
+        let mut body_open = None;
+        for (offset, byte) in code[name_start + name_len..].bytes().enumerate() {
+            match byte {
+                b'<' => depth += 1,
+                b'>' if previous != b'-' => depth -= 1,
+                b'{' if depth == 0 => {
+                    body_open = Some(name_start + name_len + offset);
+                    break;
+                }
+                b';' if depth == 0 => break,
+                _ => {}
+            }
+            previous = byte;
+        }
+        let Some(open) = body_open else {
+            continue;
+        };
+        let Some(close) = closing(code, open, b'{', b'}') else {
+            continue;
+        };
+        let count = count_identifier(&code[open + 1..close], "Vmce");
+        if count > 0 {
+            *variants.entry(name.to_string()).or_insert(0) += count;
+        }
+    }
+    variants
 }
 
 fn scan_forbidden_edges(src_root: &Path) -> BTreeSet<(String, String)> {

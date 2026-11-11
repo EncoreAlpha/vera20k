@@ -477,9 +477,12 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let launch = session.network_setup()?;
     let protocol = state.frontend.network_setup_protocol.as_ref()?;
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
+    let mode_policy = mode.class.policy();
     #[cfg(feature = "vmce")]
-    let vera_details = mode.class.is_vmce().then(|| vmce_map_details(state));
-    /// The map's actual selectable primary roles decide the lobby's rows/slots.
+    let vera_details = mode_policy
+        .authored_campaign_roles
+        .then(|| vmce_map_details(state));
+    // The map's actual selectable primary roles decide the lobby's rows/slots.
     #[cfg(feature = "vmce")]
     let vmce_role_count = vera_details
         .as_ref()
@@ -521,7 +524,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         visible_limit
     };
     #[cfg(feature = "vmce")]
-    let visible_limit = if mode.class.is_vmce() {
+    let visible_limit = if mode_policy.authored_campaign_roles {
         visible_limit.min(vmce_role_count.max(1))
     } else {
         visible_limit
@@ -546,7 +549,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             // its AI/empty row so the player column matches the role board.
             // A real participant that already occupies such a seat stays
             // visible until the host moves or kicks it.
-            if mode.class.is_vmce() && usize::from(row) >= visible_limit {
+            if mode_policy.authored_campaign_roles && usize::from(row) >= visible_limit {
                 return launch
                     .humans
                     .iter()
@@ -616,9 +619,9 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         // Player combo.
         let adding = Some(row) == add_slot;
         let bare = several && human.is_none() && ai.is_none();
-        // Modern rooms auto-accept their guest; VMCE instead uses the
-        // original manual acceptance and locks the guest's choices once ready.
-        let accepted = (!dialog.modern || mode.class.is_vmce())
+        // Modern rooms auto-accept their guest; authored campaign rooms keep
+        // the manual Accept and lock the guest's choices once ready.
+        let accepted = (!dialog.modern || mode_policy.modern_guest_manual_accept)
             && session.network_player_ready(launch.local_player_index);
         let editable = ((is_local && (host || !accepted)) || host && ai.is_some()) && !observer;
         // A VERA room's guest picks Observer in its Side list to watch while
@@ -880,8 +883,9 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 choice
             })
             .collect::<Vec<_>>();
+        let authored_roles = mode_policy.authored_campaign_roles;
         #[cfg(feature = "vmce")]
-        let (team, teams) = if mode.class.is_vmce() {
+        let (team, teams) = if authored_roles {
             vmce_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
         } else {
             (
@@ -917,7 +921,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             combos.push(SetupCombo {
                 id: column.control(visible_row),
                 row,
-                enabled: if column == SetupColumn::Team && mode.class.is_vmce() {
+                enabled: if column == SetupColumn::Team && authored_roles {
                     !observer && (host || is_local && !accepted)
                 } else {
                     (editable || switching && column == SetupColumn::Country)
@@ -925,10 +929,10 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                 },
                 visible: visible
                     && !bare
-                    && (!mode.class.is_vmce() || column == SetupColumn::Team)
+                    && (!authored_roles || column == SetupColumn::Team)
                     && (column == SetupColumn::Country || !observer)
-                    && !(column == SetupColumn::Team && mode.class.is_vmce() && human.is_none())
-                    && !(column == SetupColumn::Team && clan_room && !mode.class.is_vmce()),
+                    && !(column == SetupColumn::Team && authored_roles && human.is_none())
+                    && !(column == SetupColumn::Team && clan_room && !authored_roles),
                 selected,
                 choices,
             });
@@ -971,14 +975,14 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             value: bounds.credits_visual_position(options.starting_credits),
             range: bounds.visual_range(SkirmishTrackbarId::Credits0x511),
             enabled: host,
-            visible: !mode.class.is_vmce(),
+            visible: !mode_policy.campaign_start_options_locked,
         },
         SetupTrackbar {
             id: UNITS,
             value: options.unit_count,
             range: bounds.range(SkirmishTrackbarId::UnitCount0x50c),
             enabled: host,
-            visible: !mode.class.is_vmce(),
+            visible: !mode_policy.campaign_start_options_locked,
         },
         SetupTrackbar {
             id: DIFFICULTY,
@@ -1010,7 +1014,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let (vmce_roles, vmce_status): (
         Vec<crate::ui::multiplayer_setup::VmceLobbyRoleSlot>,
         Option<String>,
-    ) = if mode.class.is_vmce() {
+    ) = if mode_policy.authored_campaign_roles {
         vmce_lobby_board(
             state,
             launch,
@@ -1037,7 +1041,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         // C2's lockout (0x78F85E..0x78F907, 0x79132A..0x7913D1): Short Game
         // checked and disabled in a tournament or clan room.
         short_game_locked: host && profile_is_wol(state) && room.tournament_or_clan(),
-        campaign_options_locked: mode.class.is_vmce(),
+        campaign_options_locked: mode_policy.campaign_start_options_locked,
         team_header: !clan_room,
         accept_enabled: accept_enabled(state),
         start_requested: protocol.start_requested
@@ -1072,7 +1076,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
             .as_ref()
             .is_some_and(|ui| ui.map_offer.is_some()),
         #[cfg(feature = "vmce")]
-        mode_label: if mode.class.is_vmce() {
+        mode_label: if mode_policy.literal_mode_display_name {
             mode.ui_name_key.clone()
         } else {
             label(
