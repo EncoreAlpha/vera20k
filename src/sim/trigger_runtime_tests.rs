@@ -156,6 +156,44 @@ fn vmce_lobby_difficulty_selects_the_matching_trigger_flag() {
     }
 }
 
+#[test]
+fn trigger_difficulty_defaults_to_normal_and_uses_campaign_row() {
+    let body = "[Triggers]\nDIFF=<none>,<none>,Difficulty,0,1,0,0,0\n\
+                [Events]\nDIFF=2,13,0,0,36,0,0\n\
+                [Actions]\nDIFF=1,28,0,12,0,0,0,0,A\n\
+                [Tags]\nDIFF_TAG=0,Difficulty,DIFF\n";
+    let mut normal = Simulation::new();
+    let mut campaign = Simulation::new();
+    campaign
+        .session
+        .initialize_campaign_startup(
+            0,
+            1,
+            None,
+            0,
+            crate::sim::campaign_carry_over::CampaignCarryOver::CLEARED,
+        )
+        .unwrap();
+    for (sim, expected) in [(&mut normal, false), (&mut campaign, true)] {
+        install_event_ingress_map(
+            sim,
+            &crate::rules::ruleset::RuleSet::empty_for_test(),
+            body,
+        );
+        let tag_type = sim
+            .trigger_runtime
+            .definitions
+            .tag_type("DIFF_TAG")
+            .unwrap();
+        let tag = sim.shared_trigger_tag(tag_type);
+        let trigger = sim.trigger_runtime.tag(tag).unwrap().triggers[0];
+        assert_eq!(
+            sim.trigger_runtime.triggers[trigger].as_ref().unwrap().enabled,
+            expected
+        );
+    }
+}
+
 #[path = "trigger_runtime_mind_control_callback_tests.rs"]
 mod mind_control_callbacks;
 #[path = "trigger_runtime_mind_control_tests.rs"]

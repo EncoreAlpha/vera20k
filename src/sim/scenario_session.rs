@@ -1934,18 +1934,17 @@ impl ScenarioSession {
         }
     }
 
-    /// VMCE's TriggerType difficulty row, when this scenario was started
-    /// from a frozen co-op lobby. Separate from campaign difficulty because the
-    /// two owners have different scales and consumers.
-    pub(crate) fn vmce_trigger_difficulty(&self) -> Option<i32> {
+    /// Difficulty row used by TriggerType's three map flags. The campaign
+    /// lobby may supply its own frozen row; other campaigns use their player
+    /// difficulty and sessions without either use the normal row.
+    pub(crate) fn trigger_difficulty(&self) -> i32 {
         #[cfg(feature = "vmce")]
-        {
-            self.vmce_trigger_difficulty
+        if let Some(difficulty) = self.vmce_trigger_difficulty {
+            return difficulty;
         }
-        #[cfg(not(feature = "vmce"))]
-        {
-            None
-        }
+        self.campaign_house_difficulties()
+            .map(|(player, _)| player.table_index() as i32)
+            .unwrap_or(1)
     }
 
     pub fn current_house(&self) -> Option<InternedId> {
@@ -2617,7 +2616,7 @@ mod tests {
         let mut session = ScenarioSession::from_descriptor(&ScenarioDescriptor::default());
         let stock = fold(&session);
         session.install_vmce_trigger_difficulty(2);
-        assert_eq!(session.vmce_trigger_difficulty(), Some(2));
+        assert_eq!(session.trigger_difficulty(), 2);
         assert_ne!(
             fold(&session),
             stock,
@@ -2626,7 +2625,7 @@ mod tests {
 
         let encoded = serde_json::to_vec(&session).unwrap();
         let restored: ScenarioSession = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(restored.vmce_trigger_difficulty(), Some(2));
+        assert_eq!(restored.trigger_difficulty(), 2);
 
         // Stock sessions never install the field: the hash stream must stay
         // byte-identical to the pre-field contract.

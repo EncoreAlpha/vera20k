@@ -1524,17 +1524,7 @@ impl Simulation {
         if let Some(difficulty) = self.trigger_runtime.fixture_difficulty {
             return difficulty;
         }
-        // VMCE freezes the host's lobby difficulty row (Easy/Normal/Hard)
-        // and uses it directly for TriggerType's three flags. Campaigns keep
-        // deriving the row from their Scenario startup.
-        self.session
-            .vmce_trigger_difficulty()
-            .or_else(|| {
-                self.session
-                    .campaign_house_difficulties()
-                    .map(|(player, _)| player.table_index() as i32)
-            })
-            .unwrap_or(1)
+        self.session.trigger_difficulty()
     }
 
     /// Original Tag6E52A0 includes pending-but-not-yet-destroyed instances.
