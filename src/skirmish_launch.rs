@@ -1031,7 +1031,12 @@ impl SkirmishLaunchSession {
             .opponents
             .iter()
             .all(|ai| ai.team == LaunchTeam::Team(team));
-        same_humans && same_ai && !self.mode.class.permits_all_allied()
+        // VMCE's opponents and alliances come from the mission map, not the
+        // lobby's human/AI teams, including when the host is the only player.
+        same_humans
+            && same_ai
+            && !self.mode.class.permits_all_allied()
+            && !self.mode.class.is_vmce()
     }
 
     /// FreeForAll5C5D40's roles: each non-observer node+6B is its source index.

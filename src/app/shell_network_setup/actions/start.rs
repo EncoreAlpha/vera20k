@@ -367,6 +367,11 @@ pub(crate) fn begin_external_lan_go(state: &mut AppState) -> anyhow::Result<()> 
 /// a stale declared AI count cannot stand in for an actual opponent slot,
 /// and players sharing a House count once.
 fn has_minimum_players(launch: &SkirmishLaunchSession) -> bool {
+    // VMCE's authored campaign supplies its opponents on the map. Its room
+    // needs a player, but must not admit an observer as a campaign role.
+    if launch.mode.class.is_vmce() {
+        return !launch.humans.is_empty() && launch.humans.iter().all(|human| !human.is_observer());
+    }
     let houses = (0..launch.humans.len())
         .filter(|&index| !launch.humans[index].is_observer() && launch.house_leader(index) == index)
         .count();
@@ -926,6 +931,20 @@ mod tests {
     fn fixture() -> SkirmishLaunchSession {
         let profile = crate::test_fixture::json("tools/map_observation.command-bar.example.json");
         serde_json::from_value(profile["launch"].clone()).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "vmce")]
+    fn vmce_solo_host_passes_opponent_checks_but_observers_do_not() {
+        let mut launch = fixture();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        launch.opponents.clear();
+        launch.ai_player_count = 0;
+        launch.humans[0].slot.team = crate::skirmish_launch::LaunchTeam::Team(0);
+        assert!(has_minimum_players(&launch));
+        assert!(!launch.all_allied());
+        launch.humans[0].set_observer(true);
+        assert!(!has_minimum_players(&launch));
     }
 
     #[test]
