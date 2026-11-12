@@ -324,6 +324,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vmce_signals_keep_the_native_header_layout() {
+        for (signal, kind) in [
+            (VmceSignal::StageRejected, 0x37u32),
+            (VmceSignal::StageAbsent, 0x38),
+            (VmceSignal::RetryVote, 0x39),
+        ] {
+            let bytes = signal.encode("Host").unwrap();
+            assert_eq!(bytes.len(), SIGNAL_LEN);
+            assert_eq!(
+                u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                kind,
+                "the header kind dword"
+            );
+            assert_eq!(VmceSignal::decode(&bytes), Some(signal));
+        }
+        assert_eq!(VmceSignal::decode(&[0u8; SIGNAL_LEN]), None);
+    }
+
+    #[test]
     fn vmce_result_record_round_trips_and_rejects_an_absent_digest() {
         let record = VmceResultRecord {
             nonce: [3; 16],

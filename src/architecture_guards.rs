@@ -615,33 +615,93 @@ fn is_vmce_owned_file(rel: &str) -> bool {
     })
 }
 
-/// Occurrences of `feature = "vmce"` (any spacing around `=`) in code, i.e.
-/// every `#[cfg(feature = "vmce")]` and `#[cfg(all(..., feature = "vmce"))]`
-/// branch.
+/// Occurrences of `feature = "vmce"` (any spacing around `=`) outside comments
+/// and strings, except the feature-value string itself, i.e. every
+/// `#[cfg(feature = "vmce")]` and `#[cfg(all(..., feature = "vmce"))]` branch.
+/// Scanning raw source is required because the production projection blanks the
+/// `"vmce"` string; the state machine keeps comments and literals from
+/// counting.
 fn count_vmce_feature_gates(code: &str) -> usize {
     let bytes = code.as_bytes();
     let mut count = 0;
-    let mut from = 0;
-    while let Some(at) = code[from..].find("feature") {
-        let start = from + at;
-        from = start + "feature".len();
-        let mut i = from;
-        while bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b'=') {
-            continue;
-        }
-        i += 1;
-        while bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
-            i += 1;
-        }
-        if bytes.get(i) == Some(&b'"') && code.get(i + 1..i + 6) == Some("vmce\"") {
-            count += 1;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                let mut depth = 1u32;
+                i += 2;
+                while i < bytes.len() && depth > 0 {
+                    if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => i += 2,
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            b'f' if code[i..].starts_with("feature") => {
+                let mut j = i + "feature".len();
+                while bytes.get(j).is_some_and(|b| b.is_ascii_whitespace()) {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'=') {
+                    j += 1;
+                    while bytes.get(j).is_some_and(|b| b.is_ascii_whitespace()) {
+                        j += 1;
+                    }
+                    if bytes.get(j) == Some(&b'"') && code.get(j + 1..j + 6) == Some("vmce\"") {
+                        count += 1;
+                        i = j + 6;
+                        continue;
+                    }
+                }
+                i += "feature".len();
+            }
+            _ => i += 1,
         }
     }
     count
 }
+
+/// Raw source with the given byte ranges blanked, preserving line breaks.
+fn blank_source_ranges(source: &str, ranges: &[(usize, usize)]) -> String {
+    let mut bytes = source.as_bytes().to_vec();
+    for &(start, stop) in ranges {
+        let stop = stop.min(bytes.len().saturating_sub(1));
+        for byte in &mut bytes[start..=stop] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Capture/diagnostics tooling is compiled into the app but is not a gameplay
+/// owner. It is reported separately and pinned so the cluster stays visible
+/// without being treated as shared-owner coupling.
+const VMCE_DIAGNOSTICS_GATE_TOTAL: usize = 193;
 
 #[test]
 fn vmce_production_gates_stay_within_budgets() {
@@ -657,16 +717,13 @@ fn vmce_production_gates_stay_within_budgets() {
             continue;
         }
         // Raw source keeps the `"vmce"` feature name the production projection
-        // blanks as a string literal; test-gated items are stripped first.
-        let production = strip_test_items(&file.source, &file.source);
+        // blanks as a string literal; test-gated items are blanked first.
+        let production = blank_source_ranges(&file.source, &cfg_test_items(&file.blanked));
         let count = count_vmce_feature_gates(&production);
         if count == 0 {
             continue;
         }
         if file.rel.starts_with("app/diagnostics/") {
-            // Capture/diagnostics tooling is compiled into the app but is not
-            // a gameplay owner; report it without pinning it to the shared-owner
-            // budget.
             diagnostics += count;
             continue;
         }
@@ -695,11 +752,17 @@ fn vmce_production_gates_stay_within_budgets() {
          record the change in the pinned table",
         VMCE_PRODUCTION_GATE_TOTAL
     );
+    assert_eq!(
+        diagnostics, VMCE_DIAGNOSTICS_GATE_TOTAL,
+        "VMCE feature gates in diagnostics tooling: {diagnostics} != {}; \
+         record the deliberate change in the pinned table",
+        VMCE_DIAGNOSTICS_GATE_TOTAL
+    );
     println!(
         "VMCE production feature gates in shared files: {total} in {} files",
         counts.len()
     );
-    println!("VMCE diagnostics tooling feature gates (not budgeted): {diagnostics}");
+    println!("VMCE diagnostics tooling feature gates (pinned, not budgeted): {diagnostics}");
 }
 
 #[test]
@@ -711,8 +774,13 @@ fn vmce_feature_gate_scan_counts_gates_and_skips_owned_files() {
     assert_eq!(count_vmce_feature_gates(code), 3);
     assert_eq!(count_vmce_feature_gates(""), 0);
     let source = "#[cfg(feature = \"vmce\")] fn production() {}\n\
-                  #[cfg(test)] mod tests { #[cfg(feature = \"vmce\")] fn helper() {} }\n";
-    let production = strip_test_items(source, source);
+                  #[cfg(test)] mod tests { #[cfg(feature = \"vmce\")] fn helper() {} }\n\
+                  // #[cfg(feature = \"vmce\")] in a comment\n\
+                  const TEXT: &str = \"feature = \\\"vmce\\\"\";\n";
+    let production = blank_source_ranges(
+        source,
+        &cfg_test_items(&blank_comments_and_literals(source)),
+    );
     assert_eq!(count_vmce_feature_gates(&production), 1);
     assert!(is_vmce_owned_file("app/vmce_result/victory.rs"));
     assert!(is_vmce_owned_file("app/lan_service/vmce_round.rs"));
