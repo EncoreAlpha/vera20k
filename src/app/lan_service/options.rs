@@ -1325,8 +1325,8 @@ mod tests {
     fn extended_options_raw_json_matches_the_fixed_b3_wire_fixture() {
         let bytes = serde_json::to_vec(&fixed_extended_options_wire_fixture()).unwrap();
         assert_eq!(
-            bytes,
-            include_bytes!("fixtures/extended_options_wire_b3.json"),
+            bytes.as_slice(),
+            crate::test_fixture::bytes("src/app/lan_service/fixtures/extended_options_wire_b3.json"),
             "the production ExtendedOptions serializer preserves the B3 wire bytes"
         );
         let fragments = crate::net::lan_messages::extended_setup::encode(

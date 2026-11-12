@@ -365,7 +365,7 @@ impl SetupCrashCapture {
                 && state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .is_none_or(|runtime| !runtime.simulation.session().started()),
             "editable LAN crash checkpoint reached loading/gameplay"
         );

@@ -41,7 +41,7 @@ pub(crate) fn applies(state: &AppState) -> bool {
         && state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .and_then(|runtime| runtime.simulation.session().multiplayer_mode_class())
             .is_some_and(|class| class.shares_cooperative_result())
 }
@@ -58,7 +58,7 @@ pub(crate) fn mission_ended(state: &mut AppState, elapsed_ticks: i32) {
     let Some(sim) = state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .map(|runtime| &runtime.simulation)
     else {
         return;
@@ -198,7 +198,7 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
             state
                 .match_state
                 .sim_runtime
-                .as_ref()
+                .runtime()
                 .map(|runtime| runtime.simulation.save_campaign_carry_over())
         })
         .flatten();
@@ -297,7 +297,7 @@ fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<Coo
 /// house presentation owner. The caller decides their order.
 pub(crate) fn score_rows(state: &AppState) -> Option<Vec<crate::ui::score_shell::ScoreRow>> {
     use crate::app::frontend::shell_pass::resolve_csf;
-    let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
+    let sim = &state.match_state.sim_runtime.runtime()?.simulation;
     let computer = resolve_csf(state, "TXT_COMPUTER");
     let sources = crate::app::presentation::house_ui::HouseUiSources::from_state(state, &computer);
     Some(
@@ -336,7 +336,7 @@ pub(crate) fn score_side(state: &AppState) -> i32 {
     let Some(sim) = state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .map(|runtime| &runtime.simulation)
     else {
         return 0;
@@ -440,7 +440,7 @@ fn build_campaign_end(
 ) -> Option<crate::ui::campaign_score_shell::CampaignEndModel> {
     use crate::app::frontend::shell_pass::resolve_csf;
     use crate::assets::csf_file::{CsfArg, format_csf};
-    let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
+    let sim = &state.match_state.sim_runtime.runtime()?.simulation;
     let computer = resolve_csf(state, "TXT_COMPUTER");
     let sources = crate::app::presentation::house_ui::HouseUiSources::from_state(state, &computer);
     let houses: Vec<_> = sim
@@ -597,7 +597,7 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
         let rules = state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .map(|rt| &rt.resources.rules);
         let flag = rules
             .and_then(|rules| {

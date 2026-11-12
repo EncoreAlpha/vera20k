@@ -60,7 +60,7 @@ pub(crate) fn open_result(state: &mut AppState) -> bool {
         let Some(sim) = state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .map(|runtime| &runtime.simulation)
             .filter(|sim| {
                 sim.session()

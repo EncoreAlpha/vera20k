@@ -90,9 +90,26 @@ impl AresIvanBomb {
         &self.image
     }
 
+    /// `TechnoExt::CanDetonateAttachedBomb @ 100433A0`'s keys: a death bomb's
+    /// `IvanBomb.CanDetonateDeathBomb` (+0xA6), else
+    /// `IvanBomb.CanDetonateTimeBomb` (+0xA4), each over its Rules key.
+    pub(crate) fn can_detonate(
+        &self,
+        death_bomb: bool,
+        rules_time: bool,
+        rules_death: bool,
+    ) -> bool {
+        if death_bomb {
+            self.can_detonate[1].unwrap_or(rules_death)
+        } else {
+            self.can_detonate[0].unwrap_or(rules_time)
+        }
+    }
+
     /// LoadFromINIFile 10055520's reads of these keys, in its order. The
     /// warhead and the two sounds are bound by their own owners.
     pub(crate) fn read(section: &IniSection) -> Self {
+        let _ares = crate::rules::ares_switch::ares_reads();
         let mut bomb = Self::CONSTRUCTED;
         bomb.death_bomb = section.read_ares_bool("IvanBomb.DeathBomb", bomb.death_bomb);
         bomb.death_bomb_on_allies =
@@ -168,6 +185,7 @@ impl AresAbductor {
 
     /// LoadFromINIFile 10055520's reads of these keys, in its order.
     pub(crate) fn read(section: &IniSection) -> Self {
+        let _ares = crate::rules::ares_switch::ares_reads();
         let mut abductor = Self::CONSTRUCTED;
         abductor.abductor = section.read_ares_bool("Abductor", abductor.abductor);
         abductor.change_owner =
@@ -249,6 +267,7 @@ impl AresWeaponVisuals {
     /// vehicle reversal is seeded from this projection's IsMagBeam; native
     /// seeds it from the value after the first pass that read the weapon.
     pub(crate) fn read(section: &IniSection, is_mag_beam: bool) -> Self {
+        let _ares = crate::rules::ares_switch::ares_reads();
         let mut visuals = Self::constructed(is_mag_beam);
         visuals.is_detached_railgun =
             section.read_ares_bool("IsDetachedRailgun", visuals.is_detached_railgun);

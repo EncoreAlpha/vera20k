@@ -303,9 +303,6 @@ impl FreshScenarioLoadContextDescriptor {
                 "VMCE roles are frozen and verified, but authored-map House initialization is not admitted yet"
             );
         }
-        // Validate the complete stock callback row before the accepted staging
-        // token can move. Numeric mode IDs alone are not sufficient authority.
-        crate::sim::scenario_bootstrap::stock_offline_start_callback_family(&session)?;
         let (materialization, staged_waypoints) = match physical_source {
             LoadedMapSource::Generated { seed_name, .. } => {
                 if !crate::map::rmg::is_seed_selection(selected_map)

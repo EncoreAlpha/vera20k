@@ -62,6 +62,14 @@ impl GameEntity {
         self.building_online.online
     }
 
+    /// Ares BuildingExt `TogglePower_HasPower` (`+0x51`) clear: the last
+    /// GoOffline is still in force. TechnoClass_DrawExtras_PowerOff
+    /// (10049FE0, hook `0x6F526C`) draws the power-off marker from it.
+    #[cfg(feature = "ares")]
+    pub fn ares_toggled_off(&self) -> bool {
+        self.building_online.ares_toggled_off()
+    }
+
     /// Phobos `TechnoExt::IsActive` (`src/Ext/Techno/Body.cpp`) plus the power
     /// plant enhancer loops' `HasPower` (Building+660) gate. Temporal
     /// targeting and warping are both covered by `is_warped_out`.
@@ -171,6 +179,59 @@ impl Simulation {
         }
         true
     }
+
+    /// The Ares temporal factory refreshes
+    /// ([`ObjectSubstrate::set_building_online_for_temporal`]), in the order
+    /// the latch changed, before the factory sweep. A building already gone
+    /// from storage is skipped: its Limbo has refreshed the queues since.
+    ///
+    /// Residual (sim order): natively the refresh runs inside the warp or
+    /// release. Trigger: a factory warped or released by a Temporal weapon
+    /// or an Ares ChronoWarp. Effect: until this sweep, the factory's
+    /// queue keeps its hold state from before; the sweep itself sees the
+    /// refreshed one. Frequency: each such warp and release. Risk: a
+    /// queue order or another refresh in between reads the old hold.
+    ///
+    /// [`ObjectSubstrate::set_building_online_for_temporal`]: crate::sim::world::ObjectSubstrate::set_building_online_for_temporal
+    #[cfg(feature = "ares")]
+    pub(crate) fn ares_refresh_temporal_factories(
+        &mut self,
+        rules: &RuleSet,
+        effects: FrameEffects<'_>,
+    ) {
+        for id in self.substrate.take_ares_temporal_factory_refresh() {
+            self.ares_update_factory_queues(id, rules, effects);
+        }
+    }
+
+    /// BuildingExt::UpdateFactoryQueues `10013250`: a building's owner runs
+    /// `HouseClass::Update_FactoriesQueues @ 0x00509140` for the building's
+    /// `Factory=` type and `Naval=`, BuildCat DontCare; a building with no
+    /// `Factory=` or no longer stored does nothing. Callers: the temporal
+    /// refresh above, and Ares Activate `1004CCB0` / Deactivate `1004CDC0`
+    /// on a Building's transition (`Simulation::techno_reactivate`,
+    /// `Simulation::techno_deactivate`).
+    #[cfg(feature = "ares")]
+    pub(crate) fn ares_update_factory_queues(
+        &mut self,
+        id: u64,
+        rules: &RuleSet,
+        effects: FrameEffects<'_>,
+    ) {
+        let Some(entity) = self.substrate.entities.get(id) else {
+            return;
+        };
+        if entity.category() != EntityCategory::Structure {
+            return;
+        }
+        let owner = entity.owner();
+        if let Some(category) = self
+            .object_type(entity.type_ref(), rules)
+            .and_then(crate::sim::production::factory_category_for_building)
+        {
+            crate::sim::production::update_factory_queue(self, rules, owner, category, effects);
+        }
+    }
 }
 
 impl crate::sim::world::ObjectSubstrate {
@@ -180,6 +241,16 @@ impl crate::sim::world::ObjectSubstrate {
     /// translucent, or released ([`AnimObject::set_temporal_erase`]).
     /// Temporal must not call the normal toggles: these force stores have no
     /// factory, light, Stuff or EVA callbacks.
+    ///
+    /// Ares 3.0 BuildingClass_Disable_Temporal_Factories and
+    /// _Enable_Temporal_Factories (both `10013FA0`, hooks `0x004521C8` and
+    /// `0x00452218`, right after the latch) add one:
+    /// BuildingExt::UpdateFactoryQueues `10013250` runs the owner's
+    /// `HouseClass::Update_FactoriesQueues @ 0x00509140` for the building's
+    /// `Factory=` type. VERA-only: the building is queued for the next
+    /// factory sweep ([`Simulation::ares_refresh_temporal_factories`]), as
+    /// TemporalClass::LetGo's callers hold the substrate apart from the
+    /// Simulation.
     ///
     /// [`AnimObject::set_temporal_erase`]: crate::sim::anim_class::AnimObject::set_temporal_erase
     pub(crate) fn set_building_online_for_temporal(&mut self, id: u64, online: bool) {
@@ -191,6 +262,8 @@ impl crate::sim::world::ObjectSubstrate {
         }
         entity.building_online.temporal(online);
         let slots = *entity.building_art.anim_slots();
+        #[cfg(feature = "ares")]
+        self.queue_ares_temporal_factory_refresh(id);
         for slot in slots.into_iter().flatten() {
             if let Some(anim) = self.anims.get_mut(slot) {
                 anim.set_temporal_erase(!online);

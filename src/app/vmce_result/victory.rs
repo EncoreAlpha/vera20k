@@ -151,7 +151,7 @@ pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
     let connected = state.match_state.session.network_connected_source_indices();
     let can_continue = state.match_state.session.cooperative_round_can_continue();
     let victory = round.page_victory();
-    let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
+    let sim = &state.match_state.sim_runtime.runtime()?.simulation;
     let mut rows = Vec::new();
     let mut humans = launch.humans.iter().enumerate().collect::<Vec<_>>();
     humans.sort_by_key(|(_, human)| human.raw_slot_index.unwrap_or(u8::MAX));
@@ -254,7 +254,7 @@ fn score_rows(state: &AppState) -> Option<usize> {
     state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .map(|runtime| runtime.simulation.cooperative_score_rows().len())
 }
 
@@ -349,7 +349,7 @@ pub(crate) fn statistics_page(
     let sim = state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .map(|runtime| &runtime.simulation);
     let terminal = match source {
         VmceScoreSource::Terminal => sim.and_then(|sim| sim.terminal_score_snapshot()),

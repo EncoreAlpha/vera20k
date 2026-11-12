@@ -8,6 +8,7 @@ use crate::app::input::multiplayer_setup as setup_input;
 use crate::app::match_runtime::session::{
     NetworkLoadingRequest, NetworkMapMetadata, NetworkVacancy, SessionMode,
 };
+use crate::app::match_runtime::sim_host::SimWrite;
 use crate::app::shell_lan::{self as lobby, LanJoinAcceptance, LanServiceEvent, LanServiceRequest};
 use crate::app::shell_network_setup::{self as setup, NetworkSetupEvent, NetworkSetupRequest};
 use crate::skirmish_launch::*;
@@ -1271,6 +1272,7 @@ impl LanCapture {
             mode_file.as_deref(),
             SessionMode::Lan,
             the_team_enabled,
+            None,
             &mut Silent,
         )?;
         let map = initial.map_data();
@@ -3121,7 +3123,7 @@ impl LanCapture {
                     let sim = &state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .context("installed timeout runtime")?
                         .simulation;
                     let owner = sim
@@ -3174,7 +3176,7 @@ impl LanCapture {
                 let sim = &state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .context("installed LAN runtime")?
                     .simulation;
                 ensure!(
@@ -3188,7 +3190,7 @@ impl LanCapture {
                     let runtime = state
                         .match_state
                         .sim_runtime
-                        .as_mut()
+                        .write_sim(SimWrite::Debug)
                         .context("installed co-op runtime")?;
                     let sim = &mut runtime.simulation;
                     let lose = self.target == LanTarget::CoopRetry;
@@ -3262,7 +3264,7 @@ impl LanCapture {
                     let runtime = state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .context("installed LAN runtime")?;
                     let map = runtime.simulation.session().map_name().to_string();
                     ensure!(
@@ -3368,7 +3370,7 @@ impl LanCapture {
                 let sim = &state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .context("Observe lost its installed runtime")?
                     .simulation;
                 ensure!(
@@ -3438,7 +3440,7 @@ impl LanCapture {
                 let sim = &state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .context("the peer's EXIT lost the runtime")?
                     .simulation;
                 ensure!(
@@ -3690,7 +3692,7 @@ impl LanCapture {
                     state.match_state.scenario_exit.is_none(),
                     "Quit Game started the EXIT teardown"
                 );
-                if let Some(runtime) = state.match_state.sim_runtime.as_ref() {
+                if let Some(runtime) = state.match_state.sim_runtime.runtime() {
                     ensure!(
                         !runtime.simulation.quit_requested()
                             && !runtime.simulation.pending_command_snapshot().iter().any(
@@ -3748,7 +3750,7 @@ impl LanCapture {
                 let sim = &state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .context("the kick lost the runtime")?
                     .simulation;
                 let peer = state
@@ -4022,7 +4024,7 @@ impl LanCapture {
                     let sim = &state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .context("EXIT runtime")?
                         .simulation;
                     ensure!(
@@ -4127,7 +4129,7 @@ impl LanCapture {
             let sim = &state
                 .match_state
                 .sim_runtime
-                .as_ref()
+                .runtime()
                 .context("running match")?
                 .simulation;
             let order = sim.houses().order();
@@ -4211,7 +4213,7 @@ impl LanCapture {
                 let sim = &state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .context("running match")?
                     .simulation;
                 let order = sim.houses().order().to_vec();
@@ -4431,7 +4433,7 @@ impl LanCapture {
         match step {
             0 => {
                 let country = {
-                    let runtime = state.match_state.sim_runtime.as_ref().context("match")?;
+                    let runtime = state.match_state.sim_runtime.runtime().context("match")?;
                     let sim = &runtime.simulation;
                     let local = sim.session().current_house().context("local House")?;
                     let name = sim
@@ -5260,7 +5262,7 @@ fn sim_tick(state: &AppState) -> Result<u64> {
     Ok(state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .context("installed LAN runtime")?
         .simulation
         .session()

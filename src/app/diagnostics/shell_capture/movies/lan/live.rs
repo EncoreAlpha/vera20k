@@ -219,7 +219,7 @@ impl AiActivity {
         let runtime = state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .context("AI diagnostic simulation")?;
         let sim = &runtime.simulation;
         let owner = self
@@ -278,7 +278,7 @@ impl AiActivity {
         let sim = &state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .context("AI live simulation")?
             .simulation;
         let owner = sim
@@ -1033,7 +1033,7 @@ impl LiveLanCapture {
             state.match_state.network_failure.is_none() || expected_checksum || expected_startup,
             "unexpected network failure modal during live capture"
         );
-        if let Some(runtime) = &state.match_state.sim_runtime {
+        if let Some(runtime) = state.match_state.sim_runtime.runtime() {
             ensure!(
                 runtime.simulation.pending_network_failure().is_none() || expected_checksum,
                 "live LAN checksum failure: {:?}",
@@ -1357,7 +1357,7 @@ impl LiveLanCapture {
                 let native_frame = state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .map(|runtime| runtime.simulation.session().binary_frame())
                     .unwrap_or(0);
                 let evidence = json!({
@@ -1888,7 +1888,7 @@ impl LiveLanCapture {
             let committed = state
                 .match_state
                 .sim_runtime
-                .as_ref()
+                .runtime()
                 .map(|runtime| runtime.simulation.session().binary_frame())
                 .unwrap_or(0);
             self.step_vera_outcome(state, committed)?;
@@ -1904,7 +1904,7 @@ impl LiveLanCapture {
             let simulation = &state
                 .match_state
                 .sim_runtime
-                .as_ref()
+                .runtime()
                 .context("live simulation")?
                 .simulation;
             // A pending native frame may already have applied commands, but
@@ -1917,7 +1917,7 @@ impl LiveLanCapture {
         let simulation = &state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .context("live simulation")?
             .simulation;
         let committed = simulation.session().binary_frame();
@@ -1985,7 +1985,7 @@ impl LiveLanCapture {
             self.checksums.push(
                 state
                     .match_state
-                    .session
+                    .sim_runtime
                     .checksum_history()
                     .get(self.checksums.len() as u32),
             );
@@ -2162,7 +2162,7 @@ impl LiveLanCapture {
             let entity = state
                 .match_state
                 .sim_runtime
-                .as_ref()
+                .runtime()
                 .context("simulation")?
                 .simulation
                 .entities()
@@ -2325,7 +2325,7 @@ impl LiveLanCapture {
                     let runtime = state
                         .match_state
                         .sim_runtime
-                        .as_mut()
+                        .write_sim(SimWrite::Debug)
                         .context("live simulation")?;
                     // Direct field projections keep the rules borrow disjoint
                     // from the mutable simulation borrow.
@@ -2525,7 +2525,7 @@ impl LiveLanCapture {
                         let sim = &state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .context("VMCE defeat simulation")?
                             .simulation;
                         let score_rows = sim.cooperative_score_rows();
@@ -2626,12 +2626,12 @@ impl LiveLanCapture {
                         let native_frame = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.session().binary_frame());
                         let state_hash = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.state_hash());
                         let local_ready = state
                             .match_state
@@ -2690,7 +2690,7 @@ impl LiveLanCapture {
                         let rows = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.cooperative_score_rows().len())
                             .unwrap_or(0);
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
@@ -2708,12 +2708,12 @@ impl LiveLanCapture {
                         let native_frame = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.session().binary_frame());
                         let state_hash = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.state_hash());
                         let local_ready = state
                             .match_state
@@ -2785,7 +2785,7 @@ impl LiveLanCapture {
                         let continued_native_frame = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.session().binary_frame());
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
@@ -2914,7 +2914,7 @@ impl LiveLanCapture {
                     let sim = &state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .context("VMCE victory simulation")?
                         .simulation;
                     let terminal = sim.terminal_score_snapshot();
@@ -3071,7 +3071,7 @@ impl LiveLanCapture {
                 let committed = state
                     .match_state
                     .sim_runtime
-                    .as_ref()
+                    .runtime()
                     .map(|runtime| runtime.simulation.session().binary_frame())
                     .unwrap_or(0);
                 self.step_vera_outcome(state, committed)?;
@@ -3134,7 +3134,7 @@ impl LiveLanCapture {
                     let committed = state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .map(|runtime| runtime.simulation.session().binary_frame())
                         .unwrap_or(0);
                     if committed >= 1 {
@@ -3230,7 +3230,7 @@ impl LiveLanCapture {
                     let native_frame = state
                         .match_state
                         .sim_runtime
-                        .as_ref()
+                        .runtime()
                         .map(|runtime| runtime.simulation.session().binary_frame());
                     let first = *self.vera_outcome_next_frame.get_or_insert(render_frame);
                     // Both peers must read the same frame; frame 60 is after
@@ -3239,7 +3239,7 @@ impl LiveLanCapture {
                         let state_hash = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.state_hash());
                         let map_file = state
                             .match_state
@@ -3642,7 +3642,7 @@ impl LiveLanCapture {
         let sim = &state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .context("simulation")?
             .simulation;
         let live = state.match_state.live_network.as_ref();
@@ -3761,7 +3761,7 @@ fn terminal_simulation_receipt(state: &AppState) -> Result<Value> {
     let sim = &state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .context("terminal simulation")?
         .simulation;
     ensure!(
@@ -3800,7 +3800,7 @@ fn vmce_grants(state: &AppState) -> Result<Value> {
     let sim = &state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .context("VMCE simulation")?
         .simulation;
     let session = sim.session();
@@ -3853,7 +3853,7 @@ fn vmce_probe(state: &mut AppState) -> Result<Value> {
         let sim = &state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .context("VMCE probe simulation")?
             .simulation;
         let session = sim.session();
@@ -4253,7 +4253,7 @@ fn startup_receipt(state: &AppState) -> Result<Value> {
     let sim = &state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .context("simulation")?
         .simulation;
     crate::app::diagnostics::shell_capture::network_startup_receipt(state, launch, Some(sim))

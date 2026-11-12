@@ -238,7 +238,7 @@ fn loss_threshold_events_poll_recorded_losses_and_create_real_reinforcements() {
             ),
         );
         let teams = TeamAiIniRegistry::from_sources(&IniFile::from_str(""), &map.ini, false);
-        sim.install_team_ai_registry(&teams, &rules).unwrap();
+        sim.install_team_ai_registry(&teams, &rules);
         // The shared simple-map fixture initially has no Team registry.
         // Re-enter the real definition reader with the authored Team inputs.
         sim.initialize_trigger_definitions(&map, &teams, None, None, None);
@@ -1401,14 +1401,17 @@ fn action128_skips_only_passengers_with_a_transporter() {
         None,
         FrameEffects::default()
     ));
-    assert!(add_garrison_occupant(
-        &mut sim,
-        &rules,
-        occupant,
-        bunker,
-        None,
-        FrameEffects::default()
-    ));
+    assert!(
+        add_garrison_occupant(
+            &mut sim,
+            &rules,
+            occupant,
+            bunker,
+            None,
+            FrameEffects::default()
+        )
+        .unwrap()
+    );
     // Full reinforcements load through CargoClass::AddPassenger 0x4733A0,
     // which leaves +0x11C NULL.
     assert!(sim.add_cargo_passenger_chain(
@@ -1642,7 +1645,7 @@ fn retail_sov01_script_context() -> Option<(
             10,
         ));
     sim.session.set_current_house_for_test(Some(owner));
-    sim.install_team_ai_registry(&registry, &rules).unwrap();
+    sim.install_team_ai_registry(&registry, &rules);
     sim.initialize_trigger_definitions(&map, &registry, None, None, None);
     Some((sim, rules, overlay, map))
 }
@@ -3300,7 +3303,7 @@ fn trigger_action_40_normalizes_and_refreshes_authority_same_frame() {
 
     let before_zone = sim
         .zone_grid
-        .as_ref()
+        .as_deref()
         .and_then(|zones| zones.map_for(MovementZone::Normal))
         .expect("normal zone")
         .zone_at(50, 50, MovementLayer::Ground);
@@ -3332,7 +3335,7 @@ fn trigger_action_40_normalizes_and_refreshes_authority_same_frame() {
     assert_eq!(terrain.cell(50, 50).unwrap().zone_type, zone_class::OUTSIDE);
     assert!(!terrain.cell(85, 85).unwrap().outside_playfield);
     assert_eq!(terrain.cell(85, 85).unwrap().zone_type, zone_class::GROUND);
-    let zones = sim.zone_grid.as_ref().expect("zones rebuilt");
+    let zones = sim.zone_grid.as_deref().expect("zones rebuilt");
     let normal = zones.map_for(MovementZone::Normal).expect("normal zone");
     assert_eq!(normal.zone_at(50, 50, MovementLayer::Ground), ZONE_INVALID);
     assert_ne!(normal.zone_at(85, 85, MovementLayer::Ground), ZONE_INVALID);

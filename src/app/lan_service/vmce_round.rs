@@ -880,7 +880,7 @@ pub(super) fn service_result_agreement(state: &mut AppState) -> anyhow::Result<(
         let sim = &state
             .match_state
             .sim_runtime
-            .as_ref()
+            .runtime()
             .ok_or_else(|| anyhow::anyhow!("VMCE finished world is absent"))?
             .simulation;
         let assignments = state

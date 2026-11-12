@@ -1411,7 +1411,7 @@ pub(crate) fn commit_entities(
             && world
                 .unit_war_factory_contact(target_id, rules)
                 .is_some_and(|factory| {
-                    !crate::rules::ARES_ENABLED
+                    !rules.ares()
                         || !world
                             .substrate
                             .entities
@@ -2277,6 +2277,7 @@ pub(crate) fn commit_entities(
                     owner: target.owner(),
                     victim_type: target.type_ref(),
                     own_alert: true,
+                    line: crate::sim::combat::UnderAttackLine::OreMiner,
                 };
                 world.submit_under_attack_warning(event, rules, run.effects());
             }
@@ -3328,7 +3329,9 @@ fn run_special_detonation_arm(
             );
         }
         SpecialDetonationAction::ElectricAssault => {
-            world.substrate.electric_assault_detonation(owner, object);
+            world
+                .substrate
+                .electric_assault_detonation(owner, object, rules.ares());
         }
         SpecialDetonationAction::Airstrike => {
             world.airstrike_detonation(owner, object, rules, effects);

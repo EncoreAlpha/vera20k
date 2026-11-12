@@ -181,17 +181,8 @@ impl Simulation {
     /// the call, or None where native goes on to FootClass::Approach_Target
     /// (`0x00741685`).
     ///
-    /// Residuals:
-    /// - With the no-move flag set, native returns the Target without the
-    ///   destination. Every mission passes 0, and no VERA caller passes 1.
-    /// - Mission_Patrol calls Approach too (`0x004D473A`), and VERA has no
-    ///   Foot Patrol body (`FootClass::Mission_Patrol @ 0x004D4280`). Trigger:
-    ///   a Foot on Patrol holding a target. Effect: it does not approach the
-    ///   target; only the reach block's (`0x006FAB74`) does, for one it
-    ///   cannot reach. Frequency: a map can author Patrol in an object's
-    ///   `MISSION=` column (retail maps not surveyed); the team script's
-    ///   Patrol action (`0x006ECCE0`) is not ported. Risk: a whole unported
-    ///   mission.
+    /// Residual: with the no-move flag set, native returns the Target without
+    /// the destination. Every mission passes 0, and no VERA caller passes 1.
     pub(crate) fn unit_approach_head(&self, id: u64, rules: &RuleSet) -> Option<NavTargetRef> {
         let crush = self.approach_crush(id, rules);
         if let Some((facts, target)) = crush
@@ -1205,7 +1196,7 @@ impl Simulation {
         let object = self
             .object_type(actor.type_ref(), rules)
             .ok_or("Approach mover type absent")?;
-        let zones = self.zone_grid.as_ref().ok_or("Approach requires zones")?;
+        let zones = self.zone_grid.as_deref().ok_or("Approach requires zones")?;
         let source = coord_cell(self.foot_navigation_coordinate(id)?);
         let zone = zones
             .get_zone_id_native_in_query(
@@ -1276,7 +1267,7 @@ impl Simulation {
         let source = coord_cell(source);
         let zone = self
             .zone_grid
-            .as_ref()
+            .as_deref()
             .ok_or("Approach requires zones")?
             .get_zone_id_native_in_query(
                 cells.terrain(),

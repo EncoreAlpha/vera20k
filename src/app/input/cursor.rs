@@ -145,7 +145,7 @@ pub(crate) fn current_cursor_feedback_kind(
     if current_sidebar_view_hit(state) {
         return state.match_state.input.sidebar_cursor();
     }
-    let (x, y) = state.match_state.input.cursor_px();
+    let (x, y) = crate::app::presentation::super_timers::cursor_in_view(state);
     if state
         .match_state
         .match_presentation
@@ -164,7 +164,7 @@ pub(crate) fn current_cursor_feedback_kind(
         selected.is_empty(),
     );
     if let super::state::TacticalPointerMode::SuperWeapon(section) = pointer_mode {
-        if let Some(runtime) = state.match_state.sim_runtime.as_ref()
+        if let Some(runtime) = state.match_state.sim_runtime.runtime()
             && let Some(owner) = preferred_local_owner_name(state)
                 .and_then(|name| runtime.simulation.interner().get(&name))
             && let Some(sw_type) = runtime.simulation.interner().get(section)
@@ -220,7 +220,7 @@ pub(crate) fn current_cursor_feedback_kind(
     let sim = state
         .match_state
         .sim_runtime
-        .as_ref()
+        .runtime()
         .map(|rt| &rt.simulation)?;
     // DetermineAction's no-selection path keeps Repair/Sell only when no
     // armed Super overrides it. Use the same priority as the release owner;
@@ -264,6 +264,20 @@ pub(crate) fn current_cursor_feedback_kind(
     // under the cursor for an empty selection too — DetermineAction's
     // `0x00692673` arm answers action 7, row 17 (Select) — so the arm below
     // answers instead. See `no_selection_cursor`.
+    // VERA ferry: the armed drop click shows the unload cursor, or its
+    // refusal where the click would give no transport a route. With the
+    // waypoint key held the click is a waypoint: the Move cursor, or its
+    // refusal on a cell no selected transport can move to.
+    if state.match_state.input.ferry.armed() {
+        let refused = crate::app::input::ferry::armed_click_accepted(state) == Some(false);
+        let waypoint = state.match_state.input.ferry.waypoint_click();
+        return Some(match (waypoint, refused) {
+            (true, false) => CursorFeedbackKind::Move,
+            (true, true) => CursorFeedbackKind::Invalid,
+            (false, false) => CursorFeedbackKind::Deploy,
+            (false, true) => CursorFeedbackKind::NoDeploy,
+        });
+    }
     // PlanMgr63AC41 selects native action0 over a planning node.
     if crate::app::input::planning_mode::node_at_cursor(state).is_some() {
         return Some(CursorFeedbackKind::Default);
@@ -834,6 +848,25 @@ pub(super) fn capability_cursor_for_hover(
 ) -> CursorFeedbackKind {
     use super::context_order::OrderModifier;
     use crate::map::entities::EntityCategory;
+    // Ares hooks at the head of each class What_Action over an object: a
+    // Deactivated cursor owner answers GetDeactivatedAction alone.
+    #[cfg(feature = "ares")]
+    if let (Some(actor), Some(rules)) = (best_id, rules)
+        && let Some(action) = super::context_order::ares_deactivated_action(
+            sim,
+            rules,
+            selected,
+            actor,
+            hover.stable_id,
+        )
+    {
+        use super::context_order::AresDeactivatedAction;
+        return match action {
+            AresDeactivatedAction::Detonate => CursorFeedbackKind::Detonate,
+            AresDeactivatedAction::Select => CursorFeedbackKind::Select,
+            AresDeactivatedAction::None => CursorFeedbackKind::Default,
+        };
+    }
     // Ares 3.0 100171B0 (hook 0x44725F): Building What_Action answers Enter
     // before Techno What_Action when the building's occupants may traverse
     // into the hovered one (canTraverseTo 10011690).
@@ -888,6 +921,12 @@ pub(super) fn capability_cursor_for_hover(
         && sim.bomb_seen_by(hover.stable_id, actor.owner())
     {
         return CursorFeedbackKind::DisarmBomb;
+    }
+
+    if let Some(rules) = rules
+        && super::context_order::self_detonates(sim, rules, selected, hover.stable_id)
+    {
+        return CursorFeedbackKind::Detonate;
     }
 
     // Techno7000B9's self action precedes Ctrl/Alt. All self consumers share
@@ -1576,8 +1615,8 @@ pub(crate) enum ActionDistanceTarget {
 /// cell centre at height 0 when a cell was supplied, else to the target
 /// object's GetCoords.
 ///
-/// RESIDUAL: score 1 is never given. VERA has no producer for EMP (`+0x504`)
-/// or a Unit's death-frame counter (`+0x6D8`); see `techno_ai_cloak`.
+/// RESIDUAL: score 1 comes from the EMP counter (`+0x504`) alone; VERA has no
+/// producer for a Unit's death-frame counter (`+0x6D8`); see `techno_ai_cloak`.
 pub(crate) fn select_best_for_action(
     sim: &crate::sim::world::Simulation,
     selected: &[u64],
@@ -1616,6 +1655,8 @@ pub(crate) fn select_best_for_action(
         let obj = rules.and_then(|r| sim.interner().object_type(entity.type_ref(), r));
         let priority = if entity.berserk.is_active() {
             0
+        } else if entity.emp_remaining() > 0 {
+            1
         } else if !obj.zip(rules).is_some_and(|(obj, rules)| {
             is_armed(entity, obj, sim.entities(), rules, sim.interner())
         }) {
@@ -1703,6 +1744,7 @@ pub(crate) fn cursor_id_for_feedback(kind: CursorFeedbackKind) -> Option<CursorI
         // NoMove's row 0x13 but retains its distinct input action.
         CursorFeedbackKind::IvanBomb => Some(CursorId::IvanBomb),
         CursorFeedbackKind::DisarmBomb => Some(CursorId::Disarm),
+        CursorFeedbackKind::Detonate => Some(CursorId::Demolish),
         CursorFeedbackKind::Deploy => Some(CursorId::Deploy),
         CursorFeedbackKind::NoDeploy => Some(CursorId::NoDeploy),
         // Sidebar repair mode: gamemd's repair-mode arm (DetermineAction
@@ -1918,13 +1960,19 @@ fn sidebar_view_hit(frame: crate::ui::sidebar::SidebarFrame, cursor_x: f32, curs
         w: w as f32,
         h: h as f32,
     };
-    let (x, _, w, h) = frame.column();
-    let panel_rect = crate::ui::sidebar::Rect {
-        x: x as f32 - 10.0,
-        y: 10.0,
-        w: w as f32,
-        h: h as f32 - 20.0,
+    // The sidebar's zone is shifted 10 pixels toward the battlefield (left
+    // for the original's column on the right) and stops 10 pixels short of
+    // both its ends.
+    use crate::ui::sidebar::{Edge, Rect};
+    let (x, y, w, h) = frame.column();
+    let (x, y, w, h) = (x as f32, y as f32, w as f32, h as f32);
+    let (x, y, w, h) = match frame.places().side {
+        Edge::Left => (x + 10.0, y + 10.0, w, h - 20.0),
+        Edge::Right => (x - 10.0, y + 10.0, w, h - 20.0),
+        Edge::Top => (x + 10.0, y + 10.0, w - 20.0, h),
+        Edge::Bottom => (x + 10.0, y - 10.0, w - 20.0, h),
     };
+    let panel_rect = Rect { x, y, w, h };
     strip_rect.contains(cursor_x, cursor_y) || panel_rect.contains(cursor_x, cursor_y)
 }
 
@@ -3811,7 +3859,12 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
 
     /// Stock Crazy Ivan, Engineer and a heavy tank, with their weapons.
     fn bomb_cursor_rules() -> RuleSet {
-        RuleSet::from_ini(&IniFile::from_str(
+        bomb_cursor_rules_with("")
+    }
+
+    /// [`bomb_cursor_rules`] with `combat_damage` lines in `[CombatDamage]`.
+    fn bomb_cursor_rules_with(combat_damage: &str) -> RuleSet {
+        let rules = format!(
             "[InfantryTypes]\n\
              0=IVAN\n\
              1=ENGINEER\n\
@@ -3823,6 +3876,7 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
              2=AP\n\
              [CombatDamage]\n\
              IvanTimedDelay=450\n\
+             {combat_damage}\
              [IVAN]\n\
              Strength=125\n\
              Primary=IvanBomber\n\
@@ -3857,9 +3911,9 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
              [BombDisarm]\n\
              BombDisarm=yes\n\
              [AP]\n\
-             Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n",
-        ))
-        .expect("bomb cursor rules")
+             Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n"
+        );
+        RuleSet::from_ini(&IniFile::from_str(&rules)).expect("bomb cursor rules")
     }
 
     fn bomb_hover(
@@ -3974,6 +4028,48 @@ Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
             CursorFeedbackKind::DisarmBomb,
             "a bomb the player does not see"
         );
+    }
+
+    /// Techno What_Action's Detonate rung (`0x006FFF8D..0x00700003`): with
+    /// `CanDetonateTimeBomb=yes` the lone selected carrier of the player's
+    /// bomb shows Detonate over itself, an enemy as well as its own; retail's
+    /// `no` keeps the self cursor.
+    #[test]
+    fn a_lone_bombed_carrier_offers_detonate_over_itself() {
+        use HoverTargetKind::{EnemyUnit, FriendlyUnit};
+        for (keys, detonates) in [("CanDetonateTimeBomb=yes\n", true), ("", false)] {
+            let rules = bomb_cursor_rules_with(keys);
+            let mut sim = Simulation::new();
+            sim.resolve_type_handles(&rules);
+            for house in ["Americans", "Soviets"] {
+                let id = sim.intern(house);
+                sim.houses_mut_for_test()
+                    .register(crate::sim::house_state::HouseState::new(
+                        id, 0, None, false, 0, 10,
+                    ));
+            }
+            sim.session_mut_for_test().set_game_mode(
+                crate::sim::scenario_session::ScenarioGameMode::from_legacy_nonzero(true),
+            );
+            let house = sim.interner().get("Americans");
+            sim.session_mut_for_test().set_current_house_for_test(house);
+            let mut spawn = |kind: &str, owner: &str, rx: u16| {
+                sim.spawn_object(kind, owner, rx, 5, 0, &rules)
+                    .expect("spawned")
+            };
+            let ivan = spawn("IVAN", "Americans", 5);
+            let own_tank = spawn("HTNK", "Americans", 9);
+            let enemy_tank = spawn("HTNK", "Soviets", 11);
+            sim.bomb_attach_for_test(ivan, Some(own_tank), &rules);
+            sim.bomb_attach_for_test(ivan, Some(enemy_tank), &rules);
+            for (tank, kind) in [(own_tank, FriendlyUnit), (enemy_tank, EnemyUnit)] {
+                assert_eq!(
+                    bomb_hover(&sim, &rules, tank, kind, tank) == CursorFeedbackKind::Detonate,
+                    detonates,
+                    "{keys:?} over {kind:?}"
+                );
+            }
+        }
     }
 }
 

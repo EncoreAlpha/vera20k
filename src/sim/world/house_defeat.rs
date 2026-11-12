@@ -118,11 +118,59 @@ pub(crate) enum PlayerOutcomeRequest {
 
 /// The paused House's result head has already run its assessment prefix.
 /// Generated events are still unadmitted until the complete House pass.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct HouseOutcomeCursor {
     pub(super) index: usize,
     pub(super) kind: crate::sim::house_state::HouseOutcomeKind,
     pub(super) generated: Vec<crate::sim::command::CommandEnvelope>,
+}
+
+/// VERA-only: [`Simulation::civilian_side_house`]'s answer, remembered from
+/// [`Self::begin`] to [`Self::end`], which bracket the object pass. The answer
+/// depends on the House order, each House's type and the rules' sides. A
+/// House's type never changes and the House array only grows, so inside the
+/// bracket the rules set and the House count key the answer; outside it every
+/// ask walks the Houses, so nothing written between passes needs forgetting.
+/// Debug builds check a remembered answer against the walk. Never saved or
+/// hashed.
+#[derive(Debug, Default)]
+pub(crate) struct CivilianSideHouse {
+    remembering: bool,
+    /// The rules' serial and House count the answer was walked at, and the
+    /// answer.
+    answer: Option<((u64, usize), Option<InternedId>)>,
+    /// Walks made for [`Simulation::civilian_side_house_in_pass`] (test
+    /// builds only).
+    #[cfg(any(test, feature = "test-support"))]
+    walks: u32,
+}
+
+/// A presentation frame's copy (docs/sim-thread.md) never runs a pass, so
+/// it starts with nothing remembered.
+impl Clone for CivilianSideHouse {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl CivilianSideHouse {
+    /// Start remembering, from no answer.
+    pub(crate) fn begin(&mut self) {
+        debug_assert!(!self.remembering, "one pass remembers at a time");
+        self.remembering = true;
+        self.answer = None;
+    }
+
+    /// Stop remembering, and drop the answer.
+    pub(crate) fn end(&mut self) {
+        self.remembering = false;
+        self.answer = None;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn walks(&self) -> u32 {
+        self.walks
+    }
 }
 
 impl Simulation {
@@ -1167,6 +1215,7 @@ impl Simulation {
             crate::sim::passenger::garrison_eject::kill_building_occupants(
                 self,
                 id,
+                None,
                 UninitContext::new(rules, registry).with_effects(frame_effects),
             );
         }
@@ -1284,6 +1333,32 @@ impl Simulation {
             .iter()
             .copied()
             .find(|&owner| self.house_type_is_civilian(owner, rules))
+    }
+
+    /// [`Self::civilian_side_house`] for `CheckAutoSellOrCivilian`, which
+    /// every garrisonable civilian building asks in its turn: inside the
+    /// object pass the walk's answer is remembered ([`CivilianSideHouse`]).
+    pub(crate) fn civilian_side_house_in_pass(&mut self, rules: &RuleSet) -> Option<InternedId> {
+        let key = (rules.serial(), self.houses.len());
+        let memo = &self.civilian_house_memo;
+        if let Some((_, house)) = memo.answer.filter(|&(walked, _)| walked == key) {
+            debug_assert!(
+                !crate::sim::touch_log::live_read_check_enabled()
+                    || house == self.civilian_side_house(rules),
+                "the remembered Civilian-side house is current"
+            );
+            return house;
+        }
+        let house = self.civilian_side_house(rules);
+        let memo = &mut self.civilian_house_memo;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            memo.walks += 1;
+        }
+        if memo.remembering {
+            memo.answer = Some((key, house));
+        }
+        house
     }
 
     /// Installed Ares `HouseExt::GetHouseKind`10021310, the resolver Phobos'

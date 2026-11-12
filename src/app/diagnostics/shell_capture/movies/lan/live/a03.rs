@@ -166,7 +166,7 @@ impl A03Capture {
                         self.native_frame_at_notice = state
                             .match_state
                             .sim_runtime
-                            .as_ref()
+                            .runtime()
                             .map(|runtime| runtime.simulation.session().binary_frame());
                         ensure!(
                             self.native_frame_at_notice.is_none_or(|frame| frame == 0),

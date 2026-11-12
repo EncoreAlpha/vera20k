@@ -906,6 +906,7 @@ impl Simulation {
         mask: ScanMission,
         scan_coord: Option<[i32; 3]>,
     ) -> crate::sim::combat::greatest_threat::ThreatScanOutcome {
+        let _area = crate::sim::frame_profile::area(crate::sim::frame_profile::phase::TARGETING);
         crate::sim::combat::combat_targeting::greatest_threat_for_entity(
             &self.substrate.entities,
             &self.substrate.occupancy,
@@ -916,7 +917,7 @@ impl Simulation {
             self.resolved_terrain.as_ref(),
             self.playfield_bounds.is_some(),
             mask,
-            self.zone_grid.as_ref(),
+            self.zone_grid.as_deref(),
             crate::sim::combat::line_of_fire::LineOfFireInputs {
                 overlay_grid: self.overlay_grid.as_ref(),
                 overlay_registry,

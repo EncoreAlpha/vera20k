@@ -35,14 +35,31 @@ use crate::util::save_codec;
 /// layouts. A change in what an unchanged field means renames that field. The
 /// top bit is always set; the hand-kept counter used before stayed far below
 /// it, so those saves read as another layout.
+///
+/// The browser build takes the same id from the build instead
+/// (`VERA20K_SNAPSHOT_LAYOUT`, which tools/wasm/build.py sets from
+/// `src/bin/snapshot-layout.rs`), so the tracing code stays out of the
+/// package every player downloads.
 fn snapshot_layout() -> u32 {
-    static LAYOUT: OnceLock<u32> = OnceLock::new();
-    *LAYOUT.get_or_init(|| {
-        let description = save_codec::layout::describe::<GameSnapshot>()
-            .unwrap_or_else(|error| panic!("cannot describe the snapshot layout: {error}"));
-        let digest = crate::util::sha256::sha256_bytes(description.as_bytes());
-        u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) | 0x8000_0000
-    })
+    #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
+    {
+        env!("VERA20K_SNAPSHOT_LAYOUT")
+            .parse()
+            .expect("VERA20K_SNAPSHOT_LAYOUT is a snapshot layout id")
+    }
+    #[cfg(not(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown")))]
+    {
+        static LAYOUT: OnceLock<u32> = OnceLock::new();
+        *LAYOUT.get_or_init(traced_snapshot_layout)
+    }
+}
+
+/// [`snapshot_layout`], traced from the saved types.
+pub fn traced_snapshot_layout() -> u32 {
+    let description = save_codec::layout::describe::<GameSnapshot>()
+        .unwrap_or_else(|error| panic!("cannot describe the snapshot layout: {error}"));
+    let digest = crate::util::sha256::sha256_bytes(description.as_bytes());
+    u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) | 0x8000_0000
 }
 
 const SNAPSHOT_PRODUCT_MAGIC: [u8; 8] = *b"VERA20K\0";
@@ -2249,7 +2266,7 @@ impl Simulation {
             // MouseLoad restores Map+68/raw rows before LoadContent67E8CD's
             // hierarchy pass. A user file cannot invent that saved topology
             // from the Cell+4C values which CellLoad has just reset to zero.
-            let zones = self.zone_grid.as_ref().ok_or(
+            let zones = self.zone_grid.as_deref().ok_or(
                 SnapshotRestoreError::MissingMapAuthorityComponent {
                     component: "ZoneGrid",
                 },
@@ -2591,10 +2608,16 @@ mod tests {
         use std::collections::BTreeSet;
 
         fn tiberium_fixture() -> (RuleSet, OverlayTypeRegistry, u8) {
-            let ini = IniFile::from_str(
+            tiberium_fixture_with_general("")
+        }
+
+        /// [`tiberium_fixture`] with `general` added to `[General]`.
+        fn tiberium_fixture_with_general(general: &str) -> (RuleSet, OverlayTypeRegistry, u8) {
+            let ini = IniFile::from_str(&format!(
                 "[General]\n\
                  TiberiumGrows=yes\n\
                  TiberiumSpreads=yes\n\
+                 {general}\
                  [InfantryTypes]\n\
                  [VehicleTypes]\n\
                  [AircraftTypes]\n\
@@ -2614,7 +2637,7 @@ mod tests {
                  GrowthPercentage=1\n\
                  Spread=23\n\
                  SpreadPercentage=1\n",
-            );
+            ));
             let ini = crate::rules::tiberium_type::with_tiberium_image_slots(&ini);
             let rules = RuleSet::from_ini(&ini).expect("post-load tiberium fixture rules");
             let registry = OverlayTypeRegistry::from_ini(&ini, None);
@@ -2919,6 +2942,28 @@ mod tests {
             );
         }
 
+        /// No load function calls `CellClass::RecalcAttributes`
+        /// (`0x0047D2B0`), and MapClass::Resize's whole-map pass
+        /// (`0x00567110`, through `0x00568BB0`) comes before it reconstructs
+        /// the Dummy (`0x005670E7..0x005670F2`). The rebuild's overlay sweep
+        /// stands for no Recalc, so it leaves the shared Dummy cell where it
+        /// was. Ore cell (0, 5) lacks the neighbours (-1, 5) and (-1, 6).
+        #[test]
+        fn postload_overlay_sweep_reads_no_cell_through_the_dummy() {
+            let (rules, registry, ore_id) =
+                tiberium_fixture_with_general("CliffBackImpassability=2\n");
+            let sim = base_sim_sized(ore_id, 12, &[(0, 5)]);
+            let mut restored = restore_before_map_authority(&sim);
+            restored.effective_shared_cell_dummy().stamp_coord(7, 9);
+            restored
+                .restore_map_authority_after_snapshot_load(&rules, &registry, None)
+                .expect("all map-authority rebuild dependencies");
+            assert_eq!(
+                restored.effective_shared_cell_dummy().snapshot().coord,
+                (7, 9)
+            );
+        }
+
         /// A snapshot written before the rect was serialized deserializes it
         /// as `(0, 0)`; the rebuild then falls back to the retained MapClass
         /// `Size` (`+0xF4` width plus the separately retained height), never
@@ -3140,7 +3185,7 @@ mod tests {
         assert!(
             restored
                 .zone_grid
-                .as_ref()
+                .as_deref()
                 .unwrap()
                 .is_native_load_pending()
         );
@@ -3169,7 +3214,7 @@ mod tests {
         assert!(!path.is_walkable(2, 0));
         let normal_zones = restored
             .zone_grid
-            .as_ref()
+            .as_deref()
             .and_then(|zones| zones.map_for(MovementZone::Normal))
             .expect("canonical restored ground zones");
         assert_ne!(
@@ -3204,8 +3249,8 @@ mod tests {
             loaded_authority.len()
         );
         assert_zone_grids_equivalent(
-            sim.zone_grid.as_ref().unwrap(),
-            restored.zone_grid.as_ref().unwrap(),
+            sim.zone_grid.as_deref().unwrap(),
+            restored.zone_grid.as_deref().unwrap(),
         );
         assert_eq!(restored.state_hash(), authoritative_hash);
     }
@@ -3553,7 +3598,7 @@ mod tests {
         let mut header = GameSnapshot::read_header(&bytes).unwrap();
         // Flip every capability bit: the result is a foreign mode for any build.
         header.compatibility = RulesCompatibility::from_capabilities(
-            !crate::rules::ARES_ENABLED,
+            !crate::rules::ARES_BUILD,
             !crate::rules::PHOBOS_ENABLED,
             !crate::rules::NPATCH_ENABLED,
             !crate::rules::VERAX_ENABLED,
@@ -3981,7 +4026,7 @@ mod tests {
                 .as_ref()
                 .expect("overlay authority")
                 .retained_neighbor_counts(),
-            &[0, 7, 255, 4][..]
+            &[0u8, 7, 255, 4][..]
         );
     }
 
@@ -4278,7 +4323,7 @@ mod tests {
             } else {
                 let mut miner = Miner::new(MinerKind::War, &MinerConfig::default(), 40);
                 miner.set_cargo_for_test(cargo);
-                entity.miner = Some(miner);
+                entity.miner = Some(Box::new(miner));
             }
             sim.substrate.entities.insert(entity);
             // Native loading resets Scenario RNG to Seed(0). Keep that
@@ -4314,7 +4359,13 @@ mod tests {
             crate::sim::game_entity::GameEntity::test_default(1, "SMIN", "Americans", 4, 5);
         parent.set_techno_ctor_random_word_for_test(0x1111);
         let slav = sim.intern("SLAV");
-        parent.slave_manager = Some(SlaveManager::new(slav, [Some(2), Some(3)], 500, 25, 7));
+        parent.slave_manager = Some(Box::new(SlaveManager::new(
+            slav,
+            [Some(2), Some(3)],
+            500,
+            25,
+            7,
+        )));
         sim.substrate.entities.insert(parent);
         for (stable_id, word) in [(2, 0x2222), (3, 0x3333)] {
             let mut slave = crate::sim::game_entity::GameEntity::test_default(
@@ -5988,13 +6039,13 @@ mod tests {
             .ai_sell_repair
             .set_was_attacked_by_enemy_for_test(true);
         aircraft.damage_smoke_system_id.set_for_test(Some(2));
-        aircraft.capture_manager = Some(
+        aircraft.capture_manager = Some(Box::new(
             crate::sim::capture_manager::CaptureManagerState::with_victims_for_test(
                 3,
                 false,
                 &[3, 4],
             ),
-        );
+        ));
         aircraft.pending_c4_detonation.set_for_test(Some(
             crate::sim::c4_plant::PendingC4Detonation::new(
                 crate::sim::timer::CdTimer::started(11, 35),
@@ -6569,7 +6620,7 @@ mod tests {
         );
         let mut cloak = CloakRuntime::new(0);
         cloak.establish_unlimbo_fully_cloaked();
-        entity.cloak = Some(cloak);
+        entity.cloak = Some(Box::new(cloak));
         sim.substrate.entities.insert(entity);
         // Native in-scenario load restarts Scenario RNG from Seed0; isolate
         // fog/sensor/cloak persistence on that same post-load cursor.
@@ -7552,7 +7603,7 @@ mod tests {
         manager.set_current_target_for_test(Some(TargetKind::Entity(target)));
         manager.set_queued_target_for_test(Some(TargetKind::Entity(target)));
         manager.set_mode_for_test(SpawnManagerMode::Launching);
-        parent_entity.spawn_manager = Some(manager);
+        parent_entity.spawn_manager = Some(Box::new(manager));
         sim.substrate.entities.insert(parent_entity);
 
         let mut child_entity = GameEntity::test_default(child, "HORNET", "AMERICANS", 2, 1);
@@ -8053,8 +8104,8 @@ mod tests {
             loaded_authority.len()
         );
         assert_zone_grids_equivalent(
-            live.zone_grid.as_ref().unwrap(),
-            restored.zone_grid.as_ref().unwrap(),
+            live.zone_grid.as_deref().unwrap(),
+            restored.zone_grid.as_deref().unwrap(),
         );
         assert_eq!(
             restored.state_hash(),
@@ -8851,7 +8902,7 @@ mod tests {
         assert_ne!(
             restored
                 .zone_grid
-                .as_ref()
+                .as_deref()
                 .and_then(|zones| zones.map_for(MovementZone::Normal))
                 .expect("normal zone map")
                 .zone_at(destroyed_cell.0, destroyed_cell.1, MovementLayer::Ground),
@@ -8934,8 +8985,8 @@ mod tests {
         a.rebuild_zone_grid(&path_a);
         b.rebuild_zone_grid(&path_b);
         assert_zone_grids_equivalent(
-            a.zone_grid.as_ref().expect("zone grid rebuilt"),
-            b.zone_grid.as_ref().expect("zone grid rebuilt"),
+            a.zone_grid.as_deref().expect("zone grid rebuilt"),
+            b.zone_grid.as_deref().expect("zone grid rebuilt"),
         );
         assert_eq!(a.state_hash(), b.state_hash());
     }

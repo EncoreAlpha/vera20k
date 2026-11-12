@@ -2,12 +2,10 @@
 //! scenario no committed fixture in this repo covered: a ground vehicle driving
 //! across a **high bridge** under the live `advance_tick` path.
 //!
-//! `global_parity_harness_tests.rs` is the model for the shape (record a
-//! `ReplayLog`, replay it through `ReplayRunner` on a fresh `Simulation`, assert
-//! tick-for-tick hash equality plus a committed final baseline). Every "bridge"
-//! in that harness is the *mission* bridge — a code concept — so a regression in
-//! deck height, the `on_bridge` flag, or the bridge occupancy layer sails
-//! straight through the default `--lib` suite. This file closes that gap.
+//! It records a `ReplayLog`, replays it through `ReplayRunner` on a fresh
+//! `Simulation`, and asserts tick-for-tick hash equality plus a committed final
+//! baseline, so a regression in deck height, the `on_bridge` flag, or the
+//! bridge occupancy layer does not sail through the default `--lib` suite.
 //!
 //! Scope note: the fixture stamps a synthetic span into matching path and resolved terrain rather than
 //! loading a retail map, so it runs with no assets and belongs in the DEFAULT
@@ -437,10 +435,16 @@ const MIN_DISTINCT_DECK_CELLS: usize = 6;
 // only: a temporary control skipping just those two folds in an Ares build
 // gave the default value, every per-frame replay diagnostic field matched
 // the default build's, and every tripwire above stayed green. Control removed.
+// The entity hash now folds `idle_wander` (UnitClass::UpdateVisceroid
+// 0x00737180's direction) for every actor, and an Ares build also folds each
+// Unit's AltOccupation plane (TechnoExt +0x99). Hash composition only: a
+// temporary control skipping just those two folds gave the previous values
+// in both builds, with every tripwire above green. Control removed.
+// Previous: 0x534D_F91E_A02A_F8B2, Ares 0xF5A9_CCCB_69E6_AD58.
 const BRIDGE_HARNESS_FINAL_HASH: u64 = if cfg!(feature = "ares") {
-    0xF5A9_CCCB_69E6_AD58
+    0x83AC_A9D6_3E40_9C5D
 } else {
-    0x534D_F91E_A02A_F8B2
+    0x0D31_C373_DA29_2EB6
 };
 
 fn bridge_ini() -> IniFile {

@@ -307,6 +307,28 @@ mod playfield_authority_hash_tests {
 }
 
 #[cfg(test)]
+mod hash_owner_attribution_tests {
+    use super::Simulation;
+
+    /// A world that differs in one part names that part, so a match report
+    /// can say what two clients disagreed on.
+    #[test]
+    fn a_scenario_rng_difference_shows_under_its_own_name() {
+        let first = Simulation::new();
+        let mut second = Simulation::new();
+        second.scenario_rng.next_u32();
+        let differing: Vec<_> = first
+            .state_hash_owners()
+            .into_iter()
+            .zip(second.state_hash_owners())
+            .filter(|(left, right)| left != right)
+            .map(|(left, _)| left.0)
+            .collect();
+        assert_eq!(differing, ["fold_before_fog", "scenario_rng"]);
+    }
+}
+
+#[cfg(test)]
 mod shared_dummy_bridge_hash_tests {
     use super::Simulation;
     use glam::IVec3;
@@ -427,14 +449,21 @@ mod shared_dummy_bridge_hash_tests {
 /// raw latch/state dword, and signed timer dword is folded explicitly in the
 /// snapshot schema order. Current compatibility projections remain ordinary
 /// named writers until the production authority crosswalk is complete.
-fn hash_mission_com(mission: &crate::sim::mission::MissionCom, hasher: &mut impl Hasher) {
+///
+/// `owed_visits` are the `+0xC4` increments a sleeping object has not taken
+/// yet (`world::idle_sleep`); the hash reads the counter as settled.
+fn hash_mission_com(
+    mission: &crate::sim::mission::MissionCom,
+    owed_visits: u32,
+    hasher: &mut impl Hasher,
+) {
     mission.current().raw().hash(hasher);
     mission.suspended().raw().hash(hasher);
     mission.queued().raw().hash(hasher);
     mission.movement_bypass_latch().hash(hasher);
     mission.handler_state().hash(hasher);
     mission.mission_start_frame().hash(hasher);
-    mission.ai_counter().hash(hasher);
+    mission.ai_counter().wrapping_add(owed_visits).hash(hasher);
     mission.dispatch_timer().start_frame().hash(hasher);
     mission.dispatch_timer().delay().hash(hasher);
 }
@@ -496,7 +525,11 @@ fn hash_mission_leaf(leaf: &crate::sim::mission::MissionLeafState, hasher: &mut 
 impl Simulation {
     /// Read-only Rust diagnostic projections through the existing hash owners.
     /// These are attribution receipts, never gameplay/native golden inputs.
-    pub fn state_hash_owners(&self) -> [(&'static str, u64); 15] {
+    /// Everything [`Self::state_hash`] folds falls under one of these, so two
+    /// clients' lists, as a match that never started reports them, name what
+    /// differs. `interner` is outside the hash: it tells apart two clients
+    /// whose Houses and objects differ only in how names were numbered.
+    pub fn state_hash_owners(&self) -> [(&'static str, u64); 30] {
         fn digest(fold: impl FnOnce(&mut StateHasher)) -> u64 {
             let mut hasher = StateHasher::new();
             fold(&mut hasher);
@@ -555,6 +588,83 @@ impl Simulation {
             ("power", digest(|h| self.hash_power_states(h))),
             ("planning", digest(|h| self.planning.hash_state(h))),
             ("projectiles", digest(|h| self.hash_projectiles(h))),
+            ("scenario_rng", digest(|h| self.scenario_rng.hash_state(h))),
+            (
+                "native_unique_ids",
+                digest(|h| self.native_unique_ids.hash(h)),
+            ),
+            ("tech_levels", digest(|h| self.hash_type_tech_levels(h))),
+            ("playfield", digest(|h| self.hash_playfield_authority(h))),
+            (
+                "object_order",
+                digest(|h| {
+                    self.substrate.logic.as_slice().hash(h);
+                    self.substrate.display.fold_hash(h);
+                }),
+            ),
+            (
+                "game_options",
+                digest(|h| self.session.fold_game_options(h)),
+            ),
+            (
+                "bridges",
+                digest(|h| {
+                    self.hash_bridge_state(h);
+                    self.pending_bridge_collapses.hash_state(h);
+                    self.real_cell_bridge_flags_0x1180.hash(h);
+                }),
+            ),
+            (
+                "terrain_cells",
+                digest(|h| self.dynamic_terrain_cells.hash_simulation(h)),
+            ),
+            (
+                "burrowing",
+                digest(|h| {
+                    if let Some(terrain) = &self.resolved_terrain {
+                        terrain.hash_burrowing_permissions(h);
+                    }
+                }),
+            ),
+            (
+                "map_objects",
+                digest(|h| {
+                    self.hash_overlay_grid(h);
+                    self.hash_crate_authority(h);
+                    self.hash_smudge_grid(h);
+                    self.hash_radiation(h);
+                }),
+            ),
+            (
+                "effects",
+                digest(|h| {
+                    self.kamikaze.fold_hash(h);
+                    self.hash_waves(h);
+                    self.disk_lasers.hash_state(h);
+                    self.hash_anims(h);
+                    self.hash_voxel_anims(h);
+                    self.substrate.spotlights.hash_state(h);
+                    self.hash_particle_systems(h);
+                }),
+            ),
+            ("super_weapons", digest(|h| self.hash_super_weapons(h))),
+            (
+                "shared_cell_dummy",
+                digest(|h| {
+                    let entities: Vec<_> = self.substrate.entities.values().collect();
+                    let retained =
+                        self.cells_anchor_dummy() || self.entities_target_dummy(&entities);
+                    self.hash_shared_cell_dummy(retained, h);
+                }),
+            ),
+            (
+                "scenario_identity",
+                digest(|h| {
+                    self.session.fold_identity(self.houses.order(), h);
+                    self.session.pixel_conversion_bounds().hash(h);
+                }),
+            ),
+            ("interner", digest(|h| self.interner.fold_names(h))),
         ]
     }
 
@@ -562,7 +672,7 @@ impl Simulation {
     pub(crate) fn hash_owner_diagnostics_for_test(&self) -> [(&'static str, u64); 14] {
         // Preserve the existing snapshot tests' owner selection; the new
         // production prefix additionally includes clocks and Scenario RNG.
-        self.state_hash_owners()[1..]
+        self.state_hash_owners()[1..15]
             .try_into()
             .expect("14 retained owner groups")
     }
@@ -675,6 +785,11 @@ impl Simulation {
         // length delimiter distinguishes queue boundaries before the ordered
         // IDs are folded (duplicates are intentionally preserved here).
         self.substrate.pending_delete.hash_state(hasher);
+        #[cfg(feature = "ares")]
+        if !self.substrate.ares_temporal_factory_refresh().is_empty() {
+            b"ares-temporal-factory-refresh-v1".hash(hasher);
+            self.substrate.ares_temporal_factory_refresh().hash(hasher);
+        }
         self.load_objects.hash_state(hasher);
         // Path searches waiting for the next frame's batch.
         if let Some(batch) = &self.path_batch {
@@ -1425,7 +1540,12 @@ impl Simulation {
         overlay_grid.width().hash(hasher);
         overlay_grid.height().hash(hasher);
         // Row-major order carries the coordinates.
-        state_hasher::hash_records(overlay_grid.cells(), hasher, OverlayCell::hash_record);
+        state_hasher::hash_record_iter(
+            overlay_grid.cells().len(),
+            overlay_grid.cells().iter(),
+            hasher,
+            OverlayCell::hash_record,
+        );
         b"retained-wall-neighbor-counts-v1".hash(hasher);
         // The presence tag the retired plane-less fixture mode folded as 0
         // keeps its place.
@@ -1457,7 +1577,7 @@ impl Simulation {
         1u8.hash(hasher);
         let mut entries: Vec<_> = grid
             .iter_occupied()
-            .map(|(rx, ry, c)| (rx, ry, c.type_id, c.footprint_origin, c.frame_offset))
+            .map(|(rx, ry, c)| (rx, ry, c.type_id, c.frame_offset))
             .collect();
         entries.sort();
         entries.len().hash(hasher);
@@ -1549,12 +1669,28 @@ impl Simulation {
     fn entity_digests(&self, entities: &[&GameEntity]) -> Vec<u64> {
         let frame = self.session.binary_frame();
         let network = self.session.game_mode().is_network();
-        digests(entities, entities.len() >= 4096, |entity, hasher| {
-            hash_entity(entity, frame, hasher);
-            if network {
-                entity.discovery.hash_network(hasher);
-            }
-        })
+        // The visits each sleeper is owed, beside the entities: the callers
+        // pass the whole store in its own order. A partial list looks each
+        // one up instead.
+        let store = &self.substrate.entities;
+        let mut owed = store.owed_in_value_order();
+        if owed.len() != entities.len() {
+            owed = entities
+                .iter()
+                .map(|entity| store.owed_visits(entity.stable_id()))
+                .collect();
+        }
+        let entities: Vec<(&GameEntity, u32)> = entities.iter().copied().zip(owed).collect();
+        digests(
+            &entities,
+            entities.len() >= 4096,
+            |&(entity, owed), hasher| {
+                hash_entity_owed(entity, frame, owed, hasher);
+                if network {
+                    entity.discovery.hash_network(hasher);
+                }
+            },
+        )
     }
 
     /// Hash all entity components in stable-entity-ID order, as the digests
@@ -1644,7 +1780,8 @@ fn hash_particle(p: &crate::sim::particles::Particle, hasher: &mut impl Hasher) 
 
 /// One entity's components, in the order the state hash folds them.
 /// `frame` is the binary frame the pending timers measure against.
-fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
+/// `owed_visits` are the visits its sleep still owes it (`world::idle_sleep`).
+fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &mut StateHasher) {
     entity.stable_id().hash(hasher);
     if entity.production_start_price() != 0 {
         // Techno+300 survives factory release and can suppress FreeUnit at
@@ -1948,6 +2085,11 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         b"ares-drop-pod-v1".hash(hasher);
         pod.hash(hasher);
     }
+    #[cfg(feature = "ares")]
+    if let Some(alt) = entity.ares_alt_occupation() {
+        b"ares-alt-occupation-v1".hash(hasher);
+        alt.hash(hasher);
+    }
     // Building+662 and Techno+1C8 (`sim::powered_unit`), folded only
     // while set.
     if entity.building_powered_center.is_counted() {
@@ -1971,6 +2113,11 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     if !entity.sensor_array_counter.is_zero() {
         b"ares-sensor-array-counter-v1".hash(hasher);
         entity.sensor_array_counter.hash(hasher);
+    }
+    #[cfg(feature = "ares")]
+    if !entity.ares_dock_reload_timers.is_empty() {
+        b"ares-dock-reload-timers-v1".hash(hasher);
+        entity.ares_dock_reload_timers.hash(hasher);
     }
     #[cfg(feature = "ares")]
     if !entity.ares_firestorm_wall.is_zero() {
@@ -2298,6 +2445,7 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
     }
     #[cfg(feature = "ares")]
     entity.display_production_to.hash_state(hasher);
+    entity.idle_wander.hash_state(hasher);
     #[cfg(feature = "ares")]
     entity.ares_raid.hash_state(hasher);
     #[cfg(feature = "ares")]
@@ -2566,7 +2714,7 @@ fn hash_entity(entity: &GameEntity, frame: u32, hasher: &mut StateHasher) {
         0u8.hash(hasher);
     }
 
-    hash_mission_com(&entity.mission, hasher);
+    hash_mission_com(&entity.mission, owed_visits, hasher);
     hash_mission_leaf(&entity.mission_leaf, hasher);
     if let Some(post) = entity.patrol_post.cell() {
         b"foot-patrol-post-v1".hash(hasher);
@@ -3019,19 +3167,20 @@ mod lifecycle_hash_tests {
                 entity.death.set_dying_for_test(!entity.death.is_dying());
             });
             assert_entity_mutation_changes_hash(|entity| {
+                let eligible = entity.removal_facts.dirty_rect_eligible();
                 entity
                     .removal_facts
-                    .set_dirty_rect_eligible_for_test(!entity.removal_facts.dirty_rect_eligible());
+                    .set_dirty_rect_eligible_for_test(!eligible);
             });
             assert_entity_mutation_changes_hash(|entity| {
+                let recorded = entity.kill_record.is_recorded();
                 entity
                     .kill_record
-                    .set_destruction_recorded_for_test(!entity.kill_record.is_recorded());
+                    .set_destruction_recorded_for_test(!recorded);
             });
             assert_entity_mutation_changes_hash(|entity| {
-                entity
-                    .removal_facts
-                    .set_occupier_for_test(!entity.removal_facts.occupier());
+                let occupier = entity.removal_facts.occupier();
+                entity.removal_facts.set_occupier_for_test(!occupier);
             });
             assert_entity_mutation_changes_hash(|entity| {
                 entity.set_in_playfield(!entity.in_playfield());
@@ -4470,7 +4619,6 @@ mod smudge_hash_tests {
                 3,
                 SmudgeCell {
                     type_id: Some(0),
-                    footprint_origin: Some((2, 3)),
                     frame_offset: 0,
                 },
             );

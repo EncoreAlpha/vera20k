@@ -104,6 +104,7 @@ impl AresPrerequisiteRules {
             &[crate::rules::prerequisite::Prerequisite],
         ) -> Vec<crate::rules::prerequisite::Prerequisite>,
     ) {
+        let _ares = crate::rules::ares_switch::ares_reads();
         // `INIClass::ReadInteger("Prerequisite.Lists", size - 1)`, at least
         // 0, plus one: the vector grows with empty lists or is truncated.
         // Initialize (1003DEC0) sized it to one at the first read.
@@ -307,7 +308,8 @@ pub(crate) struct ResidualTypeRules {
     /// `.DescentSpeed` and `.EmergeSpeed` (+0x3B4..+0x3D4, Nullable<int>,
     /// unset; else the RulesExt values).
     hunter_seeker: [Option<i32>; 5],
-    /// `Assaulter.Level` (+0x42C, Valueable<int>, 0).
+    /// `Assaulter.Level` (+0x42C, Valueable<int>, 0), consumed through
+    /// [`AresTechnoTypeRules::assaulter_level`].
     assaulter_level: i32,
     /// `NoSelfGuardArea` (+0x4C8, false).
     no_self_guard_area: bool,
@@ -650,6 +652,7 @@ impl Default for TechnoCombatGlobalRules {
 
 impl TechnoCombatGlobalRules {
     pub(crate) fn read_before_type_data(&mut self, pass: &IniFile) {
+        let _ares = crate::rules::ares_switch::ares_reads();
         let Some(section) = pass.section("CombatDamage") else {
             return;
         };
@@ -673,10 +676,14 @@ impl TechnoCombatGlobalRules {
     }
 }
 
-/// TechnoTypeExt+0x458..+0x468, the reload amounts and the out-of-ammo
-/// weapon.
+/// TechnoTypeExt+0x448..+0x468, the dock reload rate, the reload amounts and
+/// the out-of-ammo weapon.
 #[derive(Debug, Clone, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AmmoTypeRules {
+    /// `ReloadRate` (Nullable<double> +0x448, minutes), unset: Rules
+    /// `ReloadRate`.
+    #[serde(default)]
+    reload_rate: Option<NativeF64Bits>,
     /// `ReloadAmount` (+0x458, 1).
     reload_amount: i32,
     /// `EmptyReloadAmount` (Nullable +0x45C/+0x460, unset).
@@ -690,6 +697,7 @@ pub(crate) struct AmmoTypeRules {
 impl Default for AmmoTypeRules {
     fn default() -> Self {
         Self {
+            reload_rate: None,
             reload_amount: 1,
             empty_reload_amount: None,
             no_ammo_amount: 0,
@@ -699,6 +707,14 @@ impl Default for AmmoTypeRules {
 }
 
 impl AmmoTypeRules {
+    /// The minutes between a docked aircraft's reloads at its airfield
+    /// (BuildingClass_MissionRepair_Reload, Ares.dll 10014190, hook
+    /// 0x44C844): `ReloadRate`, else `[General] ReloadRate`.
+    pub(crate) fn reload_rate(&self, general: f64) -> f64 {
+        self.reload_rate
+            .map_or(general, |rate| f64::from_bits(rate.bits()))
+    }
+
     /// The rounds one `TechnoClass::Reload` adds (TechnoClass_Reload_
     /// ReloadAmount, Ares.dll 10047A70, hook 0x6FB05B): `ReloadAmount`, or
     /// `EmptyReloadAmount` when set and the count is zero.
@@ -879,6 +895,7 @@ impl AresTechnoTypeRules {
         >,
         find: impl Fn(&str) -> Option<String>,
     ) {
+        let _ares = crate::rules::ares_switch::ares_reads();
         if !self.initialized {
             self.initialized = true;
             // 1003DEC0 strcmps the stored ID; it also seeds the EVA cues
@@ -1030,8 +1047,8 @@ impl AresTechnoTypeRules {
         if let Some(warhead) = resolve("CrushDamage.Warhead", TypeRef::Warhead) {
             combat.crush_damage_warhead = Some(warhead);
         }
-        // After ReloadRate.
         let ammo = &mut self.ammo;
+        ammo.reload_rate = section.read_ares_nullable_double_bits("ReloadRate", ammo.reload_rate);
         ammo.reload_amount = section.read_ares_int("ReloadAmount", ammo.reload_amount);
         ammo.empty_reload_amount =
             section.read_ares_nullable_int("EmptyReloadAmount", ammo.empty_reload_amount);
@@ -1136,6 +1153,7 @@ impl AresTechnoTypeRules {
         section: Option<&IniSection>,
         sounds: &crate::rules::sound_ini::SoundRegistry,
     ) {
+        let _ares = crate::rules::ares_switch::ares_reads();
         let read = |key| section.and_then(|section| sounds.read_ares_reference(section, key));
         self.presentation.airstrike_voices =
             ["VoiceAirstrikeAttack", "VoiceAirstrikeAbort"].map(read);
@@ -1170,8 +1188,12 @@ impl AresTechnoTypeRules {
     pub(crate) fn dig_effects(&self, dig_in: bool) -> [Option<Option<&str>>; 2] {
         let slot = usize::from(!dig_in);
         [
-            self.residual.dig_sounds[slot].as_ref().map(|sound| sound.as_deref()),
-            self.residual.dig_anims[slot].as_ref().map(|anim| anim.as_deref()),
+            self.residual.dig_sounds[slot]
+                .as_ref()
+                .map(|sound| sound.as_deref()),
+            self.residual.dig_anims[slot]
+                .as_ref()
+                .map(|anim| anim.as_deref()),
         ]
     }
 
@@ -1261,6 +1283,15 @@ impl AresTechnoTypeRules {
     #[cfg(feature = "ares")]
     pub(crate) fn carryall_size_limit(&self) -> Option<i32> {
         self.residual.carryall_size_limit
+    }
+
+    /// `Assaulter.Level` (+0x42C): an assaulter takes a building whose type's
+    /// level is not negative and at most his own
+    /// (BuildingClass_CanBeOccupied_SpecificAssaulters, Ares.dll 10016FD0,
+    /// hook 0x457DB7; `passenger::can_dock_occupier_garrison`).
+    #[cfg(feature = "ares")]
+    pub(crate) fn assaulter_level(&self) -> i32 {
+        self.residual.assaulter_level
     }
 
     /// `Unsellable.Get(UnitsUnsellable)`: a unit of this type cannot be sold

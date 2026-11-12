@@ -182,8 +182,17 @@ fn latch_unloading_image(sim: &mut Simulation, id: u64, image: &str) {
 
 #[test]
 fn the_turret_split_follows_the_drawn_model_not_the_objects_turret() {
-    let rules = RuleSet::from_ini(&IniFile::from_str(
-        "\
+    // The atlas seeds what the voxel catalog binds (`seed_layers_for`): a type
+    // whose Rules section gamemd reads (an empty one never is, 0x00712194)
+    // and whose ART says Voxel=yes, from its files. Each has a one-limb body,
+    // the turreted ones a turret beside it.
+    let art = IniFile::from_str(
+        "[MINER]\nVoxel=yes\n[EMPTY]\nVoxel=yes\n[PLAIN]\nVoxel=yes\n\
+         [GUNNED]\nVoxel=yes\n[JET]\nVoxel=yes\n",
+    );
+    let mut rules = RuleSet::from_ini_with_fixed_art_for_test(
+        &IniFile::from_str(
+            "\
 [VehicleTypes]
 0=MINER
 1=EMPTY
@@ -196,6 +205,7 @@ Harvester=yes
 Turret=yes
 UnloadingClass=EMPTY
 [EMPTY]
+Turret=no
 [PLAIN]
 Harvester=yes
 UnloadingClass=GUNNED
@@ -204,9 +214,25 @@ Turret=yes
 [JET]
 Turret=yes
 ",
-    ))
+        ),
+        &art,
+    )
     .expect("the draw-type rules parse");
+    rules.install_art_fixture(crate::rules::art_data::ArtRegistry::from_ini(&art));
     let directory = TestDirectory::new("unit-body-draw");
+    for model in [
+        "MINER",
+        "MINERTUR",
+        "EMPTY",
+        "PLAIN",
+        "GUNNED",
+        "GUNNEDTUR",
+        "JET",
+    ] {
+        let file = |ext: &str| directory.path().join(format!("{model}.{ext}"));
+        std::fs::write(file("VXL"), crate::assets::vxl_file::minimal_test_vxl()).unwrap();
+        std::fs::write(file("HVA"), crate::assets::hva_file::minimal_test_hva()).unwrap();
+    }
     let assets = AssetManager::from_loose_root_for_test(directory.path());
     let mut sim = Simulation::new();
     let spawn = |sim: &mut Simulation, type_id: &str| {
@@ -282,8 +308,8 @@ fn retail_siege_chopper_draws_schd_only_after_deployment_completes() {
         .body_frame_counter
         .set_for_test(1);
     let frame_counts = std::collections::BTreeMap::from([
-        (("SCHP".to_string(), VxlLayer::Body, 0), 2),
-        (("SCHD".to_string(), VxlLayer::Body, 0), 1),
+        (("SCHP".into(), VxlLayer::Body, 0), 2),
+        (("SCHD".into(), VxlLayer::Body, 0), 1),
     ]);
     for (deployed, begin, reverse, expected) in [
         (false, false, false, Some(("SCHP", true))),
@@ -331,8 +357,8 @@ fn unit_hva_frames_match_native_selected_model_remainders() {
         ("unloading", physical_frames("schd.hva")),
         ("disguise", 3), // supplied native control HVA header
     ] {
-        frame_counts.insert((model.to_string(), VxlLayer::Body, 0), frames);
-        frame_counts.insert((model.to_string(), VxlLayer::Turret, 0), 4);
+        frame_counts.insert((model.into(), VxlLayer::Body, 0), frames);
+        frame_counts.insert((model.into(), VxlLayer::Turret, 0), 4);
     }
     let mut entity =
         crate::sim::game_entity::GameEntity::test_default(1, "SCHP", "Americans", 10, 10);
@@ -362,7 +388,7 @@ fn unit_hva_frames_match_native_selected_model_remainders() {
     // Aircraft4145B0..4145C0 consumes this same retained Foot counter,
     // using the selected model's physical HVA header for signed IDIV.
     frame_counts.insert(
-        ("SPYP".to_string(), VxlLayer::Composite, 0),
+        ("SPYP".into(), VxlLayer::Composite, 0),
         physical_frames("spyp.hva"),
     );
     let mut aircraft = crate::sim::game_entity::GameEntity::test_default_of_category(
@@ -518,7 +544,11 @@ fn retail_spy_plane_flight_counter_reaches_both_physical_hva_frames_on_gpu() {
         {
             continue;
         }
-        let band = entity_draw_band(sim.display_layers(), plane.stable_id()).unwrap();
+        let band = sim
+            .display_layers()
+            .layer_of(plane.stable_id())
+            .and_then(super::super::helpers::layer_draw_band)
+            .unwrap();
         let parent = NativeDisplayOrder::from_display(sim.display_layers())
             .object_draw(plane.stable_id(), SpriteEncoding::Voxel)
             .unwrap();
@@ -558,7 +588,7 @@ fn retail_spy_plane_flight_counter_reaches_both_physical_hva_frames_on_gpu() {
     )
     .expect("physical SPYP atlas");
     assert_eq!(
-        atlas.frame_counts[&("SPYP".to_string(), VxlLayer::Composite, 0)],
+        atlas.frame_counts[&(smol_str::SmolStr::new("SPYP"), VxlLayer::Composite, 0)],
         hva.frame_count
     );
     let palette = Palette::from_bytes(assets.get_ref("UNITTEM.PAL").unwrap()).unwrap();
@@ -613,7 +643,7 @@ fn retail_spy_plane_flight_counter_reaches_both_physical_hva_frames_on_gpu() {
             assert_eq!(i64::from(frame), original["body_frame"].as_i64().unwrap());
             let entry = atlas
                 .get(&UnitSpriteKey {
-                    type_id: model.into_owned(),
+                    type_id: model.into(),
                     turret_index: 0,
                     facing: 0,
                     layer: VxlLayer::Composite,
@@ -831,6 +861,7 @@ fn retail_voxel_bodies_draw_the_sprites_their_model_is_seeded_with() {
     let mut voxel_vehicles = 0;
     let mut aircraft = Vec::new();
     let mut unloading = Vec::new();
+    let mut unbound = Vec::new();
     for type_id in rules.vehicle_ids.iter().chain(&rules.aircraft_ids) {
         let object = rules.object(type_id).expect("a listed type");
         let Some(id) = sim.spawn_object_limbo_at_height(type_id, "Americans", 10, 10, 0, 0, rules)
@@ -842,6 +873,13 @@ fn retail_voxel_bodies_draw_the_sprites_their_model_is_seeded_with() {
             continue;
         }
         let is_aircraft = entity.category() == EntityCategory::Aircraft;
+        // gamemd gives no model to a type it never reads (no Rules section,
+        // 0x00712194) or whose ART lacks Voxel=yes, and draws none; the atlas
+        // seeds nothing for it either.
+        if seed_layers_for(&assets, type_id, Some(rules)).is_empty() {
+            unbound.push(type_id.clone());
+            continue;
+        }
         match body_draw_against_seed(&sim, &assets, rules, id) {
             Ok(Some((model, parts))) => {
                 assert_eq!(&model, type_id);
@@ -869,12 +907,19 @@ fn retail_voxel_bodies_draw_the_sprites_their_model_is_seeded_with() {
         }
     }
     assert_eq!(failures, Vec::<String>::new());
+    // Listed types gamemd gives no model: no Rules section, or no ART section
+    // saying Voxel=yes.
+    assert_eq!(
+        unbound,
+        ["DeathDummy", "YDUM", "VISC_LRG", "VISC_SML", "APACHE"]
+    );
     assert!(
         voxel_vehicles > 40,
         "{voxel_vehicles} retail voxel vehicles"
     );
-    // Every aircraft in this stock Hills/Battle fixture is one body sprite.
-    assert_eq!(aircraft.len(), 12, "{aircraft:?}");
+    // Every aircraft with a model in this stock Hills/Battle fixture is one
+    // body sprite (APACHE has none).
+    assert_eq!(aircraft.len(), 11, "{aircraft:?}");
     assert!(aircraft.iter().all(|(_, parts)| !parts), "{aircraft:?}");
     // The War Miner's HARV has `Turret=yes`; its unloading HORV has none.
     unloading.sort();
@@ -1090,9 +1135,9 @@ fn indexed_turret_animation_uses_its_selected_hva_count() {
         crate::sim::game_entity::GameEntity::test_default(1, "FV", "Americans", 10, 10);
     entity.turret_anim_frame.set_for_test(1);
     let frames = std::collections::BTreeMap::from([
-        (("FV".to_string(), VxlLayer::Body, 0), 1),
-        (("FV".to_string(), VxlLayer::Turret, 0), 1),
-        (("FV".to_string(), VxlLayer::Turret, 1), 2),
+        (("FV".into(), VxlLayer::Body, 0), 1),
+        (("FV".into(), VxlLayer::Turret, 0), 1),
+        (("FV".into(), VxlLayer::Turret, 1), 2),
     ]);
     assert_eq!(unit_animation_frames(&entity, "FV", 0, &frames), (0, 0));
     assert_eq!(unit_animation_frames(&entity, "FV", 1, &frames), (0, 1));

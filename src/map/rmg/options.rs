@@ -13,6 +13,9 @@ use crate::util::ini_writer::set_ini_values;
 
 /// Section a random-map seed file stores its options under.
 const SECTION: &str = "RandomMap";
+/// VERA's seed key for [`RmgOptions::urban_areas`]; native seeds lack it.
+#[cfg(feature = "ares")]
+const URBAN_AREAS_KEY: &str = "UrbanAreas";
 
 /// One random-map configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +37,12 @@ pub struct RmgOptions {
     /// original seed generates exactly as before. Saved as `VeraUrban=yes`
     /// only when set.
     pub urban_enabled: bool,
+    /// VERA extension: Fair Starts. The generator tries a few seeds from this
+    /// one, keeps the map whose starts are best spread and best matched in
+    /// ore and building room, and evens the ore near each start to the
+    /// median start's (`fairness`). Saved as `VeraFair=yes` only when set, so
+    /// every original seed generates exactly as before.
+    pub fair_starts: bool,
     pub width: i32,
     pub height: i32,
     pub accessibility: i32,
@@ -42,10 +51,32 @@ pub struct RmgOptions {
     /// Display description. Stored in `.SED` as comma-separated hex UTF-16 code
     /// units, and used as the random-map row's displayed name.
     pub description: SeedDescription,
+    /// Ares' `RMG::UrbanAreas` (Ares.dll DAT_100c2150): the Urban Areas box
+    /// of the dialog, read by MapSeedClass_Generate_UrbanAreas (1006ABD0,
+    /// hook 0x598FB8). Native Ares keeps it process-global and writes no copy;
+    /// VERA stores it in the seed as `UrbanAreas=` so the launch regeneration
+    /// and every network peer generate the same map. The record digest
+    /// ([`Self::native_digest`]) leaves it out.
+    #[cfg(feature = "ares")]
+    pub urban_areas: bool,
+}
+
+impl RmgOptions {
+    /// Whether the urban pass (`0x005A5020`) runs: Ares' `RMG::UrbanAreas`,
+    /// or VERA's opted-in Urban Presence.
+    pub fn urban_pass_runs(&self) -> bool {
+        #[cfg(feature = "ares")]
+        if self.urban_areas {
+            return true;
+        }
+        self.urban_enabled
+    }
 }
 
 /// VERA's `.SED` key for [`RmgOptions::urban_enabled`].
 const VERA_URBAN_KEY: &str = "VeraUrban";
+/// VERA's `.SED` key for [`RmgOptions::fair_starts`].
+const VERA_FAIR_KEY: &str = "VeraFair";
 
 impl Default for RmgOptions {
     /// The original constructor's defaults (`MapSeedClass` ctor `0x00595680`,
@@ -65,12 +96,15 @@ impl Default for RmgOptions {
             vegetation: 0,
             urban_presence: 0,
             urban_enabled: false,
+            fair_starts: false,
             width: 0,
             height: 0,
             accessibility: 0,
             region_size: 0,
             seed: -1,
             description: SeedDescription::default(),
+            #[cfg(feature = "ares")]
+            urban_areas: false,
         }
     }
 }
@@ -146,6 +180,11 @@ impl RmgOptions {
         // VERA: written only when set, so a seed without the key has no towns,
         // whatever `self` held.
         self.urban_enabled = section.read_bool(VERA_URBAN_KEY, false);
+        self.fair_starts = section.read_bool(VERA_FAIR_KEY, false);
+        #[cfg(feature = "ares")]
+        {
+            self.urban_areas = section.read_bool(URBAN_AREAS_KEY, self.urban_areas);
+        }
     }
 
     /// Serialize to `.SED` bytes, writing every key in the original's order.
@@ -175,6 +214,14 @@ impl RmgOptions {
         if self.urban_enabled {
             values.push((VERA_URBAN_KEY, "yes".to_string()));
         }
+        if self.fair_starts {
+            values.push((VERA_FAIR_KEY, "yes".to_string()));
+        }
+        #[cfg(feature = "ares")]
+        values.push((
+            URBAN_AREAS_KEY,
+            if self.urban_areas { "yes" } else { "no" }.to_string(),
+        ));
         let pairs: Vec<(&str, &str)> = values
             .iter()
             .map(|(key, value)| (*key, value.as_str()))
@@ -247,6 +294,22 @@ mod tests {
         assert!(read.urban_enabled);
     }
 
+    /// VERA's Fair Starts key follows the towns key: written only when set.
+    #[test]
+    fn fair_starts_are_saved_only_when_set() {
+        let plain = RmgOptions::default().to_sed_bytes();
+        assert!(!String::from_utf8_lossy(&plain).contains("VeraFair"));
+        let fair = RmgOptions {
+            fair_starts: true,
+            ..RmgOptions::default()
+        };
+        let mut read = RmgOptions::default();
+        read.apply_sed(&IniFile::from_bytes(&fair.to_sed_bytes()).expect("seed INI"));
+        assert!(read.fair_starts);
+        read.apply_sed(&IniFile::from_bytes(&plain).expect("seed INI"));
+        assert!(!read.fair_starts);
+    }
+
     #[test]
     fn the_digest_hashes_the_options_and_not_the_description() {
         let options = RmgOptions {
@@ -304,12 +367,15 @@ mod tests {
             vegetation: -3,
             urban_presence: 900,
             urban_enabled: false,
+            fair_starts: false,
             width: 9,
             height: 9,
             accessibility: 101,
             region_size: -1,
             seed: 0x1_0000,
             description: SeedDescription::default(),
+            #[cfg(feature = "ares")]
+            urban_areas: false,
         };
         options.normalize();
 
@@ -383,12 +449,15 @@ mod tests {
             vegetation: 70,
             urban_presence: 10,
             urban_enabled: false,
+            fair_starts: false,
             width: 2,
             height: 3,
             accessibility: 60,
             region_size: 45,
             seed: 4321,
             description: "Round Trip".into(),
+            #[cfg(feature = "ares")]
+            urban_areas: true,
         };
         original.normalize();
 
