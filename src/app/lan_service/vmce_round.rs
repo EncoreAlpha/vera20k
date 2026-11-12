@@ -7,6 +7,7 @@
 use super::{AppState, LOBBY_RETRY_TIMING, LanService, direct};
 use crate::app::match_runtime::session::{
     CooperativeRoundEvent, CooperativeRoundOptions, NetworkLoadingRequest, SessionMode,
+    WallBucketTimer,
 };
 use crate::net::global::GlobalMessage;
 use crate::net::lan_messages::cooperative::{CooperativeOptionsRecord, CooperativeSignal};
@@ -26,6 +27,12 @@ pub(crate) struct VmceLanRoundState {
     intermission_entered: bool,
     campaign_completion_pending: bool,
     campaign_completion_enqueue_failed: bool,
+    /// Bounded waits for the terminal handoffs. An unresponsive peer must end
+    /// in a local failure, not an endless wait; both use the same 600-bucket
+    /// budget as the round departure.
+    intermission_deadline: Option<WallBucketTimer>,
+    campaign_completion_deadline: Option<WallBucketTimer>,
+    assignment_deadline: Option<WallBucketTimer>,
     /// The result nonce whose agreed next-stage unlock was already persisted.
     /// Duplicate or stale confirmations keep the same nonce and do not write
     /// again; a new round carries a new nonce.
@@ -41,6 +48,9 @@ impl VmceLanRoundState {
         self.intermission_entered = false;
         self.campaign_completion_pending = false;
         self.campaign_completion_enqueue_failed = false;
+        self.intermission_deadline = None;
+        self.campaign_completion_deadline = None;
+        self.assignment_deadline = None;
         self.result_unlock_nonce = None;
     }
 
@@ -75,10 +85,16 @@ impl VmceLanRoundState {
         self.intermission_entered
     }
 
-    pub(super) fn mark_intermission_prepared(&mut self, epoch: [u8; 16], solo: bool) {
+    pub(super) fn mark_intermission_prepared(&mut self, epoch: [u8; 16], solo: bool, now: u32) {
         self.intermission_epoch = Some(epoch);
         self.intermission_failed = false;
         self.intermission_go_queued = solo;
+        self.intermission_deadline = Some(WallBucketTimer::start(now, 600));
+    }
+
+    pub(super) fn intermission_wait_expired(&self, now: u32) -> bool {
+        self.intermission_deadline
+            .is_some_and(|deadline| deadline.remaining(now) == 0)
     }
 
     pub(super) fn mark_intermission_failed(&mut self) {
@@ -90,12 +106,14 @@ impl VmceLanRoundState {
         self.intermission_failed |= !queued;
     }
 
-    pub(super) fn mark_intermission_received(&mut self, epoch: [u8; 16]) {
+    pub(super) fn mark_intermission_received(&mut self, epoch: [u8; 16], now: u32) {
         self.intermission_epoch = Some(epoch);
+        self.intermission_deadline = Some(WallBucketTimer::start(now, 600));
     }
 
     pub(super) fn mark_intermission_entered(&mut self, host: bool) {
         self.intermission_entered = !host;
+        self.intermission_deadline = None;
         if host {
             self.intermission_epoch = None;
             self.intermission_go_queued = false;
@@ -105,6 +123,7 @@ impl VmceLanRoundState {
     pub(super) fn finish_guest_intermission(&mut self) {
         self.intermission_entered = false;
         self.intermission_epoch = None;
+        self.intermission_deadline = None;
     }
 
     pub(super) fn result_nonce_used(&self, nonce: &[u8; 16]) -> bool {
@@ -127,9 +146,30 @@ impl VmceLanRoundState {
         self.campaign_completion_pending
     }
 
-    pub(super) fn defer_campaign_completion(&mut self) {
+    pub(super) fn defer_campaign_completion(&mut self, now: u32) {
         self.campaign_completion_pending = true;
         self.campaign_completion_enqueue_failed = false;
+        self.campaign_completion_deadline = Some(WallBucketTimer::start(now, 600));
+    }
+
+    pub(super) fn campaign_completion_wait_expired(&self, now: u32) -> bool {
+        self.campaign_completion_deadline
+            .is_some_and(|deadline| deadline.remaining(now) == 0)
+    }
+
+    pub(super) fn mark_assignment_wait(&mut self, now: u32) {
+        if self.assignment_deadline.is_none() {
+            self.assignment_deadline = Some(WallBucketTimer::start(now, 600));
+        }
+    }
+
+    pub(super) fn assignment_wait_expired(&self, now: u32) -> bool {
+        self.assignment_deadline
+            .is_some_and(|deadline| deadline.remaining(now) == 0)
+    }
+
+    pub(super) fn clear_assignment_wait(&mut self) {
+        self.assignment_deadline = None;
     }
 
     pub(super) fn mark_campaign_completion_enqueue_failed(&mut self, failed: bool) {
@@ -139,19 +179,24 @@ impl VmceLanRoundState {
     fn take_campaign_completion(
         &mut self,
         observation: Option<super::SetupTransportObservation>,
+        now: u32,
     ) -> Option<Result<(), ()>> {
         if !self.campaign_completion_pending {
             return None;
         }
+        let expired = self.campaign_completion_wait_expired(now);
         let result = match observation {
             _ if self.campaign_completion_enqueue_failed => Err(()),
             Some(observation) if !observation.service_ok => Err(()),
-            Some(observation) if observation.queued != 0 => return None,
-            Some(_) => Ok(()),
+            // A final ACK that lands in the deadline bucket is still success.
+            Some(observation) if observation.queued == 0 => Ok(()),
+            _ if expired => Err(()),
+            Some(_) => return None,
             None => Err(()),
         };
         self.campaign_completion_pending = false;
         self.campaign_completion_enqueue_failed = false;
+        self.campaign_completion_deadline = None;
         Some(result)
     }
 }
@@ -423,6 +468,14 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             ) {
                 return Ok(true);
             }
+            if matches!(control, Some((VmceRoundControl::Begin, _))) {
+                let now = super::super::match_runtime::frame_pacer::frame_bucket(
+                    super::super::match_runtime::frame_pacer::wall_clock_ms(),
+                );
+                if let Some(service) = state.match_state.lan_service.as_mut() {
+                    service.vmce_round.mark_assignment_wait(now);
+                }
+            }
             let event = match control {
                 Some((VmceRoundControl::Begin, _)) => CooperativeRoundEvent::Begin,
                 Some((VmceRoundControl::Ack, _)) => CooperativeRoundEvent::Ack { source },
@@ -475,7 +528,10 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
                     "VMCE intermission scope differs from the admitted match"
                 );
                 transport.prepare_lan_intermission()?;
-                service.vmce_round.mark_intermission_received(epoch);
+                let now = super::super::match_runtime::frame_pacer::frame_bucket(
+                    super::super::match_runtime::frame_pacer::wall_clock_ms(),
+                );
+                service.vmce_round.mark_intermission_received(epoch, now);
             }
             return Ok(true);
         }
@@ -603,21 +659,25 @@ pub(super) fn flush_round_work(state: &mut AppState, service_ok: bool) {
 pub(super) fn take_campaign_completion(
     state: &mut AppState,
     service_ok: bool,
+    now: u32,
 ) -> Option<Result<(), ()>> {
     let service = state.match_state.lan_service.as_mut()?;
-    take_campaign_completion_from_service(service, service_ok)
+    take_campaign_completion_from_service(service, service_ok, now)
 }
 
 pub(super) fn take_campaign_completion_from_service(
     service: &mut LanService,
     service_ok: bool,
+    now: u32,
 ) -> Option<Result<(), ()>> {
     // Preserve the completion boundary's second FIFO flush: the first round
     // flush may predate the final Go request, and the reliable observation
     // must include every setup request admitted before completion.
     service.flush_setup();
     let observation = service.go_transport_observation(service_ok);
-    service.vmce_round.take_campaign_completion(observation)
+    service
+        .vmce_round
+        .take_campaign_completion(observation, now)
 }
 
 pub(super) fn campaign_completion_pending(state: &AppState) -> bool {
@@ -635,13 +695,16 @@ pub(crate) fn defer_campaign_completion(state: &mut AppState) -> bool {
     {
         return false;
     }
+    let now = super::super::match_runtime::frame_pacer::frame_bucket(
+        super::super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
     state
         .match_state
         .lan_service
         .as_mut()
         .expect("checked service")
         .vmce_round
-        .defer_campaign_completion();
+        .defer_campaign_completion(now);
     super::drain_match_requests(state);
     state.platform.window.request_redraw();
     true
@@ -660,6 +723,9 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
     {
         return Ok(());
     }
+    let now = super::super::match_runtime::frame_pacer::frame_bucket(
+        super::super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
     let peers = peer_sources(state);
     let endpoints = peer_endpoints(state, &peers)?;
     let epoch = super::fresh_nonce()?;
@@ -688,7 +754,9 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
         "VMCE intermission scope differs from the admitted match"
     );
     transport.prepare_lan_intermission()?;
-    service.vmce_round.mark_intermission_prepared(epoch, solo);
+    service
+        .vmce_round
+        .mark_intermission_prepared(epoch, solo, now);
     if !service.queue_setup(
         endpoints
             .into_iter()
@@ -700,7 +768,10 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
     Ok(())
 }
 
-pub(crate) fn vmce_intermission_transition_ready(state: &AppState) -> anyhow::Result<bool> {
+pub(crate) fn vmce_intermission_transition_ready(
+    state: &AppState,
+    now: u32,
+) -> anyhow::Result<bool> {
     let service = state
         .match_state
         .lan_service
@@ -709,6 +780,10 @@ pub(crate) fn vmce_intermission_transition_ready(state: &AppState) -> anyhow::Re
     anyhow::ensure!(
         service.vmce_round.intermission_epoch().is_some(),
         "VMCE intermission was not prepared"
+    );
+    anyhow::ensure!(
+        !service.vmce_round.intermission_wait_expired(now),
+        "VMCE intermission delivery timed out"
     );
     let observation = service
         .go_transport_observation(true)
@@ -743,7 +818,14 @@ pub(crate) fn enter_vmce_intermission(state: &mut AppState) -> anyhow::Result<bo
         "VMCE intermission delivery failed"
     );
     if host {
+        let now = super::super::match_runtime::frame_pacer::frame_bucket(
+            super::super::match_runtime::frame_pacer::wall_clock_ms(),
+        );
         if !service.vmce_round.intermission_go_queued() {
+            anyhow::ensure!(
+                !service.vmce_round.intermission_wait_expired(now),
+                "VMCE intermission delivery timed out"
+            );
             return Ok(false);
         }
         let observation = service
@@ -751,6 +833,10 @@ pub(crate) fn enter_vmce_intermission(state: &mut AppState) -> anyhow::Result<bo
             .ok_or_else(|| anyhow::anyhow!("VMCE has no LAN transport"))?;
         anyhow::ensure!(observation.service_ok, "VMCE Go delivery failed");
         if observation.queued != 0 {
+            anyhow::ensure!(
+                !service.vmce_round.intermission_wait_expired(now),
+                "VMCE intermission delivery timed out"
+            );
             return Ok(false);
         }
     } else {
@@ -823,11 +909,11 @@ pub(super) fn should_assign_intermission(state: &AppState) -> bool {
 /// Keep the host's established transport-ready gate and assignment order in
 /// the VMCE LAN owner so shared Cooperative polling stays protocol-neutral.
 /// Returns false after a terminal handoff failure has returned to the lobby.
-pub(super) fn assign_intermission_if_ready(state: &mut AppState) -> bool {
+pub(super) fn assign_intermission_if_ready(state: &mut AppState, now: u32) -> bool {
     if !should_assign_intermission(state) {
         return true;
     }
-    match vmce_intermission_transition_ready(state) {
+    match vmce_intermission_transition_ready(state, now) {
         Ok(true) => {
             let difficulty = state
                 .frontend
@@ -847,6 +933,7 @@ pub(super) fn assign_intermission_if_ready(state: &mut AppState) -> bool {
         Err(error) => {
             log::error!("VMCE intermission preparation failed: {error:#}");
             crate::app::cooperative_round::return_to_shell(state);
+            report_round_failure(state);
             return false;
         }
     }
@@ -1012,6 +1099,56 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
         crate::app::vmce_round::advance_intermission(state);
         return state.match_state.session.cooperative_round().is_some();
     }
+    let awaiting_assignment = state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| round.awaiting_assignment());
+    if awaiting_assignment {
+        let now = super::super::match_runtime::frame_pacer::frame_bucket(
+            super::super::match_runtime::frame_pacer::wall_clock_ms(),
+        );
+        let expired = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .is_some_and(|service| service.vmce_round.assignment_wait_expired(now));
+        if expired {
+            log::error!("VMCE round assignment wait timed out");
+            let _ = state.match_state.session.quit_cooperative_round();
+            crate::app::cooperative_round::return_to_shell(state);
+            report_round_failure(state);
+            return false;
+        }
+    } else if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_round.clear_assignment_wait();
+    }
+    // The result is settled but the host's Go has not arrived. A peer that
+    // stopped answering must not keep the page waiting forever.
+    let waiting_go = state
+        .match_state
+        .session
+        .cooperative_round()
+        .is_some_and(|round| {
+            round.vmce_ending() == Some(crate::app::match_runtime::session::VmceRoundEnding::Next)
+                && !round.vmce_next_accepted()
+        });
+    if waiting_go {
+        let now = super::super::match_runtime::frame_pacer::frame_bucket(
+            super::super::match_runtime::frame_pacer::wall_clock_ms(),
+        );
+        let expired = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .is_some_and(|service| service.vmce_round.intermission_wait_expired(now));
+        if expired {
+            log::error!("VMCE intermission Go wait timed out");
+            crate::app::cooperative_round::return_to_shell(state);
+            report_round_failure(state);
+            return false;
+        }
+    }
     true
 }
 
@@ -1062,7 +1199,16 @@ fn encode_scoped_request(
     }
 }
 
-fn report_round_failure(state: &mut AppState) {
+pub(crate) fn mark_assignment_wait(state: &mut AppState) {
+    let now = super::super::match_runtime::frame_pacer::frame_bucket(
+        super::super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_round.mark_assignment_wait(now);
+    }
+}
+
+pub(crate) fn report_round_failure(state: &mut AppState) {
     let departure_pending = state
         .match_state
         .lan_service
@@ -1175,13 +1321,14 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
             }
             return true;
         }
-        if let Some(message) = message {
-            let queued = queue_encoded_to_peers(state, message.as_bytes(), &peers);
-            if !queued {
-                fail_round_delivery(state);
-            }
-        } else {
-            fail_round_delivery(state);
+        let queued = message
+            .as_ref()
+            .is_some_and(|message| queue_encoded_to_peers(state, message.as_bytes(), &peers));
+        if !queued && !fail_round_delivery(state) {
+            // The retry/campaign-end continuation already froze the round;
+            // the shell still needs the local failure instead of a silent wait.
+            crate::app::cooperative_round::return_to_shell(state);
+            report_round_failure(state);
         }
         return true;
     }
@@ -1255,6 +1402,40 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_waits_expire_and_clear_with_the_handoff() {
+        let mut state = VmceLanRoundState::default();
+        state.mark_intermission_prepared([7; 16], false, 10);
+        assert!(!state.intermission_wait_expired(609));
+        assert!(state.intermission_wait_expired(610));
+        state.mark_intermission_entered(false);
+        assert!(
+            !state.intermission_wait_expired(1_000),
+            "entering the intermission clears the wait"
+        );
+
+        state.mark_intermission_received([8; 16], 20);
+        assert!(state.intermission_wait_expired(620));
+        state.finish_guest_intermission();
+        assert!(!state.intermission_wait_expired(2_000));
+
+        state.defer_campaign_completion(30);
+        assert!(!state.campaign_completion_wait_expired(629));
+        assert!(state.campaign_completion_wait_expired(630));
+
+        state.mark_assignment_wait(40);
+        assert!(!state.assignment_wait_expired(639));
+        assert!(state.assignment_wait_expired(640));
+        state.clear_assignment_wait();
+        assert!(!state.assignment_wait_expired(2_000));
+        state.clear_visit();
+        assert!(
+            !state.campaign_completion_wait_expired(3_000),
+            "a new visit starts without a stale terminal wait"
+        );
+        assert!(!state.assignment_wait_expired(3_000));
+    }
 
     #[test]
     fn result_unlock_nonce_is_remembered_per_round_and_clears_with_the_visit() {

@@ -42,9 +42,15 @@ fn assign(state: &mut AppState, ending: VmceRoundEnding) -> anyhow::Result<()> {
         && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
     {
         crate::app::lan_service::vmce_round::begin_vmce_intermission_transition(state)?;
-        if !crate::app::lan_service::vmce_round::vmce_intermission_transition_ready(state)? {
+        let now = crate::app::match_runtime::frame_pacer::frame_bucket(
+            crate::app::match_runtime::frame_pacer::wall_clock_ms(),
+        );
+        if !crate::app::lan_service::vmce_round::vmce_intermission_transition_ready(state, now)? {
             return Ok(());
         }
+    }
+    if state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan {
+        crate::app::lan_service::vmce_round::mark_assignment_wait(state);
     }
     let difficulty = state
         .frontend
@@ -86,6 +92,7 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
         Err(error) => {
             log::error!("VMCE intermission handoff failed: {error:#}");
             crate::app::cooperative_round::return_to_shell(state);
+            crate::app::lan_service::vmce_round::report_round_failure(state);
         }
     }
 }

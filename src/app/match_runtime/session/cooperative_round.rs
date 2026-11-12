@@ -93,6 +93,14 @@ impl CooperativeRoundState {
     }
 
     #[cfg(feature = "vmce")]
+    /// True while the host has assigned the round (Begin/Options sent) or a
+    /// guest has received Begin, and the Go that ends the wait is still
+    /// outstanding. The result page uses this to bound the handshake.
+    pub(crate) fn awaiting_assignment(&self) -> bool {
+        self.outcome.is_none() && (self.assigned || self.begin)
+    }
+
+    #[cfg(feature = "vmce")]
     pub(crate) fn vmce_next_accepted(&self) -> bool {
         self.vmce
             .as_ref()
@@ -1348,6 +1356,41 @@ mod tests {
             end.vmce_agreed_unlock(),
             None,
             "a campaign end has no next stage to unlock"
+        );
+    }
+
+    /// B10: the retry/campaign-end assignment handshake exposes a bounded
+    /// wait — the host waits for guest Acks after assigning, the guest waits
+    /// for the host Go after Begin, and both end when the round continues.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_assignment_wait_starts_at_begin_and_ends_with_the_go() {
+        let (mut host, _) = frozen_vera(0);
+        let (mut guest, _) = frozen_vera(1);
+        for session in [&mut host, &mut guest] {
+            session
+                .enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+                .unwrap();
+        }
+        assert!(!host.cooperative_round().unwrap().awaiting_assignment());
+        assert!(!guest.cooperative_round().unwrap().awaiting_assignment());
+        agree_for_existing_round_test(&mut host);
+        agree_for_existing_round_test(&mut guest);
+        host.cooperative_round_assigned(0).unwrap();
+        assert!(
+            host.cooperative_round().unwrap().awaiting_assignment(),
+            "the host waits for the guest Acks after assigning"
+        );
+        guest
+            .cooperative_round_event(CooperativeRoundEvent::Begin, 0)
+            .unwrap();
+        assert!(
+            guest.cooperative_round().unwrap().awaiting_assignment(),
+            "the guest waits for the host Go after Begin"
+        );
+        assert_eq!(
+            host.cooperative_round().unwrap().vmce_ending(),
+            Some(VmceRoundEnding::Retry)
         );
     }
 

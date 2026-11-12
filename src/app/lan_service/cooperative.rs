@@ -77,12 +77,13 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
     }
     #[cfg(feature = "vmce")]
     if super::vmce_round::campaign_completion_pending(state) {
-        match super::vmce_round::take_campaign_completion(state, service_ok) {
+        match super::vmce_round::take_campaign_completion(state, service_ok, now) {
             None => {}
             Some(Ok(())) => crate::app::App::vmce_campaign_end(state),
             Some(Err(())) => {
                 log::error!("VMCE campaign completion could not be delivered to every peer");
                 crate::app::cooperative_round::return_to_shell(state);
+                super::vmce_round::report_round_failure(state);
             }
         }
         return true;
@@ -104,7 +105,7 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         return false;
     }
     #[cfg(feature = "vmce")]
-    if !super::vmce_round::assign_intermission_if_ready(state) {
+    if !super::vmce_round::assign_intermission_if_ready(state, now) {
         return false;
     }
     // Records that arrived between the mission's end and this round's phase

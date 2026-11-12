@@ -5206,10 +5206,10 @@ mod tests {
             .encode("Host")
             .unwrap();
         assert!(host.send(&go, direct(guest_addr), true));
-        host.vmce_round.defer_campaign_completion();
+        host.vmce_round.defer_campaign_completion(1);
         host.transport.as_mut().unwrap().service(1);
         assert!(
-            vmce_round::take_campaign_completion_from_service(&mut host, true).is_none(),
+            vmce_round::take_campaign_completion_from_service(&mut host, true, 32).is_none(),
             "a sent but unacknowledged Go must keep the scoped transport"
         );
         host.transport
@@ -5217,7 +5217,7 @@ mod tests {
             .unwrap()
             .service(LOBBY_RETRY_TIMING.retry_delta + 2);
         assert!(
-            vmce_round::take_campaign_completion_from_service(&mut host, true).is_none(),
+            vmce_round::take_campaign_completion_from_service(&mut host, true, 32).is_none(),
             "a retry without an acknowledgement must still wait"
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -5231,7 +5231,7 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .service(LOBBY_RETRY_TIMING.retry_delta + 2);
-            if let Some(result) = vmce_round::take_campaign_completion_from_service(&mut host, true)
+            if let Some(result) = vmce_round::take_campaign_completion_from_service(&mut host, true, 96)
             {
                 assert!(result.is_ok());
                 break;
@@ -5249,6 +5249,88 @@ mod tests {
             .pop_global_received()
             .unwrap();
         assert_eq!(received.payload, go);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_campaign_completion_times_out_when_the_go_ack_never_arrives() {
+        let mut host = service();
+        let mut guest = service();
+        let scope = host.setup_scope.unwrap();
+        let guest_addr = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        for service in [&mut host, &mut guest] {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .set_lan_scope(scope)
+                .unwrap();
+        }
+        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
+            .encode("Host")
+            .unwrap();
+        assert!(host.send(&go, direct(guest_addr), true));
+        host.vmce_round.defer_campaign_completion(1);
+        host.transport.as_mut().unwrap().service(1);
+        assert!(
+            vmce_round::take_campaign_completion_from_service(&mut host, true, 600).is_none(),
+            "before the deadline an unacknowledged Go keeps waiting"
+        );
+        assert_eq!(
+            vmce_round::take_campaign_completion_from_service(&mut host, true, 601),
+            Some(Err(())),
+            "an unresponsive peer must end the wait with a local failure"
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_campaign_completion_accepts_an_ack_at_the_deadline_bucket() {
+        let mut host = service();
+        let mut guest = service();
+        let scope = host.setup_scope.unwrap();
+        let guest_addr = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        for service in [&mut host, &mut guest] {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .set_lan_scope(scope)
+                .unwrap();
+        }
+        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
+            .encode("Host")
+            .unwrap();
+        assert!(host.send(&go, direct(guest_addr), true));
+        host.vmce_round.defer_campaign_completion(1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            guest
+                .transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            host.transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            if host
+                .go_transport_observation(true)
+                .is_some_and(|observation| observation.queued == 0)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Go was not acknowledged"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            vmce_round::take_campaign_completion_from_service(&mut host, true, 601),
+            Some(Ok(())),
+            "an ACK in the deadline bucket is still a completed delivery"
+        );
     }
 
     fn launch() -> crate::skirmish_launch::SkirmishLaunchSession {

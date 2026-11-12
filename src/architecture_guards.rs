@@ -566,7 +566,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/loading/transitions.rs", 1),
     ("app/match_bootstrap.rs", 33),
     ("app/match_runtime/session.rs", 30),
-    ("app/match_runtime/session/cooperative_round.rs", 36),
+    ("app/match_runtime/session/cooperative_round.rs", 37),
     ("app/match_runtime/sim_tick.rs", 1),
     ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
@@ -605,7 +605,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 506;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 507;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
