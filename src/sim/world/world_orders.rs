@@ -1181,25 +1181,32 @@ impl Simulation {
     /// Arbitrary authored native raw-save bytes are outside this producer.
     /// See engineer_bridge_cursor_caller.md for executed gate controls/bounds.
     pub fn techno_player_controllable(&self, id: u64, rules: &RuleSet) -> bool {
-        self.techno_player_controllable_for_owner(id, rules, |owner| {
-            self.house_is_human_player(owner)
-        })
+        self.techno_player_controllable_for_owner(
+            id,
+            rules,
+            |owner| self.owner_is_human(owner),
+            |owner| self.house_is_human_player(owner),
+        )
     }
 
     /// App input counterpart for a VMCE participant's additional Houses.
     /// The shared simulation predicate above remains unchanged for all sim
     /// decisions; this local grant is consumed only by input callers.
     pub fn locally_controllable_techno(&self, id: u64, rules: &RuleSet) -> bool {
-        self.techno_player_controllable_for_owner(id, rules, |owner| {
-            self.house_is_locally_controlled_player(owner)
-        })
+        self.techno_player_controllable_for_owner(
+            id,
+            rules,
+            |owner| self.house_is_locally_controlled_player(owner),
+            |owner| self.house_is_locally_controlled_player(owner),
+        )
     }
 
     fn techno_player_controllable_for_owner(
         &self,
         id: u64,
         rules: &RuleSet,
-        is_player_owner: impl FnOnce(InternedId) -> bool,
+        owner_is_human: impl FnOnce(InternedId) -> bool,
+        unit_is_player: impl FnOnce(InternedId) -> bool,
     ) -> bool {
         let Some(actor) = self.substrate.entities.get(id) else {
             return false;
@@ -1217,7 +1224,7 @@ impl Simulation {
                 return true;
             }
             if object.construction_yard
-                && !(is_player_owner(actor.owner())
+                && !(owner_is_human(actor.owner())
                     && self.session.game_mode_nonzero()
                     && self.session.game_options().mcv_redeploy
                     && actor.mind_control.controller().is_none())
@@ -1226,7 +1233,7 @@ impl Simulation {
             }
             return crate::sim::production::undeploy_target(rules, &object.id).is_some();
         }
-        if !is_player_owner(actor.owner()) || actor.bunker.link().installed_in().is_some() {
+        if !unit_is_player(actor.owner()) || actor.bunker.link().installed_in().is_some() {
             return false;
         }
         if object.spawned

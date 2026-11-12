@@ -83,7 +83,7 @@ python -m tools.cargo_run -- build --release --no-default-features --features vm
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.3.2-vmce.N` (currently `0.3.2-vmce.6`, merged with upstream `v0.3.2`, merge commit
+`0.3.2`, the upstream version it tracks (merge commit
 `89ccbea49`); LAN peers should run the same VMCE build and the same rules/data. The series
 series digest covers `campaign.ini` and the manifest maps; the LAN rules agreement separately
 covers the selected rules closure and the Ares/extension build identity, and the VMCE setup
@@ -405,7 +405,7 @@ acceptance and stock Cooperative continuation were re-run on the merged baseline
   (credits and campaign-end screenshots on both peers), and the VMCE `2p-retry` capture passed
   there too (BC6 page, guest votes → host retry → same stage, 300 matching checksums). There are
   no result-page timers anywhere: defeat uses the vote gate and campaign end the all-ready gate
-  (B02 cancelled). Version `0.3.2-vmce.6` is the current fork version; the VMCE `0x103`/`0xBC6`
+  (B02 cancelled). Version `0.3.2` is the current fork version; the VMCE `0x103`/`0xBC6`
   pages are authored at 800x600 and were verified at 1024x768 (and 800x600/1600x900) against the
   pre-sync baseline (B103 closed).
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the

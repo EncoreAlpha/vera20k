@@ -8,7 +8,7 @@ the upstream sync, not a native-parity certification.
 | --- | --- |
 | Upstream baseline | `867ae2467` (upstream main, 2026-11-13; room Teams/join queue, mods page, Ares in every build behind its switch) |
 | Merge commit | `89ccbea49` (`Merge upstream/main (867ae2467) into feature/vmce`) |
-| Fork version | `0.3.2-vmce.6` (all three workspace manifests and `Cargo.lock`) |
+| Fork version | `0.3.2` (all three workspace manifests and `Cargo.lock`); the fork no longer suffixes the upstream version, so the `vmce` capability identifies a VMCE build |
 | Capability | `vmce` (off by default; shipping builds do not enable it) |
 
 ## What the 0.3.2 merge changed
@@ -24,8 +24,8 @@ sync.
 
 The VMCE side needed four kinds of adaptation: the result/defeat projections use
 the new `SimHost` accessors; the ten i18n catalogs were merged key by key (all
-fork and upstream keys present, no duplicates); the crate version became
-`0.3.2-vmce.6`; and the architecture guards pin upstream's new Ares
+fork and upstream keys present, no duplicates); the crate version carries the upstream
+`0.3.2` (the fork no longer suffixes it); and the architecture guards pin upstream's new Ares
 superweapon-presentation reads and its rules-layer Ares switch setter.
 
 ## Latest upstream sync (2026-11-13)
@@ -40,9 +40,9 @@ vmce`, architecture guards 26/26 in both configurations, focused VMCE tests
 real two-process `2p-win`, `2p-retry` and `2p-final` acceptance (300 matching
 checksums each; start, result, retry, intermission continue and campaign end).
 The 20,000-unit performance comparison and the VMCE+Ares combination were not
-run. Upstream's new AGENTS contract moves game behavior off build features
-(Ares uses its runtime switch); VMCE remains a compile-time capability by
-design, so that policy conflict is reported here rather than resolved.
+run. Decided 2026-11-13: keep VMCE as a compile-time `vmce` capability per the
+roadmap; this is an explicit exception to the upstream AGENTS policy that game
+behavior does not sit behind a build feature.
 
 ## Resolution policy
 

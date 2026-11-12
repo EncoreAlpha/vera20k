@@ -17,7 +17,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is absent, `Maps/VMCE/`
 is not scanned, and VMCE-only session/LAN fields are compiled out.
 
-Current fork version: `0.3.2-vmce.6`, synced to upstream main `867ae2467` (merge
+Current fork version: `0.3.2`, synced to upstream main `867ae2467` (merge
 commit `89ccbea49`). LAN peers should run the same VMCE build. The fork baseline and what the merge
 changed are in the [VMCE baseline](vmce-baseline.md); the merged baseline has been
 re-captured (screenshot matrix at 800x600/1024x768/1600x900, LAN acceptance 4/4, stock

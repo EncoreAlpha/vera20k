@@ -1454,6 +1454,7 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/crates/pickup.rs", 1),
                 ("sim/docking/hospital.rs", 1),
                 ("sim/flashing.rs", 1),
+                // VMCE campaign-shared voice gate: local presentation only.
                 ("sim/infantry.rs", 1),
                 ("sim/movement/per_cell.rs", 1),
                 // Process's deselect over the player's shroud (0x007290F6).
@@ -1467,6 +1468,7 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/world/camera_home.rs", 1),
                 ("sim/world/fly_process.rs", 1),
                 ("sim/world/lifecycle.rs", 1),
+                // VMCE's local grant predicate replaces one native check.
                 ("sim/world/move_cell_input.rs", 2),
                 ("sim/world/planning.rs", 1),
                 ("sim/world/selection_voice.rs", 4),
@@ -1501,6 +1503,7 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/world/lifecycle.rs", 11),
                 ("sim/world/mod.rs", 1),
                 ("sim/world/shroud_refresh.rs", 1),
+                // VMCE local input selection admits granted Houses.
                 ("sim/world/world_commands.rs", 2),
                 ("sim/world/world_hash.rs", 1),
             ],
