@@ -582,7 +582,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("net/lan_messages.rs", 1),
     ("net/lan_messages/cooperative.rs", 0),
     ("net/lan_messages/ingame.rs", 8),
-    ("net/udp.rs", 24),
+    ("net/udp.rs", 17),
     ("rules/ini_parser.rs", 21),
     ("rules/ruleset.rs", 1),
     ("sim/multiplayer_checksum.rs", 1),
@@ -600,7 +600,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 /// A shared file not named in the budget table may carry no production VMCE
 /// gate: adding one is a new coupling decision, not a drive-by branch.
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 523;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 516;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
