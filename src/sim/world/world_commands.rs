@@ -1356,7 +1356,7 @@ impl Simulation {
     /// path view and the retained base movement-class topology. Zone ID
     /// assignment remains owned by the ordered native repair callback.
     fn refresh_wall_sale_recalc_prefix(
-        world_zone_grid: &mut Option<crate::util::shared::Shared<ZoneGrid>>,
+        world_zone_grid: &mut Option<ZoneGrid>,
         resolved_terrain: &Option<ResolvedTerrainGrid>,
         overlay_grid: &Option<OverlayGrid>,
         tail_grid: &mut Option<PathGrid>,
@@ -1379,7 +1379,7 @@ impl Simulation {
             }
         }
 
-        if let Some(zone_grid) = world_zone_grid.as_deref_mut() {
+        if let Some(zone_grid) = world_zone_grid.as_mut() {
             let _ = zone_grid.refresh_base_cell_attributes_at(terrain, rx, ry);
         }
     }
@@ -1399,7 +1399,7 @@ impl Simulation {
         };
         #[cfg(not(any(test, feature = "test-support")))]
         let _ = sold_cell;
-        let Some(_zone_grid) = self.zone_grid.as_deref_mut() else {
+        let Some(_zone_grid) = self.zone_grid.as_mut() else {
             return;
         };
         #[cfg(any(test, feature = "test-support"))]
@@ -4390,6 +4390,7 @@ mod tests {
                 .entities
                 .get(building)
                 .unwrap()
+                .building
                 .repairing
                 .is_on()
         );
@@ -4411,6 +4412,7 @@ mod tests {
                 .entities
                 .get(building)
                 .unwrap()
+                .building
                 .repairing
                 .is_on()
         );
@@ -4601,7 +4603,8 @@ mod tests {
             5,
             false,
         );
-        ge.bunker_runtime = Some(crate::sim::docking::bunker_install::BunkerRuntime::idle());
+        ge.building.bunker_runtime =
+            Some(crate::sim::docking::bunker_install::BunkerRuntime::idle());
         // Revealed object: order admission reads the limbo byte.
         ge.lifecycle.set_in_limbo_for_test(false);
         sim.substrate.entities.insert(ge);
@@ -4729,6 +4732,7 @@ mod tests {
                     .entities
                     .get(2)
                     .unwrap()
+                    .building
                     .bunker_runtime
                     .unwrap()
                     .state(),
@@ -4773,7 +4777,7 @@ mod tests {
             assert_eq!(building.building_ready_latch(), 0, "{mission:?}");
             assert_eq!(building.mission.queued(), MissionId::NONE, "{mission:?}");
             assert_eq!(
-                building.bunker_runtime.unwrap().state(),
+                building.building.bunker_runtime.unwrap().state(),
                 BunkerState::Idle,
                 "{mission:?}"
             );
@@ -5046,6 +5050,7 @@ mod tests {
                 .entities
                 .get(2)
                 .unwrap()
+                .building
                 .bunker_runtime
                 .unwrap()
                 .state(),
@@ -5074,6 +5079,7 @@ mod tests {
                 .entities
                 .get(2)
                 .unwrap()
+                .building
                 .bunker_runtime
                 .unwrap()
                 .state();
@@ -5097,6 +5103,7 @@ mod tests {
             .entities
             .get(2)
             .unwrap()
+            .building
             .bunker_runtime
             .unwrap();
         assert_eq!(rt.state(), BunkerState::Occupied);
@@ -5230,6 +5237,7 @@ mod tests {
                 .entities
                 .get(2)
                 .unwrap()
+                .building
                 .bunker_runtime
                 .unwrap()
                 .state(),

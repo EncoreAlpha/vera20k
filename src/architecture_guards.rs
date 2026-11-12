@@ -1379,7 +1379,8 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/scenario_bootstrap.rs", 5),
                 ("sim/scenario_session.rs", 5),
                 ("sim/snapshot.rs", 2),
-                // Ares superweapon presentation: the local viewer's relation only.
+                // Ares IsTimerVisible (10032E80): whether the local player
+                // sees a Super's timer line; only the timer drawing asks.
                 ("sim/superweapon/ares_presentation.rs", 1),
                 ("sim/superweapon/lightning_storm.rs", 1),
                 ("sim/superweapon/psychic_reveal.rs", 1),
@@ -1419,7 +1420,7 @@ fn engine_per_client_reads_have_pinned_callers() {
             &[
                 ("sim/scenario_session.rs", 1),
                 ("sim/score.rs", 1),
-                // Ares superweapon presentation: the local viewer's relation only.
+                // IsTimerVisible's observer case, as for `current_house`.
                 ("sim/superweapon/ares_presentation.rs", 1),
                 ("sim/superweapon/mod.rs", 1),
                 ("sim/world/house_defeat.rs", 2),
@@ -1453,7 +1454,6 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/crates/pickup.rs", 1),
                 ("sim/docking/hospital.rs", 1),
                 ("sim/flashing.rs", 1),
-                // VMCE campaign-shared voice gate: local presentation only.
                 ("sim/infantry.rs", 1),
                 ("sim/movement/per_cell.rs", 1),
                 // Process's deselect over the player's shroud (0x007290F6).
@@ -1467,14 +1467,14 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/world/camera_home.rs", 1),
                 ("sim/world/fly_process.rs", 1),
                 ("sim/world/lifecycle.rs", 1),
-                // VMCE's local grant predicate replaces one native check.
                 ("sim/world/move_cell_input.rs", 2),
                 ("sim/world/planning.rs", 1),
                 ("sim/world/selection_voice.rs", 4),
                 ("sim/world/shroud_refresh.rs", 2),
                 ("sim/world/techno_ai.rs", 1),
                 ("sim/world/world_commands.rs", 2),
-                ("sim/world/world_orders.rs", 13),
+                // The clicked actions, with Ares' infantry heal arm (0x0051E710).
+                ("sim/world/world_orders.rs", 14),
             ],
         ),
         (
@@ -1501,7 +1501,6 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/world/lifecycle.rs", 11),
                 ("sim/world/mod.rs", 1),
                 ("sim/world/shroud_refresh.rs", 1),
-                // VMCE local input selection admits granted Houses.
                 ("sim/world/world_commands.rs", 2),
                 ("sim/world/world_hash.rs", 1),
             ],
@@ -2465,6 +2464,12 @@ fn composition_root_slots_are_owner_types() {
             "mission_leaf",
             "an enum of owner leaves, built once at entity construction; only fixtures replace it",
         ),
+        (
+            "GameEntity",
+            "building",
+            "a Building's own fields stored apart from the record every turn reads; each \
+             keeps its visibility and owning module, so the slot opens nothing that was closed",
+        ),
     ];
     let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let files = source_files(&src_root);
@@ -2818,8 +2823,8 @@ fn mutable_handouts_and_setters_are_owner_operations() {
         "a generic cell-keyed container; every CellMap is a private field of its owner";
     const COW_CELLS: &str = "the resolved terrain grid's private cell storage (pub(super)); \
                              ResolvedTerrainGrid owns every write to its cells";
-    const SHARED: &str = "generic copy-on-write containers for the presentation frame \
-                          (docs/sim-thread.md); every Shared, DerivedCache and ChunkedVec is a \
+    const SHARED: &str = "generic change-tracking containers the presentation copy syncs from \
+                          (docs/sim-thread.md); every Synced, DerivedCache and ChunkedVec is a \
                           field of its owner";
     const SPARSE: &str = "a generic out-of-line holder for state most objects leave at its \
                           default; every Sparse is a field of its owner and holds an owner struct";
@@ -2892,10 +2897,10 @@ fn mutable_handouts_and_setters_are_owner_operations() {
             "emit_and_finish",
             "a producer finishes the fact it just emitted, before the frame tail reads the channel",
         ),
-        ("util/shared.rs", "deref_mut", SHARED),
-        ("util/shared.rs", "get_mut", SHARED),
-        ("util/shared.rs", "iter_mut", SHARED),
-        ("util/shared.rs", "index_mut", SHARED),
+        ("util/synced.rs", "deref_mut", SHARED),
+        ("util/synced.rs", "get_mut", SHARED),
+        ("util/synced.rs", "iter_mut", SHARED),
+        ("util/synced.rs", "index_mut", SHARED),
         ("util/sparse.rs", "deref_mut", SPARSE),
         (
             "util/sync.rs",
@@ -2930,12 +2935,6 @@ fn mutable_handouts_and_setters_are_owner_operations() {
             "set_timing",
             "Set_Timing (0x00540C60) stores the manager's +0x58..+0x60 and copies them into \
              every private connection's +0x28..+0x30 (0x00540CBE..0x00540CE1)",
-        ),
-        (
-            "rules/native_processing.rs",
-            "set_ships_ares",
-            "the game's data switches Ares on once at rules install (rules::ares_switch); \
-             the stack copies that decision into each flattened layer",
         ),
         (
             "rules/object_type.rs",

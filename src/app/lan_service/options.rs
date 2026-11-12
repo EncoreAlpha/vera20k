@@ -133,6 +133,12 @@ pub(super) fn publish_options(
         vmce_series,
         #[cfg(feature = "vmce")]
         vmce_intermission: session.vmce_intermission_map().map(str::to_owned),
+        teams: session
+            .network_setup()
+            .expect("projected setup")
+            .options
+            .teams,
+        queue: session.network_queue().to_vec(),
     })?;
     let admitted = queue_payload(
         state,
@@ -198,6 +204,28 @@ struct ExtendedOptions {
     #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_intermission: Option<String>,
+    /// The room's Teams count, beside `room` ([`RoomOptions::teams`]).
+    ///
+    /// [`RoomOptions::teams`]: crate::skirmish_launch::RoomOptions::teams
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    teams: Option<u8>,
+    /// The room's join queue, beside `room`
+    /// ([`SkirmishLaunchOptions::queue`]). A guest whose game is older skips
+    /// it and shows no places.
+    ///
+    /// [`SkirmishLaunchOptions::queue`]: crate::skirmish_launch::SkirmishLaunchOptions::queue
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    queue: Vec<String>,
+}
+
+impl ExtendedOptions {
+    /// VERA's room options with the Teams count that travels beside them.
+    fn room_options(&self) -> Option<crate::skirmish_launch::RoomOptions> {
+        self.room.map(|room| crate::skirmish_launch::RoomOptions {
+            teams: self.teams,
+            ..room
+        })
+    }
 }
 
 /// Host-authored admission projection for native Type3 assembly, derived from
@@ -301,6 +329,7 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
             .as_ref()
             .expect("received options own a LAN service"),
     );
+    let room = options.room_options();
     #[cfg(feature = "vmce")]
     let result = receive_options_text(
         state,
@@ -308,7 +337,8 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.source_sha256,
         options.effective_digest,
         options.selected_map_file,
-        options.room,
+        room,
+        options.queue,
         options.vmce_roles,
         options.vmce_series,
         options.vmce_series_content,
@@ -321,7 +351,8 @@ pub(super) fn reapply_received_options(state: &mut AppState) -> Result<()> {
         options.source_sha256,
         options.effective_digest,
         options.selected_map_file,
-        options.room,
+        room,
+        options.queue,
     );
     if let Err(error) = &result {
         abort_received_setup(state, checkpoint, error);
@@ -397,6 +428,7 @@ fn receive_options_text(
     effective_digest: String,
     selected_map_file: String,
     room: Option<crate::skirmish_launch::RoomOptions>,
+    queue: Vec<String>,
     #[cfg(feature = "vmce")] vmce_roles: Vec<VmceRoleRow>,
     #[cfg(feature = "vmce")] vmce_series: Option<VmceSeriesIdentity>,
     #[cfg(feature = "vmce")] vmce_series_content: Option<String>,
@@ -441,6 +473,8 @@ fn receive_options_text(
         vmce_series_content,
         vmce_intermission,
     );
+    // The text starts from this guest's own setup: an empty queue clears it.
+    options.launch.options.queue = queue;
     crate::app::shell_network_setup::service_event(state, NetworkSetupEvent::HostSetup(options))?;
     #[cfg(feature = "vmce")]
     super::vmce_setup::commit_received_options(state, vmce_effect)?;
@@ -678,6 +712,7 @@ pub(super) fn receive_extended(
                     }
                 }
                 crate::app::shell_network_setup::invalidate_network_agreement(state)?;
+                let room = options.room_options();
                 #[cfg(feature = "vmce")]
                 receive_options_text(
                     state,
@@ -685,7 +720,8 @@ pub(super) fn receive_extended(
                     options.source_sha256,
                     options.effective_digest,
                     options.selected_map_file,
-                    options.room,
+                    room,
+                    options.queue,
                     options.vmce_roles,
                     options.vmce_series,
                     options.vmce_series_content,
@@ -698,7 +734,8 @@ pub(super) fn receive_extended(
                     options.source_sha256,
                     options.effective_digest,
                     options.selected_map_file,
-                    options.room,
+                    room,
+                    options.queue,
                 )?;
                 super::maps::received_options(state, scope, options.random_map)
             })();
@@ -1298,7 +1335,11 @@ mod tests {
                 bridges_destroyable: true,
                 ally_change_allowed: false,
                 bans: crate::sim::game_options::RoomBans::default(),
+                teams: None,
+                auto_balance: false,
             }),
+            teams: None,
+            queue: Vec::new(),
             vmce_roles: vec![
                 VmceRoleRow {
                     row: 0,
@@ -1650,6 +1691,8 @@ mod tests {
             random_map: None,
             admissions: Vec::new(),
             room: None,
+            teams: None,
+            queue: Vec::new(),
             vmce_roles: roles,
             vmce_series: None,
             vmce_series_content: None,
@@ -1729,6 +1772,8 @@ mod tests {
             random_map: None,
             admissions: Vec::new(),
             room: None,
+            teams: None,
+            queue: Vec::new(),
             vmce_roles: vmce_role_rows(&host),
             vmce_series: None,
             vmce_series_content: None,
@@ -2293,6 +2338,8 @@ mod tests {
             random_map: None,
             admissions: Vec::new(),
             room: None,
+            teams: None,
+            queue: Vec::new(),
             vmce_roles: Vec::new(),
             vmce_series: Some(identity),
             vmce_series_content: Some(content.clone()),
@@ -2352,6 +2399,8 @@ mod tests {
             random_map: None,
             admissions: Vec::new(),
             room: None,
+            teams: None,
+            queue: Vec::new(),
             vmce_roles: vmce_role_rows(&host),
             vmce_series: Some(identity.clone()),
             vmce_series_content: Some("d".repeat(64)),
