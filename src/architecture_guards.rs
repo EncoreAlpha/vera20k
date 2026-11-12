@@ -519,7 +519,7 @@ fn shared_vmce_mode_checks_have_pinned_policy_callers() {
         .map(|((file, _), _)| file.as_str())
         .collect();
     println!(
-        "VMCE shared direct references: B1 85/21 -> B4 start 80/20 -> {shared_count}/{} now",
+        "VMCE shared direct references: B1 85/21, B3 80/20, B4 55/18, now {shared_count}/{}",
         shared_files.len()
     );
     println!("VMCE specialized references (separate): 7 diagnostics + 1 result");
