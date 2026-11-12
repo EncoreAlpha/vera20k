@@ -128,6 +128,8 @@ pub(crate) mod types;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub(crate) mod updater;
 #[cfg(feature = "vmce")]
+pub(crate) mod vmce_campaign;
+#[cfg(feature = "vmce")]
 pub(crate) mod vmce_result;
 #[cfg(feature = "vmce")]
 pub(crate) mod vmce_round;

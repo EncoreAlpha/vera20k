@@ -678,9 +678,9 @@ pub(crate) fn commit_map_selection(
     #[cfg(feature = "vmce")]
     let vmce_map_config = if mode.class.is_vmce() {
         match state.match_state.session_mode() {
-            crate::app::match_runtime::session::SessionMode::Lan => {
-                Some(super::resolve_host_vmce_map_config(state, &file)?)
-            }
+            crate::app::match_runtime::session::SessionMode::Lan => Some(
+                crate::app::vmce_campaign::resolve_host_vmce_map_config(state, &file)?,
+            ),
             // WOL retains its existing lobby and map selection behavior. Its
             // options transport has no supplemental-config field.
             crate::app::match_runtime::session::SessionMode::Wol => None,

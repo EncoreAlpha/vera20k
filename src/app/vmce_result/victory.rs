@@ -83,11 +83,11 @@ pub(super) fn open_victory(state: &mut AppState) {
     };
     let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
     let (next, ending) = match next {
-        crate::app::shell_network_setup::vmce_map::VmceResolvedStage::Next(next) => (
+        crate::app::vmce_campaign::VmceResolvedStage::Next(next) => (
             Some(next),
             crate::app::match_runtime::session::VmceRoundEnding::Next,
         ),
-        crate::app::shell_network_setup::vmce_map::VmceResolvedStage::EndOfGame => (
+        crate::app::vmce_campaign::VmceResolvedStage::EndOfGame => (
             None,
             crate::app::match_runtime::session::VmceRoundEnding::CampaignEnd,
         ),
@@ -210,11 +210,11 @@ pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
 /// stage; an `Err` is a broken series and must not be presented as one.
 fn resolve_next_stage(
     state: &AppState,
-) -> anyhow::Result<crate::app::shell_network_setup::vmce_map::VmceResolvedStage> {
+) -> anyhow::Result<crate::app::vmce_campaign::VmceResolvedStage> {
     let Some(current) = state.match_state.session.network_vmce_map_config() else {
         anyhow::bail!("the finished stage has no admitted VMCE series");
     };
-    crate::app::shell_network_setup::vmce_map::resolve_next_vmce_stage(state, current)
+    crate::app::vmce_campaign::resolve_next_vmce_stage(state, current)
 }
 
 fn leave_after_stage_error(state: &mut AppState) {

@@ -597,10 +597,7 @@ impl OwnedMapMutation {
             .as_deref()
             .context("A03 selected VMCE map")?
             .to_owned();
-        let series = crate::app::shell_network_setup::vmce_map::local_vmce_series_manifest(
-            state,
-            &selected_map,
-        )?;
+        let series = crate::app::vmce_campaign::local_vmce_series_manifest(state, &selected_map)?;
         let manifest = crate::rules::ini_parser::IniFile::from_bytes_preserving_empty_values(
             &series.manifest,
         )?;

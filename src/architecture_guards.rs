@@ -216,6 +216,7 @@ const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
     "app/vmce_result/paint_victory.rs",
     "app/vmce_result/types.rs",
     "app/vmce_result/victory.rs",
+    "app/vmce_campaign.rs",
     "app/vmce_round.rs",
     "sim/scenario_session/vmce.rs",
     "skirmish_modes.rs",
@@ -530,6 +531,7 @@ fn shared_vmce_mode_checks_have_pinned_policy_callers() {
 /// is test tooling and is excluded here; the mode-check guard covers it.
 const VMCE_OWNED_FILE_PREFIXES: &[&str] = &[
     "app/vmce_result/",
+    "app/vmce_campaign.rs",
     "app/vmce_round.rs",
     "app/lan_service/vmce_",
     "app/match_runtime/session/cooperative_round/vmce_round.rs",
@@ -566,7 +568,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/match_runtime/session.rs", 30),
     ("app/match_runtime/session/cooperative_round.rs", 36),
     ("app/match_runtime/sim_tick.rs", 1),
-    ("app/mod.rs", 2),
+    ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
     ("app/shell_network_setup.rs", 20),
@@ -603,7 +605,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 503;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 504;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {

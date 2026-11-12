@@ -14,10 +14,7 @@ pub(crate) mod vmce_map;
 pub(crate) mod vmce_map;
 #[cfg(feature = "vmce")]
 pub(super) mod vmce_setup;
-pub(crate) use vmce_map::{
-    host_vmce_identity, refresh_vmce_entries, resolve_host_vmce_map_config,
-    resolve_local_vmce_config,
-};
+pub(crate) use vmce_map::refresh_vmce_entries;
 #[cfg(feature = "vmce")]
 pub(crate) use vmce_setup::{VmceLobbyProjection, VmceLobbyStatus, VmceMapDetails};
 mod cooperative;
@@ -1010,7 +1007,7 @@ fn install_setup(
                     .network_setup()
                     .is_some_and(|launch| launch.mode.class.is_vmce())
             {
-                Some(resolve_host_vmce_map_config(state, &file)?)
+                Some(crate::app::vmce_campaign::resolve_host_vmce_map_config(state, &file)?)
             } else {
                 None
             };

@@ -79,7 +79,7 @@ pub(in crate::app::lan_service) fn published_series_identity(
         };
     };
     let (directory, sha256) =
-        crate::app::shell_network_setup::host_vmce_identity(state, &file, &source_sha256)?;
+        crate::app::vmce_campaign::host_vmce_identity(state, &file, &source_sha256)?;
     if !directory.eq_ignore_ascii_case(&source.directory) || sha256 != source.manifest_sha256() {
         // The series changed while its digest was computed: rescan the new
         // identity and defer this revision.
@@ -163,7 +163,7 @@ pub(in crate::app::lan_service) fn resolve_received_series_config(
 ) {
     let mut failure = None;
     let resolved = identity.and_then(|identity| {
-        let (config, digest) = match crate::app::shell_network_setup::resolve_local_vmce_config(
+        let (config, digest) = match crate::app::vmce_campaign::resolve_local_vmce_config(
             state,
             map_file,
             &identity.directory,
@@ -373,13 +373,13 @@ pub(in crate::app::lan_service) fn validate_current_coop_campaign(state: &AppSta
         .ok_or_else(|| anyhow!("local VMCE series is not verified"))?;
     accepted.validate_binding(file, &metadata.source_sha256)?;
     let (directory, expected_sha256) = if session.host() {
-        crate::app::shell_network_setup::host_vmce_identity(state, file, &metadata.source_sha256)?
+        crate::app::vmce_campaign::host_vmce_identity(state, file, &metadata.source_sha256)?
     } else {
         let identity = current_series_identity(state)
             .ok_or_else(|| anyhow!("host series identity is missing"))?;
         (identity.directory, identity.manifest_sha256)
     };
-    let (local, local_sha256) = crate::app::shell_network_setup::resolve_local_vmce_config(
+    let (local, local_sha256) = crate::app::vmce_campaign::resolve_local_vmce_config(
         state,
         file,
         &directory,
@@ -419,7 +419,7 @@ pub(in crate::app::lan_service) fn intermission_unlock_earned(
 
 pub(in crate::app::lan_service) fn unlock_verified_intermission(state: &AppState) {
     if let Some(map) = intermission_unlock_earned(&state.match_state.session) {
-        crate::app::shell_network_setup::vmce_map::unlock_catalog_stage(state, map);
+        crate::app::vmce_campaign::unlock_catalog_stage(state, map);
     }
 }
 

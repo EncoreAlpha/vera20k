@@ -302,23 +302,21 @@ impl VmceSeriesVerifier {
         let manifest = series.manifest.clone();
         let (sender, receiver) = channel();
         self.results = Some(receiver);
-        let spawned =
-            std::thread::Builder::new()
-                .name("vmce-series-scan".to_owned())
-                .spawn(move || {
-                    let outcome =
-                        match crate::app::shell_network_setup::vmce_map::series_content_sha256(
-                            &directory, &manifest, &cancel,
-                        ) {
-                            Ok(digest) => ScanOutcome::Digest(digest),
-                            Err(error) => ScanOutcome::Failed(format!("{error:#}")),
-                        };
-                    let _ = sender.send(ScanResult {
-                        generation,
-                        key,
-                        outcome,
-                    });
+        let spawned = std::thread::Builder::new()
+            .name("vmce-series-scan".to_owned())
+            .spawn(move || {
+                let outcome = match crate::app::vmce_campaign::series_content_sha256(
+                    &directory, &manifest, &cancel,
+                ) {
+                    Ok(digest) => ScanOutcome::Digest(digest),
+                    Err(error) => ScanOutcome::Failed(format!("{error:#}")),
+                };
+                let _ = sender.send(ScanResult {
+                    generation,
+                    key,
+                    outcome,
                 });
+            });
         match spawned {
             Ok(worker) => self.worker = Some(worker),
             Err(_) => {
@@ -378,8 +376,7 @@ pub(crate) fn read_local_series(
     state: &crate::app::AppState,
     map_file: &str,
 ) -> anyhow::Result<LocalSeries> {
-    let series =
-        crate::app::shell_network_setup::vmce_map::local_vmce_series_manifest(state, map_file)?;
+    let series = crate::app::vmce_campaign::local_vmce_series_manifest(state, map_file)?;
     Ok(LocalSeries {
         directory: series.directory,
         directory_path: series.directory_path,

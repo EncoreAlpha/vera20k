@@ -134,5 +134,5 @@ fn unlock_confirmed_stage(state: &AppState) {
     };
     // A completed mission unlocks its resolved successor even if loading it
     // later fails.
-    crate::app::shell_network_setup::vmce_map::unlock_catalog_stage(state, map);
+    crate::app::vmce_campaign::unlock_catalog_stage(state, map);
 }
