@@ -33,7 +33,7 @@ struct VmceResultAgreement {
     deferred_go: bool,
     early_records: Vec<(
         usize,
-        crate::net::lan_messages::cooperative::VmceResultRecord,
+        crate::net::lan_messages::vmce::VmceResultRecord,
     )>,
 }
 
@@ -449,7 +449,7 @@ impl MatchSession {
     /// accepts it. Host starts a fresh nonce; guests echo that nonce.
     pub(crate) fn vmce_result_next_record(
         &self,
-    ) -> Option<crate::net::lan_messages::cooperative::VmceResultRecord> {
+    ) -> Option<crate::net::lan_messages::vmce::VmceResultRecord> {
         let NetworkPhase::CooperativeRound {
             connected,
             launch,
@@ -471,7 +471,7 @@ impl MatchSession {
         } else {
             return None;
         };
-        Some(crate::net::lan_messages::cooperative::VmceResultRecord {
+        Some(crate::net::lan_messages::vmce::VmceResultRecord {
             nonce,
             entries: agreement.entries,
             confirmed,
@@ -506,7 +506,7 @@ impl MatchSession {
     pub(crate) fn vmce_result_received(
         &mut self,
         source: usize,
-        record: crate::net::lan_messages::cooperative::VmceResultRecord,
+        record: crate::net::lan_messages::vmce::VmceResultRecord,
     ) -> anyhow::Result<()> {
         let host = self.host;
         let RoundParts {

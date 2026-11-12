@@ -9,10 +9,9 @@ use crate::app::match_runtime::session::{
     CooperativeRoundEvent, CooperativeRoundOptions, NetworkLoadingRequest, SessionMode,
 };
 use crate::net::global::GlobalMessage;
-use crate::net::lan_messages::cooperative::{
-    CooperativeOptionsRecord, CooperativeSignal, VmceRoundControl, VmceStageRecord,
-};
+use crate::net::lan_messages::cooperative::{CooperativeOptionsRecord, CooperativeSignal};
 use crate::net::lan_messages::ingame::{LoadingFailureReason, encode_loading_failure};
+use crate::net::lan_messages::vmce::{VmceRoundControl, VmceSignal, VmceStageRecord};
 use crate::net::lan_messages::{LanMessage, LanMessageKind, SessionScope};
 use std::collections::{BTreeSet, VecDeque};
 use std::net::SocketAddrV4;
@@ -146,14 +145,7 @@ impl VmceLanRoundState {
 
 pub(crate) fn is_round_record(payload: &[u8]) -> bool {
     if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
-        return CooperativeSignal::decode(payload).is_some_and(|signal| {
-            matches!(
-                signal,
-                CooperativeSignal::StageRejected
-                    | CooperativeSignal::StageAbsent
-                    | CooperativeSignal::RetryVote
-            )
-        });
+        return VmceSignal::decode(payload).is_some();
     }
     if payload.len() != crate::net::lan_messages::LAN_MESSAGE_LEN {
         return false;
@@ -164,8 +156,8 @@ pub(crate) fn is_round_record(payload: &[u8]) -> bool {
     VmceStageRecord::decode(&message).is_some()
         || VmceRoundControl::decode(&message).is_some()
         || CooperativeOptionsRecord::decode_vmce(&message).is_some()
-        || crate::net::lan_messages::cooperative::decode_intermission_epoch(&message).is_some()
-        || crate::net::lan_messages::cooperative::VmceResultRecord::decode(&message).is_some()
+        || crate::net::lan_messages::vmce::decode_intermission_epoch(&message).is_some()
+        || crate::net::lan_messages::vmce::VmceResultRecord::decode(&message).is_some()
 }
 
 pub(super) fn defer_pending_round_record(state: &mut AppState, incoming: &GlobalMessage) -> bool {
@@ -441,9 +433,7 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             let _ = connected_source(state, incoming.source)?;
             return Ok(true);
         }
-        if let Some(epoch) =
-            crate::net::lan_messages::cooperative::decode_intermission_epoch(&message)
-        {
+        if let Some(epoch) = crate::net::lan_messages::vmce::decode_intermission_epoch(&message) {
             let _ = connected_source(state, incoming.source)?;
             anyhow::ensure!(
                 !state.match_state.session.host() && admitted_host(state) == Some(incoming.source),
@@ -476,11 +466,8 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             }
             return Ok(true);
         }
-        if message.kind()
-            == LanMessageKind::Unknown(crate::net::lan_messages::cooperative::RESULT_KIND)
-        {
-            let Some(record) =
-                crate::net::lan_messages::cooperative::VmceResultRecord::decode(&message)
+        if message.kind() == LanMessageKind::Unknown(crate::net::lan_messages::vmce::RESULT_KIND) {
+            let Some(record) = crate::net::lan_messages::vmce::VmceResultRecord::decode(&message)
             else {
                 log::warn!("ignoring a stale or malformed VMCE result record");
                 return Ok(true);
@@ -531,31 +518,28 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             return Ok(true);
         }
     }
-    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN
-        && let Some(signal) = CooperativeSignal::decode(payload)
-    {
-        let Some(source) = (match signal {
-            CooperativeSignal::StageRejected
-            | CooperativeSignal::StageAbsent
-            | CooperativeSignal::RetryVote
-            | CooperativeSignal::Begin
-            | CooperativeSignal::Ack
-            | CooperativeSignal::Go => Some(connected_source(state, incoming.source)?),
-            _ => None,
-        }) else {
-            return Ok(false);
-        };
-        let event = match signal {
-            CooperativeSignal::StageRejected => Some(CooperativeRoundEvent::StageRejected),
-            CooperativeSignal::StageAbsent => Some(CooperativeRoundEvent::StageAbsent),
-            CooperativeSignal::RetryVote => Some(CooperativeRoundEvent::RetryVote { source }),
-            CooperativeSignal::Begin | CooperativeSignal::Ack | CooperativeSignal::Go => None,
-            _ => unreachable!("only VMCE-specific signals are admitted here"),
-        };
-        if let Some(event) = event {
+    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
+        if let Some(signal) = VmceSignal::decode(payload) {
+            let source = connected_source(state, incoming.source)?;
+            let event = match signal {
+                VmceSignal::StageRejected => CooperativeRoundEvent::StageRejected,
+                VmceSignal::StageAbsent => CooperativeRoundEvent::StageAbsent,
+                VmceSignal::RetryVote => CooperativeRoundEvent::RetryVote { source },
+            };
             crate::app::cooperative_round::service_event(state, event)?;
+            return Ok(true);
         }
-        return Ok(true);
+        // Native round controls still pass through this owner when VMCE is
+        // active, but the shared BC6 owner handles them.
+        if let Some(signal) = CooperativeSignal::decode(payload)
+            && matches!(
+                signal,
+                CooperativeSignal::Begin | CooperativeSignal::Ack | CooperativeSignal::Go
+            )
+        {
+            let _ = connected_source(state, incoming.source)?;
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -667,7 +651,7 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
     let endpoints = peer_endpoints(state, &peers)?;
     let epoch = super::fresh_nonce()?;
     let solo = endpoints.is_empty();
-    let message = crate::net::lan_messages::cooperative::encode_intermission_epoch(
+    let message = crate::net::lan_messages::vmce::encode_intermission_epoch(
         &super::local_name(state),
         epoch,
     )?;
@@ -1014,7 +998,7 @@ fn encode_scoped_request(
     name: &str,
     result_nonce: Option<[u8; 16]>,
 ) -> Option<Option<LanMessage>> {
-    use crate::net::lan_messages::cooperative::VmceRoundControl;
+    use crate::net::lan_messages::vmce::VmceRoundControl;
 
     match request {
         NetworkLoadingRequest::CooperativeBegin => {
@@ -1106,14 +1090,12 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 | NetworkLoadingRequest::CooperativeStageRejected
         )
     {
-        let signal = if matches!(request, NetworkLoadingRequest::CooperativeLeave) {
-            CooperativeSignal::Left
+        let message = if matches!(request, NetworkLoadingRequest::CooperativeLeave) {
+            CooperativeSignal::Left.encode(&name).ok()
         } else {
-            CooperativeSignal::StageRejected
+            VmceSignal::StageRejected.encode(&name).ok()
         };
-        let queued = signal
-            .encode(&name)
-            .is_ok_and(|message| queue_encoded_to_peers(state, &message, &peers));
+        let queued = message.is_some_and(|message| queue_encoded_to_peers(state, &message, &peers));
         if !queued {
             if let Some(service) = state.match_state.lan_service.as_mut() {
                 service.mark_departure_failed();
@@ -1177,7 +1159,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
     if vmce {
         match request {
             NetworkLoadingRequest::CooperativeRetryVote => {
-                if let Ok(message) = CooperativeSignal::RetryVote.encode(&name) {
+                if let Ok(message) = VmceSignal::RetryVote.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
                     }
@@ -1197,7 +1179,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                         log::error!(
                             "VMCE stage identity could not be encoded ({error}); rejecting the round"
                         );
-                        CooperativeSignal::StageRejected
+                        VmceSignal::StageRejected
                             .encode(&name)
                             .is_ok_and(|message| queue_encoded_to_peers(state, &message, &peers))
                     }
@@ -1208,7 +1190,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 return true;
             }
             NetworkLoadingRequest::CooperativeStageAbsent => {
-                if let Ok(message) = CooperativeSignal::StageAbsent.encode(&name) {
+                if let Ok(message) = VmceSignal::StageAbsent.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
                     }
@@ -1216,7 +1198,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 return true;
             }
             NetworkLoadingRequest::CooperativeStageRejected => {
-                if let Ok(message) = CooperativeSignal::StageRejected.encode(&name) {
+                if let Ok(message) = VmceSignal::StageRejected.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
                     }
@@ -1328,7 +1310,7 @@ mod tests {
 
     #[test]
     fn vmce_early_records_are_owned_separately_from_generic_bc6_records() {
-        let absent = CooperativeSignal::StageAbsent.encode("Guest").unwrap();
+        let absent = VmceSignal::StageAbsent.encode("Guest").unwrap();
         assert!(is_round_record(&absent));
         assert!(!crate::app::lan_service::cooperative::is_round_record(
             &absent

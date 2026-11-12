@@ -583,6 +583,8 @@ fn c_string(bytes: &[u8]) -> &[u8] {
 mod tests;
 
 pub mod cooperative;
+#[cfg(feature = "vmce")]
+pub mod vmce;
 pub mod extended_setup;
 pub mod setup;
 

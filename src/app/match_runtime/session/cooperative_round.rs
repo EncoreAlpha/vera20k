@@ -832,13 +832,13 @@ mod tests {
         nonce: [u8; 16],
         entries: [u8; 4],
         confirmed: bool,
-    ) -> crate::net::lan_messages::cooperative::VmceResultRecord {
+    ) -> crate::net::lan_messages::vmce::VmceResultRecord {
         let NetworkPhase::CooperativeRound { round, .. } =
             &session.network.as_ref().expect("network visit").phase
         else {
             panic!("round");
         };
-        crate::net::lan_messages::cooperative::VmceResultRecord {
+        crate::net::lan_messages::vmce::VmceResultRecord {
             nonce,
             entries,
             confirmed,
@@ -1148,7 +1148,7 @@ mod tests {
         host.vmce_result_record_queued(false).unwrap();
         // A record from the previous round carries that round's nonce and its
         // continuation digest; it must not reopen this round's agreement.
-        let previous = crate::net::lan_messages::cooperative::VmceResultRecord {
+        let previous = crate::net::lan_messages::vmce::VmceResultRecord {
             nonce: [6; 16],
             entries,
             confirmed: false,

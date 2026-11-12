@@ -48,8 +48,9 @@ fn channel(send_capacity: usize, receive_capacity: usize) -> GlobalChannel {
 #[test]
 fn vmce_round_records_survive_lost_begin_and_ack() {
     use crate::net::lan_messages::cooperative::{
-        CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, VmceRoundControl,
+        CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord,
     };
+    use crate::net::lan_messages::vmce::VmceRoundControl;
     let host = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12001);
     let guest = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12002);
     let nonce = [7; 16];
