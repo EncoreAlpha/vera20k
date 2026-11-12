@@ -17,8 +17,10 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is absent, `Maps/VMCE/`
 is not scanned, and VMCE-only session/LAN fields are compiled out.
 
-Current fork version: `0.2.9-vmce.6`, merged with upstream `v0.2.9`. LAN peers should run
-the same VMCE build.
+Current fork version: `0.3.2-vmce.6`, merged with upstream `v0.3.2` (merge commit
+`70d569b86`). LAN peers should run the same VMCE build. The fork baseline and what the merge
+changed are in the [VMCE baseline](vmce-baseline.md); the post-sync acceptance run is still
+outstanding.
 
 ## Status
 
@@ -29,15 +31,15 @@ the same VMCE build.
 | Outcomes | Per-player win/loss from the map's actual diplomacy; an eliminated primary House keeps its authorized control and the mission continues until a map outcome trigger |
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
 | Unlocks | The result and stage identity must be confirmed; the current code also waits for Continue before saving, so leaving earlier can lose the unlock (B57). Loading the next stage is not required |
-| LAN validation | Current build: two-, three- and four-process win and next mission, two-player retry, 300 matching checksums; each peer's local unlock file checked |
-| Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers |
-| i18n | English and zh-CN real; other shipped languages use English placeholders |
+| LAN validation | Validated on the B4 base (`6322d411b`) before the 0.3.2 merge: two-, three- and four-process win and next mission, two-player retry, 300 matching checksums; each peer's local unlock file checked. Re-run on the merged baseline is pending (B105) |
+| Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers. Authored at 800x600 and fitted to the 1024x768 default window (B103) |
+| i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. Upstream's Vietnamese catalog has none yet (B101) |
 
 ## Known open findings
 
 The authoritative priority list is the [Chinese consolidated review](zh-CN/vmce-review.md), currently
-55 entries (45 `A` findings plus 10 B-only residuals). Player-visible gaps that matter to this
-overview:
+55 entries (45 `A` findings plus 10 B-only residuals), plus the five post-0.3.2 baseline items
+B101–B105 in the [backlog](vmce-backlog.md). Player-visible gaps that matter to this overview:
 
 - **A44/B99:** an intermission-room guest can miss the next-stage map preview and the "map has a
   briefing" chat hint; the host shows the preview when its local map carries decodable preview

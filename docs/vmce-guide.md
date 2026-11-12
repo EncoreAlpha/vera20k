@@ -80,8 +80,8 @@ python -m tools.cargo_run -- build --release --no-default-features --features vm
 Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
-`0.2.9-vmce.N` (currently `0.2.9-vmce.6`, merged with upstream `v0.2.9`); LAN peers should
-run the same VMCE build.
+`0.3.2-vmce.N` (currently `0.3.2-vmce.6`, merged with upstream `v0.3.2`, merge commit
+`70d569b86`); LAN peers should run the same VMCE build.
 
 ### Campaign directories
 
@@ -136,8 +136,9 @@ to the directory name.
 2. Enter a LAN room and choose the **Multiplayer Campaign** mode row.
 3. The host picks a map; every guest must show the map as available (Ready).
 4. Each player confirms a role and readies; the host starts.
-5. The VMCE room does not offer new AI seats. Its current minimum-participant check also rejects
-   a lone host without lobby AI (B74), despite the solo hint; the solo campaign path needs a fix.
+5. The VMCE room does not offer new AI seats. A lone host without lobby AI is admitted for the
+   supported solo campaign (B74 closed in B4); AI seats inherited from another LAN mode are
+   still cleared when switching into VMCE (B73).
 6. The mission uses one deterministic shared world. Both peers must see the same opening,
    triggers and result.
 
@@ -381,19 +382,21 @@ real-process captures:
 - Cross-mission money is not carried over. Role reselection, whole-series admission verification
   and local stage unlocks are implemented; real cross-machine guest and failure paths still need
   connected validation.
-- The working tree has passed two-, three- and four-process win → next mission captures with
-  300 matching checksums, and each peer's local unlock file contains only the designated next
-  stage. They exercise the result board, Ready/Continue controls, nonce-bound result agreement
-  and whole-series admission; cross-machine play and changing a guest's role after joining have
-  not been covered.
+- On the pre-sync B4 base (`6322d411b`) the working tree passed two-, three- and four-process
+  win → next mission captures with 300 matching checksums, and each peer's local unlock file
+  contained only the designated next stage. They exercise the result board, Ready/Continue
+  controls, nonce-bound result agreement and whole-series admission; cross-machine play and
+  changing a guest's role after joining have not been covered. The merged 0.3.2 baseline still
+  needs the full matrix and LAN acceptance re-run (B105).
 - A real two-process `EndOfGame` probe reached the credits on both peers, then used Escape
   to return both to the main menu. It compared 300 checksums; it did not watch the entire
   credits roll. The standard acceptance runner's `2p-final` scenario passes on the current build
   (credits and campaign-end screenshots on both peers). VMCE `2p-retry`
-  capture passed (BC6 page, guest votes → host retry → same stage, 300 matching checksums).
-  There are no result-page timers anywhere: defeat
+  capture passed on that base (BC6 page, guest votes → host retry → same stage, 300 matching
+  checksums). There are no result-page timers anywhere: defeat
   uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version
-  `0.2.9-vmce.6` is the current fork release.
+  `0.3.2-vmce.6` is the current fork release; the VMCE `0x103`/`0xBC6` pages are authored at
+  800x600 and must also be verified at the new 1024x768 default window (B103).
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
   five-column result board, the right-panel statistics button/page, and the BC6 defeat page.
   HUD and loading/transition presentation are not implemented in this cycle (B20/B21).
@@ -411,11 +414,12 @@ real-process captures:
 - The lobby lists only the selected map's actual primary roles: the player rows, Ready/colour
   slots, the role board and the host's room limit all follow that count (2–4), so a three-role map
   shows three seats instead of four.
-- VMCE rooms list no new AI seat option: authored primary roles are for human players. The status
-  line says a lone host can start, but the current minimum-participant gate rejects that case
-  (B74). AI seats inherited from another LAN mode can also remain in the room (B73).
-- i18n policy: English and zh-CN have real VMCE copy; the other eight shipped languages keep
-  English placeholders and are translated later (B08). VERA labels default to the Windows system
+- VMCE rooms list no new AI seat option: authored primary roles are for human players. A lone
+  host is admitted (B74 closed in B4). AI seats inherited from another LAN mode are cleared when
+  switching into VMCE (B73).
+- i18n policy: the ten older catalogs carry the 32 VMCE keys; English and zh-CN have real copy,
+  the other eight keep English placeholders and are translated later (B08). Upstream's
+  Vietnamese catalog has no VMCE keys yet (B101). VERA labels default to the Windows system
   language when the player has not picked one; native CSF follows the install language, and that
   mismatch is expected.
 - Known gaps and their evidence live in the [Chinese consolidated review](zh-CN/vmce-review.md) and [the VMCE backlog](vmce-backlog.md).
