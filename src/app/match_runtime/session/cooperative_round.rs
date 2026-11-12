@@ -2330,6 +2330,86 @@ mod tests {
         assert_ne!(super::vmce_round::next_stage_seed(SEED, &other), seed);
     }
 
+    /// B102: a retry and an intermission continuation keep the admitted map
+    /// identity — the retry reuses the current physical/digest identity (the
+    /// loader re-verifies it against the file) and the next stage carries the
+    /// newly admitted identity. Rules/extension identity was admitted by the
+    /// setup handshake and stays process-lifetime for both continuations.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_retry_freeze_preserves_the_admitted_map_identity_and_retry_nonce() {
+        use crate::app::match_bootstrap::PreparedNetworkStartup;
+        use crate::app::match_runtime::session::{SessionMode, WolStartTerms};
+
+        let (mut host, first) = frozen_vera(0);
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
+            .unwrap();
+        agree_for_existing_round_test(&mut host);
+        let round = host.cooperative_round().unwrap().clone();
+        let launch = host.network_setup().unwrap().clone();
+        let freeze = super::vmce_round::prepare_freeze(&first, &launch, &round).unwrap();
+        let startup = freeze.apply_startup(PreparedNetworkStartup::new(
+            launch.clone(),
+            first.seed.value,
+            SessionMode::Lan,
+            true,
+            2,
+            WolStartTerms::default(),
+        ));
+        assert_eq!(startup.vmce_retry_attempt(), Some([9; 16]));
+        assert_eq!(
+            startup.local_map_source(),
+            first.local_map_source(),
+            "the retry keeps the map the setup admitted"
+        );
+        assert_eq!(
+            startup.effective_map_digest(),
+            first.effective_map_digest(),
+            "the retry keeps the admitted map include digest"
+        );
+        assert_eq!(startup.vmce_map_config(), first.vmce_map_config());
+        assert_eq!(startup.seed.value, first.seed.value);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vera_next_stage_freeze_carries_the_next_admitted_map_identity() {
+        use crate::app::match_bootstrap::PreparedNetworkStartup;
+        use crate::app::match_runtime::session::{SessionMode, WolStartTerms};
+
+        let (mut host, first) = frozen_vera(0);
+        let next = next_stage("mission02.map");
+        host.enter_vmce_round(Some(next.clone()), true, 2).unwrap();
+        agree_for_existing_round_test(&mut host);
+        let round = host.cooperative_round().unwrap().clone();
+        let launch = host.network_setup().unwrap().clone();
+        let freeze = super::vmce_round::prepare_freeze(&first, &launch, &round).unwrap();
+        let startup = freeze.apply_startup(PreparedNetworkStartup::new(
+            launch.clone(),
+            first.seed.value,
+            SessionMode::Lan,
+            true,
+            2,
+            WolStartTerms::default(),
+        ));
+        assert!(startup.vmce_retry_attempt().is_none());
+        assert_eq!(startup.vmce_map_config(), Some(&next.config));
+        assert_eq!(
+            startup.local_map_source(),
+            Some(&next.local_map_source),
+            "the next stage carries the identity its options admitted"
+        );
+        assert_eq!(
+            startup.effective_map_digest(),
+            Some(next.effective_digest.as_str())
+        );
+        assert_eq!(
+            freeze.seed,
+            super::vmce_round::next_stage_seed(first.seed.value, &next)
+        );
+        assert_ne!(freeze.seed, first.seed.value);
+    }
+
     #[cfg(feature = "vmce")]
     #[test]
     fn vera_round_rejects_a_peer_with_a_different_next_stage_availability() {
