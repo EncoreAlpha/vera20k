@@ -80,7 +80,9 @@ lang: zh-CN
   （战役开始、下一关、300 个 checksum 一致）与 `2p-retry`（300 个 checksum 一致）双进程验收通过；
   证据在 `.scratch/b106/`（未提交）。提交另经一次只读 critic 审查：APPROVE WITH NOTES，无阻塞项。
 - **残余：** `refresh_vmce_entries`/`discover_entries` 无直接 retain/extend/早退测试（旧 refresh 也未测）；
-  `listed_houses` 在所有者与 `map/vmce_config.rs` 仍各有一份（既有、返回形状不同，本次未引入）。
+  `listed_houses` 在所有者与 `map/vmce_config.rs` 仍各有一份（既有、返回形状不同，本次未引入）；
+  A03 诊断仍自行重读 `campaign.ini` 的 `[Campaign]` 以构造其 owned-map mutation fixture
+  （仅诊断、既有，不是生产所有者）。
 
 ## P1 — 优先修复
 

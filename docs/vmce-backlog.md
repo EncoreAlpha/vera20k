@@ -105,7 +105,9 @@ LAN admission and the result flow now call that owner directly.
   commit: APPROVE WITH NOTES, no blocking findings.
 - **Residual:** `refresh_vmce_entries`/`discover_entries` has no direct retain/extend/early-return
   test (the old refresh was also untested); `listed_houses` stays duplicated between the owner and
-  `map/vmce_config.rs` (pre-existing, different return shape, not introduced here).
+  `map/vmce_config.rs` (pre-existing, different return shape, not introduced here); the A03
+  diagnostic still re-parses `[Campaign]` from `campaign.ini` for its owned-map mutation fixture
+  (diagnostics-only, pre-existing, not a production owner).
 
 ## Connected validation (B36)
 
