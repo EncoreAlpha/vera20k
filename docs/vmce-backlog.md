@@ -4,7 +4,8 @@ This is the English engineering ledger. The [Chinese consolidated review](zh-CN/
 authoritative for priorities and currently holds 55 entries (45 `A` findings plus 10 B-only
 residuals); this ledger keeps the same numbering and records unfinished work, locked decisions
 and acceptance boundaries. The current baseline is upstream 0.3.2, merge `70d569b86`, fork
-version `0.3.2-vmce.6`; the five interactions the sync exposed are B101–B105 below. Implemented
+version `0.3.2-vmce.6`; the interactions the sync exposed are B101–B105 below
+(B103 and B105 are closed by the merged-baseline acceptance; B101, B102 and B104 stay open). Implemented
 paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits); an
 implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md)
 describes current behavior. Planned or follow-up items are not implementation promises.
@@ -22,22 +23,25 @@ These are new work created by the upstream 0.3.2 merge, not re-numbered audit fi
   the game's data (`RuleSet::ares`), and mods can change rules; peers with different data can
   still admit the same series and then desync. Decide whether to include a rules/extension
   identity digest in admission or to refuse mixed data explicitly, and document the requirement.
-- **B103 — 1024x768 default-window pages:** the launch window is now 1024x768
-  (`VERA_LAUNCH_WINDOW_SIZE`) instead of 800x600; the VMCE `0x103`/`0xBC6` pages are authored at
-  800x600 and fitted by `ShellScale`. The B3 matrix covered 800x600 and 1600x900 only. Add
-  1024x768 capture targets for both dialogs (and the VMCE lobby) and compare them with the B2
-  baseline under the accepted repeat-run protocol.
+- **B103 — 1024x768 default-window pages (closed 2026-11-12):** the launch window is now
+  1024x768 (`VERA_LAUNCH_WINDOW_SIZE`) instead of 800x600; the VMCE `0x103`/`0xBC6` pages are
+  authored at 800x600 and fitted by `ShellScale`. The merged-baseline run captured
+  `vmce-result-host-victory-next`, `vmce-result-host-victory-stats` and
+  `vmce-defeat-host-disabled-2p` at 1024x768; all three matched the B2 baseline at the same size
+  (3/3, byte-identical frames and stable metadata). The VMCE lobby was not re-captured at
+  1024x768; its layout is shared with the existing 800x600/1600x900 coverage.
 - **B104 — Auto Repair and shared-House grants:** Auto Repair sends Repair orders to damaged
   buildings. VMCE's `PlayerNControl` grants let a player command shared Houses, but the repair and
   sell paths (B70) and self-click/deploy actions (B75) already miss some grant checks. Cover the
   Auto Repair path with the same grant (or refuse it consistently) and add a focused test.
-- **B105 — simulation-thread result-page reads:** desktop frames now tick on the worker by
-  default, and `SimHost::runtime()` returns the published presentation frame while the runtime is
-  lent. VMCE victory statistics use the terminal snapshot and defeat statistics the live
-  pre-retire values; verify both under the threaded default (and a forced inline comparison where
-  available), then re-run the B4 LAN acceptance and the 300-checksum comparison on the merged
-  baseline. Add a regression test that a result page never renders an empty or one-frame-late
-  board.
+- **B105 — simulation-thread result-page reads (closed 2026-11-12):** desktop frames tick on
+  the worker by default, and `SimHost::runtime()` returns the published presentation frame while
+  the runtime is lent. The merged-baseline LAN run (`2p-win`, `2p-retry`, `4p-win`, `2p-final`;
+  93/93 checks, 300 matching checksums each) rendered the live victory board and the live defeat
+  statistics page non-empty, with equal host/guest result fields and state hashes; the result
+  pages were also pixel-identical to the B2 baseline at 800x600, 1024x768 and 1600x900. No empty
+  or one-frame-late board was observed, so no extra regression test was added beyond the live
+  receipts and screenshots.
 
 ## Connected validation (B36)
 

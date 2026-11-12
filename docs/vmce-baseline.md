@@ -65,25 +65,30 @@ Locally the same build/test pairs are run for the four configurations
 (Esc/settings input, setup presets, `0x103` renderer/layout, INI parser, house
 defeat) and the i18n completeness suite.
 
-The last full VMCE validation ran on the pre-sync B4 base (`6322d411b`):
+The full VMCE validation has been re-run on the merged 0.3.2 baseline
+(label `b5-sync-70d569b86-r1`, executable SHA-256 `404ce982…`, source
+fingerprint `26dbb7ca…`):
 
-- B3 screenshot matrix: 15/15 targets under the repeat-run protocol (stable
-  targets pixel- and stable-metadata-identical; `0x103` covers both known
-  emblem-animation variants; stock BC6 differs only in seeded content cells;
-  the 1600x900 pair is environment-dependent and was proven source-neutral by
-  same-environment cross-executable controls);
-- B4 LAN acceptance: `2p-win`, `2p-retry`, `4p-win`, `2p-final` all passed
-  (93/93 checks, 300 matching checksums per scenario, next-stage/seed/unlock
-  receipts), plus the stock Cooperative continuation run;
+- screenshot matrix: 13/13 at 800x600 (12 strict passes plus the seeded stock
+  BC6 target under the repeat-run protocol), 2/2 at 1600x900, and 3/3 for the
+  new 1024x768 default-window targets (`vmce-result-host-victory-next`,
+  `vmce-result-host-victory-stats`, `vmce-defeat-host-disabled-2p`; byte- and
+  stable-metadata-identical to the B2 baseline) — B103 closed;
+- LAN acceptance: `2p-win`, `2p-retry`, `4p-win`, `2p-final` all passed
+  (93/93 checks, 300 matching checksums per scenario, next-stage/rows/seed
+  receipts) plus the stock Cooperative continuation run;
+- desktop frames tick on the simulation worker by default on this baseline;
+  the live victory board and the live defeat statistics page rendered
+  non-empty, with equal host/guest result fields and state hashes — B105
+  closed;
 - focused Rust tests: 332 passed (default) and 459 passed (`vmce`), including
   the architecture guards.
 
-After the 0.3.2 merge only the build-and-test gate was re-run: `cargo check
---locked -p vera20k --lib --bins` (default and `vmce`) passed, the focused
-suites passed, and a single `vmce-defeat-host-disabled-2p` shell capture
-produced the known `03a871c8…` frame. The full B3 matrix and B4 LAN acceptance
-have not been re-run on the merged baseline yet; they are the first step of
-[B103/B105](vmce-backlog.md).
+The pre-sync B4 run (`6322d411b`) remains the comparison baseline: its matrix
+was 15/15 under the repeat-run protocol, its LAN acceptance 93/93, and its
+stock continuation passed; the merged run above repeated the same set on the
+new build. Evidence: `.scratch/b5/sync-acceptance/` (summary, comparison
+JSONs, receipts).
 
 The shipped i18n baseline keeps every catalog the fork maintains key-complete:
 English carries the real VMCE labels, zh-CN keeps the fork's translations, and
@@ -97,17 +102,17 @@ The runner selects `4p-win`, `2p-win`, `2p-retry` and `2p-final`; `--players`
 controls 2, 3 or 4 rows for the `4p-*` scenarios. It compares the 300-frame
 checksum stream and scenario-specific receipt fields; each run uses a single
 supplied series, which must suit the selected scenario. Two-, three- and
-four-player wins and next missions, a two-player mixed-outcome advance, a
-two-player retry and the `2p-final` scenario passed on the pre-sync B4 base,
-and on that base each peer's local `VmceProgress.json` was checked to contain
-only the designated next stage (`2p-final` writes none, because the last stage
-resolves no successor). The final-stage run reached credits and returned after
-Escape; the full credits duration was not observed. Run one scenario per
-invocation on machines with limited shared GPU memory: an exited capture
-process can still hold its device allocation, and a following scenario may fail
-inside wgpu with "Out of Memory" although each scenario passes separately.
-Bundles stay under `.scratch/`; older pre-merge receipts do not prove the
-current build.
+four-player wins and next missions, a two-player retry and the `2p-final`
+scenario passed on the merged baseline (the same set passed on the pre-sync B4
+base before it), and on the pre-sync base each peer's local
+`VmceProgress.json` was checked to contain only the designated next stage
+(`2p-final` writes none, because the last stage resolves no successor). The
+final-stage run reached credits and returned after Escape; the full credits
+duration was not observed. Run one scenario per invocation on machines with
+limited shared GPU memory: an exited capture process can still hold its device
+allocation, and a following scenario may fail inside wgpu with "Out of Memory"
+although each scenario passes separately. Bundles stay under `.scratch/`; the
+merged-baseline bundles are under `.scratch/b5/sync-acceptance/`.
 
 ## Re-capturing and re-accepting
 
@@ -130,21 +135,23 @@ The capture and comparison runners are machine-local scripts under the gitignore
 - **LAN acceptance** (in the repo, `tools/vmce_lan_acceptance.py`): drives the
   VMCE checkpoints through real processes; `run` and `compare` subcommands,
   `--scenario`, `--players` and `--entry` as described in the
-  [player guide](vmce-guide.md#accepting-a-build). Bundles stay under
+  [overview acceptance section](vmce.md#accepting-a-build). Bundles stay under
   `.scratch/`.
 - **Stock Cooperative continuation** (`.scratch/b3/run_stock_coop.py` plus the
   official comparator): the pre-sync regression guard for the ordinary
   Cooperative retry path.
 
-For the merged 0.3.2 baseline the first runs to redo are the B4 LAN acceptance
-(`2p-win`, `2p-retry`, `4p-win`, `2p-final`, stock continuation) and the B3
-matrix extended with 1024x768 targets for both VMCE dialogs (B103/B105).
+The merged 0.3.2 baseline has been re-captured with these runners (matrix at
+800x600, 1600x900 and 1024x768; LAN `2p-win`/`2p-retry`/`4p-win`/`2p-final`;
+stock continuation). Re-run the same set after the next upstream sync or any
+change that can affect rendering or simulation timing.
 
 ## Audit checkpoint
 
 The [Chinese consolidated review](zh-CN/vmce-review.md) is the authoritative open-defect list;
 it currently holds 55 entries (45 `A` findings plus 10 B-only residuals), and the
-[backlog](vmce-backlog.md) adds the five post-0.3.2 baseline items B101–B105. The current audit's
+[backlog](vmce-backlog.md) adds the five post-0.3.2 baseline items B101–B105
+(B103 and B105 closed by the merged-baseline run). The current audit's
 local capture set is `2p-win`, `2p-retry`, `4p-win` with 2, 3 and 4 players, `2p-final` and the
 manifest-extra 2p-final probe; a preview-capable host lobby was also captured with
 `XMP29U2.MAP` as a series stage. These establish local multi-process behavior only.
