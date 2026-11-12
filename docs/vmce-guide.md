@@ -230,8 +230,9 @@ The result state, Continue and retry semantics belong to VMCE. Both pages are au
   a malformed later stage's configuration fails at the transition (B05).
 - Before a next mission loads, peers exchange the identity they resolved (map path plus
   source, effective-map and config digests). A mismatch rejects the transition and requests a
-  return to the lobby. The rejection can currently be lost during transport teardown (B10),
-  leaving a peer waiting; two-sided recovery is not yet guaranteed.
+  return to the lobby. The rejection and the final Go are retried on the scoped reliable queue
+  with a bounded wait; if a peer stops acknowledging, the local side reports the send failure and
+  returns instead of waiting forever (B10 closed).
 - On load, roles are re-resolved against the next map's own `[Basic] PlayerN`/`[Houses]`
   binding; the previous mission's House names are not carried over. The next mission's seed is
   derived deterministically from the previous seed and the next stage's identity (both peers

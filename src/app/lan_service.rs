@@ -5231,7 +5231,8 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .service(LOBBY_RETRY_TIMING.retry_delta + 2);
-            if let Some(result) = vmce_round::take_campaign_completion_from_service(&mut host, true, 96)
+            if let Some(result) =
+                vmce_round::take_campaign_completion_from_service(&mut host, true, 96)
             {
                 assert!(result.is_ok());
                 break;

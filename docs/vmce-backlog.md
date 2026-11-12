@@ -73,8 +73,8 @@ The series is `da212a8a4`, `86ca439a6`, `e8cfdcb93`, `dff07c1d9`, plus `7a722853
 - **Residual:** `finish_lan_intermission` and `cancel_retired_lan_sends_to` still have no direct UDP
   test (pre-existing gap; behavior unchanged by the moves).
 - **Still open, not closed by the file moves:** B40 (map-details cache inside the per-frame setup
-  view), B41 (synthetic catalog record on intermission), B10 (terminal LAN delivery) and the
-  connected-validation items above. The moves change ownership, not those behaviors.
+  view), B41 (synthetic catalog record on intermission) and the connected-validation items above.
+  The moves change ownership, not those behaviors.
 - **Follow-up (closed in B106, below): campaign data vs lobby reverse dependency.** LAN and the
   result flow no longer reach campaign data through the lobby; see the B106 section below.
 
@@ -271,12 +271,45 @@ and four-player sessions. VMCE has up to four human roles and no observers.
   (2/2 or 4/4) still looks joinable and a click ends in `TXT_GAME_FULL`. Use
   `!session.network_room_full()` (plus the editability state) for the open bit; see
   [audit A45](zh-CN/vmce-review.md).
-- **B10 — terminal LAN delivery.** `release_transport` currently services once and resets the
-  scoped reliable queue; losing the final Go or a rejection can strand a peer. Keep the
-  existing transport and retry owner until the relevant records are acknowledged or a delivery
-  failure is handled explicitly. Cover final Go, mismatch/rejection, departure and a peer that
-  stops responding, with packet/ACK loss and real multi-process validation. The campaign-end
-  portion is not fully validated; B10 as a whole is open.
+- **B10 — terminal LAN delivery (closed 2026-11-13, `ff9ecb725`).** Every terminal handoff now
+  keeps the existing scoped reliable queue until its records are acknowledged or a bounded wait
+  expires, then reports the existing local failure notice instead of stranding a peer:
+  - departure (leave, stage rejection, loading failure) already drained with a 600-bucket
+    deadline, first-packet/ACK-loss retry and `VERA:VmceRoundSendFailed`; unchanged here;
+  - the intermission epoch/Go handoff and the campaign-end Go now carry the same 600-bucket
+    deadline (host ready gate, host enter wait, guest Go wait and campaign completion) and clear
+    it on success, a new visit or entering/finishing the intermission;
+  - the retry/campaign-end assignment handshake is bounded too: the host records the wait when it
+    assigns (Begin/Options) and fails if the guest Acks never produce the Go, the guest records it
+    on Begin and fails if the host Go never arrives, and the round's `awaiting_assignment`
+    projection ends the wait when the Go lands; a Go that fails to queue after a continuation
+    already froze the round reports locally instead of returning silently;
+  - a timeout returns to the shell first and then reports through the existing departure-failure
+    notice, so the started departure carries `VERA:VmceRoundSendFailed` instead of dropping it on
+    the result page (which has neither the setup dialog nor the LAN chat sink);
+  - no second transport or round state machine was added; the reliable queue, round state and
+    wire protocol are unchanged, and stock Cooperative behavior is untouched.
+  Validation: unit tests for campaign-completion timeout with an unacknowledged Go and success
+  when the ACK lands in the deadline bucket, terminal-wait expiry/clear for intermission,
+  campaign completion and assignment, the host/guest assignment projection through Begin, and the
+  existing departure first-packet/ACK-loss/timeout and per-target loading tests; labelled build
+  `b10-ff9ecb725-r1` (exe SHA-256
+  `4EF874FFBBEBC335A1BE8058A12B8177A588BEB1CF2A70A8399E6D47D712639A`) passed `2p-win`,
+  `2p-retry` and `2p-final` LAN acceptance (300 matching checksums each; the final run reached
+  credits and the campaign-end page on both peers). Guards pin 507 shared + 193 diagnostics. Residuals: packet/ACK loss is simulated at
+  the reliable-queue level, not captured as a live lossy multi-process run; the guest waiting for
+  the host's intermission epoch/Go before any deadline is set can still leave via the bounded
+  departure; the 600-bucket (~10 s) guest Go wait can auto-exit an idle guest while the host
+  waits; before the host starts assigning, a guest's wait has no deadline (Leave Room is still
+  enabled there); a local timeout returns without queuing a Leave record, so the peer relies on
+  its own bounded wait rather than being told; the host assignment-timeout and frozen-round Go
+  failure have no AppState-level test. Narrower residuals: the deferred Next assignment relies on
+  the intermission deadline instead of a separate assignment mark; a Continue press in the frame
+  the intermission deadline expires exits through the Assign error handler without the notice
+  (the poll path reports the same timeout); the assignment test stops at Begin and the ACK test
+  proves drained-queue precedence rather than an ACK inside the deadline bucket; a successful
+  Retry freeze keeps the assignment deadline until the next visit (traced harmless because a new
+  round starts after `return_transport`). Evidence is under `.scratch/b10/` (not committed).
 - **B03 — setup rollback:** implemented; only the real LAN failure/notice capture remains,
   including rollback and room exit. Do not describe its unit test as a real capture.
 - **B13 — guest role propagation:** implemented with focused tests; exercise a guest changing

@@ -41,9 +41,10 @@ Cooperative continuation) and the evidence is recorded there.
 
 The authoritative priority list is the [Chinese consolidated review](zh-CN/vmce-review.md), currently
 55 entries (45 `A` findings plus 10 B-only residuals), plus the post-0.3.2 baseline items
-B101–B105 in the [backlog](vmce-backlog.md) (B103/B105 closed). B40/B41/B10 and the connected-validation
-items remain open; B106 (campaign data owner) is closed, so LAN and the result flow no longer read
-campaign data through the lobby. Player-visible gaps that matter to this overview:
+B101–B105 in the [backlog](vmce-backlog.md) (B103/B105 closed). B40/B41 and the connected-validation
+items remain open; B106 (campaign data owner) and B10 (terminal LAN delivery) are closed, so LAN and
+the result flow no longer read campaign data through the lobby and terminal handoffs fail locally
+instead of waiting forever. Player-visible gaps that matter to this overview:
 
 - **A44/B99:** an intermission-room guest can miss the next-stage map preview and the "map has a
   briefing" chat hint; the host shows the preview when its local map carries decodable preview
@@ -57,8 +58,8 @@ campaign data through the lobby. Player-visible gaps that matter to this overvie
 
 The synthetic result/defeat capture fixtures need the B91 workaround recorded in the backlog;
 that is a tooling issue, not a player-facing defect. The [VMCE backlog](vmce-backlog.md) also
-tracks connected acceptance work (cross-machine sessions, mid-intermission joins, packet loss,
-B10 delivery) and implementation residuals.
+tracks connected acceptance work (cross-machine sessions, mid-intermission joins, live
+packet-loss capture) and implementation residuals.
 
 ## Start here
 
