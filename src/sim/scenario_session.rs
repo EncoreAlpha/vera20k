@@ -1869,6 +1869,9 @@ impl ScenarioSession {
             .map(|campaign| (campaign.player_difficulty, campaign.computer_difficulty))
     }
 
+    /// Difficulty row used by TriggerType's three map flags. The campaign
+    /// lobby may supply its own frozen row; other campaigns use their player
+    /// difficulty and sessions without either use the normal row.
     pub(crate) fn trigger_difficulty(&self) -> i32 {
         #[cfg(feature = "vmce")]
         if let Some(difficulty) = self.vmce_trigger_difficulty {

@@ -540,11 +540,12 @@ const VMCE_OWNED_FILE_PREFIXES: &[&str] = &[
     "sim/scenario_session/vmce.rs",
 ];
 
-/// Production `#[cfg(feature = "vmce")]` gates in shared files, one ceiling per
-/// file. These are the coupling the mode-check metric does not see: a shared
-/// owner that branches on the capability. Ratchet them down as VMCE code moves
-/// behind its own modules; a new shared file that gates on `vmce` must be added
-/// here deliberately.
+/// Production `#[cfg(feature = "vmce")]` gates in shared files, one exact pin
+/// per file. These are the coupling the mode-check metric does not see: a
+/// shared owner that branches on the capability. Every change must update this
+/// table deliberately (ratchet), so a reduction in one file cannot silently
+/// fund a new branch in another; a new shared file that gates on `vmce` must be
+/// added here deliberately.
 const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/cooperative_round.rs", 12),
     ("app/frame.rs", 1),
@@ -554,7 +555,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/initialize.rs", 1),
     ("app/input/multiplayer_setup.rs", 4),
     ("app/lan_service.rs", 70),
-    ("app/lan_service/cooperative.rs", 18),
+    ("app/lan_service/cooperative.rs", 17),
     ("app/lan_service/maps.rs", 4),
     ("app/lan_service/options.rs", 30),
     ("app/loading/fresh_scenario.rs", 9),
@@ -600,7 +601,9 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 /// A shared file not named in the budget table may carry no production VMCE
 /// gate: adding one is a new coupling decision, not a drive-by branch.
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 504;
+/// Sum of the exact pins above; kept explicit so the total is visible in the
+/// guard source and in the printed metric.
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 503;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -647,9 +650,10 @@ fn vmce_production_gates_stay_within_budgets() {
     let gated = test_gated_files(files);
     let budgets: BTreeMap<&str, usize> = VMCE_PRODUCTION_GATE_BUDGETS.iter().copied().collect();
     let mut counts = BTreeMap::new();
+    let mut diagnostics = 0;
     let mut violations = Vec::new();
     for file in files {
-        if is_vmce_owned_file(&file.rel) || gated.contains(&file.rel) || file.production.is_none() {
+        if gated.contains(&file.rel) || file.production.is_none() {
             continue;
         }
         // Raw source keeps the `"vmce"` feature name the production projection
@@ -659,32 +663,43 @@ fn vmce_production_gates_stay_within_budgets() {
         if count == 0 {
             continue;
         }
+        if file.rel.starts_with("app/diagnostics/") {
+            // Capture/diagnostics tooling is compiled into the app but is not
+            // a gameplay owner; report it without pinning it to the shared-owner
+            // budget.
+            diagnostics += count;
+            continue;
+        }
+        if is_vmce_owned_file(&file.rel) {
+            continue;
+        }
         let budget = budgets
             .get(file.rel.as_str())
             .copied()
             .unwrap_or(VMCE_PRODUCTION_GATE_UNLISTED_MAX);
-        if count > budget {
-            violations.push(format!("{}: {count} > {budget}", file.rel));
+        if count != budget {
+            violations.push(format!("{}: {count} != {budget}", file.rel));
         }
         counts.insert(file.rel.clone(), count);
     }
     let total: usize = counts.values().sum();
     assert!(
         violations.is_empty(),
-        "shared files carry more VMCE feature gates than their budget: {violations:?}\n\
-         Move the VMCE branch behind its own module and leave one delegation hook, \
-         then lower the budget in this table."
+        "shared files changed their VMCE feature-gate counts: {violations:?}\n\
+         Record the deliberate change in the pinned table; a reduction in one \
+         file must not silently fund a new branch in another."
     );
-    assert!(
-        total <= VMCE_PRODUCTION_GATE_TOTAL,
-        "VMCE production feature gates in shared files: {total} > {}; \
-         move VMCE branches into VMCE-owned modules",
+    assert_eq!(
+        total, VMCE_PRODUCTION_GATE_TOTAL,
+        "VMCE production feature gates in shared files: {total} != {}; \
+         record the change in the pinned table",
         VMCE_PRODUCTION_GATE_TOTAL
     );
     println!(
         "VMCE production feature gates in shared files: {total} in {} files",
         counts.len()
     );
+    println!("VMCE diagnostics tooling feature gates (not budgeted): {diagnostics}");
 }
 
 #[test]

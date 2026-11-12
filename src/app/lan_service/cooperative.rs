@@ -208,8 +208,6 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
             CooperativeSignal::Ready => CooperativeRoundEvent::PeerReady { source },
             CooperativeSignal::Go => CooperativeRoundEvent::Go,
             CooperativeSignal::Begin => CooperativeRoundEvent::Begin,
-            #[cfg(feature = "vmce")]
-            _ => return Ok(()),
         }
     } else {
         let message = LanMessage::decode(&incoming.payload)?;

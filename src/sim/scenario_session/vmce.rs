@@ -23,6 +23,7 @@ impl ScenarioSession {
         self.local_shared_house_source = local_source;
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn install_network_house_grants_for_test(
         &mut self,
         source_houses: Vec<u8>,
@@ -47,14 +48,8 @@ impl ScenarioSession {
     /// already validated the 0..=2 range; clamp here keeps a corrupted frozen
     /// payload from indexing past TriggerType's three flags.
     pub(crate) fn install_vmce_trigger_difficulty(&mut self, difficulty: i32) {
-        #[cfg(not(feature = "vmce"))]
-        {
-            let _ = difficulty;
-        }
-        {
-            debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
-            self.vmce_trigger_difficulty = Some(difficulty.clamp(0, 2));
-        }
+        debug_assert!((0..=2).contains(&difficulty), "lobby row was validated");
+        self.vmce_trigger_difficulty = Some(difficulty.clamp(0, 2));
     }
 
     /// VMCE starts an authored campaign map under a nonzero network game
@@ -63,19 +58,9 @@ impl ScenarioSession {
     /// `ShortGame` buildings only), and random lobby crates are a multiplayer
     /// system the campaign never runs.
     pub(crate) fn install_vmce_series_options(&mut self) {
-        #[cfg(not(feature = "vmce"))]
-        {
-            let _ = self;
-        }
-        {
-            self.game_options.short_game = false;
-            self.game_options.crates = false;
-        }
+        self.game_options.short_game = false;
+        self.game_options.crates = false;
     }
-
-    /// Difficulty row used by TriggerType's three map flags. The campaign
-    /// lobby may supply its own frozen row; other campaigns use their player
-    /// difficulty and sessions without either use the normal row.
 
     pub(crate) fn record_vmce_outcome_candidate(
         &mut self,
