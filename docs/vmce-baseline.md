@@ -44,6 +44,15 @@ run. Decided 2026-11-13: keep VMCE as a compile-time `vmce` capability per the
 roadmap; this is an explicit exception to the upstream AGENTS policy that game
 behavior does not sit behind a build feature.
 
+Post-audit fixes (`567f5f59c`): the shared building-admission predicate is back
+on `owner_is_human` (VMCE input keeps its local grant predicate), the fork
+reports upstream version `0.3.2` so Mods `Needs=` parses, the Vietnamese
+catalog carries `VERA:LanSetupApplyFailed`, and the three VMCE guard comments
+are restored. The rebuilt `vmce-audit-fixes-0.3.2-r1` executable (SHA-256
+`73688C0489A54478F9BB464143C1D373EB16E3FA0A6C3A359E431204F32CCF01`) re-passed
+the real two-process `2p-win`, `2p-retry` and `2p-final` acceptance with 300
+matching checksums each.
+
 ## Resolution policy
 
 Shared files follow upstream, then replay the VMCE work. The VMCE-only
