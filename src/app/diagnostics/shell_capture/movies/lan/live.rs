@@ -2311,9 +2311,11 @@ impl LiveLanCapture {
                 VmceOutcome::Win | VmceOutcome::Lose => {
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
                         ensure!(
-                            page.model
-                                .vmce_statistics
+                            state
+                                .frontend
+                                .vmce_result_page
                                 .as_ref()
+                                .and_then(|page| page.statistics())
                                 .is_some_and(|stats| stats.rows.len() == 4),
                             "VMCE defeat page is missing its four-row statistics table"
                         );
@@ -2367,10 +2369,11 @@ impl LiveLanCapture {
                             .is_some_and(|round| round.vmce_active())
                     });
                     if let Some(page) = state.frontend.coop_score_page.as_ref() {
-                        let statistics = page
-                            .model
-                            .vmce_statistics
+                        let statistics = state
+                            .frontend
+                            .vmce_result_page
                             .as_ref()
+                            .and_then(|page| page.statistics())
                             .context("VMCE defeat page statistics table")?;
                         ensure!(
                             statistics.rows.len() == self.expected_players,
@@ -2500,8 +2503,7 @@ impl LiveLanCapture {
                         }
                         if crate::i18n::selected_language() == "zh-CN" {
                             let scale = crate::app::input::coop_score::layout(state).page.scale;
-                            let layout =
-                                crate::ui::campaign_score_shell::vmce_statistics_layout(scale);
+                            let layout = crate::app::vmce_result::types::statistics_layout(scale);
                             for header in layout.headers {
                                 let label = if let Some(key) = header.key.strip_prefix("VERA:") {
                                     crate::i18n::tr(&format!("VERA:{key}"))
@@ -2763,9 +2765,10 @@ impl LiveLanCapture {
                 if native_victory_page {
                     let board = state
                         .frontend
-                        .campaign_score_page
+                        .vmce_result_page
                         .as_ref()
-                        .and_then(|page| page.vmce_board())
+                        .and_then(|page| page.victory())
+                        .and_then(|page| page.board.as_ref())
                         .context("settled VMCE victory page has no result board")?;
                     ensure!(
                         board.rows.len() == self.expected_players,
@@ -2813,9 +2816,9 @@ impl LiveLanCapture {
                     );
                     let statistics = state
                         .frontend
-                        .campaign_score_page
+                        .vmce_result_page
                         .as_ref()
-                        .and_then(|page| page.vmce_statistics())
+                        .and_then(|page| page.statistics())
                         .context("VMCE victory statistics are missing")?;
                     let sim = &state
                         .match_state
@@ -2921,7 +2924,9 @@ impl LiveLanCapture {
                             crate::app::frontend::shell_layout::shell_screen_size(state);
                         let fills = crate::app::frontend::shell_layout::fills_window(state);
                         let layout = page.layout(width, height, fills);
-                        set_window_pointer_to_rect_center(state, layout.vmce_ready_button);
+                        let ready =
+                            crate::app::vmce_result::types::button_rects(layout.scale).ready;
+                        set_window_pointer_to_rect_center(state, ready);
                         App::handle_campaign_score_mouse_move(state);
                         App::handle_campaign_score_mouse_down(state);
                         App::handle_campaign_score_mouse_up(state);
@@ -2930,9 +2935,10 @@ impl LiveLanCapture {
                             ensure!(
                                 state
                                     .frontend
-                                    .campaign_score_page
+                                    .vmce_result_page
                                     .as_ref()
-                                    .and_then(|page| page.vmce_board())
+                                    .and_then(|page| page.victory())
+                                    .and_then(|page| page.board.as_ref())
                                     .is_some_and(|board| board.local_ready),
                                 "VMCE Ready click did not update the result page"
                             );

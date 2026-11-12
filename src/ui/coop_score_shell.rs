@@ -48,16 +48,11 @@ pub const ROW_CELLS: [[u16; 5]; 2] = [
     [0x0782, 0x0784, 0x0786, 0x0788, 0x078A],
 ];
 
-/// VMCE's defeat page extends BC6's native two player rows to four; the
-/// stock path always uses [`DEFAULT_SCORE_ROWS`]. The extra rows reuse the
-/// native row pitch and the same five columns.
+/// VERA's row-count extension of BC6: the stock path always uses
+/// [`DEFAULT_SCORE_ROWS`]; a longer result list extends the native two player
+/// rows on the native pitch and the same five columns, using the caller's
+/// extra cell ids (outside the native `0xBC6` range).
 pub const DEFAULT_SCORE_ROWS: usize = 2;
-pub const VMCE_SCORE_ROWS: usize = 4;
-/// The two additional rows' cell ids, outside the native `0xBC6` range.
-pub const VMCE_ROW_CELLS: [[u16; 5]; 2] = [
-    [0x7B81, 0x7B83, 0x7B85, 0x7B87, 0x7B89],
-    [0x7B82, 0x7B84, 0x7B86, 0x7B88, 0x7B8A],
-];
 /// Native row cell columns (Player/Kills/Losses/Built/Score) and the native
 /// 14-DLU row pitch; rows 0/1 are the template's own 50/64 DLU rows.
 const ROW_CELL_DLU: [RectPx; 5] = [
@@ -378,23 +373,6 @@ pub fn hidden_on_final_mission(id: u16) -> bool {
         || STARTS.contains(&id)
 }
 
-/// BC6 statics VMCE's statistics-only defeat page hides: no next mission,
-/// description, difficulty prompt or previous-mission/next caption. Chat and
-/// the player-setup columns are hidden by the page renderer.
-pub fn vmce_stats_hidden(id: u16) -> bool {
-    matches!(
-        id,
-        NEXT_MISSION
-            | DESCRIPTION
-            | DIFFICULTY
-            | 0x0798
-            | 0x0799
-            | 0x079A
-            | 0x079B
-            | PREVIOUS_MISSION
-    )
-}
-
 /// `0x0046DE20`'s slider range: Easy, Normal, Hard.
 pub const DIFFICULTY_RANGE: TrackbarRange = TrackbarRange {
     min: 0,
@@ -410,18 +388,26 @@ pub struct CoopScoreLayout {
     pub page: MenuPageLayout,
     controls: Vec<(u16, RectPx)>,
     rows: usize,
+    /// The caller's cell ids for rows beyond the native two.
+    extended_cells: Vec<[u16; 5]>,
 }
 
 impl CoopScoreLayout {
     /// The stock two-row entry; unchanged retail geometry.
     pub fn new(width: i32, height: i32, responsive: bool) -> Self {
-        Self::new_rows(width, height, responsive, DEFAULT_SCORE_ROWS)
+        Self::new_rows(width, height, responsive, DEFAULT_SCORE_ROWS, &[])
     }
 
-    /// Row-count-aware entry: `rows == 2` is the stock path; VMCE's defeat
-    /// page passes 4 and gets two more rows on the native pitch. RESIDUAL:
-    /// BC6 natively lays out only two player rows.
-    pub fn new_rows(width: i32, height: i32, responsive: bool, rows: usize) -> Self {
+    /// Row-count-aware entry: `rows == 2` is the stock path; a longer list gets
+    /// extra rows on the native pitch with the caller's extra cell ids.
+    /// RESIDUAL: BC6 natively lays out only two player rows.
+    pub fn new_rows(
+        width: i32,
+        height: i32,
+        responsive: bool,
+        rows: usize,
+        extended_cells: &[[u16; 5]],
+    ) -> Self {
         let mut page = if responsive {
             menu_page::compute_responsive_layout(&COOP_SCORE_PAGE, width as u32, height as u32)
         } else {
@@ -484,38 +470,42 @@ impl CoopScoreLayout {
                 ah,
             )),
         ));
+        let mut extended = Vec::new();
         for row in 2..rows {
-            let y = ROW_Y_DLU[row];
+            let Some(cells) = extended_cells.get(row - 2).copied() else {
+                break;
+            };
+            let Some(&y) = ROW_Y_DLU.get(row) else {
+                break;
+            };
             for (column, cell) in ROW_CELL_DLU.iter().enumerate() {
                 controls.push((
-                    VMCE_ROW_CELLS[row - 2][column],
+                    cells[column],
                     scale.scale_rect(child_window(cell.x, y, cell.w, cell.h)),
                 ));
             }
+            extended.push(cells);
         }
         Self {
             page,
             controls,
-            rows,
+            rows: DEFAULT_SCORE_ROWS + extended.len(),
+            extended_cells: extended,
         }
     }
 
-    /// The row count this layout was built for (2 stock, 4 VMCE defeat).
+    /// The row count this layout was built for (two native rows plus any
+    /// extended rows).
     pub fn rows(&self) -> usize {
         self.rows
     }
 
     /// The cell ids of one score row: Player/Kills/Losses/Built/Score.
     pub fn row_cells(&self, row: usize) -> Option<[u16; 5]> {
-        if row >= self.rows {
-            return None;
-        }
         match row {
             0 => Some(ROW_CELLS[0]),
             1 => Some(ROW_CELLS[1]),
-            2 => Some(VMCE_ROW_CELLS[0]),
-            3 => Some(VMCE_ROW_CELLS[1]),
-            _ => None,
+            row => self.extended_cells.get(row - 2).copied(),
         }
     }
 
@@ -592,22 +582,12 @@ pub struct CoopScoreModel {
     pub next_mission: String,
     pub mode_label: String,
     pub map_label: String,
-    /// VMCE's defeat page names the stage just played beside the native
-    /// `GUI:PreviousMission` static. Stock Cooperative leaves it empty.
-    pub previous_mission: String,
     pub description: String,
     /// Scenario `+0x34B8`, which picks the score palette (`0x0072D300`).
     pub side: i32,
     /// The next mission's shell map, for the preview `0x468`.
     pub map_index: Option<usize>,
     pub can_continue: bool,
-    /// VMCE's defeat page: BC6 is the statistics view itself (no Ready
-    /// column, no statistics entry), four role rows, and no chat.
-    pub vmce_stats: bool,
-    /// VERA's shared six-column statistics table (victory stats page and the
-    /// BC6 defeat page); `None` on the stock BC6 page.
-    #[cfg(feature = "vmce")]
-    pub vmce_statistics: Option<crate::ui::campaign_score_shell::VmceStatistics>,
 }
 
 /// The open dialog: its fixed texts, its interaction, and what the
@@ -725,7 +705,7 @@ mod tests {
     #[test]
     fn stock_two_row_entry_is_unchanged() {
         let stock = CoopScoreLayout::new(800, 600, false);
-        let explicit = CoopScoreLayout::new_rows(800, 600, false, DEFAULT_SCORE_ROWS);
+        let explicit = CoopScoreLayout::new_rows(800, 600, false, DEFAULT_SCORE_ROWS, &[]);
         assert_eq!(stock.rows(), 2);
         assert_eq!(explicit.rows(), 2);
         for row in 0..2 {
@@ -737,10 +717,18 @@ mod tests {
         assert_eq!(stock.row_cells(2), None);
     }
 
+    /// The caller's extra cell ids land on the native columns and 14-DLU
+    /// pitch, leaving the two native rows untouched. The ids are arbitrary
+    /// test data: the shared layout owns the geometry, not the ids.
+    const EXTRA_CELLS: [[u16; 5]; 2] = [
+        [0x7C81, 0x7C83, 0x7C85, 0x7C87, 0x7C89],
+        [0x7C82, 0x7C84, 0x7C86, 0x7C88, 0x7C8A],
+    ];
+
     #[test]
-    fn vmce_four_row_layout_extends_on_the_native_pitch() {
+    fn extended_row_layout_extends_on_the_native_pitch() {
         let stock = CoopScoreLayout::new(800, 600, false);
-        let four = CoopScoreLayout::new_rows(800, 600, false, 4);
+        let four = CoopScoreLayout::new_rows(800, 600, false, 4, &EXTRA_CELLS);
         assert_eq!(four.rows(), 4);
         assert_eq!(stock.rows(), DEFAULT_SCORE_ROWS);
         for row in 0..2 {
@@ -779,24 +767,8 @@ mod tests {
         assert!(last.y + last.h < continue_button.y);
         // Every row is visible in the page's upper body.
         assert!(last.y + last.h < 400);
-    }
-
-    #[test]
-    fn vmce_stats_page_hides_final_mission_prompts() {
-        for id in [
-            NEXT_MISSION,
-            DESCRIPTION,
-            DIFFICULTY,
-            0x0798,
-            0x0799,
-            0x079A,
-            0x079B,
-            PREVIOUS_MISSION,
-        ] {
-            assert!(vmce_stats_hidden(id), "{id:#x} belongs to the stock page");
-        }
-        for id in [ROW_CELLS[0][0], ROW_CELLS[1][4], TIME, CONTINUE, QUIT] {
-            assert!(!vmce_stats_hidden(id), "{id:#x} stays on the defeat page");
-        }
+        // Fewer extra ids than rows falls back to the native two-row layout.
+        let short = CoopScoreLayout::new_rows(800, 600, false, 4, &EXTRA_CELLS[..1]);
+        assert_eq!(short.rows(), 3);
     }
 }

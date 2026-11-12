@@ -675,6 +675,8 @@ impl App {
         });
         state.frontend.campaign_score_page = None;
         state.frontend.campaign_score_art = None;
+        #[cfg(feature = "vmce")]
+        crate::app::vmce_result::close_vmce_result(state);
         if state.frontend.score_art.is_none() {
             log::warn!("Could not prepare the score art; the result screen falls back");
         }
@@ -699,6 +701,8 @@ impl App {
 
         state.frontend.score_page = None;
         state.frontend.score_art = None;
+        #[cfg(feature = "vmce")]
+        crate::app::vmce_result::close_vmce_result(state);
         let side = model.side;
         state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
             crate::render::main_menu_shell_chrome::build_campaign_score_art(
@@ -754,6 +758,8 @@ impl App {
         model: crate::ui::campaign_score_shell::CampaignEndModel,
     ) {
         use crate::ui::campaign_score_shell::{CAMPAIGN_END_DIALOG, CampaignScorePage};
+        #[cfg(feature = "vmce")]
+        crate::app::vmce_result::close_vmce_result(state);
         state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
             crate::render::main_menu_shell_chrome::build_campaign_score_art(
                 &state.renderer.gpu,
@@ -904,60 +910,27 @@ impl App {
             rect: layout.continue_button,
         }];
         let mut hover_feed = hover_feed;
-        // VMCE's result page owns its right-panel buttons: row one is
-        // Continue/Ready, row two is 统计数据 and the bottom slot is Leave Room.
-        // On the statistics page only row one is a normal Back button.
-        #[cfg(feature = "vmce")]
-        if let Some(page) = state.frontend.campaign_score_page.as_ref()
-            && let Some(board) = page.vmce_board().cloned()
+        // The shared result-page extension owns its right-panel buttons: row one
+        // is the native Continue/Ready action, row two the statistics toggle and
+        // the bottom slot Leave Room; on the body-takeover subpage only the
+        // bottom Back is a button. This is the same projection the renderer
+        // paints, so the clickable and drawn rects cannot drift.
+        if let Some(buttons) = crate::app::frontend::score_overlay::campaign_buttons(state, &layout)
         {
             hover_feed.retain(|control| control.id != dialog.continue_button());
-            let stats_page =
-                board.victory && page.vmce_stats_open() && page.vmce_statistics().is_some();
-            if stats_page {
-                let buttons = crate::ui::campaign_score_shell::vmce_stats_page_buttons(&layout);
-                press_feed = buttons
-                    .iter()
-                    .map(|button| crate::ui::shell::layout::LaidOutControl {
-                        id: button.id,
-                        rect: button.rect,
-                    })
-                    .collect();
-                for button in &buttons {
-                    hover_feed.push(crate::ui::shell::layout::LaidOutControl {
-                        id: button.id,
-                        rect: button.rect,
-                    });
-                }
-            } else {
-                let can_continue = if state.match_state.session.cooperative_round().is_some() {
-                    state
-                        .match_state
-                        .session
-                        .cooperative_round_continue_enabled()
-                } else {
-                    board.can_continue
-                };
-                let buttons = crate::ui::campaign_score_shell::vmce_result_buttons(
-                    &board,
-                    &layout,
-                    dialog.continue_button(),
-                    can_continue,
-                );
-                press_feed = buttons
-                    .iter()
-                    .filter(|button| button.enabled)
-                    .map(|button| crate::ui::shell::layout::LaidOutControl {
-                        id: button.id,
-                        rect: button.rect,
-                    })
-                    .collect();
-                for button in &buttons {
-                    hover_feed.push(crate::ui::shell::layout::LaidOutControl {
-                        id: button.id,
-                        rect: button.rect,
-                    });
-                }
+            press_feed = buttons
+                .iter()
+                .filter(|button| button.enabled)
+                .map(|button| crate::ui::shell::layout::LaidOutControl {
+                    id: button.id,
+                    rect: button.rect,
+                })
+                .collect();
+            for button in &buttons {
+                hover_feed.push(crate::ui::shell::layout::LaidOutControl {
+                    id: button.id,
+                    rect: button.rect,
+                });
             }
         }
         state
@@ -982,18 +955,9 @@ impl App {
             .frontend
             .shell_controller
             .on_pointer_down(x, y, &press_feed);
-        let pressed = state.frontend.shell_controller.pressed();
-        let continue_id = Self::campaign_score_dialog(state).continue_button();
-        #[cfg(feature = "vmce")]
-        let vmce_button = pressed.is_some_and(|id| {
-            id == crate::ui::campaign_score_shell::VMCE_READY_CONTROL
-                || id == crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL
-                || id == crate::ui::campaign_score_shell::VMCE_STATS_CONTROL
-                || id == crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL
-        });
-        #[cfg(not(feature = "vmce"))]
-        let vmce_button = false;
-        if pressed == Some(continue_id) || vmce_button {
+        // Both press feeds contain only buttons, so a recorded press is one of
+        // the page's buttons (the stock Continue or an extension button).
+        if state.frontend.shell_controller.pressed().is_some() {
             Self::play_main_menu_button_sound(state);
         }
     }
@@ -1020,58 +984,16 @@ impl App {
             .frontend
             .shell_controller
             .on_pointer_up(x, y, &press_feed);
-        // VERA's row-two 统计数据 button opens the full-screen page; the page's
-        // only right-panel control (row-one Back) closes it.
-        #[cfg(feature = "vmce")]
-        if let Some(page) = state.frontend.campaign_score_page.as_mut()
-            && page.vmce_board().is_some_and(|board| board.victory)
-        {
-            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_CONTROL) {
-                page.toggle_vmce_stats();
-                state.platform.window.request_redraw();
-                return;
-            }
-            if released == Some(crate::ui::campaign_score_shell::VMCE_STATS_BACK_CONTROL) {
-                page.close_vmce_stats();
-                state.platform.window.request_redraw();
-                return;
-            }
-        }
-        // VMCE's own right-panel buttons: Leave Room closes the page, a guest's
-        // Ready runs the existing ready action; neither is the native Continue.
-        #[cfg(feature = "vmce")]
-        if let Some(board) = state
-            .frontend
-            .campaign_score_page
-            .as_ref()
-            .and_then(|page| page.vmce_board())
-            .cloned()
-        {
-            match released {
-                Some(crate::ui::campaign_score_shell::VMCE_LEAVE_CONTROL) => {
-                    crate::app::vmce_result::leave_room_pressed(state);
-                    return;
-                }
-                Some(crate::ui::campaign_score_shell::VMCE_READY_CONTROL) => {
-                    if !board.local_host && !board.local_ready {
-                        crate::app::vmce_result::continue_pressed(state);
-                    }
-                    return;
-                }
-                _ => {}
-            }
+        // The extension's buttons (and its native Continue on its own page)
+        // route through its single owner before the stock campaign path.
+        if crate::app::frontend::score_overlay::campaign_button_pressed(state, released) {
+            return;
         }
         if released != Some(dialog.continue_button()) {
             return;
         }
         match dialog {
             CampaignScoreDialog::Victory => {
-                // VMCE's own settlement page owns its Continue; stock modes
-                // keep the retail campaign-score path below.
-                #[cfg(feature = "vmce")]
-                if crate::app::vmce_result::continue_pressed(state) {
-                    return;
-                }
                 // `0x423` ends the global VocHandle before the result returns.
                 Self::stop_campaign_score_anim_sound(state);
                 Self::leave_shell_dialog(state, ShellExitThen::CampaignScoreContinue);
@@ -1108,6 +1030,8 @@ impl App {
         Self::persist_returned_session_toggles(state);
         state.frontend.score_page = None;
         state.frontend.campaign_score_page = None;
+        #[cfg(feature = "vmce")]
+        crate::app::vmce_result::close_vmce_result(state);
         // 0x0072D780 releases the score art.
         state.frontend.score_art = None;
         state.frontend.campaign_score_art = None;

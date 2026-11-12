@@ -20,10 +20,15 @@ use super::{
     SHELL_LABEL_TEXT_RGB, SHELL_PARENT_BACKGROUND_DEPTH,
 };
 use crate::app::AppState;
+use crate::app::frontend::score_overlay;
 use crate::render::shell_text::{self, ShellAlign};
 use crate::ui::coop_score_shell::*;
 use crate::ui::shell::geom::{self, RectPx};
 use crate::util::time::Instant;
+
+/// The native owner-draw caption colour of a lit button (`SDBTNANM` frame 4,
+/// packed `0x00000C05`): a lit frame's label is dark, even while disabled.
+const LIT_BUTTON_CAPTION_RGB: [f32; 3] = [5.0 / 255.0, 12.0 / 255.0, 0.0];
 
 pub(crate) fn render_coop_score(
     state: &mut AppState,
@@ -38,15 +43,29 @@ pub(crate) fn render_coop_score(
     };
     crate::app::input::coop_score::update_geometry(state);
     let layout = crate::app::input::coop_score::layout(state);
+    // One overlay projection per frame: paint and input consume the same
+    // extension data, so the drawn and clickable buttons cannot drift.
+    let overlay = score_overlay::coop_overlay(state, &layout, &view);
+    let suppress_stock_text = overlay
+        .as_ref()
+        .is_some_and(|overlay| overlay.suppress_stock_text);
+    let suppress_body_controls = overlay
+        .as_ref()
+        .is_some_and(|overlay| overlay.suppress_body_controls);
+    let hidden_control = |id: u16| {
+        overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.hidden_controls.contains(&id))
+    };
     let scale = layout.page.scale;
     let (width, height) = (state.render_width(), state.render_height());
     let fills = crate::app::frontend::shell_layout::fills_window(state);
     let now = Instant::now();
-    let (can_continue, map_index, stats) = {
+    let (can_continue, map_index) = {
         let model = &state.frontend.coop_score_page.as_ref().expect("view").model;
-        (model.can_continue, model.map_index, model.vmce_stats)
+        (model.can_continue, model.map_index)
     };
-    match map_index.filter(|_| can_continue && !stats) {
+    match map_index.filter(|_| can_continue && !suppress_body_controls) {
         Some(index) => ensure_map_preview_texture(
             state,
             index,
@@ -146,15 +165,12 @@ pub(crate) fn render_coop_score(
         ShellAlign::V_CENTER,
         SHELL_LABEL_TEXT_RGB,
     ));
-    // VMCE's statistics page keeps only the score table, time, title and the
-    // two buttons: no next-mission/difficulty/description prompts.
-    let stats_hidden = |id: u16| stats && vmce_stats_hidden(id);
-    // The failure page replaces the native five-column table with VERA's
-    // shared six-column statistics table; all its own statics are skipped.
-    if !stats {
+    // The extension takes over the page body: no native statics, cells or
+    // right-panel map texts.
+    if !suppress_stock_text {
         for spec in COOP_SCORE_CONTROLS
             .iter()
-            .filter(|spec| shown(spec.id) && !stats_hidden(spec.id))
+            .filter(|spec| shown(spec.id) && !hidden_control(spec.id))
         {
             let Some(rect) = layout.control_rect(spec.id) else {
                 continue;
@@ -173,111 +189,22 @@ pub(crate) fn render_coop_score(
             };
             texts.push(text(&value, rect, align(spec.align), SHELL_LABEL_TEXT_RGB));
         }
-    }
-    for (label, id) in [
-        (&model.mode_label, MODE_LABEL),
-        (&model.map_label, MAP_LABEL),
-    ] {
-        if !stats
-            && shown(id)
-            && let Some(rect) = layout.control_rect(id)
-        {
-            texts.push(text(
-                label,
-                rect,
-                ShellAlign::H_CENTER,
-                SHELL_LABEL_TEXT_RGB,
-            ));
-        }
-    }
-    // The tail's cells: name, then "%d" for each count, in the row colour.
-    // VMCE's failure page instead shows the same six-column statistics table
-    // as the victory stats page (time header, native headings, four role rows).
-    if stats {
-        #[cfg(feature = "vmce")]
-        if let Some(statistics) = model.vmce_statistics.as_ref() {
-            let table = crate::ui::campaign_score_shell::vmce_statistics_layout(scale);
-            texts.push(text(
-                &format!(
-                    "{} {}",
-                    localized_label(state, "GUI:YourTime", "Your Time"),
-                    statistics.total_time
-                ),
-                table.total_time,
-                ShellAlign::NONE,
-                SHELL_LABEL_TEXT_RGB,
-            ));
-            texts.push(text(
-                &format!(
-                    "{} {}",
-                    localized_label(state, "GUI:ParTime", "Par Time"),
-                    statistics.par_time
-                ),
-                table.par_time,
-                ShellAlign::NONE,
-                SHELL_LABEL_TEXT_RGB,
-            ));
-            for header in table.headers {
-                let label = if let Some(key) = header.key.strip_prefix("VERA:") {
-                    crate::i18n::tr(&format!("VERA:{key}"))
-                } else {
-                    localized_label(state, header.key, header.key)
-                };
+        for (label, id) in [
+            (&model.mode_label, MODE_LABEL),
+            (&model.map_label, MAP_LABEL),
+        ] {
+            if shown(id)
+                && let Some(rect) = layout.control_rect(id)
+            {
                 texts.push(text(
-                    &label,
-                    header.rect,
-                    if header.centred {
-                        ShellAlign::H_CENTER
-                    } else {
-                        ShellAlign::NONE
-                    },
+                    label,
+                    rect,
+                    ShellAlign::H_CENTER,
                     SHELL_LABEL_TEXT_RGB,
                 ));
             }
-            for (row, cells) in statistics.rows.iter().zip(table.rows.iter()) {
-                // This page is reached only when every player lost; retain a
-                // separate visible verdict for each participant.
-                let player_cell = cells.cells[0];
-                let name_width = player_cell.w * 2 / 3;
-                let name_rect =
-                    RectPx::new(player_cell.x, player_cell.y, name_width, player_cell.h);
-                let result_rect = RectPx::new(
-                    player_cell.x + name_width,
-                    player_cell.y,
-                    player_cell.w - name_width,
-                    player_cell.h,
-                );
-                let color = rgb(row.rgb.unwrap_or([255, 255, 0]));
-                let name = super::vmce_panel::ellipsize_native(
-                    &state.renderer.bit_font,
-                    &row.player,
-                    scale.base_rect(name_rect).w,
-                );
-                texts.push(text(&name, name_rect, ShellAlign::NONE, color));
-                texts.push(text(
-                    &crate::i18n::tr("VERA:VmceResultLost"),
-                    result_rect,
-                    ShellAlign::H_CENTER,
-                    color,
-                ));
-                let values = [
-                    row.kills.to_string(),
-                    row.losses.to_string(),
-                    row.built.to_string(),
-                    row.score.to_string(),
-                    row.income.to_string(),
-                ];
-                for (column, value) in values.iter().enumerate() {
-                    texts.push(text(
-                        value,
-                        cells.cells[column + 1],
-                        ShellAlign::H_CENTER,
-                        color,
-                    ));
-                }
-            }
         }
-    } else {
+        // The tail's cells: name, then "%d" for each count, in the row colour.
         for (index, row) in model.rows.iter().enumerate() {
             let Some(cells) = layout.row_cells(index) else {
                 continue;
@@ -299,9 +226,15 @@ pub(crate) fn render_coop_score(
                 }
             }
         }
+    } else if let Some(overlay) = overlay.as_ref() {
+        // The extension's body text replaces the native table; its lines are
+        // appended at this depth in the projection's authored order.
+        for line in &overlay.texts {
+            texts.push(text(&line.text, line.rect, line.align, line.rgb));
+        }
     }
     let chrome = atlas.control_chrome();
-    if !stats {
+    if !suppress_body_controls {
         for (row, slot) in view.slots.iter().enumerate() {
             let Some(slot) = slot else {
                 continue;
@@ -376,7 +309,7 @@ pub(crate) fn render_coop_score(
         }
     }
     if can_continue
-        && !stats
+        && !suppress_body_controls
         && let Some(rect) = layout.control_rect(DIFFICULTY)
     {
         // 0x0046DE20's slider: range 0..2 at [0xA8EB68], no value plaque.
@@ -400,7 +333,7 @@ pub(crate) fn render_coop_score(
             scale,
         );
     }
-    if !stats {
+    if !suppress_body_controls {
         let (Some(chat_rect), Some(chat_log_rect)) =
             (layout.control_rect(CHAT), layout.control_rect(CHAT_LOG))
         else {
@@ -469,7 +402,7 @@ pub(crate) fn render_coop_score(
             ));
         }
     }
-    let mut overlay = ShellFrameOverlay {
+    let mut frame_overlay = ShellFrameOverlay {
         score_backdrop,
         ..Default::default()
     };
@@ -477,38 +410,35 @@ pub(crate) fn render_coop_score(
         state.frontend.skirmish_preview_texture.as_ref(),
         layout.control_rect(PREVIEW),
     ) {
-        overlay.preview = build_preview_surface_instance(rect, preview.width, preview.height);
+        frame_overlay.preview = build_preview_surface_instance(rect, preview.width, preview.height);
     }
     for button in &layout.page.buttons {
-        if !shown(button.id) {
+        if !shown(button.id) || hidden_control(button.id) {
             continue;
         }
-        // VMCE's defeat page relabels Continue/Quit and lights Retry only
-        // when the retry gate is open (host: all guests voted) or the guest
-        // already voted; Leave Room stays the native Quit action.
-        let (label_key, lit, enabled) = if stats {
-            match button.id {
-                CONTINUE => {
-                    #[cfg(feature = "vmce")]
-                    let retry = view.retry.unwrap_or((false, false, false));
-                    #[cfg(not(feature = "vmce"))]
-                    let retry = (false, false, false);
-                    ("VERA:VmceRetry", retry.1, retry.2)
-                }
-                QUIT => ("VERA:VmceLeaveRoom", false, view.quit_enabled),
-                _ => continue,
+        // A page extension owns its button set: its projection supplies the
+        // caption key and the lit/enabled state; native art and the disabled
+        // style stay the shared renderer's.
+        let (label_key, lit, enabled) = match overlay.as_ref().and_then(|overlay| {
+            overlay
+                .buttons
+                .iter()
+                .find(|candidate| candidate.id == button.id)
+        }) {
+            Some(projected) => (projected.label_key, projected.lit, projected.enabled),
+            None if overlay.is_some() => continue,
+            None => {
+                let enabled = match button.id {
+                    CONTINUE => view.continue_enabled,
+                    _ => view.quit_enabled,
+                };
+                let key = COOP_SCORE_PAGE
+                    .buttons()
+                    .find(|spec| spec.id == button.id)
+                    .map(|spec| spec.csf_key)
+                    .unwrap_or("GUI:Continue");
+                (key, false, enabled)
             }
-        } else {
-            let enabled = match button.id {
-                CONTINUE => view.continue_enabled,
-                _ => view.quit_enabled,
-            };
-            let key = COOP_SCORE_PAGE
-                .buttons()
-                .find(|spec| spec.id == button.id)
-                .map(|spec| spec.csf_key)
-                .unwrap_or("GUI:Continue");
-            (key, false, enabled)
         };
         let pressed = lit || ui.buttons.is_pressed(button.id);
         push_right_panel_button_shp(
@@ -525,14 +455,7 @@ pub(crate) fn render_coop_score(
             SHELL_CONTROL_DEPTH,
         );
         let rgb = if lit {
-            #[cfg(feature = "vmce")]
-            {
-                crate::ui::campaign_score_shell::vmce_result_button_text_rgb(true)
-            }
-            #[cfg(not(feature = "vmce"))]
-            {
-                super::text::button_label_color_for_disabled(!enabled)
-            }
+            LIT_BUTTON_CAPTION_RGB
         } else {
             super::text::button_label_color_for_disabled(!enabled)
         };
@@ -559,7 +482,7 @@ pub(crate) fn render_coop_score(
             label: "LAN Co-op Result BC6",
         },
         ShellFrameArt::Launcher,
-        overlay,
+        frame_overlay,
         ShellFrameCursor::Visible,
     )?;
     state.platform.window.request_redraw();

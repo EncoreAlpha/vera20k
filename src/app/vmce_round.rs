@@ -77,6 +77,7 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
         Ok(true) => {
             state.frontend.campaign_score_page = None;
             state.frontend.campaign_score_art = None;
+            crate::app::vmce_result::close_vmce_result(state);
             if let Err(error) = crate::app::shell_network_setup::open_vmce_intermission(state) {
                 log::error!("Could not open VMCE intermission: {error:#}");
                 crate::app::cooperative_round::return_to_shell(state);
@@ -101,7 +102,9 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
 /// its freeze payload binds the new load attempt to the result nonce.
 fn retry_last_mission(state: &mut AppState) {
     state.frontend.campaign_score_page = None;
+    state.frontend.coop_score_page = None;
     state.frontend.campaign_score_art = None;
+    crate::app::vmce_result::close_vmce_result(state);
     let game_speed = state
         .match_state
         .session

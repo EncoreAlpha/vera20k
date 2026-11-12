@@ -1,17 +1,67 @@
-//! VMCE's settlement pages and round semantics. Victory and campaign end use
-//! the campaign score dialog `0x103`; defeat uses the cooperative BC6 dialog.
+//! VMCE's `0x103` victory and campaign-end result page content.
 //!
-//! Guests ready on victory and vote to retry on defeat; the host continues
-//! once every connected guest is ready. Campaign end uses the all-ready gate.
+//! The stock `CampaignScorePage` owns the native dialog, its statics and its
+//! reveal/emblem timing; this module owns everything VERA adds on top: the
+//! settlement board, the statistics projection and the statistics subpage
+//! state. It installs that content together with the stock page through
+//! [`super::VmceResultPage`] and never touches the shared UI model.
+//!
+//! Victory statistics prefer the terminal snapshot; campaign end reads the
+//! same terminal snapshot, while the defeat page (see [`super::defeat`]) reads
+//! the live values before the world retires.
 
 use crate::app::match_bootstrap::VmceNextStage;
 use crate::app::{App, AppState};
+
+use super::types::{VmceResultBoard, VmceResultRow, VmceStatistics, VmceStatisticsRow};
+
+/// The VMCE content over one open `0x103` page.
+#[derive(Debug, Clone)]
+pub(crate) struct VictoryResultPage {
+    /// The settlement board projected at open time and refreshed as the round
+    /// owner changes readiness or membership.
+    pub(crate) board: Option<VmceResultBoard>,
+    /// Statistics projected before the finished world retired.
+    pub(crate) statistics: Option<VmceStatistics>,
+    /// Whether the full-screen statistics subpage is showing.
+    pub(crate) stats_open: bool,
+}
+
+impl VictoryResultPage {
+    pub(crate) fn new(board: Option<VmceResultBoard>, statistics: Option<VmceStatistics>) -> Self {
+        Self {
+            board,
+            statistics,
+            stats_open: false,
+        }
+    }
+
+    /// The page keeps the statistics entry only while there is content.
+    pub(crate) fn toggle_statistics(&mut self) {
+        if self.statistics.is_some() {
+            self.stats_open = !self.stats_open;
+        }
+    }
+
+    pub(crate) fn close_statistics(&mut self) {
+        self.stats_open = false;
+    }
+
+    pub(crate) fn statistics_open(&self) -> bool {
+        self.stats_open && self.statistics.is_some()
+    }
+
+    /// Refresh the board after the round owner changed Ready or membership.
+    pub(crate) fn refresh(&mut self, board: Option<VmceResultBoard>) {
+        self.board = board;
+    }
+}
 
 /// Open the result page for a won mission and enter its round. The round is
 /// entered even when this peer resolved no next stage: both peers exchange
 /// their resolved stage, and a mismatch returns both to the lobby instead of
 /// one peer waiting forever.
-pub(crate) fn open_victory(state: &mut AppState) {
+pub(super) fn open_victory(state: &mut AppState) {
     let elapsed = state
         .match_state
         .scenario_elapsed_clock
@@ -47,114 +97,16 @@ pub(crate) fn open_victory(state: &mut AppState) {
     );
 }
 
-/// Open the defeat page on the native BC6 shell (`0xBC6`), not `0x103`. The
-/// page is the statistics view itself: four role rows, no chat and no player
-/// setup columns. Its Continue is the retry vote/start gate; its Quit is
-/// Leave Room.
-pub(crate) fn open_defeat(state: &mut AppState) {
-    let elapsed = state
-        .match_state
-        .scenario_elapsed_clock
-        .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let Some(mut model) = crate::app::cooperative_round::build_vmce_defeat_model(state, elapsed)
-    else {
-        App::leave_mission_result_screen(state);
-        return;
-    };
-    // The failure page shows the same statistics table as the victory stats
-    // page: score rows plus the gross-income accumulator and the stage's par
-    // time. Project it while the finished world is still resident.
-    let ranking_model =
-        crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
-    let Some(statistics) = statistics_page(state, &ranking_model, VmceScoreSource::Live) else {
-        log::error!("Could not build the VMCE defeat statistics");
-        App::leave_mission_result_screen(state);
-        return;
-    };
-    model.vmce_statistics = Some(statistics);
-    let rows = model.rows.len();
-    let side = model.side;
-    crate::app::lan_service::cooperative::hold_transport(state);
-    App::retire_finished_scenario(state);
-    if let Err(error) = state.match_state.session.enter_vmce_round_ending(
-        None,
-        true,
-        crate::app::match_runtime::session::VmceRoundEnding::Retry,
-        rows,
-    ) {
-        log::error!("Could not open the VMCE defeat round: {error:#}");
-        crate::app::cooperative_round::return_to_shell(state);
-        return;
-    }
-    let _ = side;
-    open_defeat_page(state, model);
-}
-
-/// Present an already-built VMCE defeat model on the native BC6 shell. Both
-/// the real defeat path and the synthetic captures use this one page owner.
-#[cfg(feature = "vmce")]
-pub(crate) fn open_defeat_page(
-    state: &mut AppState,
-    model: crate::ui::coop_score_shell::CoopScoreModel,
-) {
-    let side = model.side;
-    // The shared BC6 backdrop is the native campaign score SCRBK.
-    state.frontend.campaign_score_art = state.process_assets.manager().and_then(|assets| {
-        crate::render::main_menu_shell_chrome::build_campaign_score_art(
-            &state.renderer.gpu,
-            &state.renderer.batch_renderer,
-            assets,
-            side,
-            crate::app::frontend::shell_layout::art_key_screen_width(state),
-            state.process_assets.side_score_art(side),
-        )
-    });
-    state.frontend.score_page = None;
-    state.frontend.score_art = None;
-    state.frontend.campaign_score_page = None;
-    state.frontend.coop_score_page = Some(crate::ui::coop_score_shell::CoopScorePage {
-        model,
-        ui: Default::default(),
-        victory: false,
-        saved: None,
-        campaign_end: None,
-    });
-    state.frontend.screen = crate::app::GameScreen::MissionResult {
-        title: String::new(),
-        detail: String::new(),
-    };
-    state
-        .frontend
-        .shell_controller
-        .reset_to(crate::ui::coop_score_shell::COOP_SCORE_DIALOG, false);
-}
-
-/// Whether the open `0x103` page is VMCE's. Stock modes keep their own
-/// Continue handling.
-pub(crate) fn owns_page(state: &AppState) -> bool {
-    state.frontend.campaign_score_page.is_some()
-        && (state
-            .match_state
-            .session
-            .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce())
-            || state
-                .match_state
-                .session
-                .cooperative_round()
-                .is_some_and(|round| round.vmce_active()))
-}
-
-/// Run the VMCE result page's Continue. Returns false when the open page is
-/// not VMCE's, so the caller keeps the retail path.
-pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
-    if !owns_page(state) {
+/// Run a VMCE victory/campaign-end page's Continue. Returns false when the
+/// open page is not VMCE's, so the caller keeps the retail path.
+pub(super) fn continue_pressed(state: &mut AppState) -> bool {
+    if !super::owns_page(state) {
         return false;
     }
     if state.match_state.session.cooperative_round().is_none() {
         // A result page always has its round; recover to the lobby rather
         // than leaving the page without a network owner.
-        state.frontend.campaign_score_page = None;
+        super::close_vmce_result(state);
         crate::app::lan_service::cooperative::release_transport(state);
         App::leave_mission_result_screen(state);
         return true;
@@ -179,35 +131,16 @@ pub(crate) fn continue_pressed(state: &mut AppState) -> bool {
         Ok(step) => crate::app::cooperative_round::run_step(state, step),
         Err(error) => log::warn!("VMCE result Continue refused: {error:#}"),
     }
-    refresh_board(state);
+    super::refresh(state);
     state.platform.window.request_redraw();
     true
 }
 
-/// Run a VMCE result page's Leave Room: the round's own leave record goes to
-/// every peer (`0x0046E28C`'s `0x24`), the page closes and the LAN lobby
-/// returns. The host's leave disbands the room; a guest's leave is its local
-/// exit and the host's own peer-left path returns the room to the lobby.
-pub(crate) fn leave_room_pressed(state: &mut AppState) -> bool {
-    if !owns_page(state) {
-        return false;
-    }
-    if let Err(error) = state.match_state.session.quit_cooperative_round() {
-        log::warn!("VMCE result Leave Room refused: {error:#}");
-    }
-    crate::app::cooperative_round::return_to_shell(state);
-    true
-}
-
 /// The settlement board the `0x103` page shows: one row per connected human
-/// with its authored role, country and verdict, plus the truthful caption for
-/// the continuation this page gates. Read-only projection of the round and
+/// with its authored role, country and verdict, plus the truthful continuation
+/// state for the ending this page gates. Read-only projection of the round and
 /// launch the page already owns; no second result state.
-#[cfg(feature = "vmce")]
-pub(crate) fn result_board(
-    state: &AppState,
-) -> Option<crate::ui::campaign_score_shell::VmceResultBoard> {
-    use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
+pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
     let round = state.match_state.session.cooperative_round()?;
     if !round.vmce_active() {
         return None;
@@ -273,17 +206,6 @@ pub(crate) fn result_board(
     })
 }
 
-/// Refresh the page after the round owner changes Ready or membership.
-pub(crate) fn refresh_board(state: &mut AppState) {
-    if !owns_page(state) {
-        return;
-    }
-    let board = result_board(state);
-    if let Some(page) = state.frontend.campaign_score_page.as_mut() {
-        page.set_vmce_board(board);
-    }
-}
-
 /// Resolve the next campaign stage. `Ok(None)` is the campaign's real last
 /// stage; an `Err` is a broken series and must not be presented as one.
 fn resolve_next_stage(
@@ -336,6 +258,15 @@ fn score_rows(state: &AppState) -> Option<usize> {
         .map(|runtime| runtime.simulation.cooperative_score_rows().len())
 }
 
+/// Victory statistics use terminal scores; defeat shows the live, unbonused
+/// House values.
+#[derive(Clone, Copy)]
+pub(crate) enum VmceScoreSource {
+    Terminal,
+    Live,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn open_page(
     state: &mut AppState,
     model: crate::ui::campaign_score_shell::CampaignScoreScreenModel,
@@ -347,7 +278,6 @@ fn open_page(
     what: &str,
     victory: bool,
 ) {
-    #[cfg(feature = "vmce")]
     let statistics = victory
         .then(|| statistics_page(state, &model, VmceScoreSource::Terminal))
         .flatten();
@@ -398,34 +328,21 @@ fn open_page(
             log::warn!("VMCE {what} round countries: {error:#}");
         }
     }
-    #[cfg(feature = "vmce")]
     let board = result_board(state);
     // The settlement board's flags/host/ready glyphs come from the skirmish
     // chrome the lobby already loaded; VMCE result pages only exist after it.
-    #[cfg(feature = "vmce")]
     let _ = App::ensure_skirmish_shell_chrome(state);
     App::open_campaign_score_page(state, model, String::new(), String::new());
-    #[cfg(feature = "vmce")]
-    if let Some(page) = state.frontend.campaign_score_page.as_mut() {
-        page.set_vmce_board(board);
-        page.set_vmce_statistics(statistics);
-    }
-}
-
-/// Victory uses terminal scores; defeat shows the live, unbonused House values.
-enum VmceScoreSource {
-    Terminal,
-    Live,
+    super::install_victory_content(state, board, statistics, false);
 }
 
 /// Project each admitted player from the frozen assignment and the finished
 /// world's House statistics. Both result pages share this owner.
-fn statistics_page(
+pub(crate) fn statistics_page(
     state: &AppState,
     model: &crate::ui::campaign_score_shell::CampaignScoreScreenModel,
     source: VmceScoreSource,
-) -> Option<crate::ui::campaign_score_shell::VmceStatistics> {
-    use crate::ui::campaign_score_shell::{VmceStatistics, VmceStatisticsRow};
+) -> Option<VmceStatistics> {
     let launch = state.match_state.session.network_setup()?;
     let roles = crate::app::shell_network_setup::view::vmce_result_roles(state);
     let assignments = state.match_state.session.network_vmce_assignments();
@@ -520,7 +437,6 @@ fn statistics_page(
 /// The native score model's time fields keep their CSF label (`時間:...`).
 /// The shared statistics header draws its own label, so the value is only the
 /// trailing `HH:MM:SS`.
-#[cfg(feature = "vmce")]
 fn bare_duration(value: &str) -> String {
     let value = value.trim();
     let candidate = value
@@ -544,9 +460,11 @@ fn bare_duration(value: &str) -> String {
     }
 }
 
-#[cfg(all(test, feature = "vmce"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::vmce_result::types;
+
     #[test]
     fn the_statistics_time_header_drops_the_native_label() {
         assert_eq!(bare_duration("時間:00:00:13"), "00:00:13");
@@ -556,7 +474,7 @@ mod tests {
 
     #[test]
     fn the_result_row_text_uses_the_authored_house_colour() {
-        let mut row = crate::ui::campaign_score_shell::VmceResultRow {
+        let mut row = VmceResultRow {
             player: "LiveHost".into(),
             role: "Americans House".into(),
             country: "America".into(),
@@ -566,15 +484,57 @@ mod tests {
             host: true,
             rgb: Some([32, 160, 64]),
         };
-        assert_eq!(
-            crate::ui::campaign_score_shell::vmce_result_text_rgb(&row),
-            [32, 160, 64]
-        );
+        assert_eq!(types::result_text_rgb(&row), [32, 160, 64]);
         row.rgb = None;
         assert_eq!(
-            crate::ui::campaign_score_shell::vmce_result_text_rgb(&row),
+            types::result_text_rgb(&row),
             [255, 255, 0],
             "a role without an authored colour keeps the native yellow"
         );
+    }
+
+    #[test]
+    fn the_statistics_subpage_state_is_page_local_and_reopenable() {
+        let mut page = VictoryResultPage::new(None, None);
+        page.toggle_statistics();
+        assert!(!page.statistics_open(), "no statistics, no page");
+        page.statistics = Some(VmceStatistics {
+            rows: Vec::new(),
+            total_time: "00:01:00".into(),
+            par_time: "00:02:00".into(),
+        });
+        page.toggle_statistics();
+        assert!(page.statistics_open(), "the tab opens the page");
+        page.toggle_statistics();
+        assert!(!page.statistics_open(), "the same tab toggles back");
+        page.toggle_statistics();
+        page.close_statistics();
+        assert!(!page.statistics_open(), "Back returns to the board");
+        // A reopened page starts clean: a fresh container carries no subpage
+        // state from the previous page instance.
+        let reopened = VictoryResultPage::new(None, None);
+        assert!(!reopened.statistics_open());
+    }
+
+    #[test]
+    fn a_refresh_reprojects_the_board() {
+        let mut page = VictoryResultPage::new(
+            None,
+            Some(VmceStatistics {
+                rows: Vec::new(),
+                total_time: String::new(),
+                par_time: String::new(),
+            }),
+        );
+        assert!(!page.statistics_open());
+        let board = VmceResultBoard {
+            rows: vec![VmceResultRow {
+                player: "Guest".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        page.refresh(Some(board));
+        assert_eq!(page.board.as_ref().map(|board| board.rows.len()), Some(1));
     }
 }

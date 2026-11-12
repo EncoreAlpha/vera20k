@@ -168,31 +168,10 @@ fn save_houses(state: &AppState) -> [(i32, i32); 2] {
 /// opened by [`crate::app::vmce_result`]; this function keeps the stock
 /// Cooperative mode's BC6 path.
 pub(crate) fn open_result(state: &mut AppState, victory: bool) {
+    // The VMCE owner decides and opens its own settlement page; ordinary
+    // Cooperative keeps the BC6 path below.
     #[cfg(feature = "vmce")]
-    if let Some(sim) = state
-        .match_state
-        .sim_runtime
-        .as_ref()
-        .map(|runtime| &runtime.simulation)
-        .filter(|sim| {
-            sim.session()
-                .multiplayer_mode_class()
-                .is_some_and(|class| class.is_vmce())
-        })
-    {
-        let Some(outcomes) = sim.session().vmce_outcomes() else {
-            log::error!("VMCE reached settlement without a shared result");
-            return_to_shell(state);
-            return;
-        };
-        if outcomes
-            .iter()
-            .any(|(_, kind)| *kind == crate::sim::house_state::HouseOutcomeKind::Victory)
-        {
-            crate::app::vmce_result::open_victory(state);
-        } else {
-            crate::app::vmce_result::open_defeat(state);
-        }
+    if crate::app::vmce_result::open_result(state) {
         return;
     }
     let Some(can_continue) = state
@@ -208,7 +187,7 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let Some(mut model) = build_model(state, can_continue, elapsed) else {
+    let Some(model) = build_model(state, can_continue, elapsed) else {
         App::leave_mission_result_screen(state);
         return;
     };
@@ -286,6 +265,8 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
     });
     state.frontend.score_page = None;
     state.frontend.score_art = None;
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::close_vmce_result(state);
     state.frontend.campaign_score_page = None;
     state.frontend.coop_score_page = Some(CoopScorePage {
         model,
@@ -309,57 +290,67 @@ pub(crate) fn open_result(state: &mut AppState, victory: bool) {
 /// mission and map names (`A8B322`, the scenario `+0xA0` selected), the
 /// game type and `NAME:COOPDESC<campaign+1><map+1>`.
 fn build_model(state: &AppState, can_continue: bool, elapsed: i32) -> Option<CoopScoreModel> {
-    build_model_rows(state, can_continue, elapsed, false)
+    build_model_rows(state, can_continue, elapsed)
 }
 
-/// VMCE's defeat page: the same BC6 model over all four role rows in campaign
-/// order (never sorted), no next mission/preview, and the statistics-only
-/// flag that hides chat and the native player setup columns.
-#[cfg(feature = "vmce")]
-pub(crate) fn build_vmce_defeat_model(state: &AppState, elapsed: i32) -> Option<CoopScoreModel> {
-    build_model_rows(state, true, elapsed, true)
-}
-
-fn build_model_rows(
-    state: &AppState,
-    can_continue: bool,
-    elapsed: i32,
-    vmce_stats: bool,
-) -> Option<CoopScoreModel> {
+/// The live co-op score rows of the finished mission, named and coloured by the
+/// house presentation owner. The caller decides their order.
+pub(crate) fn score_rows(state: &AppState) -> Option<Vec<crate::ui::score_shell::ScoreRow>> {
     use crate::app::frontend::shell_pass::resolve_csf;
     let sim = &state.match_state.sim_runtime.as_ref()?.simulation;
     let computer = resolve_csf(state, "TXT_COMPUTER");
     let sources = crate::app::presentation::house_ui::HouseUiSources::from_state(state, &computer);
-    let mut rows: Vec<_> = sim
-        .cooperative_score_rows()
-        .into_iter()
-        .map(|row| crate::ui::score_shell::ScoreRow {
-            name: crate::app::presentation::house_ui::house_ui_name(state, row.owner)
-                .unwrap_or_default(),
-            rgb: sources.text_rgb(sim, row.owner),
-            kills: row.kills,
-            losses: row.losses,
-            built: row.built,
-            score: row.score,
-        })
-        .collect();
-    if !vmce_stats {
-        crate::ui::score_shell::sort_rows(&mut rows);
-    }
-    // s = T/60 signed, then the 99:59:59 clamp (0x0046EE34..0x0046EEE4).
+    Some(
+        sim.cooperative_score_rows()
+            .into_iter()
+            .map(|row| crate::ui::score_shell::ScoreRow {
+                name: crate::app::presentation::house_ui::house_ui_name(state, row.owner)
+                    .unwrap_or_default(),
+                rgb: sources.text_rgb(sim, row.owner),
+                kills: row.kills,
+                losses: row.losses,
+                built: row.built,
+                score: row.score,
+            })
+            .collect(),
+    )
+}
+
+/// The result table's time: `TXT_TIME_FORMAT_HOURS` over the mission's ticks.
+/// s = T/60 signed, then the 99:59:59 clamp (`0x0046EE34..0x0046EEE4`).
+pub(crate) fn score_time(state: &AppState, elapsed: i32) -> String {
+    use crate::app::frontend::shell_pass::resolve_csf;
     let time_model = crate::ui::score_shell::ScoreScreenModel {
         elapsed_seconds: (elapsed / 60) as u32,
         ..Default::default()
     };
-    let time = crate::ui::score_shell::format_elapsed(
+    crate::ui::score_shell::format_elapsed(
         &time_model,
         &resolve_csf(state, "TXT_TIME_FORMAT_HOURS"),
-    );
-    let side = crate::app::input::commands::preferred_local_owner_name(state)
+    )
+}
+
+/// Scenario `+0x34B8` of the local viewpoint's House: it picks the score
+/// palette (`0x0072D300`).
+pub(crate) fn score_side(state: &AppState) -> i32 {
+    let Some(sim) = state
+        .match_state
+        .sim_runtime
+        .as_ref()
+        .map(|runtime| &runtime.simulation)
+    else {
+        return 0;
+    };
+    crate::app::input::commands::preferred_local_owner_name(state)
         .as_deref()
         .and_then(|owner| sim.interner().get(owner))
         .and_then(|owner| sim.houses().get(&owner))
-        .map_or(0, |house| house.side_index());
+        .map_or(0, |house| house.side_index())
+}
+
+/// The stage the score tail names (`A8B322`, the scenario `+0xA0` selected):
+/// its shell-map index and display name.
+pub(crate) fn score_map(state: &AppState) -> (Option<usize>, String) {
     let runtime = &state.frontend.multiplayer_shell_runtime;
     let catalog = &state.frontend.scenario_catalog;
     let map_index = catalog
@@ -375,27 +366,29 @@ fn build_model_rows(
         .and_then(|index| catalog.shell_maps().get(index))
         .map(|map| map.display_name.clone())
         .unwrap_or_default();
-    // VMCE's external campaign has no CSF entry for its mode row; that
-    // row's own text is its display name (the same fallback the setup shell
-    // uses), not a missing label. Stock modes keep their CSF lookup.
-    let mode_label = state
+    (map_index, map_name)
+}
+
+/// The launch mode row's own display key, before CSF resolution. The setup
+/// shell writes the mode row from this key; VERA's own external campaign shows
+/// the key itself because it has no CSF entry.
+pub(crate) fn score_mode_key(state: &AppState) -> Option<String> {
+    state
         .match_state
         .session
         .network_setup()
         .and_then(|launch| {
             crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
         })
-        .map_or_else(
-            || resolve_csf(state, "GUI:None").into_owned(),
-            |mode| {
-                if mode.class.is_vmce() {
-                    mode.ui_name_key.clone()
-                } else {
-                    resolve_csf(state, &mode.ui_name_key).into_owned()
-                }
-            },
-        );
-    let description = runtime
+        .map(|mode| mode.ui_name_key.clone())
+}
+
+/// The setup row's `NAME:COOPDESC<campaign+1><map+1>` description.
+pub(crate) fn score_description(state: &AppState) -> String {
+    use crate::app::frontend::shell_pass::resolve_csf;
+    state
+        .frontend
+        .multiplayer_shell_runtime
         .cooperative_setup_view()
         .description
         .map(|(campaign, stage)| {
@@ -405,26 +398,30 @@ fn build_model_rows(
             )
             .into_owned()
         })
-        .unwrap_or_default();
-    let (next_mission, map_index, previous_mission) = if vmce_stats {
-        (String::new(), None, map_name.clone())
-    } else {
-        (map_name.clone(), map_index, String::new())
-    };
+        .unwrap_or_default()
+}
+
+fn build_model_rows(state: &AppState, can_continue: bool, elapsed: i32) -> Option<CoopScoreModel> {
+    use crate::app::frontend::shell_pass::resolve_csf;
+    let mut rows = score_rows(state)?;
+    crate::ui::score_shell::sort_rows(&mut rows);
+    let (map_index, map_name) = score_map(state);
+    // The setup shell writes the mode row from the player-facing CSF label;
+    // the score tail resolves the same key.
+    let mode_label = score_mode_key(state).map_or_else(
+        || resolve_csf(state, "GUI:None").into_owned(),
+        |key| resolve_csf(state, &key).into_owned(),
+    );
     Some(CoopScoreModel {
         rows,
-        time,
-        next_mission,
+        time: score_time(state, elapsed),
+        next_mission: map_name.clone(),
         mode_label,
         map_label: map_name,
-        previous_mission,
-        description,
-        side,
+        description: score_description(state),
+        side: score_side(state),
         map_index,
         can_continue,
-        vmce_stats,
-        #[cfg(feature = "vmce")]
-        vmce_statistics: None,
     })
 }
 
@@ -554,17 +551,6 @@ pub(crate) struct CoopScoreView {
     pub(crate) continue_enabled: bool,
     pub(crate) quit_enabled: bool,
     pub(crate) difficulty: i32,
-    /// VMCE defeat BC6 Retry: `(host, lit, enabled)`. `None` on stock BC6.
-    #[cfg(feature = "vmce")]
-    pub(crate) retry: Option<(bool, bool, bool)>,
-}
-
-impl CoopScoreView {
-    /// VMCE defeat BC6 Retry enablement; `None` on the stock page.
-    #[cfg(feature = "vmce")]
-    pub(crate) fn retry_continue_enabled(&self) -> Option<bool> {
-        self.retry.map(|(_, _, enabled)| enabled)
-    }
 }
 
 pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
@@ -635,8 +621,6 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
         slots,
         continue_enabled: session.cooperative_round_continue_enabled(),
         quit_enabled: round.quit_enabled(),
-        #[cfg(feature = "vmce")]
-        retry: session.cooperative_round_retry_state(),
         difficulty: state
             .frontend
             .multiplayer_shell_runtime
@@ -648,22 +632,16 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
 pub(crate) fn apply_action(state: &mut AppState, action: CoopScoreAction) {
     let result = match action {
         CoopScoreAction::Continue => {
-            let vmce_defeat = state
-                .frontend
-                .coop_score_page
-                .as_ref()
-                .is_some_and(|page| page.model.vmce_stats);
+            // VERA's defeat BC6 is the statistics view; its Continue is the
+            // retry vote/start gate, which the round owner already implements.
             #[cfg(feature = "vmce")]
-            if vmce_defeat {
+            if crate::app::vmce_result::defeat_page_active(state) {
                 retry_pressed(state)
             } else {
                 continue_pressed(state)
             }
             #[cfg(not(feature = "vmce"))]
-            {
-                let _ = vmce_defeat;
-                continue_pressed(state)
-            }
+            continue_pressed(state)
         }
         // 0x0046E28C: 0x24 to every node, result 0.
         CoopScoreAction::Quit => state
@@ -684,7 +662,9 @@ pub(crate) fn apply_action(state: &mut AppState, action: CoopScoreAction) {
 }
 
 /// VMCE's defeat Continue: a guest casts its one retry vote; the host starts
-/// the existing retry step once every online guest voted.
+/// the existing retry step once every online guest voted. B2's round/vote
+/// entry stays here; the shared BC6 Continue action routes to it when a
+/// VMCE defeat page is installed.
 #[cfg(feature = "vmce")]
 fn retry_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep> {
     let difficulty = state
@@ -742,7 +722,7 @@ pub(crate) fn service_event(
         .cooperative_round_event(event, difficulty)?;
     run_step(state, step);
     #[cfg(feature = "vmce")]
-    crate::app::vmce_result::refresh_board(state);
+    crate::app::vmce_result::refresh(state);
     state.platform.window.request_redraw();
     Ok(())
 }
@@ -876,6 +856,8 @@ pub(crate) fn begin_next_mission(state: &mut AppState) {
         .and_then(|page| page.saved);
     // VMCE's won mission leaves from the native 0x103 page, which has no
     // CoopScorePage of its own.
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::close_vmce_result(state);
     state.frontend.campaign_score_page = None;
     let game_speed = state
         .match_state
@@ -915,6 +897,8 @@ pub(crate) fn finish_result(state: &mut AppState) {
         .coop_score_page
         .take()
         .and_then(|page| page.campaign_end);
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::close_vmce_result(state);
     state.frontend.campaign_score_page = None;
     match campaign_end {
         Some(model) => {
@@ -942,6 +926,8 @@ pub(crate) fn finish_return_to_shell(state: &mut AppState) {
 
 /// `0xBC7`'s Continue (`0x6D1`, result 1) after its slide: the shell.
 pub(crate) fn campaign_end_continue(state: &mut AppState) {
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::close_vmce_result(state);
     state.frontend.campaign_score_page = None;
     leave_result(state);
 }
@@ -949,6 +935,8 @@ pub(crate) fn campaign_end_continue(state: &mut AppState) {
 fn leave_result(state: &mut AppState) {
     state.frontend.coop_score_page = None;
     state.frontend.campaign_score_page = None;
+    #[cfg(feature = "vmce")]
+    crate::app::vmce_result::close_vmce_result(state);
     state.frontend.campaign_score_art = None;
     App::persist_returned_session_toggles(state);
     state.frontend.screen = GameScreen::MainMenu;

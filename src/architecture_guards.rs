@@ -205,8 +205,13 @@ const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
     "app/diagnostics/shell_capture/movies/lan/live.rs",
     "app/lan_service/vmce_round.rs",
     "app/match_runtime/session/cooperative_round/vmce_round.rs",
+    "app/vmce_result/defeat.rs",
+    "app/vmce_result/mod.rs",
+    "app/vmce_result/paint_defeat.rs",
+    "app/vmce_result/paint_victory.rs",
+    "app/vmce_result/types.rs",
+    "app/vmce_result/victory.rs",
     "app/vmce_round.rs",
-    "app/vmce_result.rs",
     "skirmish_modes.rs",
 ];
 
@@ -226,9 +231,7 @@ const VMCE_LOADER_VARIANT_DECLARATIONS: &[(&str, &str, usize)] = &[
 /// separately named policy covers them. Values are function-local counts of
 /// `is_vmce` and whole-token `Vmce` references.
 const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
-    ("app/cooperative_round.rs", "build_model_rows", 1, 0),
     ("app/cooperative_round.rs", "mission_ended", 1, 0),
-    ("app/cooperative_round.rs", "open_result", 1, 0),
     ("app/input/abort.rs", "vmce_active", 1, 0),
     ("app/input/multiplayer_setup.rs", "layout", 1, 0),
     ("app/lan_service.rs", "reject_setup_compatibility", 1, 0),
@@ -631,6 +634,279 @@ fn vmce_mode_scan_covers_test_projection_grouped_imports_and_qualifiers() {
     );
 }
 
+/// The `vmce` cargo feature gate: the one attribute the neutral score seam may
+/// put around its delegation to `app::vmce_result`.
+const VMCE_FEATURE_ATTRIBUTE: &str = "#[cfg(feature = \"vmce\")]";
+
+/// VERA-only score-page control ids: the `0x103` statistics subpage statics and
+/// the `0xBC6` extended statistics rows. They belong to `app::vmce_result`,
+/// never to the shared page models or renderers.
+const VMCE_ONLY_SCORE_CONTROL_IDS: &[(u32, u32)] = &[(0x7001, 0x7004), (0x7B81, 0x7B8A)];
+
+/// The shared result models and renderers that B3 emptied of VMCE. They and the
+/// neutral `app::frontend::score_overlay` seam are the shared score-page code;
+/// the seam may delegate to `app::vmce_result` behind `#[cfg(feature = "vmce")]`,
+/// these four files may never name VMCE at all.
+const VMCE_FREE_SHARED_SCORE_FILES: &[&str] = &[
+    "ui/campaign_score_shell.rs",
+    "ui/coop_score_shell.rs",
+    "app/frontend/campaign_score_shell_render.rs",
+    "app/frontend/skirmish_shell_render/coop_score.rs",
+];
+
+/// How blanked `text` names VMCE: a `Vmce`/`VMCE` identifier, the
+/// `vmce_result` owner module, or one of the VERA-only control ids. Comments
+/// and string literals are already blanked by the caller, so only identifiers
+/// and code literals reach here.
+fn vmce_identity_offenses(text: &str) -> Vec<String> {
+    let mut offenses = Vec::new();
+    for identifier in ["Vmce", "VMCE"] {
+        let count = count_identifier(text, identifier);
+        if count > 0 {
+            offenses.push(format!("`{identifier}` identifier x{count}"));
+        }
+    }
+    let owner_references = count_identifier(text, "vmce_result");
+    if owner_references > 0 {
+        offenses.push(format!("`vmce_result` owner reference x{owner_references}"));
+    }
+    let ids: BTreeSet<u32> = hex_literal_values(text)
+        .into_iter()
+        .filter(|value| {
+            VMCE_ONLY_SCORE_CONTROL_IDS
+                .iter()
+                .any(|&(first, last)| (first..=last).contains(value))
+        })
+        .collect();
+    if !ids.is_empty() {
+        let ids: Vec<_> = ids.iter().map(|id| format!("{id:#06x}")).collect();
+        offenses.push(format!("VERA-only control id(s) {}", ids.join(", ")));
+    }
+    offenses
+}
+
+/// Every hexadecimal integer literal in blanked `text`. Blanking erases
+/// comments and strings, so prose and captions cannot trip the control-id scan,
+/// and any spelling the compiler accepts (`0x7b8a`, `0x7B8A`, `0x7B8A_u16`)
+/// parses the same.
+fn hex_literal_values(text: &str) -> Vec<u32> {
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut values = Vec::new();
+    for (at, _) in text
+        .match_indices("0x")
+        .chain(text.match_indices("0X"))
+        .collect::<Vec<_>>()
+    {
+        if at > 0 && is_ident(bytes[at - 1]) {
+            continue;
+        }
+        let mut value = 0u32;
+        let mut digits = 0;
+        for &byte in &bytes[at + 2..] {
+            let Some(digit) = (byte as char).to_digit(16) else {
+                if byte == b'_' {
+                    continue;
+                }
+                break;
+            };
+            value = value.saturating_mul(16).saturating_add(digit);
+            digits += 1;
+        }
+        if digits > 0 {
+            values.push(value);
+        }
+    }
+    values
+}
+
+/// Byte ranges of the items gated on the exact `attribute` text, from the
+/// attribute through the item's braced body or `;`/`,` terminator. `source` is
+/// the file text and `blanked` its blanked form; blanking preserves byte
+/// offsets and newlines, so ranges found in one index the other.
+fn cfg_gated_items(source: &str, blanked: &str, attribute: &str) -> Vec<(usize, usize)> {
+    assert_eq!(
+        source.len(),
+        blanked.len(),
+        "blanking must preserve byte offsets"
+    );
+    let bytes = blanked.as_bytes();
+    let mut items = Vec::new();
+    for (at, _) in source.match_indices(attribute) {
+        // Only an attribute whose string literal was blanked is code; a
+        // commented-out or quoted copy is not an attribute at all.
+        if !blanked[at..].starts_with("#[cfg(feature =") {
+            continue;
+        }
+        let mut open = at + attribute.len();
+        while bytes.get(open).is_some_and(u8::is_ascii_whitespace) {
+            open += 1;
+        }
+        let end = if bytes.get(open) == Some(&b'{') {
+            closing(blanked, open, b'{', b'}')
+        } else {
+            blanked[open..].find([';', ',']).map(|offset| open + offset)
+        };
+        if let Some(end) = end {
+            items.push((at, end));
+        }
+    }
+    items
+}
+
+/// `text` with each inclusive byte range replaced by spaces, keeping newlines
+/// and byte offsets. Used to drop cfg-gated and test-only items before an
+/// identity scan so only the portable code is read.
+fn blank_ranges(text: &str, ranges: &[(usize, usize)]) -> String {
+    let len = text.len();
+    let mut bytes = text.as_bytes().to_vec();
+    for &(start, end) in ranges {
+        for byte in &mut bytes[start..=end.min(len - 1)] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(bytes).expect("blanking preserves UTF-8 structure")
+}
+
+/// B3 keeps VMCE result-page content and identity out of the shared score
+/// models and renderers: they carry native layout/content only, and VMCE owns
+/// its pages, checks and control ids in `app::vmce_result`. The shared files
+/// consume the neutral `app::frontend::score_overlay` seam instead, whose
+/// portable body is generic. This guard pins the four files B3 emptied, so a
+/// later edit cannot quietly pull `Vmce` checks, the result owner or the
+/// VERA-only control ids back into shared code. Production text only:
+/// comments, user-visible strings and `#[cfg(test)]` items may name VMCE.
+#[test]
+fn shared_result_models_and_renderers_stay_free_of_vmce() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let mut violations = Vec::new();
+    for rel in VMCE_FREE_SHARED_SCORE_FILES {
+        let file = files
+            .iter()
+            .find(|file| file.rel == *rel)
+            .unwrap_or_else(|| panic!("{rel} missing — update the guard's file list"));
+        let production = file
+            .production
+            .as_deref()
+            .expect("shared score files are not test modules");
+        for offense in vmce_identity_offenses(production) {
+            violations.push(format!("{rel}: {offense}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "shared score models/renderers name VMCE again: {violations:#?}\n\
+         VMCE result-page content, identity checks and control ids belong to \
+         app::vmce_result; shared files consume the generic overlay data of \
+         app::frontend::score_overlay."
+    );
+
+    // The seam is the only shared score file allowed to know the VMCE result
+    // owner, and only inside `#[cfg(feature = "vmce")]` items: its portable
+    // body (the `not(feature = "vmce")` branch and shared projections) must
+    // compile without naming VMCE, so a stock build stays VMCE-free.
+    const SEAM: &str = "app/frontend/score_overlay.rs";
+    let seam = files
+        .iter()
+        .find(|file| file.rel == SEAM)
+        .unwrap_or_else(|| panic!("{SEAM} missing — update the guard's file list"));
+    let mut gated = cfg_gated_items(&seam.source, &seam.blanked, VMCE_FEATURE_ATTRIBUTE);
+    gated.extend(cfg_test_items(&seam.blanked));
+    let portable = blank_ranges(&seam.blanked, &gated);
+    let seam_offenses = vmce_identity_offenses(&portable);
+    assert!(
+        seam_offenses.is_empty(),
+        "{SEAM} names VMCE outside `#[cfg(feature = \"vmce\")]` items: \
+         {seam_offenses:#?}\n\
+         The seam's portable body stays generic; keep VMCE delegation behind \
+         the feature gate."
+    );
+}
+
+#[test]
+fn vmce_identity_scan_covers_tokens_owner_paths_control_ids_and_cfg_seam() {
+    // Generic overlay consumption stays clean.
+    assert!(vmce_identity_offenses("fn overlay() -> usize { 4 }\n").is_empty());
+
+    // Each identity form is caught.
+    let token = "fn identity(mode: MpModeClass) -> bool { mode == MpModeClass::Vmce }\n";
+    assert!(
+        vmce_identity_offenses(token)
+            .iter()
+            .any(|offense| offense.contains("`Vmce`")),
+        "a whole `Vmce` identifier must be caught"
+    );
+    assert!(
+        vmce_identity_offenses("const VMCE: u16 = 1;\n")
+            .iter()
+            .any(|offense| offense.contains("`VMCE`")),
+        "a whole uppercase `VMCE` identifier must be caught"
+    );
+    assert!(
+        vmce_identity_offenses("fn f() { crate::app::vmce_result::button_pressed(); }\n")
+            .iter()
+            .any(|offense| offense.contains("vmce_result")),
+        "an import/reference to the result owner must be caught"
+    );
+    let ids = "const A: u16 = 0x7002;\nconst B: u16 = 0x7b8a;\nconst C: u16 = 0x7B81_u16;\n";
+    let offenses = vmce_identity_offenses(ids);
+    assert_eq!(offenses.len(), 1, "one combined control-id offense");
+    assert!(
+        offenses[0].contains("0x7002")
+            && offenses[0].contains("0x7b8a")
+            && offenses[0].contains("0x7b81"),
+        "every VERA-only id spelling is reported: {offenses:?}"
+    );
+    assert!(
+        vmce_identity_offenses(
+            "const OK: [u16; 3] = [0x7000, 0x7005, 0x7B80];\nconst LAST: u16 = 0x7B8B;\n"
+        )
+        .iter()
+        .all(|offense| !offense.contains("control id")),
+        "ids just outside the VERA ranges stay clean"
+    );
+
+    // Comments, doc prose and user-visible strings may name VMCE: the guard
+    // reads blanked text.
+    let prose = "// Vmce 0x7001 crate::app::vmce_result\n\
+                 fn clean(rows: [u16; 2]) -> usize { let _ = \"Vmce 0x7002\"; rows.len() }\n";
+    assert!(
+        vmce_identity_offenses(&blank_comments_and_literals(prose)).is_empty(),
+        "blanked prose must not trip the scan"
+    );
+
+    // The seam check strips items gated on the feature attribute...
+    let seam = "fn seam() -> bool {\n    #[cfg(feature = \"vmce\")]\n    {\n        \
+                return crate::app::vmce_result::open_result();\n    }\n    false\n}\n";
+    let seam_blanked = blank_comments_and_literals(seam);
+    let portable = blank_ranges(
+        &seam_blanked,
+        &cfg_gated_items(seam, &seam_blanked, VMCE_FEATURE_ATTRIBUTE),
+    );
+    assert!(
+        vmce_identity_offenses(&portable).is_empty(),
+        "cfg-gated delegation is not portable code"
+    );
+
+    // ...but a leak outside the gate still fails closed.
+    let leaked =
+        format!("{seam}fn leaked() -> bool {{ crate::app::vmce_result::open_result() }}\n");
+    let leaked_blanked = blank_comments_and_literals(&leaked);
+    let leaked_portable = blank_ranges(
+        &leaked_blanked,
+        &cfg_gated_items(&leaked, &leaked_blanked, VMCE_FEATURE_ATTRIBUTE),
+    );
+    assert!(
+        vmce_identity_offenses(&leaked_portable)
+            .iter()
+            .any(|offense| offense.contains("vmce_result")),
+        "an ungated owner reference must be caught"
+    );
+}
+
 /// Float functions whose last bits differ by platform, since Rust calls the
 /// host's libm for them. Arithmetic and `sqrt` round exactly everywhere, and
 /// the `libm` crate is the portable replacement.
@@ -644,6 +920,44 @@ const PLATFORM_MATH: &[&str] = &[
 /// the files that make them. Each pinned use was reviewed: none reaches
 /// simulation state, a state hash or the multiplayer checksum. A needle that
 /// starts with `.` is a method call; any other is a whole identifier or path.
+/// `frontend.vmce_result_page` is VERA's result-page content over the stock
+/// `0x103`/`0xBC6` dialog. The app-layer owner installs and drops it together
+/// with the stock page, so only `app::vmce_result` may write it; any other
+/// writer could decorate a stock result page with VMCE content.
+#[test]
+fn vmce_result_page_container_is_written_only_by_its_owner() {
+    const OWNERS: &[&str] = &["app/vmce_result/mod.rs", "app/vmce_result/defeat.rs"];
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let mut violations = Vec::new();
+    let mut owners_found = Vec::new();
+    for file in files {
+        let Some(production) = file.production.as_deref() else {
+            continue;
+        };
+        if !production.contains(".vmce_result_page =") {
+            continue;
+        }
+        if OWNERS.contains(&file.rel.as_str()) {
+            owners_found.push(file.rel.clone());
+        } else {
+            violations.push(file.rel.clone());
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "vmce_result_page written outside app::vmce_result: {violations:?}\n\
+         Install/drop the VMCE result content through app::vmce_result so it \
+         always pairs with the stock result page."
+    );
+    for owner in OWNERS {
+        assert!(
+            owners_found.iter().any(|found| found == owner),
+            "{owner} no longer writes vmce_result_page; update the guard"
+        );
+    }
+}
+
 #[test]
 fn engine_platform_and_process_reads_have_pinned_files() {
     let math: Vec<String> = PLATFORM_MATH
@@ -849,7 +1163,7 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/world/command_schedule.rs", 3),
                 ("sim/world/fog_objects.rs", 1),
                 ("sim/world/gap_generator.rs", 1),
-                ("sim/world/house_defeat.rs", 9),
+                ("sim/world/house_defeat.rs", 11),
                 ("sim/world/jumpjet_cruise.rs", 1),
                 ("sim/world/lifecycle.rs", 6),
                 ("sim/world/mod.rs", 7),
@@ -892,6 +1206,8 @@ fn engine_per_client_reads_have_pinned_callers() {
         (
             "house_is_human_player",
             &[
+                // What_Action's Tote rung (0x00417CC0): the clicked action.
+                ("sim/aircraft/carryall.rs", 1),
                 ("sim/building_art.rs", 2),
                 ("sim/building_entry.rs", 1),
                 ("sim/building_power.rs", 2),
@@ -903,8 +1219,10 @@ fn engine_per_client_reads_have_pinned_callers() {
                 ("sim/docking/hospital.rs", 1),
                 ("sim/flashing.rs", 1),
                 // VMCE campaign-shared voice gate: local presentation only.
-                ("sim/infantry.rs", 2),
+                ("sim/infantry.rs", 1),
                 ("sim/movement/per_cell.rs", 1),
+                // Process's deselect over the player's shroud (0x007290F6).
+                ("sim/movement/tunnel_process.rs", 1),
                 ("sim/passenger.rs", 1),
                 ("sim/production/can_build.rs", 1),
                 ("sim/production/production_repair.rs", 1),
@@ -2386,6 +2704,12 @@ fn mutable_handouts_and_setters_are_owner_operations() {
             "TAction 76 stores the signed +0x90 dword unchanged (0x006DF364)",
         ),
         (
+            "sim/aircraft/carryall.rs",
+            "set",
+            "Foot+0x424, written by the pickup (0x00417297), the drop (0x00416C66) and an \
+             ordinary aircraft unload (0x00415548)",
+        ),
+        (
             "sim/ammo.rs",
             "set_dock",
             "the +0x6CC writers and PointerExpired's clear",
@@ -2516,6 +2840,16 @@ fn mutable_handouts_and_setters_are_owner_operations() {
             "sim/movement/teleport_movement.rs",
             "set_warping_in",
             "Techno+0x271, cleared by TimerCheck's expiry and state 7",
+        ),
+        (
+            "sim/movement/tunnel_movement.rs",
+            "set_state",
+            "TunnelLocomotionClass+0x18, written directly by its members in tunnel_process.rs",
+        ),
+        (
+            "sim/movement/tunnel_movement.rs",
+            "set_destination",
+            "TunnelLocomotionClass+0x1C, written directly by its members in tunnel_process.rs",
         ),
         (
             "sim/object_fall.rs",

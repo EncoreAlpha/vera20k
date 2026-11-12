@@ -212,6 +212,12 @@ pub(crate) struct FrontendState {
     /// The LAN co-op result dialog `0xBC6` between missions. Its `SCRBK`
     /// background is held in `campaign_score_art`.
     pub(crate) coop_score_page: Option<crate::ui::coop_score_shell::CoopScorePage>,
+    /// VERA's result-page extension over the stock `0x103` / `0xBC6` dialog:
+    /// the settlement board, statistics and subpage state. Installed and
+    /// dropped together with the stock page by `app::vmce_result`; no other
+    /// module writes it.
+    #[cfg(feature = "vmce")]
+    pub(crate) vmce_result_page: Option<crate::app::vmce_result::VmceResultPage>,
     /// `0x108`'s side art, loaded for the open page (`0x0072D730`) and
     /// released with it (`0x0072D780`).
     pub(crate) score_art: Option<crate::render::main_menu_shell_chrome::ScoreArt>,

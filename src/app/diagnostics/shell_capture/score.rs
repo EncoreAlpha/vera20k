@@ -1130,8 +1130,10 @@ impl ScoreCapture {
 /// match, no transport, no protocol.
 #[cfg(feature = "vmce")]
 fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -> Result<()> {
+    use crate::app::vmce_result::types::{
+        VmceResultBoard, VmceResultRow, VmceStatistics, VmceStatisticsRow,
+    };
     use crate::ui::campaign_score_shell::CampaignScoreScreenModel;
-    use crate::ui::campaign_score_shell::{VmceResultBoard, VmceResultRow};
     let local_host = !matches!(
         target,
         VmceResultTarget::GuestUnready | VmceResultTarget::GuestReady
@@ -1206,9 +1208,9 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
     const BUILT: [u32; 4] = [40, 31, 18, 9];
     const SCORE: [i32; 4] = [900, 640, 410, 220];
     const INCOME: [i64; 4] = [5_000, 3_200, 2_100, 1_200];
-    let statistics = crate::ui::campaign_score_shell::VmceStatistics {
+    let statistics = VmceStatistics {
         rows: (0..4)
-            .map(|role| crate::ui::campaign_score_shell::VmceStatisticsRow {
+            .map(|role| VmceStatisticsRow {
                 player: if role == 0 {
                     "LiveHost".into()
                 } else {
@@ -1226,16 +1228,18 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
         total_time,
         par_time,
     };
-    let page = state
-        .frontend
-        .campaign_score_page
-        .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("VMCE result fixture did not open the 0x103 page"))?;
-    page.set_vmce_board(Some(board));
-    page.set_vmce_statistics(Some(statistics));
-    if stats_open {
-        page.toggle_vmce_stats();
-    }
+    ensure!(
+        state.frontend.campaign_score_page.is_some(),
+        "VMCE result fixture did not open the 0x103 page"
+    );
+    // Install the VMCE content over the stock page through the same owner the
+    // real victory/campaign-end flow uses; the fixture never pokes page fields.
+    crate::app::vmce_result::install_victory_content(
+        state,
+        Some(board),
+        Some(statistics),
+        stats_open,
+    );
     Ok(())
 }
 
@@ -1244,6 +1248,7 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
 /// and the model carries display-only score numbers. No match, no transport.
 #[cfg(feature = "vmce")]
 fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -> Result<()> {
+    use crate::app::vmce_result::types::{VmceStatistics, VmceStatisticsRow};
     use crate::ui::coop_score_shell::CoopScoreModel;
     use crate::ui::score_shell::ScoreRow;
     crate::app::shell_network_setup::install_vmce_lobby_fixture(
@@ -1348,9 +1353,9 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
             score: SCORE[role],
         })
         .collect();
-    let statistics = crate::ui::campaign_score_shell::VmceStatistics {
+    let statistics = VmceStatistics {
         rows: (0..target.rows())
-            .map(|role| crate::ui::campaign_score_shell::VmceStatisticsRow {
+            .map(|role| VmceStatisticsRow {
                 player: if role == 0 {
                     "LiveHost".into()
                 } else {
@@ -1374,15 +1379,14 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
         next_mission: String::new(),
         mode_label: "VMCE".into(),
         map_label: String::new(),
-        previous_mission: "VMCE campaign stage".into(),
         description: String::new(),
         side: 0,
         map_index: None,
         can_continue: true,
-        vmce_stats: true,
-        vmce_statistics: Some(statistics),
     };
-    crate::app::vmce_result::open_defeat_page(state, model);
+    // The shared BC6 page and the VMCE content are installed together by the
+    // production defeat-page owner; the fixture only supplies their state.
+    crate::app::vmce_result::defeat::install_defeat_page(state, model, statistics);
     let _ = App::ensure_skirmish_shell_chrome(state);
     Ok(())
 }

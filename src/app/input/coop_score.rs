@@ -1,7 +1,8 @@
 //! BC6 (`0xBC6`) window input adapter. The dialog produces intents;
 //! `app::cooperative_round` and `MatchSession` decide their effects.
 
-use crate::app::frontend::{shell_layout, shell_transition};
+use crate::app::cooperative_round::CoopScoreView;
+use crate::app::frontend::{score_overlay, shell_layout, shell_transition};
 use crate::app::{App, AppState};
 use crate::ui::coop_score_shell::*;
 use crate::ui::lan_shell::LanEditKey;
@@ -12,24 +13,34 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 pub(crate) fn layout(state: &AppState) -> CoopScoreLayout {
     let (w, h) = shell_layout::shell_screen_size(state);
-    // VMCE's defeat BC6 lays out four role rows; every stock page keeps two.
-    let rows = state
-        .frontend
-        .coop_score_page
-        .as_ref()
-        .map_or(DEFAULT_SCORE_ROWS, |page| {
-            page.model.rows.len().max(DEFAULT_SCORE_ROWS)
-        });
-    CoopScoreLayout::new_rows(w as i32, h as i32, shell_layout::fills_window(state), rows)
-}
-
-/// The open page is VMCE's statistics-only defeat BC6.
-pub(crate) fn stats_only(state: &AppState) -> bool {
-    state
-        .frontend
-        .coop_score_page
-        .as_ref()
-        .is_some_and(|page| page.model.vmce_stats)
+    // The open page's extension owns its row count and extra cell ids; the
+    // native page keeps the two-row table. A stock BC6 page lists at most the
+    // two native rows (`0x0046EE17`'s table has two), so a longer model
+    // without an extension is a projection bug, not extra painted rows.
+    let (rows, extended): (usize, &[[u16; 5]]) = match score_overlay::coop_row_extension(state) {
+        Some((rows, cells)) => (rows, cells),
+        None => {
+            let model_rows = state
+                .frontend
+                .coop_score_page
+                .as_ref()
+                .map_or(DEFAULT_SCORE_ROWS, |page| page.model.rows.len());
+            if model_rows > DEFAULT_SCORE_ROWS {
+                log::warn!(
+                    "Stock BC6 model lists {model_rows} rows; the native page lays out \
+                     {DEFAULT_SCORE_ROWS} and takes extra rows only from a page extension"
+                );
+            }
+            (DEFAULT_SCORE_ROWS, &[])
+        }
+    };
+    CoopScoreLayout::new_rows(
+        w as i32,
+        h as i32,
+        shell_layout::fills_window(state),
+        rows,
+        extended,
+    )
 }
 
 /// BC6 owns the result screen while its page is open.
@@ -41,7 +52,7 @@ pub(crate) fn active(state: &AppState) -> bool {
 }
 
 pub(crate) fn update_geometry(state: &mut AppState) {
-    if stats_only(state) {
+    if score_overlay::coop_is_statistics_only(state) {
         return;
     }
     let layout = layout(state);
@@ -62,30 +73,20 @@ pub(crate) fn update_geometry(state: &mut AppState) {
     );
 }
 
-/// Whether control `id` takes input now (`0x0046FB50`, `0x0046DE20`).
-fn enabled(
-    view: &crate::app::cooperative_round::CoopScoreView,
-    can_continue: bool,
-    stats: bool,
-    id: u16,
-) -> bool {
+/// Whether control `id` takes input now (`0x0046FB50`, `0x0046DE20`). The
+/// open page's extension supplies the enablement of its own buttons; `None`
+/// keeps the native rules.
+fn enabled(state: &AppState, view: &CoopScoreView, can_continue: bool, id: u16) -> bool {
+    if let Some(extended) = score_overlay::coop_control_enabled(state, view, id) {
+        return extended;
+    }
     if !can_continue && hidden_on_final_mission(id) {
         return false;
     }
     match id {
-        CONTINUE => {
-            #[cfg(feature = "vmce")]
-            {
-                view.retry_continue_enabled()
-                    .unwrap_or(view.continue_enabled)
-            }
-            #[cfg(not(feature = "vmce"))]
-            {
-                view.continue_enabled
-            }
-        }
+        CONTINUE => view.continue_enabled,
         QUIT => view.quit_enabled,
-        CHAT | CHAT_LOG => !stats,
+        CHAT | CHAT_LOG => true,
         _ => false,
     }
 }
@@ -103,8 +104,8 @@ pub(crate) fn key(state: &mut AppState, event: &KeyEvent) {
 }
 
 pub(crate) fn key_press(state: &mut AppState, code: Option<KeyCode>, text: Option<&str>) {
-    if stats_only(state) {
-        // The defeat page is the statistics view: no chat input.
+    if score_overlay::coop_is_statistics_only(state) {
+        // The statistics page is the whole result view: no chat input.
         return;
     }
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
@@ -140,11 +141,12 @@ pub(crate) fn key_press(state: &mut AppState, code: Option<KeyCode>, text: Optio
 pub(crate) fn cursor_moved(state: &mut AppState) {
     let layout = layout(state);
     let (x, y) = state.match_state.input.cursor_px();
+    let statistics_only = score_overlay::coop_is_statistics_only(state);
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
         return;
     };
     page.ui.buttons.hovered = layout.control_at(x, y);
-    if page.model.vmce_stats {
+    if statistics_only {
         state.platform.window.request_redraw();
         return;
     }
@@ -172,14 +174,16 @@ pub(crate) fn mouse(state: &mut AppState, button: MouseButton, pressed: bool) {
     };
     let layout = layout(state);
     let (x, y) = state.match_state.input.cursor_px();
-    let stats = stats_only(state);
+    let can_continue = match state.frontend.coop_score_page.as_ref() {
+        Some(page) => page.model.can_continue,
+        None => return,
+    };
+    let over = layout
+        .control_at(x, y)
+        .filter(|id| enabled(state, &view, can_continue, *id));
     let Some(page) = state.frontend.coop_score_page.as_mut() else {
         return;
     };
-    let can_continue = page.model.can_continue;
-    let over = layout
-        .control_at(x, y)
-        .filter(|id| enabled(&view, can_continue, stats, *id));
     let ui = &mut page.ui;
     let mut action = None;
     let mut cue = None;
@@ -229,7 +233,7 @@ pub(crate) fn mouse(state: &mut AppState, button: MouseButton, pressed: bool) {
 
 /// The chat list's scrollbar repeat timer.
 pub(crate) fn poll(state: &mut AppState) -> Option<Instant> {
-    if stats_only(state) {
+    if score_overlay::coop_is_statistics_only(state) {
         return None;
     }
     let layout = layout(state);
