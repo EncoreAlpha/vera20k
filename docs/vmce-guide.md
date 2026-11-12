@@ -236,11 +236,11 @@ The result state, Continue and retry semantics belong to VMCE. Both pages are au
   binding; the previous mission's House names are not carried over. The next mission's seed is
   derived deterministically from the previous seed and the next stage's identity (both peers
   compute it locally); the frozen difficulty row carries over.
-- The result page does not write `coopsave.ini`. The current code waits for the result and stage
-  identity agreement and then for the Continue flow before unlocking the next stage locally.
-  Leaving after agreement but before Continue can lose the unlock (B57); loading the next stage
-  is not required. A verified intermission guest unlocks the designated stage without receiving
-  earlier stages. Admission verifies the whole series (see the install section) before the host
+- The result page does not write `coopsave.ini`. As soon as every online participant confirms the
+  result and stage identity, each peer saves its next-stage unlock locally, before Continue or the
+  intermission room (B57 closed); leaving the result page right after agreement no longer loses
+  it. Loading the next stage is not required. A verified intermission guest unlocks the designated
+  stage without receiving earlier stages. Admission verifies the whole series (see the install section) before the host
   can start; the selected map and `campaign.ini` are also checked individually.
 
 Cross-mission money, `AltNextScenario` execution and `SkipMapSelect` branches are still
@@ -326,10 +326,11 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
   reselect roles and ready again. Joining and leaving are allowed between stages. If there are
   more players than roles, keep the room and block Start until the count is valid. The host
   cannot replace the designated stage within that intermission.
-- Completing a stage and resolving the next stage is intended to unlock it once every online
-  participant confirms the result and stage identity. The current implementation also waits for
-  Continue, so leaving earlier can lose the unlock (B57); the next stage need not load. A verified intermission guest unlocks the designated next stage, without
-  receiving earlier stages; this includes returning disconnected players. Unlocks survive content
+- Completing a stage and resolving the next stage unlocks it as soon as every online participant
+  confirms the result and stage identity; Continue and the intermission room are not required
+  (B57 closed), and the next stage need not load. A verified intermission guest unlocks the
+  designated next stage, without receiving earlier stages; this includes returning disconnected
+  players. Unlocks survive content
   updates under the same campaign directory and stage path; persistence is implemented in the
   working tree, while real cross-machine guest joins still need connected validation.
   New hosts may select their locally unlocked stages; guests need matching files, not prior unlocks.

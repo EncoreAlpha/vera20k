@@ -143,9 +143,24 @@ and four-player sessions. VMCE has up to four human roles and no observers.
 
 ## Required reliability and admission work
 
-- **B57 — unlock timing:** agreement alone does not persist the next-stage unlock; leaving or
-  waiting on the result page can lose it. Persist idempotently when the round's result and stage
-  identity are agreed. See the [Chinese audit](zh-CN/vmce-review.md).
+- **B57 — unlock timing (closed 2026-11-13, `9de82144e`):** the result agreement persists the
+  next-stage unlock immediately and idempotently on every peer, before Continue, the intermission
+  room or loading the next stage; a solo host uses the same path. The poll writes right after each
+  received round record, so a following Left, delivery failure or phase close cannot skip it, and
+  a failed store write is not remembered as saved (the next poll retries). A retry, a campaign end,
+  a stale result nonce and a mismatched result or stage expose no unlock. The progress store stays
+  the only writer. See the [Chinese audit](zh-CN/vmce-review.md). Validation: unit tests for the
+  agreement-time decision (host, guest, solo, retry/campaign end, proposal-only, per-round nonce
+  memory), and labelled build `b57-9de82144e-r1` (exe SHA-256
+  `7B49F5B22AEB6AA19B999BE190991A6F5D9660DEAC95277F15B44FDDF2AB3D3C`) passing `2p-win` and
+  `2p-retry` LAN acceptance; both `2p-win` peers' kept `VmceProgress.json` contain
+  `stage02/all01umd.map`, and the retry run writes none. Residuals: the poll early-return ordering
+  and the literal "leave the result page right after agreement" capture have no direct test; a
+  same-batch proposal + confirmation + `Left` can exit before the local confirmation is sent
+  (below the agreement gate, so no write); a clean `Left` shrinks the connected set, so the
+  remaining host may write its own locally resolved, digest-bound stage even though the departed
+  peer never confirmed (Continue still waits for every row). The trigger is unit-tested and runs
+  before those exits.
 - **B58 — Ready/Go revalidation (closed in B4, `6322d411b`):** Ready/Go/GuestPrepare now
   hand off a consumable revision-bound ticket and the current handoff fails closed; focused
   production regressions cover a changed unselected map, a restored map and stale tickets.
