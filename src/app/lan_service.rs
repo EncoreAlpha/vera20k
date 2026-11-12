@@ -17,6 +17,11 @@ use crate::net::lan_messages::{
 use crate::net::reliable::{Delivery, LanConnectionConfig, LanConnections, RetryTiming};
 use crate::net::udp::{DEFAULT_LAN_PORT, LanUdpTransport, UdpBindConfig};
 
+#[cfg(feature = "vmce")]
+type SetupBoundaryRef<'a> = Option<&'a vmce_setup::BoundaryTicket>;
+#[cfg(not(feature = "vmce"))]
+type SetupBoundaryRef<'a> = Option<&'a ()>;
+
 // VERA IPv4 setup lease: 1800 native16-ms wall buckets (28.8s), allowing
 // more than21 missed83-bucket announcements. Native5DF9E0 owns the same
 // presence cadence;5E1410's nativeType5 probe is not an admitted-peer lease.
@@ -137,10 +142,10 @@ pub(crate) struct LanService {
     /// VMCE result and intermission transport state stays grouped in its LAN owner.
     #[cfg(feature = "vmce")]
     vmce_round: vmce_round::VmceLanRoundState,
-    /// Whole-series content verification (worker/cancel/result only; the
-    /// admitted map status stays in MatchSession).
+    /// VMCE setup validation and request-scoped boundary grants. The admitted
+    /// map status and roster remain owned by MatchSession.
     #[cfg(feature = "vmce")]
-    pub(super) vmce_series: vmce_series::VmceSeriesVerifier,
+    vmce_setup: vmce_setup::VmceSetupState,
     // Browser loading suspends the native ACK drain between event-loop turns.
     // The same service retains the queue and deadline; no progress is duplicated.
     #[cfg(any(
@@ -169,13 +174,50 @@ pub(crate) struct LanService {
     presence_timer: super::match_runtime::session::WallBucketTimer,
     force_presence: bool,
     force_query: bool,
-    deferred_setup: std::collections::VecDeque<super::shell_network_setup::NetworkSetupRequest>,
+    deferred_setup: std::collections::VecDeque<DeferredSetupRequest>,
     /// VERA-only: who the host kicked and may not rejoin yet.
     kept_out: Vec<KeptOut>,
     /// A direct spawn launch (docs/spawn.md): the launcher admitted the
     /// roster and the map, so discovery, join/confirm and map transfer never
     /// run; scope, nonces and endpoints come from [`DirectAdmission`].
     preadmitted: bool,
+}
+
+/// A local service request survives the queue's `mem::take`, backpressure and
+/// retry. VMCE boundary validation attaches its request identity to this same
+/// envelope; new UI requests always start without one.
+struct DeferredSetupRequest {
+    pub(super) request: super::shell_network_setup::NetworkSetupRequest,
+    #[cfg(feature = "vmce")]
+    request_id: u64,
+    #[cfg(feature = "vmce")]
+    boundary: Option<vmce_setup::BoundaryTicket>,
+}
+
+impl DeferredSetupRequest {
+    fn new(
+        request: super::shell_network_setup::NetworkSetupRequest,
+        #[cfg(feature = "vmce")] request_id: u64,
+    ) -> Self {
+        Self {
+            request,
+            #[cfg(feature = "vmce")]
+            request_id,
+            #[cfg(feature = "vmce")]
+            boundary: None,
+        }
+    }
+
+    fn boundary_ticket(&self) -> SetupBoundaryRef<'_> {
+        #[cfg(feature = "vmce")]
+        {
+            self.boundary.as_ref()
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            None
+        }
+    }
 }
 
 impl LanService {
@@ -271,7 +313,7 @@ impl LanService {
             #[cfg(feature = "vmce")]
             vmce_round: Default::default(),
             #[cfg(feature = "vmce")]
-            vmce_series: vmce_series::VmceSeriesVerifier::new(),
+            vmce_setup: vmce_setup::VmceSetupState::new(),
             #[cfg(any(
                 test,
                 all(feature = "wasm-net", target_arch = "wasm32", target_os = "unknown")
@@ -308,6 +350,27 @@ impl LanService {
         self.pending_setup.extend(packets);
         self.flush_setup();
         Ok(true)
+    }
+
+    /// Admit the complete setup batch to the retained reliable FIFO before
+    /// consuming the VMCE start ticket that authorized it.
+    fn queue_setup_and_consume_boundary(
+        &mut self,
+        packets: impl ExactSizeIterator<Item = (Vec<u8>, GlobalDestination)>,
+        boundary: SetupBoundaryRef<'_>,
+    ) -> anyhow::Result<bool> {
+        let admitted = self.queue_setup(packets)?;
+        #[cfg(feature = "vmce")]
+        if admitted && let Some(ticket) = boundary {
+            self.vmce_setup.consume_boundary(ticket);
+        }
+        #[cfg(not(feature = "vmce"))]
+        let _ = boundary;
+        Ok(admitted)
+    }
+
+    pub(super) fn can_publish_options(&self) -> bool {
+        self.queued_setup_count() == 0
     }
 
     pub(super) fn setup_scope(&self) -> Option<SessionScope> {
@@ -349,17 +412,13 @@ impl LanService {
     /// admission through the retained transfer owner, for this exact options.
     fn setup_maps_verified(&self, session: &super::match_runtime::session::MatchSession) -> bool {
         #[cfg(feature = "vmce")]
-        if session
-            .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce())
-        {
+        if let Some(verified) = self.vmce_setup.map_admission_verified(session) {
             // Coop LAN never starts a transfer. The session's typed config is
             // created only from the host's campaign identity and this peer's
             // locally verified campaign/map files; the whole series behind
             // those files must also have produced the advertised content
             // digest, so a pending/failed scan keeps K1 and A1 unsent.
-            return session.network_vmce_map_config().is_some()
-                && self.vmce_series.state().verified();
+            return verified;
         }
         // A direct spawn's map is the launcher's file beside spawn.ini; the
         // selected-mode agreement still compares the rules digest at GO.
@@ -486,6 +545,7 @@ impl LanService {
         &mut self,
         message: &LanMessage,
         destinations: &[GlobalDestination],
+        boundary: SetupBoundaryRef<'_>,
     ) -> anyhow::Result<bool> {
         if !self.can_queue_go(destinations.len()) {
             return Ok(false);
@@ -505,10 +565,11 @@ impl LanService {
             transport.clear_lan_scope();
         }
         transport.prepare_lan_scope(proof.scope)?;
-        let admitted = self.queue_setup(
+        let admitted = self.queue_setup_and_consume_boundary(
             destinations
                 .iter()
                 .map(|destination| (message.as_bytes().to_vec(), *destination)),
+            boundary,
         )?;
         assert!(admitted, "reserved GO batch must fit the setup FIFO");
         assert!(
@@ -1150,7 +1211,7 @@ impl LanService {
         {
             self.vmce_round.clear_visit();
             // A new visit's options identity is verified from scratch.
-            self.vmce_series.cancel();
+            self.vmce_setup.reset();
         }
         #[cfg(any(
             test,
@@ -1879,7 +1940,7 @@ pub(crate) fn poll(state: &mut AppState, now_ms: u64) {
     announce(state, now);
     maps::poll(state);
     #[cfg(feature = "vmce")]
-    options::apply_finished_vmce_series_scan(state);
+    vmce_setup::apply_finished_series_scan(state);
     if let Some(service) = state.match_state.lan_service.as_mut() {
         service.flush_setup();
     }
@@ -1897,7 +1958,28 @@ pub(crate) fn vmce_series_state(state: &AppState) -> VmceSeriesState {
         .match_state
         .lan_service
         .as_ref()
-        .map_or(VmceSeriesState::Idle, |service| service.vmce_series.state())
+        .map_or(VmceSeriesState::Idle, |service| service.vmce_setup.state())
+}
+
+#[cfg(feature = "vmce")]
+pub(super) fn discard_deferred_vmce_map_grants(state: &mut AppState) {
+    let mut cancel_through = 0;
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.deferred_setup.retain(|envelope| {
+            let invalidate = matches!(
+                &envelope.request,
+                super::shell_network_setup::NetworkSetupRequest::Ready(true)
+                    | super::shell_network_setup::NetworkSetupRequest::MapStatus(1)
+            );
+            if invalidate {
+                cancel_through = cancel_through.max(envelope.request_id);
+            }
+            !invalidate
+        });
+    }
+    if cancel_through != 0 {
+        vmce_setup::cancel_boundaries(state, cancel_through);
+    }
 }
 
 fn accepts_online_application_packet(payload: &[u8], live: bool, loading: bool) -> bool {
@@ -2302,16 +2384,10 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                 if change.roster && !options::publish_roster(state)? {
                     deferred.push(super::shell_network_setup::NetworkSetupRequest::PublishRoster);
                 }
-                if change.options && !options::publish_options(state)? {
+                if change.options && !options::publish_options(state, None)? {
                     deferred.push(super::shell_network_setup::NetworkSetupRequest::PublishOptions);
                 }
-                state
-                    .match_state
-                    .lan_service
-                    .as_mut()
-                    .expect("visit")
-                    .deferred_setup
-                    .extend(deferred);
+                defer_setup_requests(state, deferred);
             }
         }
         LanMessageKind::Unknown(0x10) => {
@@ -2331,15 +2407,18 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
             let proof = message
                 .session_proof()?
                 .ok_or_else(|| anyhow::anyhow!("GO reply has no LAN scope"))?;
-            let campaign_ok = !state
-                .match_state
-                .session
-                .network_setup()
-                .is_some_and(|launch| launch.mode.class.is_vmce())
-                || options::validate_current_coop_campaign(state).is_ok();
-            if !campaign_ok {
-                options::report_coop_campaign_unavailable(state);
-                return Ok(());
+            #[cfg(feature = "vmce")]
+            {
+                let campaign_ok = !state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .is_some_and(|launch| launch.mode.class.is_vmce())
+                    || vmce_setup::validate_current_coop_campaign(state).is_ok();
+                if !campaign_ok {
+                    vmce_setup::report_coop_campaign_unavailable(state);
+                    return Ok(());
+                }
             }
             if !state
                 .match_state
@@ -2392,26 +2471,61 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                 let proof = message
                     .session_proof()?
                     .ok_or_else(|| anyhow::anyhow!("GO has no LAN scope"))?;
-                let campaign_ok = !state
-                    .match_state
-                    .session
-                    .network_setup()
-                    .is_some_and(|launch| launch.mode.class.is_vmce())
-                    || options::validate_current_coop_campaign(state).is_ok();
-                if !campaign_ok {
-                    options::report_coop_campaign_unavailable(state);
-                    return Ok(());
-                }
-                if !state
+                let (proof_valid, maps_verified, roster_complete) = state
                     .match_state
                     .lan_service
                     .as_ref()
-                    .is_some_and(|service| {
-                        service.validate_peer_agreement(&proof)
-                            && service.setup_maps_verified(&state.match_state.session)
-                            && service.setup_roster_complete(&state.match_state.session)
-                    })
+                    .map_or((false, false, false), |service| {
+                        (
+                            service.validate_peer_agreement(&proof),
+                            service.setup_maps_verified(&state.match_state.session),
+                            service.setup_roster_complete(&state.match_state.session),
+                        )
+                    });
+                if !proof_valid || !roster_complete {
+                    return Ok(());
+                }
+                #[cfg(feature = "vmce")]
                 {
+                    let vmce_guest = !state.match_state.session.host()
+                        && state
+                            .match_state
+                            .session
+                            .network_setup()
+                            .is_some_and(|launch| launch.mode.class.is_vmce());
+                    let (proof_valid, maps_verified, roster_complete) = state
+                        .match_state
+                        .lan_service
+                        .as_ref()
+                        .map_or((false, false, false), |service| {
+                            (
+                                service.validate_peer_agreement(&proof),
+                                service.setup_maps_verified(&state.match_state.session),
+                                service.setup_roster_complete(&state.match_state.session),
+                            )
+                        });
+                    if !proof_valid || !roster_complete {
+                        return Ok(());
+                    }
+                    let admission_pending = vmce_guest
+                        && matches!(vmce_setup::admission_state(state), VmceSeriesState::Pending);
+                    let campaign_ok = !vmce_guest
+                        || admission_pending
+                        || vmce_setup::validate_current_coop_campaign(state).is_ok();
+                    if !campaign_ok {
+                        vmce_setup::report_coop_campaign_unavailable(state);
+                        return Ok(());
+                    }
+                    // A valid GO can arrive while the current guest Options scan
+                    // is still running. Let the existing HostGo -> Prepare queue
+                    // wait for that admission; it retains scope and the handoff
+                    // owner and does not accept a missing or failed series.
+                    if !maps_verified && !admission_pending {
+                        return Ok(());
+                    }
+                }
+                #[cfg(not(feature = "vmce"))]
+                if !maps_verified {
                     return Ok(());
                 }
                 verify_setup_agreement(state)?;
@@ -3742,6 +3856,8 @@ mod options;
 pub(crate) mod vmce_round;
 #[cfg(feature = "vmce")]
 mod vmce_series;
+#[cfg(feature = "vmce")]
+mod vmce_setup;
 pub(crate) use loading::LoadingNetworkService;
 #[cfg(feature = "vmce")]
 pub(crate) use vmce_round::{
@@ -3749,7 +3865,16 @@ pub(crate) use vmce_round::{
     loading_failure_pending as vmce_loading_failure_pending,
 };
 #[cfg(feature = "vmce")]
-pub(crate) use vmce_series::VmceSeriesState;
+pub(crate) use vmce_setup::VmceSeriesState;
+#[cfg(feature = "vmce")]
+pub(in crate::app) use vmce_setup::local_map_admission_policy;
+#[cfg(feature = "vmce")]
+pub(in crate::app) use vmce_setup::uses_local_series_map_assets;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_setup::{
+    admit_vmce_series_map, invalidate_pending_vmce_boundaries,
+    ready_admission_generation as vmce_ready_admission_generation, reset_vmce_setup,
+};
 
 fn send_bytes(
     state: &mut AppState,
@@ -4045,6 +4170,66 @@ fn remote_sources(state: &AppState) -> Vec<usize> {
         })
 }
 
+fn defer_setup_requests(
+    state: &mut AppState,
+    requests: impl IntoIterator<Item = super::shell_network_setup::NetworkSetupRequest>,
+) {
+    let mut incoming = std::collections::VecDeque::new();
+    #[cfg(feature = "vmce")]
+    let mut preceding_options_id = state.match_state.lan_service.as_ref().and_then(|service| {
+        service.deferred_setup.iter().rev().find_map(|request| {
+            matches!(
+                &request.request,
+                super::shell_network_setup::NetworkSetupRequest::PublishOptions
+            )
+            .then_some(request.request_id)
+        })
+    });
+    for request in requests {
+        #[cfg(feature = "vmce")]
+        let request_id = vmce_setup::next_request_id(state);
+        #[cfg(feature = "vmce")]
+        let is_options_publication = matches!(
+            &request,
+            super::shell_network_setup::NetworkSetupRequest::PublishOptions
+        );
+        #[cfg(feature = "vmce")]
+        if is_options_publication {
+            vmce_setup::note_publication_enqueued(state, request_id);
+            preceding_options_id = Some(request_id);
+        }
+        #[cfg(feature = "vmce")]
+        let publication_dependency = matches!(
+            &request,
+            super::shell_network_setup::NetworkSetupRequest::Go { .. }
+        )
+        .then_some(preceding_options_id)
+        .flatten();
+        let mut envelope = DeferredSetupRequest::new(
+            request,
+            #[cfg(feature = "vmce")]
+            request_id,
+        );
+        #[cfg(feature = "vmce")]
+        {
+            envelope.boundary = vmce_setup::ticket_for_enqueue(
+                state,
+                &envelope.request,
+                request_id,
+                publication_dependency,
+            );
+        }
+        incoming.push_back(envelope);
+    }
+    state
+        .match_state
+        .lan_service
+        .as_mut()
+        .expect("checked LAN service")
+        .deferred_setup
+        .extend(incoming);
+}
+
 fn drain_setup_requests(state: &mut AppState, now: u32) {
     let incoming = state
         .frontend
@@ -4052,13 +4237,16 @@ fn drain_setup_requests(state: &mut AppState, now: u32) {
         .as_mut()
         .map(|protocol| protocol.take_service_requests())
         .unwrap_or_default();
+    if state.match_state.lan_service.is_none() {
+        return;
+    }
+    defer_setup_requests(state, incoming);
     let Some(service) = state.match_state.lan_service.as_mut() else {
         return;
     };
-    service.deferred_setup.extend(incoming);
     let mut requests = std::mem::take(&mut service.deferred_setup);
     let mut deferred = std::collections::VecDeque::new();
-    while let Some(request) = requests.pop_front() {
+    while let Some(mut envelope) = requests.pop_front() {
         if state
             .match_state
             .lan_service
@@ -4070,18 +4258,36 @@ fn drain_setup_requests(state: &mut AppState, now: u32) {
         // A guest reads C0 only under the scope the options before it bring.
         if !deferred.is_empty()
             && matches!(
-                request,
+                &envelope.request,
                 super::shell_network_setup::NetworkSetupRequest::PublishCooperativeCampaign(_)
             )
         {
-            deferred.push_back(request);
+            deferred.push_back(envelope);
             continue;
         }
-        match setup_request(state, &request, now) {
+        match setup_request(state, &mut envelope, now) {
+            Ok(false) => deferred.push_back(envelope),
             Ok(true) => {}
-            Ok(false) => deferred.push_back(request),
             Err(error) => {
                 log::warn!("LAN setup request failed: {error:#}");
+                #[cfg(feature = "vmce")]
+                {
+                    let failed_current_handoff =
+                        vmce_setup::is_current_handoff(state, envelope.request_id);
+                    if envelope.boundary.is_some() {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
+                    }
+                    if matches!(
+                        &envelope.request,
+                        super::shell_network_setup::NetworkSetupRequest::PublishOptions
+                    ) {
+                        vmce_setup::abandon_publication(state, envelope.request_id);
+                    }
+                    if failed_current_handoff {
+                        super::shell_network_setup::fail_go_handoff(state);
+                    }
+                    vmce_setup::finish_boundary(state, envelope.boundary.as_ref());
+                }
                 // A direct spawn has no dialog to retry from.
                 if super::shell_network_setup::external(state) {
                     super::App::fail_external_launch(
@@ -4102,16 +4308,56 @@ fn drain_setup_requests(state: &mut AppState, now: u32) {
 
 fn setup_request(
     state: &mut AppState,
-    request: &super::shell_network_setup::NetworkSetupRequest,
+    envelope: &mut DeferredSetupRequest,
     now: u32,
 ) -> anyhow::Result<bool> {
     use super::shell_network_setup::NetworkSetupRequest;
+    let request = &envelope.request;
     let coop_lan = state.match_state.session_mode() == SessionMode::Lan
         && state
             .match_state
             .session
             .network_setup()
             .is_some_and(|launch| launch.mode.class.is_vmce());
+    #[cfg(feature = "vmce")]
+    if coop_lan && matches!(request, NetworkSetupRequest::Ready(false)) {
+        vmce_setup::cancel_boundaries(state, envelope.request_id);
+    }
+    #[cfg(feature = "vmce")]
+    if coop_lan && matches!(request, NetworkSetupRequest::Ready(true)) {
+        let accepted = state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| {
+                state
+                    .match_state
+                    .session
+                    .network_player_ready(launch.local_player_index)
+            });
+        if !accepted {
+            vmce_setup::cancel_boundaries(state, envelope.request_id);
+            return Ok(true);
+        }
+        if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+            protocol.clear_vmce_retry();
+        }
+    }
+    #[cfg(feature = "vmce")]
+    if coop_lan
+        && matches!(
+            request,
+            NetworkSetupRequest::Go { .. } | NetworkSetupRequest::PrepareMapForHandoff { .. }
+        )
+        && !state
+            .frontend
+            .network_setup_protocol
+            .as_ref()
+            .is_some_and(|protocol| protocol.lan_go_send_pending())
+    {
+        vmce_setup::cancel_boundaries(state, envelope.request_id);
+        return Ok(true);
+    }
     if coop_lan && matches!(request, NetworkSetupRequest::MapStatus(2)) {
         // There is no LAN map-transfer fallback for VMCE.
         return Ok(true);
@@ -4119,10 +4365,6 @@ fn setup_request(
     if let Some(admitted) = maps::setup_request(state, request)? {
         return Ok(admitted);
     }
-    // Ready/GO re-check the whole series: the files behind the admitted
-    // options may have changed. The first boundary after admission starts one
-    // fresh scan; Ready waits for it (the deferred request retries) while GO
-    // and the guest handoff refuse, exactly like a failed campaign check.
     #[cfg(feature = "vmce")]
     if coop_lan
         && matches!(
@@ -4132,61 +4374,110 @@ fn setup_request(
                 | NetworkSetupRequest::PrepareMapForHandoff { .. }
         )
     {
-        match options::vmce_series_boundary(state)? {
-            VmceSeriesState::Verified { .. } | VmceSeriesState::Idle => {}
-            VmceSeriesState::Pending
+        match vmce_setup::boundary(state, request, &mut envelope.boundary)? {
+            vmce_setup::BoundaryDecision::Verified
+            | vmce_setup::BoundaryDecision::NotApplicable => {
+                if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                    protocol.clear_vmce_retry();
+                }
+            }
+            vmce_setup::BoundaryDecision::Pending => return Ok(false),
+            vmce_setup::BoundaryDecision::Stale => {
+                let fail_current_handoff =
+                    vmce_setup::is_current_handoff(state, envelope.request_id);
+                vmce_setup::finish_boundary(state, envelope.boundary.as_ref());
+                if fail_current_handoff {
+                    super::shell_network_setup::fail_go_handoff(state);
+                }
+                return Ok(true);
+            }
+            vmce_setup::BoundaryDecision::Refused(state_now) => {
+                let current_handoff = vmce_setup::is_current_handoff(state, envelope.request_id);
                 if matches!(
                     request,
-                    NetworkSetupRequest::Ready(true) | NetworkSetupRequest::Go { .. }
-                ) =>
-            {
-                // The Ready click / host start waits for the revalidation
-                // scan; the deferred request retries in the same poll that
-                // collects the verdict.
-                return Ok(false);
-            }
-            state_now => {
+                    NetworkSetupRequest::Go { .. }
+                        | NetworkSetupRequest::PrepareMapForHandoff { .. }
+                ) && !current_handoff
+                {
+                    vmce_setup::finish_boundary(state, envelope.boundary.as_ref());
+                    return Ok(true);
+                }
                 log::warn!("VMCE whole-series verification refused a start: {state_now:?}");
-                options::report_coop_campaign_unavailable(state);
+                vmce_setup::report_coop_campaign_unavailable(state);
+                if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                    let status = vmce_setup::series_lobby_status(&state_now);
+                    protocol.set_vmce_lobby_status(status);
+                }
                 match request {
                     NetworkSetupRequest::Ready(true) => {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
                         super::shell_network_setup::withdraw_local_acceptance(state)?;
+                        if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                            protocol.allow_vmce_retry();
+                        }
                     }
-                    _ => super::shell_network_setup::fail_go_handoff(state),
+                    _ => {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
+                        super::shell_network_setup::fail_go_handoff(state)
+                    }
                 }
+                vmce_setup::finish_boundary(state, envelope.boundary.as_ref());
                 return Ok(true);
             }
         }
     }
-    let validate_campaign = coop_lan
-        && matches!(
-            request,
-            NetworkSetupRequest::Ready(true)
-                | NetworkSetupRequest::MapStatus(1)
-                | NetworkSetupRequest::Go { .. }
-                | NetworkSetupRequest::PrepareMapForHandoff { .. }
-        );
-    if validate_campaign && let Err(error) = options::validate_current_coop_campaign(state) {
-        log::warn!("VMCE local campaign validation failed: {error:#}");
-        options::report_coop_campaign_unavailable(state);
-        match request {
-            NetworkSetupRequest::Ready(true) => {
-                super::shell_network_setup::withdraw_local_acceptance(state)?;
-                return Ok(true);
+    #[cfg(feature = "vmce")]
+    {
+        let validate_campaign = coop_lan
+            && matches!(
+                request,
+                NetworkSetupRequest::Ready(true)
+                    | NetworkSetupRequest::MapStatus(1)
+                    | NetworkSetupRequest::Go { .. }
+                    | NetworkSetupRequest::PrepareMapForHandoff { .. }
+            );
+        if validate_campaign && let Err(error) = vmce_setup::validate_current_coop_campaign(state) {
+            log::warn!("VMCE local campaign validation failed: {error:#}");
+            vmce_setup::report_coop_campaign_unavailable(state);
+            match request {
+                NetworkSetupRequest::Ready(true) => {
+                    #[cfg(feature = "vmce")]
+                    if coop_lan {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
+                    }
+                    super::shell_network_setup::withdraw_local_acceptance(state)?;
+                    #[cfg(feature = "vmce")]
+                    if coop_lan {
+                        if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                            protocol.allow_vmce_retry();
+                        }
+                    }
+                    #[cfg(feature = "vmce")]
+                    vmce_setup::finish_boundary(state, envelope.boundary.as_ref());
+                    return Ok(true);
+                }
+                NetworkSetupRequest::MapStatus(1) => {
+                    super::shell_network_setup::report_local_map_unavailable(state)?;
+                    return Ok(true);
+                }
+                NetworkSetupRequest::Go { .. } => {
+                    super::shell_network_setup::fail_go_handoff(state);
+                    #[cfg(feature = "vmce")]
+                    if coop_lan {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
+                    }
+                    return Ok(true);
+                }
+                NetworkSetupRequest::PrepareMapForHandoff { .. } => {
+                    super::shell_network_setup::fail_go_handoff(state);
+                    #[cfg(feature = "vmce")]
+                    if coop_lan {
+                        vmce_setup::cancel_boundaries(state, envelope.request_id);
+                    }
+                    return Ok(true);
+                }
+                _ => {}
             }
-            NetworkSetupRequest::MapStatus(1) => {
-                super::shell_network_setup::report_local_map_unavailable(state)?;
-                return Ok(true);
-            }
-            NetworkSetupRequest::Go { .. } => {
-                super::shell_network_setup::fail_go_handoff(state);
-                return Ok(true);
-            }
-            NetworkSetupRequest::PrepareMapForHandoff { .. } => {
-                super::shell_network_setup::fail_go_handoff(state);
-                return Ok(true);
-            }
-            _ => {}
         }
     }
     let message = match request {
@@ -4198,7 +4489,20 @@ fn setup_request(
                 .expect("visit")
                 .kick_peer(&state.match_state.session, name, *keep_out, now);
         }
-        NetworkSetupRequest::PublishOptions => return options::publish_options(state),
+        NetworkSetupRequest::PublishOptions => {
+            let admitted = options::publish_options(
+                state,
+                #[cfg(feature = "vmce")]
+                Some(envelope.request_id),
+                #[cfg(not(feature = "vmce"))]
+                None,
+            )?;
+            #[cfg(feature = "vmce")]
+            if !admitted {
+                return Ok(false);
+            }
+            return Ok(admitted);
+        }
         NetworkSetupRequest::PublishRoster => return options::publish_roster(state),
         NetworkSetupRequest::Go {
             agreed_seed,
@@ -4247,7 +4551,11 @@ fn setup_request(
                 .lan_service
                 .as_mut()
                 .expect("visit")
-                .queue_go(&LanMessage::go(*max_ahead_frames), &destinations)?
+                .queue_go(
+                    &LanMessage::go(*max_ahead_frames),
+                    &destinations,
+                    envelope.boundary_ticket(),
+                )?
             {
                 return Ok(false);
             }
@@ -4414,7 +4722,11 @@ fn setup_request(
                 .lan_service
                 .as_mut()
                 .expect("visit")
-                .queue_go(&LanMessage::ready_to_go(), &[direct(endpoint)])?;
+                .queue_go(
+                    &LanMessage::ready_to_go(),
+                    &[direct(endpoint)],
+                    envelope.boundary_ticket(),
+                )?;
             assert!(admitted, "guest GO preflight must retain its reserved slot");
             let now = super::match_runtime::frame_pacer::frame_bucket(
                 super::match_runtime::frame_pacer::wall_clock_ms(),
@@ -4463,16 +4775,23 @@ fn setup_request(
         .filter_map(|source| state.match_state.session.network_endpoint(source))
         .map(direct)
         .collect::<Vec<_>>();
-    state
+    let boundary = if matches!(request, NetworkSetupRequest::Ready(true)) {
+        envelope.boundary_ticket()
+    } else {
+        None
+    };
+    let admitted = state
         .match_state
         .lan_service
         .as_mut()
         .expect("visit")
-        .queue_setup(
+        .queue_setup_and_consume_boundary(
             destinations
                 .into_iter()
                 .map(|destination| (message.as_bytes().to_vec(), destination)),
-        )
+            boundary,
+        )?;
+    Ok(admitted)
 }
 
 /// The name of the LAN host that admitted this guest, while its setup lasts.
@@ -4942,7 +5261,7 @@ mod tests {
         }
     }
 
-    fn global_frames(service: &mut LanService, now: u32) -> Vec<Vec<u8>> {
+    pub(super) fn global_frames(service: &mut LanService, now: u32) -> Vec<Vec<u8>> {
         let mut frames = Vec::new();
         service
             .transport
@@ -4953,7 +5272,7 @@ mod tests {
         frames
     }
 
-    fn global_receive(
+    pub(super) fn global_receive(
         service: &mut LanService,
         source: SocketAddrV4,
         frame: &[u8],
@@ -4971,7 +5290,7 @@ mod tests {
         replies
     }
 
-    fn global_capacity(service: &mut LanService, slots: usize) {
+    pub(super) fn global_capacity(service: &mut LanService, slots: usize) {
         *service.transport.as_mut().unwrap().global_mut() = crate::net::global::GlobalChannel::new(
             crate::net::global::GlobalConfig {
                 send_capacity: slots,
@@ -5005,7 +5324,7 @@ mod tests {
         transport.start_io_pump(bucket).unwrap();
         assert!(
             service
-                .queue_go(&LanMessage::ready_to_go(), &[direct(destination)])
+                .queue_go(&LanMessage::ready_to_go(), &[direct(destination)], None)
                 .unwrap()
         );
 
@@ -5316,9 +5635,9 @@ mod tests {
             directory_path,
             manifest,
         };
-        assert!(service.vmce_series.host_digest(&source).is_none());
+        assert!(service.vmce_setup.host_digest(&source).is_none());
         for _ in 0..600 {
-            if service.vmce_series.poll() {
+            if service.vmce_setup.poll() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -5527,7 +5846,7 @@ mod tests {
         assert!(guest.admitted_host.is_none());
         assert!(guest.peer_admissions.is_empty());
         assert_eq!(guest.queued_setup_count(), 0);
-        assert!(guest.queue_go(&LanMessage::go(2), &[]).is_err());
+        assert!(guest.queue_go(&LanMessage::go(2), &[], None).is_err());
         assert_eq!(
             session.return_to_network_lobby(),
             Some(NetworkReturnContext::LanLobby)
@@ -5922,7 +6241,7 @@ mod tests {
             .unwrap();
         assert!(host.pending_setup.is_empty());
         let go = LanMessage::go(10);
-        assert!(!host.queue_go(&go, &[direct(guest_address)]).unwrap());
+        assert!(!host.queue_go(&go, &[direct(guest_address)], None).unwrap());
         let mut frames = global_frames(&mut host, 31);
         let last = frames.pop().unwrap();
         let delayed_ack = global_receive(&mut guest, host_address, &last)
@@ -5935,7 +6254,7 @@ mod tests {
         }
         global_frames(&mut host, 33);
         assert_eq!(host.queued_setup_count(), 1);
-        assert!(!host.queue_go(&go, &[direct(guest_address)]).unwrap());
+        assert!(!host.queue_go(&go, &[direct(guest_address)], None).unwrap());
         let mut global = guest.transport.as_mut().unwrap().global_mut();
         let mut reassembly = Reassembly::default();
         assert!(
@@ -5955,7 +6274,7 @@ mod tests {
         drop(global);
         global_receive(&mut host, guest_address, &delayed_ack);
         global_frames(&mut host, 34);
-        assert!(host.queue_go(&go, &[direct(guest_address)]).unwrap());
+        assert!(host.queue_go(&go, &[direct(guest_address)], None).unwrap());
         assert_eq!(
             host.queued_setup_count(),
             1,
@@ -5999,7 +6318,11 @@ mod tests {
             direct(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30123)),
             direct(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30125)),
         ];
-        assert!(!host.queue_go(&LanMessage::go(10), &destinations).unwrap());
+        assert!(
+            !host
+                .queue_go(&LanMessage::go(10), &destinations, None)
+                .unwrap()
+        );
         assert_eq!(host.queued_setup_count(), 0);
         assert_eq!(
             host.transport
@@ -6010,7 +6333,10 @@ mod tests {
             0
         );
         global_capacity(&mut host, 2);
-        assert!(host.queue_go(&LanMessage::go(10), &destinations).unwrap());
+        assert!(
+            host.queue_go(&LanMessage::go(10), &destinations, None)
+                .unwrap()
+        );
         assert!(host.pending_setup.is_empty());
         assert_eq!(host.queued_setup_count(), 2);
     }
@@ -6299,9 +6625,11 @@ mod tests {
         service.admitted_host = Some(("old host".into(), host));
         service.pending_host = Some(host);
         service.selected_game = Some(endpoint_id(host));
-        service
-            .deferred_setup
-            .push_back(super::super::shell_network_setup::NetworkSetupRequest::RequestAcceptance);
+        service.deferred_setup.push_back(DeferredSetupRequest::new(
+            super::super::shell_network_setup::NetworkSetupRequest::RequestAcceptance,
+            #[cfg(feature = "vmce")]
+            1,
+        ));
         assert!(service.send(b"old options", direct(host), true));
 
         service.clear_setup();

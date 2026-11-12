@@ -57,8 +57,8 @@ pub(super) enum CoopEnding {
     /// The last stage is won and `0xBC7` opens; `continue_to_shell` presses
     /// its Continue.
     CampaignEnd { continue_to_shell: bool },
-    /// Online: the first stage is won, BC6's Continue returns both players
-    /// to the kept room on the next stage, and the host starts it there.
+    /// The first stage is won. Stock LAN loads the next stage directly;
+    /// online Continue returns both players to the kept room first.
     Advance,
 }
 
@@ -209,8 +209,8 @@ impl CooperativeRun {
             && committed_frame(state).is_ok_and(|frame| frame >= OBSERVE_FRAME)
     }
 
-    /// Online, BC6's Continue returns both players to the kept room. True
-    /// once it seats both on Cooperative's stage after the won one. Retail's
+    /// BC6's Continue returns both players to the kept room. True once it
+    /// seats both on Cooperative's stage after the won one. Retail's
     /// rematch `+0xAC` (`0x005C46E0`) seats them without a join, so the
     /// partner's return must not print `+0x94`'s saved-campaign notice.
     pub(super) fn room_returned(
@@ -356,11 +356,28 @@ impl CooperativeRun {
                             page.victory && page.model.can_continue && page.campaign_end.is_none(),
                             "a won stage with stages left must offer Continue"
                         );
-                        self.result =
-                            Some(json!({"render_frame":frame,"victory":page.victory,"rows":rows}));
+                        let next = state
+                            .match_state
+                            .session
+                            .network_setup()
+                            .and_then(|launch| launch.selected_map_file.clone());
+                        if !self.online {
+                            ensure!(
+                                next.is_some() && next != self.first_map,
+                                "the winning stage did not project a different next map: {:?} -> {next:?}",
+                                self.first_map
+                            );
+                            self.next_map = next.clone();
+                        }
+                        self.result = Some(json!({"render_frame":frame,"victory":page.victory,
+                            "rows":rows,"next_map":next}));
                         press_score_button(state, crate::ui::coop_score_shell::CONTINUE)?;
                         route.push(json!({"render_frame":frame,"action":"BC6 opened after the won stage; Continue clicked"}));
-                        self.phase = CoopPhase::AwaitRoom;
+                        self.phase = if self.online {
+                            CoopPhase::AwaitRoom
+                        } else {
+                            CoopPhase::AwaitNext
+                        };
                     }
                     CoopEnding::Retry => {
                         ensure!(
@@ -413,17 +430,24 @@ impl CooperativeRun {
                         .and_then(|launch| launch.selected_map_file.clone());
                     ensure!(
                         loaded == self.next_map,
-                        "the next stage loaded {loaded:?}, not the kept room's {:?}",
+                        "the next stage loaded {loaded:?}, not the BC6 next-map projection {:?}",
                         self.next_map
                     );
                 }
-                self.next_startup = Some(startup_receipt(state)?);
+                let startup = startup_receipt(state)?;
+                if advance {
+                    ensure!(
+                        startup.get("map").and_then(Value::as_str) == self.next_map.as_deref(),
+                        "the next-stage startup receipt does not match the BC6 map projection: {startup}"
+                    );
+                }
+                self.next_startup = Some(startup);
                 self.next_first_frame = committed_frame(state)?;
                 if !advance {
                     screenshots.push("vmce-retry-mission".to_owned());
                 }
                 route.push(json!({"render_frame":frame,"action":if advance {
-                    "the kept room's next stage loaded over the relay"
+                    "BC6 next stage loaded over the LAN"
                 } else {
                     "BC6 round over UDP; retried mission loaded"
                 }}));

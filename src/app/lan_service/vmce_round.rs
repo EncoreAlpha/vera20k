@@ -780,6 +780,7 @@ pub(crate) fn enter_vmce_intermission(state: &mut AppState) -> anyhow::Result<bo
     service.pending_admissions.clear();
     service.vmce_round.clear_pending_round();
     service.deferred_setup.clear();
+    service.vmce_setup.reset();
     service.setup_reassembly = Default::default();
     service.maps.cancel();
     for peer in service.peer_admissions.values_mut() {

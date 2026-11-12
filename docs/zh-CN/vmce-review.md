@@ -116,10 +116,11 @@ lang: zh-CN
 
 ### A03 · B58 Ready 后修改其他地图可绕过 Go 前复验 — P2
 
+- **状态：** 已实现请求级复验并通过定向生产回归。
 - **问题与影响：** 玩家 Ready 后更改系列中尚未选中的地图，随后开始任务；已验证的清单和当前地图仍相同，开局可能继续使用旧的整套系列结果，不能保证双方文件一致。
-- **依据：** [边界校验](../../src/app/lan_service/vmce_series.rs#L180)通过 `revalidated` 复用一次扫描结果；[发送路径](../../src/app/lan_service.rs#L4082)的 Ready、Go 和交接调用同一状态，未分别消费新的复验凭据。进入下一关房间会取消旧校验，本问题不依赖跨关缓存。
-- **修正：** 为每个实际 Ready 或 Go 交接分配带身份和代次的一次性复验凭据；异步扫描期间保留心跳，并让同一请求的 deferred 重试复用正在进行的扫描。文件身份变化和离房时失效，失败时撤销准备并显示原因。
-- **验收：** 初次校验和 Ready 成功后，仅改动未选中地图；Go 必须拒绝，恢复一致后可重新验证并开局。分别覆盖房主、客人、重复请求和旧扫描结果晚到。
+- **依据：** [边界票据](../../src/app/lan_service/vmce_setup.rs#L637)绑定所选地图及系列摘要；[票据绑定](../../src/app/lan_service/vmce_setup.rs#L676)在发送 Ready、Go 或 GuestPrepare 前重新核对当前身份，旧票据不能替代新交接。
+- **修正：** 为实际 Ready 或 Go 交接分配带身份和代次的一次性复验票据；异步扫描期间保留心跳，并让同一请求的 deferred 重试复用正在进行的扫描。文件身份变化和离房时失效；当前交接失败时撤销准备并显示原因。
+- **验收：** 定向生产回归覆盖 Ready 后修改未选中地图、恢复后重新验证，以及旧票据/失败发布对当前交接的影响。原同机验收口径仍是：房主和客人在地图改变后拒绝 Go、恢复后可重新验证开局，并覆盖重复请求与旧扫描结果晚到。
 
 ### A04 · B59 相同国家的不同角色仍可开局 — P2
 
@@ -457,7 +458,7 @@ lang: zh-CN
 - **新人角色板空角色：** `apply_vmce_roles` 在已绑定行数与角色数不一致时整体推迟，roster revision 会重放 options；该窗口在同一 service pass 内，不会显示空角色（随机角色不可见另见 A07）。
 - **离房与 HostLeft：** 离开走可靠 Departure，房主收到 `ParticipantLeft` 后重发 options/roster；房主离开走 HostLeft；`leave_setup` 清理 `vmce_intermission_map`，下一房间不会被上一关锁图。
 - **房主缺新人也能开始：** `request_start` 要求其他每个 human 的 map status 非 0 且 `all_ready`；新人 admission 两值初始都不满足；进入 GO 锁定后 `join_denial` 也拒绝后到者。
-- **GO/下一关加载身份：** 客人 Ready 的系列边界会先启动 revalidation，GO 后的 handoff boundary 取其已验证结果；A03/B58 的边界复用仍是已知弱点，未发现额外缺口。
+- **GO/下一关加载身份：** 客人 Ready 的系列边界先启动 revalidation；Go/GuestPrepare 交接持有当前边界票据。A03/B58 的定向生产回归覆盖地图身份变化、旧票据和当前交接失败路径。
 - **seed 与随机角色：** 下一关 seed 由上一关 seed 与双方已同意的 stage identity 派生；随机角色分配按 `raw_slot_index` 排序，与 humans 顺序无关。
 - **结果页/计分美术泄漏到关间或加载：** `advance_vmce_intermission` 会清 campaign score page/art；失败页只进重试，不进入关间，故不会把上一页残留带进房间或加载。
 - **`Start_Scenario` 的加载重试循环：** VMCE 网络加载失败已经由 `fail_loading_with` 通知对端并回到 LAN 大厅（`RetryNetworkShell`），大厅/关间房间保留，房主可再次 Start；原生 `0x00685C47` 的自动重试只是把重试位置放在加载器内，未发现会让玩家卡住或丢状态的独立缺口（失败通知本身见 A25/A31/A32）。

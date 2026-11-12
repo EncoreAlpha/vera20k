@@ -810,6 +810,10 @@ pub(crate) fn commit_map_selection(
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.invalidate_received_preview(map_changed);
         #[cfg(feature = "vmce")]
+        if mode_changed || map_changed || vmce_config_changed {
+            protocol.reset_vmce_lobby_options(None);
+        }
+        #[cfg(feature = "vmce")]
         if vmce_lan_material_changed {
             protocol.start_requested = false;
         }

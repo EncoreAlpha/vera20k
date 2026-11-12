@@ -914,12 +914,14 @@ pub(super) fn received_options(
             .ok_or_else(|| anyhow!("no LAN service"))?
             .maps,
     );
-    if state
-        .match_state
-        .session
-        .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vmce())
-    {
+    #[cfg(feature = "vmce")]
+    if super::vmce_setup::uses_series_map_admission(
+        state
+            .match_state
+            .session
+            .network_setup()
+            .map(|launch| launch.mode.class),
+    ) {
         maps.cancel();
         state
             .match_state
@@ -953,12 +955,14 @@ pub(super) fn poll(state: &mut AppState) {
     {
         return;
     }
-    if state
-        .match_state
-        .session
-        .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vmce())
-    {
+    #[cfg(feature = "vmce")]
+    if super::vmce_setup::uses_series_map_admission(
+        state
+            .match_state
+            .session
+            .network_setup()
+            .map(|launch| launch.mode.class),
+    ) {
         let active = state
             .match_state
             .lan_service
@@ -1020,12 +1024,14 @@ pub(super) fn poll(state: &mut AppState) {
 }
 
 pub(super) fn receive(state: &mut AppState, source: SocketAddrV4, bytes: &[u8]) -> Result<()> {
-    if state
-        .match_state
-        .session
-        .network_setup()
-        .is_some_and(|launch| launch.mode.class.is_vmce())
-    {
+    #[cfg(feature = "vmce")]
+    if super::vmce_setup::uses_series_map_admission(
+        state
+            .match_state
+            .session
+            .network_setup()
+            .map(|launch| launch.mode.class),
+    ) {
         // A stale or unsolicited transfer from a previous options revision
         // must never be installed into a Coop LAN room.
         return Ok(());
@@ -1063,14 +1069,16 @@ pub(super) fn setup_request(
     state: &mut AppState,
     request: &NetworkSetupRequest,
 ) -> Result<Option<bool>> {
-    let coop_lan = state.match_state.session_mode()
-        == crate::app::match_runtime::session::SessionMode::Lan
-        && state
+    #[cfg(feature = "vmce")]
+    if super::vmce_setup::consumes_legacy_map_asset_request(
+        state.match_state.session_mode(),
+        state
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce());
-    if coop_lan && is_asset_request(request) {
+            .map(|launch| launch.mode.class),
+        request,
+    ) {
         return Ok(Some(true));
     }
     match request {
@@ -1103,18 +1111,6 @@ pub(super) fn setup_request(
     }
 }
 
-fn is_asset_request(request: &NetworkSetupRequest) -> bool {
-    matches!(
-        request,
-        NetworkSetupRequest::RequestPreview
-            | NetworkSetupRequest::RequestRandomMapImage
-            | NetworkSetupRequest::OfferPreview
-            | NetworkSetupRequest::SendPreviewFile
-            | NetworkSetupRequest::AcknowledgePreview
-            | NetworkSetupRequest::RequestPreviewFile
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1122,21 +1118,6 @@ mod tests {
     use crate::net::reliable::{Delivery, LanConnectionConfig, LanConnections, RetryTiming};
     use crate::net::udp::{LanUdpTransport, UdpBindConfig};
     use std::net::Ipv4Addr;
-
-    #[test]
-    fn coop_lan_asset_requests_are_identifiable_for_consumption_without_sending() {
-        for request in [
-            NetworkSetupRequest::RequestPreview,
-            NetworkSetupRequest::RequestRandomMapImage,
-            NetworkSetupRequest::OfferPreview,
-            NetworkSetupRequest::SendPreviewFile,
-            NetworkSetupRequest::AcknowledgePreview,
-            NetworkSetupRequest::RequestPreviewFile,
-        ] {
-            assert!(is_asset_request(&request));
-        }
-        assert!(!is_asset_request(&NetworkSetupRequest::Ready(true)));
-    }
 
     fn key(resource: TransferResource, bytes: &[u8]) -> Key {
         let mut identity = crate::util::sha256::Sha256::new();

@@ -204,7 +204,10 @@ const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
     "app/diagnostics/shell_capture/movies/lan.rs",
     "app/diagnostics/shell_capture/movies/lan/live.rs",
     "app/lan_service/vmce_round.rs",
+    "app/lan_service/vmce_setup.rs",
+    "app/lan_service/vmce_setup/options.rs",
     "app/match_runtime/session/cooperative_round/vmce_round.rs",
+    "app/shell_network_setup/vmce_setup.rs",
     "app/vmce_result/defeat.rs",
     "app/vmce_result/mod.rs",
     "app/vmce_result/paint_defeat.rs",
@@ -236,47 +239,7 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
     ("app/input/multiplayer_setup.rs", "layout", 1, 0),
     ("app/lan_service.rs", "reject_setup_compatibility", 1, 0),
     ("app/lan_service.rs", "receive", 3, 0),
-    ("app/lan_service.rs", "setup_maps_verified", 1, 0),
     ("app/lan_service.rs", "setup_request", 1, 0),
-    ("app/lan_service/maps.rs", "poll", 1, 0),
-    ("app/lan_service/maps.rs", "receive", 1, 0),
-    ("app/lan_service/maps.rs", "received_options", 1, 0),
-    ("app/lan_service/maps.rs", "setup_request", 1, 0),
-    (
-        "app/lan_service/options.rs",
-        "apply_finished_vmce_series_scan",
-        1,
-        0,
-    ),
-    ("app/lan_service/options.rs", "apply_vmce_roles", 1, 0),
-    (
-        "app/lan_service/options.rs",
-        "current_vmce_series_identity",
-        1,
-        0,
-    ),
-    (
-        "app/lan_service/options.rs",
-        "prevalidate_received_options",
-        2,
-        0,
-    ),
-    ("app/lan_service/options.rs", "publish_options", 2, 0),
-    (
-        "app/lan_service/options.rs",
-        "published_vmce_series_identity",
-        1,
-        0,
-    ),
-    ("app/lan_service/options.rs", "receive_options_text", 2, 0),
-    (
-        "app/lan_service/options.rs",
-        "validate_current_coop_campaign",
-        1,
-        0,
-    ),
-    ("app/lan_service/options.rs", "validate_vmce_series", 1, 0),
-    ("app/lan_service/options.rs", "vmce_series_boundary", 1, 0),
     ("app/loading/fresh_scenario.rs", "admit", 3, 1),
     ("app/loading/fresh_scenario.rs", "into_parts", 0, 2),
     (
@@ -395,19 +358,7 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         1,
         0,
     ),
-    (
-        "app/shell_network_setup/service.rs",
-        "apply_local_map_admission",
-        1,
-        0,
-    ),
-    (
-        "app/shell_network_setup/service.rs",
-        "gate_vmce_series_admission",
-        1,
-        0,
-    ),
-    ("app/shell_network_setup/service.rs", "service_event", 7, 0),
+    ("app/shell_network_setup/service.rs", "service_event", 2, 0),
     ("app/shell_network_setup/view.rs", "view", 7, 0),
     ("app/shell_network_setup/wol.rs", "send_first_choices", 1, 0),
     ("app/shell_skirmish.rs", "commit_choose_map_selection", 2, 0),
@@ -566,7 +517,7 @@ fn shared_vmce_mode_checks_have_pinned_policy_callers() {
         .map(|((file, _), _)| file.as_str())
         .collect();
     println!(
-        "VMCE shared direct references: 85/21 at cc0f2caca -> {shared_count}/{} now",
+        "VMCE shared direct references: B1 85/21 -> B4 start 80/20 -> {shared_count}/{} now",
         shared_files.len()
     );
     println!("VMCE specialized references (separate): 7 diagnostics + 1 result");

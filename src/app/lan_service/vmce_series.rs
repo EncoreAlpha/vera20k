@@ -75,18 +75,13 @@ pub(crate) struct VmceSeriesVerifier {
     /// The identity the cached outcome (or the running worker) belongs to.
     current: Option<SeriesKey>,
     outcome: Option<ScanOutcome>,
-    /// A Ready/Go boundary revalidation produced the cached outcome, so that
-    /// boundary may pass. Admission-time scans do not set this.
-    revalidated: bool,
     /// Host boundary scans remember the digest the host published; a fresh
     /// scan that produces a different digest means the series changed after
     /// the room opened and must refuse the start.
     boundary_expected: Option<String>,
-    /// Whether the current key's finished verdict has reached the admission
-    /// owner. A verdict is applied at most once per scan; reconciliation
-    /// retries until it succeeds, so a completion that lands while the setup
-    /// identity is temporarily unavailable is never lost.
-    applied: bool,
+    /// The Ready/Go/handoff request that owns the boundary scan. Repeated
+    /// service retries retain this ID; another user action starts a fresh scan.
+    boundary_request_id: Option<u64>,
     #[cfg(test)]
     scans_started: usize,
 }
@@ -106,9 +101,8 @@ impl VmceSeriesVerifier {
             results: None,
             current: None,
             outcome: None,
-            revalidated: false,
             boundary_expected: None,
-            applied: false,
+            boundary_request_id: None,
             #[cfg(test)]
             scans_started: 0,
         }
@@ -142,7 +136,7 @@ impl VmceSeriesVerifier {
     pub(crate) fn host_digest(&mut self, series: &LocalSeries) -> Option<String> {
         let key = Self::key(series, None);
         if self.current.as_ref() != Some(&key) {
-            self.start(key, series, false);
+            self.start(key, series);
             return None;
         }
         if self.worker.is_some() {
@@ -164,64 +158,58 @@ impl VmceSeriesVerifier {
     ) -> VmceSeriesState {
         let key = Self::key(series, Some(advertised));
         if self.current.as_ref() != Some(&key) {
-            self.start(key, series, false);
+            self.start(key, series);
             return VmceSeriesState::Pending;
         }
         if self.worker.is_some() {
             return VmceSeriesState::Pending;
         }
         if self.outcome.is_none() {
-            self.start(key, series, false);
+            self.start(key, series);
             return VmceSeriesState::Pending;
         }
         self.state()
     }
 
-    /// Ready/Go boundary: the guest needs a scan that completed for the
-    /// current identity after admission, because the series files may have
-    /// changed since the options revision was admitted. Starts that
-    /// revalidation when it is missing and reports `Pending` until it ends.
-    pub(crate) fn boundary(&mut self, series: &LocalSeries, advertised: &str) -> VmceSeriesState {
+    /// Fresh guest validation for a local boundary request. Retrying the same
+    /// deferred request ID reuses its worker and verdict; a later ID rescans.
+    pub(crate) fn guest_boundary_for_request(
+        &mut self,
+        series: &LocalSeries,
+        advertised: &str,
+        request_id: u64,
+    ) -> VmceSeriesState {
         let key = Self::key(series, Some(advertised));
-        if self.current.as_ref() != Some(&key) {
-            self.start(key, series, true);
+        if self.boundary_request_id != Some(request_id) {
+            self.start(key, series);
+            self.boundary_request_id = Some(request_id);
             return VmceSeriesState::Pending;
         }
         if self.worker.is_some() {
             return VmceSeriesState::Pending;
         }
-        match self.state() {
-            state @ (VmceSeriesState::Mismatch { .. } | VmceSeriesState::Failed(_)) => state,
-            VmceSeriesState::Verified { .. } if !self.revalidated => {
-                self.start(key, series, true);
-                VmceSeriesState::Pending
-            }
-            state => state,
-        }
+        self.state()
     }
 
-    /// Host Ready/Go boundary: revalidate the series the host advertises, so a
-    /// change to any later mission after the room opened is caught before GO
-    /// (a guest already verified the digest the host published). Reports
-    /// `Pending` until that fresh scan ends.
-    pub(crate) fn host_boundary(&mut self, series: &LocalSeries) -> VmceSeriesState {
+    /// Fresh host validation for a local Go request. The expected digest is
+    /// the whole-series content identity carried by the admitted Options.
+    pub(crate) fn host_boundary_for_request(
+        &mut self,
+        series: &LocalSeries,
+        advertised: &str,
+        request_id: u64,
+    ) -> VmceSeriesState {
         let key = Self::key(series, None);
-        if self.current.as_ref() != Some(&key) {
-            self.start(key, series, true);
+        if self.boundary_request_id != Some(request_id) {
+            self.start(key, series);
+            self.boundary_request_id = Some(request_id);
+            self.boundary_expected = Some(advertised.to_owned());
             return VmceSeriesState::Pending;
         }
         if self.worker.is_some() {
             return VmceSeriesState::Pending;
         }
-        match self.state() {
-            state @ VmceSeriesState::Failed(_) => state,
-            VmceSeriesState::Verified { digest } if !self.revalidated => {
-                self.start(key, series, true);
-                self.boundary_expected = Some(digest);
-                VmceSeriesState::Pending
-            }
-            state => state,
-        }
+        self.state()
     }
 
     /// Collect a finished worker scan. Returns true when the active identity's
@@ -263,22 +251,14 @@ impl VmceSeriesVerifier {
                 ScanOutcome::Failed("VMCE series changed after the host advertised it".to_owned());
         }
         self.outcome = Some(outcome);
-        self.applied = false;
         true
     }
 
-    /// Whether the finished verdict for the current identity still needs to
-    /// reach the admission owner. Callers reconcile every poll pass, so a
-    /// completion that lands while the setup identity is momentarily
-    /// unavailable is applied on a later frame instead of being dropped.
-    pub(crate) fn admission_needed(&self) -> bool {
-        !self.applied && self.worker.is_none() && self.outcome.is_some()
-    }
-
-    /// The admission owner applied (or deliberately skipped) the current
-    /// verdict; a following scan becomes unapplied again on completion.
-    pub(crate) fn mark_admission_applied(&mut self) {
-        self.applied = true;
+    /// The active worker belongs to a request-scoped boundary when set. A
+    /// material revision may cancel that worker while preserving the separate
+    /// admitted-map verdict.
+    pub(crate) fn boundary_request_id(&self) -> Option<u64> {
+        self.boundary_request_id
     }
 
     /// Cancel any running scan, forget the cached identity and discard its
@@ -296,12 +276,11 @@ impl VmceSeriesVerifier {
         self.generation = self.generation.wrapping_add(1);
         self.current = None;
         self.outcome = None;
-        self.revalidated = false;
         self.boundary_expected = None;
-        self.applied = false;
+        self.boundary_request_id = None;
     }
 
-    fn start(&mut self, key: SeriesKey, series: &LocalSeries, revalidation: bool) {
+    fn start(&mut self, key: SeriesKey, series: &LocalSeries) {
         self.cancel.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -311,9 +290,8 @@ impl VmceSeriesVerifier {
         self.generation = self.generation.wrapping_add(1);
         self.current = Some(key.clone());
         self.outcome = None;
-        self.revalidated = revalidation;
         self.boundary_expected = None;
-        self.applied = false;
+        self.boundary_request_id = None;
         #[cfg(test)]
         {
             self.scans_started += 1;
@@ -595,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_blocks_the_ready_boundary_until_a_revalidation_completes() {
+    fn same_boundary_request_reuses_its_scan_and_a_new_request_rescans() {
         let root = TestDirectory::new("vmce-series-verifier-boundary");
         write_series(
             &root,
@@ -609,12 +587,32 @@ mod tests {
             VmceSeriesState::Pending
         );
         assert!(wait_settled(&mut guest).verified());
-        // Admission only proves the files at options time; the first Ready
-        // forces a fresh scan and reports pending until it ends.
-        assert_eq!(guest.boundary(&source, &digest), VmceSeriesState::Pending);
+        assert_eq!(guest.scans_started(), 1);
+        // Admission only proves the files at Options time. A Ready request
+        // starts one fresh scan; its queue-backpressure retry keeps that ID.
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 17),
+            VmceSeriesState::Pending
+        );
         assert!(guest.scanning());
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 17),
+            VmceSeriesState::Pending
+        );
+        assert_eq!(guest.scans_started(), 2);
         assert!(wait_settled(&mut guest).verified());
-        assert!(guest.boundary(&source, &digest).verified());
+        assert!(
+            guest
+                .guest_boundary_for_request(&source, &digest, 17)
+                .verified()
+        );
+        assert_eq!(guest.scans_started(), 2);
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 18),
+            VmceSeriesState::Pending
+        );
+        assert_eq!(guest.scans_started(), 3);
+        guest.cancel();
     }
 
     #[test]
@@ -634,13 +632,31 @@ mod tests {
         assert!(wait_settled(&mut guest).verified());
         // A later mission's bytes change after the options revision.
         root.write("later.map", b"changed after admission");
-        assert_eq!(guest.boundary(&source, &digest), VmceSeriesState::Pending);
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 24),
+            VmceSeriesState::Pending
+        );
         let state = wait_settled(&mut guest);
         assert!(
             matches!(state, VmceSeriesState::Mismatch { .. }),
             "a later mission changed after admission must refuse Ready: {state:?}"
         );
-        assert_eq!(guest.boundary(&source, &digest), state);
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 24),
+            state
+        );
+        // A restored file is a distinct user request and is scanned again.
+        root.write("later.map", b"later");
+        assert_eq!(
+            guest.guest_boundary_for_request(&source, &digest, 25),
+            VmceSeriesState::Pending
+        );
+        assert!(wait_settled(&mut guest).verified());
+        assert!(
+            guest
+                .guest_boundary_for_request(&source, &digest, 25)
+                .verified()
+        );
     }
 
     #[test]
@@ -655,62 +671,39 @@ mod tests {
         assert!(unchanged.host_digest(&source).is_none());
         assert!(wait_settled(&mut unchanged).verified());
         // The first Ready/Go revalidates unchanged official files and passes.
-        assert_eq!(unchanged.host_boundary(&source), VmceSeriesState::Pending);
+        let published = match unchanged.state() {
+            VmceSeriesState::Verified { digest } => digest,
+            state => panic!("host digest not complete: {state:?}"),
+        };
+        assert_eq!(
+            unchanged.host_boundary_for_request(&source, &published, 31),
+            VmceSeriesState::Pending
+        );
         assert!(wait_settled(&mut unchanged).verified());
-        assert!(unchanged.host_boundary(&source).verified());
+        assert!(
+            unchanged
+                .host_boundary_for_request(&source, &published, 31)
+                .verified()
+        );
 
         // A later mission's bytes change after the digest was published; the
         // host must not start on the identity its guests verified.
         let mut host = VmceSeriesVerifier::new();
         assert!(host.host_digest(&source).is_none());
         assert!(wait_settled(&mut host).verified());
+        let published = match host.state() {
+            VmceSeriesState::Verified { digest } => digest,
+            state => panic!("host digest not complete: {state:?}"),
+        };
         root.write("later.map", b"changed after publish");
-        assert_eq!(host.host_boundary(&source), VmceSeriesState::Pending);
+        assert_eq!(
+            host.host_boundary_for_request(&source, &published, 32),
+            VmceSeriesState::Pending
+        );
         let state = wait_settled(&mut host);
         assert!(
             matches!(state, VmceSeriesState::Failed(_)),
             "the host's advertised series changed before GO: {state:?}"
         );
-    }
-
-    /// A finished scan stays unapplied until the admission owner consumes it.
-    /// The LAN service reconciles every pass, so a completion that lands while
-    /// the setup identity is momentarily unavailable is applied on a later
-    /// frame instead of leaving the guest without a `K` answer.
-    #[test]
-    fn a_finished_scan_waits_for_the_admission_owner_to_apply_it() {
-        let root = TestDirectory::new("vmce-series-verifier-applied");
-        write_series(
-            &root,
-            &[("first.map", b"selected"), ("later.map", b"later")],
-        );
-        let source = local_series(&root);
-        let digest = host_digest(&source);
-        let mut guest = VmceSeriesVerifier::new();
-        assert_eq!(
-            guest.verify_advertised(&source, &digest),
-            VmceSeriesState::Pending
-        );
-        assert!(
-            !guest.admission_needed(),
-            "a running scan has no verdict to apply"
-        );
-        assert!(wait_settled(&mut guest).verified());
-        assert!(
-            guest.admission_needed(),
-            "a finished verdict must reach the admission owner"
-        );
-        guest.mark_admission_applied();
-        assert!(!guest.admission_needed());
-        // A later boundary scan becomes unapplied again when it completes.
-        assert_eq!(guest.boundary(&source, &digest), VmceSeriesState::Pending);
-        assert!(!guest.admission_needed());
-        assert!(wait_settled(&mut guest).verified());
-        assert!(guest.admission_needed());
-        guest.mark_admission_applied();
-        assert!(!guest.admission_needed());
-        // Cancelling forgets the identity and its verdict entirely.
-        guest.cancel();
-        assert!(!guest.admission_needed());
     }
 }

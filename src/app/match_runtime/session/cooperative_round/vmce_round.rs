@@ -1008,7 +1008,7 @@ pub(super) struct FreezeData {
     previous_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     next_houses: Option<crate::skirmish_launch::VmceHouseAssignments>,
     next_stage: Option<VmceNextStage>,
-    retry_map_identity: Option<(
+    preserved_map_identity: Option<(
         Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
         Option<crate::map::source::LoadedMapSource>,
         Option<String>,
@@ -1022,10 +1022,8 @@ impl FreezeData {
             network.map_metadata = Some(next.metadata.clone());
             network.local_map_source = Some(next.local_map_source.clone());
             network.local_map_effective_digest = Some(next.effective_digest.clone());
-        } else if let Some((config, source, digest)) = self.retry_map_identity.as_ref() {
-            if let Some(config) = config {
-                network.vmce_map_config = Some(config.clone());
-            }
+        } else if let Some((config, source, digest)) = self.preserved_map_identity.as_ref() {
+            network.vmce_map_config = config.clone();
             network.local_map_source = source.clone();
             network.local_map_effective_digest = digest.clone();
         }
@@ -1052,7 +1050,7 @@ impl FreezeData {
                     Some(next.effective_digest.clone()),
                 )
                 .with_vmce_map_config(next.config.clone());
-        } else if let Some((config, source, digest)) = self.retry_map_identity.clone() {
+        } else if let Some((config, source, digest)) = self.preserved_map_identity.clone() {
             if let Some(config) = config {
                 prepared = prepared.with_vmce_map_config(config);
             }
@@ -1082,15 +1080,25 @@ pub(super) fn prepare_freeze(
         None => previous.seed.value,
     };
     let previous_houses = previous.vmce_houses().cloned();
-    // Retry reopens the same frozen stage. Capture the admitted map identity
-    // before network fields are changed so the rebuilt start inherits it
-    // without re-reading campaign data or resolving a different source.
-    let retry_map_identity = next_stage.is_none().then(|| {
-        (
-            previous.vmce_map_config().cloned(),
-            previous.local_map_source().cloned(),
-            previous.effective_map_digest().map(str::to_owned),
-        )
+    // Reuse the admitted map identity only when the next launch still names
+    // that selected map. A changed stock Cooperative map must resolve its own
+    // source through the normal loader path.
+    let same_previous_map = previous
+        .launch_session()
+        .selected_map_file
+        .as_deref()
+        .zip(launch.selected_map_file.as_deref())
+        .is_some_and(|(previous, next)| previous.eq_ignore_ascii_case(next));
+    let preserved_map_identity = next_stage.is_none().then(|| {
+        if same_previous_map {
+            (
+                previous.vmce_map_config().cloned(),
+                previous.local_map_source().cloned(),
+                previous.effective_map_digest().map(str::to_owned),
+            )
+        } else {
+            (None, None, None)
+        }
     });
     let next_houses = if let Some(next) = next_stage.as_ref() {
         // Resolve the new map's own PlayerN/Houses binding while preserving
@@ -1116,6 +1124,6 @@ pub(super) fn prepare_freeze(
         previous_houses,
         next_houses,
         next_stage,
-        retry_map_identity,
+        preserved_map_identity,
     })
 }

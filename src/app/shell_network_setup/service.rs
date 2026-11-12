@@ -432,8 +432,14 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .session
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?;
+            #[cfg(feature = "vmce")]
             anyhow::ensure!(
-                status != 2 || dialog.wol() || !launch.mode.class.is_vmce(),
+                status != 2
+                    || dialog.wol()
+                    || !crate::app::lan_service::uses_local_series_map_assets(
+                        state.match_state.session_mode(),
+                        Some(launch.mode.class),
+                    ),
                 "VMCE LAN does not transfer maps"
             );
             let status = if index == launch.local_player_index {
@@ -505,71 +511,6 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
                 .clone();
-            #[cfg(feature = "vmce")]
-            validate_host_vmce_map_config(
-                dialog.host,
-                dialog.wol(),
-                launch.mode.class.is_vmce(),
-                launch.selected_map_file.as_deref(),
-                &map_metadata.source_sha256,
-                vmce_map_config.as_ref(),
-            )?;
-            #[cfg(feature = "vmce")]
-            let coop_local_map = if let Some(config) = vmce_map_config.as_ref()
-                && let Some(file) = launch.selected_map_file.as_deref()
-                && let (Some(game_config), Some(assets)) = (
-                    state.platform.game_config.as_ref(),
-                    state.process_assets.manager(),
-                )
-                && let Ok(map) = crate::map::source::load_network_map_ini(
-                    &game_config.paths.ra2_dir,
-                    file,
-                    assets,
-                )
-                && map
-                    .source
-                    .physical_identity()
-                    .is_some_and(|(_, digest)| digest == config.source_sha256)
-            {
-                // The peer's local map validates its locally derived campaign
-                // projection before it enters Session. Coop LAN never transfers
-                // a missing or mismatched map/config.
-                config.apply_to_map(file, &config.source_sha256, &map.ini)?;
-                let loose = matches!(
-                    &map.source,
-                    crate::map::source::LoadedMapSource::Loose { .. }
-                );
-                // The campaign Entry is not a Choose Map row on a guest, so the
-                // catalog cannot supply this verified local source. The local
-                // bytes just matched the host-advertised campaign digest, which
-                // is the LAN admission proof for a preinstalled map.
-                let name = map
-                    .ini
-                    .section("Basic")
-                    .map(|section| section.read_string("Name", "", 0x20))
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| map_metadata.display_name.clone());
-                Some((
-                    name,
-                    loose,
-                    map.source,
-                    map_metadata.effective_digest.clone(),
-                ))
-            } else {
-                None
-            };
-            #[cfg(not(feature = "vmce"))]
-            let coop_local_map: Option<(
-                String,
-                bool,
-                crate::map::source::LoadedMapSource,
-                String,
-            )> = None;
-            #[cfg(feature = "vmce")]
-            let vmce_config_changed =
-                state.match_state.session.network_vmce_map_config() != vmce_map_config.as_ref();
-            #[cfg(not(feature = "vmce"))]
-            let vmce_config_changed = false;
             // 0x5E5411..0x5E541D: the current mode's +24 on every parse.
             if super::cooperative::current(state) {
                 state
@@ -588,9 +529,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // independently of the later general-option acceptance flag.
             // A qualified local record supplies its title;
             // otherwise the accepted host metadata remains sufficient for BD.
-            // VMCE's preinstalled campaign Entry is not a guest catalog
-            // row, so a locally re-verified campaign map stands in for it.
-            let local_map = if map_changed {
+            let catalog_local_map = if map_changed {
                 launch.selected_map_file.as_deref().and_then(|file| {
                     let config = state.platform.game_config.as_ref()?;
                     let assets = state.process_assets.manager()?;
@@ -609,12 +548,51 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             } else {
                 None
             };
+            let map_admission = if map_changed {
+                let file = launch
+                    .selected_map_file
+                    .as_deref()
+                    .filter(|file| !file.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("host options have no map"))?;
+                Some(map_metadata.admission(file, catalog_local_map.is_some()))
+            } else {
+                None
+            };
+            let request_preview =
+                map_changed && catalog_local_map.is_none() && !dialog.host && !dialog.wol();
+            let map_outcome = super::HostSetupMapOutcome {
+                local_map: catalog_local_map,
+                map_admission,
+                request_preview,
+                #[cfg(feature = "vmce")]
+                vmce_local_source: None,
+                #[cfg(feature = "vmce")]
+                vmce_config_changed: false,
+                #[cfg(feature = "vmce")]
+                vmce_series_admission: false,
+            };
             #[cfg(feature = "vmce")]
-            let local_map = local_map.or_else(|| {
-                coop_local_map
-                    .as_ref()
-                    .map(|(name, loose, _, _)| (name.clone(), *loose))
-            });
+            let map_outcome = super::vmce_setup::apply_vmce_host_setup_map(
+                state,
+                dialog.host,
+                dialog.wol(),
+                &launch,
+                &map_metadata,
+                map_changed,
+                vmce_map_config.as_ref(),
+                map_outcome,
+            )?;
+            let local_map = map_outcome.local_map;
+            let map_admission = map_outcome.map_admission;
+            let request_preview = map_outcome.request_preview;
+            #[cfg(feature = "vmce")]
+            let vmce_local_source = map_outcome.vmce_local_source;
+            #[cfg(feature = "vmce")]
+            let vmce_config_changed = map_outcome.vmce_config_changed;
+            #[cfg(not(feature = "vmce"))]
+            let vmce_config_changed = false;
+            #[cfg(feature = "vmce")]
+            let vmce_series_admission = map_outcome.vmce_series_admission;
             // 0x005E7604..0x005E76E8: a WOL guest skips the loose-file test
             // only for an unofficial name holding both ".MPR" and ".YRM".
             let local_map_loose = local_map.as_ref().is_some_and(|(_, loose)| {
@@ -628,34 +606,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                     && (map_metadata.official
                         || !(upper.contains(".MPR") && upper.contains(".YRM")))
             });
-            let local_map = local_map.map(|(name, _)| name);
-            let vmce = launch.mode.class.is_vmce();
-            #[cfg(feature = "vmce")]
-            let coop_lan_without_local_config = launch.mode.class.is_vmce()
-                && !dialog.wol()
-                && !dialog.host
-                && vmce_map_config.is_none();
-            #[cfg(not(feature = "vmce"))]
-            let coop_lan_without_local_config = false;
-            // Every options revision clears the host's remote map status
-            // (`invalidate_network_agreement`). A stock guest re-sends `K`
-            // through its verified map source; a VMCE guest has no LAN map
-            // transfer pass, so it must recompute the admission here or the
-            // host's Start gate keeps reporting GUI:HostNoMap.
-            let reanswer_map =
-                guest_rechecks_map_on_options(vmce, dialog.host, dialog.wol(), map_changed);
-            let map_admission = if coop_lan_without_local_config {
-                Some(crate::app::match_runtime::session::NetworkMapAdmission::Unavailable)
-            } else if reanswer_map {
-                let file = launch
-                    .selected_map_file
-                    .as_deref()
-                    .filter(|file| !file.is_empty())
-                    .ok_or_else(|| anyhow::anyhow!("host options have no map"))?;
-                Some(map_metadata.admission(file, local_map.is_some()))
-            } else {
-                None
-            };
+            let local_map_name = local_map.as_ref().map(|(name, _)| name.as_str());
             state.match_state.session.accept_network_host_setup(
                 launch,
                 vacancies,
@@ -665,14 +616,14 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             )?;
             state.match_state.session.accept_network_map_metadata(
                 map_metadata,
-                local_map.as_deref(),
+                local_map_name,
                 map_changed,
             )?;
             // The preinstalled Coop campaign map is this guest's transfer
             // source: LAN never sends the bytes, and the post-GO local-file
             // probe plus the loader both read this retained source.
             #[cfg(feature = "vmce")]
-            if let Some((_, _, source, effective)) = coop_local_map {
+            if let Some((source, effective)) = vmce_local_source {
                 state
                     .match_state
                     .session
@@ -691,13 +642,13 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             // produced the host's advertised content digest; the gate holds
             // the authoritative status closed while the scan runs.
             #[cfg(feature = "vmce")]
-            let vmce_series_admission = vmce && !dialog.host && !dialog.wol();
-            #[cfg(not(feature = "vmce"))]
-            let vmce_series_admission = false;
             if vmce_series_admission {
-                #[cfg(feature = "vmce")]
-                apply_vmce_series_admission(state, map_admission);
+                crate::app::lan_service::admit_vmce_series_map(state, map_admission);
             } else if let Some(admission) = map_admission {
+                apply_local_map_admission(state, admission)?;
+            }
+            #[cfg(not(feature = "vmce"))]
+            if let Some(admission) = map_admission {
                 apply_local_map_admission(state, admission)?;
             }
             // 0x005E57DA → 0x005E74E0: a material change frees the preview
@@ -716,7 +667,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 protocol.awaiting_preview_file = false;
                 protocol.local_map_verified = local_map.is_some();
                 protocol.local_map_loose = local_map_loose;
-                if local_map.is_none() && !dialog.host && !dialog.wol() && !vmce {
+                if request_preview {
                     protocol.requests.push(NetworkSetupRequest::RequestPreview);
                 }
             }
@@ -924,12 +875,16 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             preview_acknowledged(state, index)?;
         }
         NetworkSetupEvent::PreviewOffered => {
-            if state
-                .match_state
-                .session
-                .network_setup()
-                .is_some_and(|launch| launch.mode.class.is_vmce())
-                && !dialog.wol()
+            #[cfg(feature = "vmce")]
+            if !dialog.wol()
+                && crate::app::lan_service::uses_local_series_map_assets(
+                    state.match_state.session_mode(),
+                    state
+                        .match_state
+                        .session
+                        .network_setup()
+                        .map(|launch| launch.mode.class),
+                )
             {
                 return Ok(());
             }
@@ -1119,56 +1074,9 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
     Ok(())
 }
 
-#[cfg(feature = "vmce")]
-fn validate_host_vmce_map_config(
-    host: bool,
-    wol: bool,
-    vmce: bool,
-    map_file: Option<&str>,
-    source_sha256: &str,
-    config: Option<&crate::app::match_bootstrap::NetworkVmceMapConfig>,
-) -> anyhow::Result<()> {
-    match (vmce, config) {
-        (true, Some(config)) => {
-            anyhow::ensure!(
-                !wol,
-                "WOL VMCE does not synchronize supplemental map config"
-            );
-            let file = map_file
-                .ok_or_else(|| anyhow::anyhow!("VMCE host options have no selected map"))?;
-            config.validate_binding(file, source_sha256)?;
-        }
-        (true, None) if wol || !host => {}
-        (true, None) => anyhow::bail!("VMCE host options omit the map config"),
-        (false, Some(_)) => anyhow::bail!("non-VMCE host options carry VMCE map config"),
-        (false, None) => {}
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "vmce")]
-    use super::validate_host_vmce_map_config;
-    use super::{
-        guest_rechecks_map_on_options, mode_allows_automatic_accept, without_coop_lan_transfer,
-    };
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn vmce_guest_reanswers_the_map_check_on_every_options_revision() {
-        // Stock guests resend their `K` map status through the verified map
-        // source on each revision; VMCE has no such pass, so an unchanged map
-        // still recomputes the admission.
-        assert!(guest_rechecks_map_on_options(true, false, false, false));
-        assert!(guest_rechecks_map_on_options(true, false, false, true));
-        assert!(!guest_rechecks_map_on_options(false, false, false, false));
-        assert!(guest_rechecks_map_on_options(false, false, false, true));
-        // A host does not answer its own map check, and WOL Coop is outside
-        // the LAN VMCE path.
-        assert!(!guest_rechecks_map_on_options(true, true, false, false));
-        assert!(!guest_rechecks_map_on_options(true, false, true, false));
-    }
+    use super::mode_allows_automatic_accept;
 
     #[cfg(feature = "vmce")]
     #[test]
@@ -1178,68 +1086,6 @@ mod tests {
         assert!(mode_allows_automatic_accept(Battle));
         assert!(mode_allows_automatic_accept(Cooperative));
         assert!(!mode_allows_automatic_accept(Vmce));
-    }
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn vmce_lan_never_admits_missing_custom_maps_for_transfer() {
-        use crate::app::match_runtime::session::NetworkMapAdmission::{
-            NeedsTransfer, Present, Unavailable,
-        };
-
-        assert_eq!(without_coop_lan_transfer(NeedsTransfer, true), Unavailable);
-        assert_eq!(without_coop_lan_transfer(Present, true), Present);
-        assert_eq!(
-            without_coop_lan_transfer(NeedsTransfer, false),
-            NeedsTransfer
-        );
-    }
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn wol_coop_keeps_legacy_behavior_and_lan_guest_can_lack_local_config() {
-        let map_file = "test.map";
-        let source = "a".repeat(64);
-        let config = crate::app::match_bootstrap::NetworkVmceMapConfig::new(
-            map_file.to_owned(),
-            source.clone(),
-            crate::map::vmce_config::VmceMapConfig::default(),
-        )
-        .unwrap();
-
-        assert!(
-            validate_host_vmce_map_config(true, true, true, Some(map_file), &source, None).is_ok()
-        );
-        assert!(
-            validate_host_vmce_map_config(true, true, true, Some(map_file), &source, Some(&config))
-                .is_err()
-        );
-        assert!(
-            validate_host_vmce_map_config(false, true, true, Some(map_file), &source, None).is_ok()
-        );
-        assert!(
-            validate_host_vmce_map_config(
-                false,
-                true,
-                true,
-                Some(map_file),
-                &source,
-                Some(&config)
-            )
-            .is_err()
-        );
-        assert!(
-            validate_host_vmce_map_config(false, false, true, Some(map_file), &source, None)
-                .is_ok()
-        );
-        assert!(
-            validate_host_vmce_map_config(true, false, true, Some(map_file), &source, None)
-                .is_err()
-        );
-        assert!(
-            validate_host_vmce_map_config(false, false, false, Some(map_file), &source, None)
-                .is_ok()
-        );
     }
 
     /// A2: every accepted host-options revision queues this guest's `K` map
@@ -1287,45 +1133,6 @@ mod tests {
             !protocol.accept_eligible,
             "an unavailable map never makes the guest accept-eligible"
         );
-    }
-
-    /// A VMCE LAN guest reports `K1` only for a whole series that produced the
-    /// host's advertised digest. A differing unselected map is a completed
-    /// mismatch (unavailable, status 0, so the host's Start gate refuses); a
-    /// still-running scan supports no admission at all.
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn vmce_series_verification_decides_the_map_admission_status() {
-        use crate::app::lan_service::VmceSeriesState;
-        use crate::app::match_runtime::session::NetworkMapAdmission;
-
-        let present = super::vmce_series_admission(&VmceSeriesState::Verified {
-            digest: "a".repeat(64),
-        });
-        assert_eq!(present, Some(NetworkMapAdmission::Present));
-        assert_eq!(present.map(NetworkMapAdmission::status), Some(1));
-
-        let mismatch = super::vmce_series_admission(&VmceSeriesState::Mismatch {
-            local: "b".repeat(64),
-        });
-        assert_eq!(
-            mismatch.map(NetworkMapAdmission::status),
-            Some(0),
-            "a differing later mission must never look present"
-        );
-        assert_eq!(
-            super::vmce_series_admission(&VmceSeriesState::Failed(
-                "campaign map is missing: later.map".to_owned()
-            ))
-            .map(NetworkMapAdmission::status),
-            Some(0)
-        );
-        assert_eq!(
-            super::vmce_series_admission(&VmceSeriesState::Pending),
-            None,
-            "a running scan withholds the K answer"
-        );
-        assert_eq!(super::vmce_series_admission(&VmceSeriesState::Idle), None);
     }
 }
 
@@ -1444,6 +1251,8 @@ pub(crate) fn fail_go_handoff_with(state: &mut AppState, notice: Option<String>)
     {
         return;
     }
+    #[cfg(feature = "vmce")]
+    crate::app::lan_service::invalidate_pending_vmce_boundaries(state);
     if super::external(state) {
         if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
             protocol.lan_go = Some(LanGoWait::Failed);
@@ -1766,14 +1575,20 @@ pub(crate) fn apply_local_map_admission(
     state: &mut AppState,
     admission: crate::app::match_runtime::session::NetworkMapAdmission,
 ) -> anyhow::Result<()> {
-    let coop_lan = state.match_state.session_mode()
-        == crate::app::match_runtime::session::SessionMode::Lan
-        && state
+    #[cfg(feature = "vmce")]
+    let policy = crate::app::lan_service::local_map_admission_policy(
+        state.match_state.session_mode(),
+        state
             .match_state
             .session
             .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce());
-    let admission = without_coop_lan_transfer(admission, coop_lan);
+            .map(|launch| launch.mode.class),
+        admission,
+    );
+    #[cfg(feature = "vmce")]
+    let (admission, report_missing_vmce_map) = (policy.admission, policy.report_missing_vmce_map);
+    #[cfg(not(feature = "vmce"))]
+    let (admission, report_missing_vmce_map) = (admission, false);
     let status = admission.status();
     let index = state
         .match_state
@@ -1811,7 +1626,7 @@ pub(crate) fn apply_local_map_admission(
             },
         );
     }
-    if coop_lan && status == 0 {
+    if report_missing_vmce_map && status == 0 {
         let text = crate::i18n::tr("VERA:VmceMapMissing");
         crate::app::shell_lan::append_chat(
             state,
@@ -1824,10 +1639,30 @@ pub(crate) fn apply_local_map_admission(
     Ok(())
 }
 
+/// Hold the local map admission closed without sending an unavailable `K`
+/// while its owner is still validating files. Session remains authoritative;
+/// this only applies its existing lobby acceptability projection.
+pub(crate) fn withhold_local_map_admission(state: &mut AppState) {
+    let Some(index) = state
+        .match_state
+        .session
+        .network_setup()
+        .map(|launch| launch.local_player_index)
+    else {
+        return;
+    };
+    if let Err(error) = state.match_state.session.set_network_map_status(index, 0) {
+        log::warn!("Could not withhold local map admission: {error:#}");
+    }
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.accept_eligible = false;
+    }
+    state.platform.window.request_redraw();
+}
+
 /// Queue this peer's `K` map status for one accepted host-options revision.
-/// A VMCE guest re-runs the admission on every revision
-/// (`guest_rechecks_map_on_options`); skipping the queue leaves the host's
-/// Start gate without this peer's map answer (`GUI:HostNoMap`).
+/// Skipping a required answer leaves the host's Start gate without this peer's
+/// map result (`GUI:HostNoMap`).
 fn queue_local_map_status(
     protocol: &mut crate::app::shell_network_setup::NetworkSetupProtocol,
     admission: crate::app::match_runtime::session::NetworkMapAdmission,
@@ -1838,127 +1673,6 @@ fn queue_local_map_status(
         .requests
         .push(NetworkSetupRequest::MapStatus(status));
     status
-}
-
-/// In a VMCE LAN room a guest's map admission is only as good as its
-/// whole-series verification: `K1`/`A1` require it (`LanService::
-/// setup_maps_verified`), and this projection keeps the authoritative
-/// `MatchSession` status in step with the scan owner. While the scan runs the
-/// status is held closed without a `K`, so the host's missing-map line is not
-/// printed for a scan that has simply not finished.
-#[cfg(feature = "vmce")]
-fn gate_vmce_series_admission(
-    state: &mut AppState,
-    admission: Option<crate::app::match_runtime::session::NetworkMapAdmission>,
-) -> Option<crate::app::match_runtime::session::NetworkMapAdmission> {
-    let vmce_guest = state.match_state.session_mode()
-        == crate::app::match_runtime::session::SessionMode::Lan
-        && !state.match_state.session.host()
-        && state
-            .match_state
-            .session
-            .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce())
-        && state.match_state.lan_service.is_some();
-    if !vmce_guest
-        || state
-            .match_state
-            .session
-            .network_vmce_map_config()
-            .is_none()
-    {
-        return admission;
-    }
-    let admission = vmce_series_admission(&crate::app::lan_service::vmce_series_state(state));
-    if admission.is_none() {
-        withhold_local_map_admission(state);
-    }
-    admission
-}
-
-/// The map admission a whole-series verification state supports. Only a
-/// verified series may report `K` status 1; a completed mismatch or failure
-/// reports 0 (the host's Start gate then refuses the participant), while a
-/// running scan supports no admission yet.
-#[cfg(feature = "vmce")]
-fn vmce_series_admission(
-    verification: &crate::app::lan_service::VmceSeriesState,
-) -> Option<crate::app::match_runtime::session::NetworkMapAdmission> {
-    use crate::app::lan_service::VmceSeriesState;
-    use crate::app::match_runtime::session::NetworkMapAdmission;
-    match verification {
-        VmceSeriesState::Verified { .. } => Some(NetworkMapAdmission::Present),
-        VmceSeriesState::Mismatch { .. } | VmceSeriesState::Failed(_) => {
-            Some(NetworkMapAdmission::Unavailable)
-        }
-        VmceSeriesState::Pending | VmceSeriesState::Idle => None,
-    }
-}
-
-/// Hold a VMCE LAN guest's own map admission closed while its whole-series
-/// scan runs: the authoritative flag stays `0` and no `K` is queued, unlike
-/// `report_local_map_unavailable`, which the host would print as a missing map.
-#[cfg(feature = "vmce")]
-fn withhold_local_map_admission(state: &mut AppState) {
-    let Some(index) = state
-        .match_state
-        .session
-        .network_setup()
-        .map(|launch| launch.local_player_index)
-    else {
-        return;
-    };
-    if let Err(error) = state.match_state.session.set_network_map_status(index, 0) {
-        log::warn!("Could not withhold VMCE map admission: {error:#}");
-    }
-    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
-        protocol.accept_eligible = false;
-    }
-    state.platform.window.request_redraw();
-}
-
-/// Re-run a VMCE LAN guest's map admission from its whole-series verification
-/// state. The authoritative flag and its `K` request keep going through
-/// [`apply_local_map_admission`]; this only decides which admission the scan
-/// currently supports.
-#[cfg(feature = "vmce")]
-pub(crate) fn apply_vmce_series_admission(
-    state: &mut AppState,
-    admission: Option<crate::app::match_runtime::session::NetworkMapAdmission>,
-) {
-    let Some(admission) = gate_vmce_series_admission(state, admission) else {
-        return;
-    };
-    if let Err(error) = apply_local_map_admission(state, admission) {
-        log::warn!("Could not apply VMCE map admission: {error:#}");
-        return;
-    }
-    // This verdict reached the admission owner; the poll-driven reconciliation
-    // must not queue a second answer for the same scan.
-    if let Some(service) = state.match_state.lan_service.as_mut() {
-        service.vmce_series.mark_admission_applied();
-    }
-}
-
-fn without_coop_lan_transfer(
-    admission: crate::app::match_runtime::session::NetworkMapAdmission,
-    coop_lan: bool,
-) -> crate::app::match_runtime::session::NetworkMapAdmission {
-    if coop_lan
-        && admission == crate::app::match_runtime::session::NetworkMapAdmission::NeedsTransfer
-    {
-        crate::app::match_runtime::session::NetworkMapAdmission::Unavailable
-    } else {
-        admission
-    }
-}
-
-/// Whether a host-options parse must recompute the local map admission. A
-/// changed map always does; a VMCE LAN guest must also do it for an unchanged
-/// map because hosting a new options revision clears the host's remote
-/// `map_status` and VMCE has no LAN map-transfer pass that would resend it.
-fn guest_rechecks_map_on_options(coop: bool, host: bool, wol: bool, map_changed: bool) -> bool {
-    map_changed || (coop && !host && !wol)
 }
 
 /// Verified map prefetch uses the editable lobby's existing progress owner
@@ -2167,7 +1881,7 @@ fn auto_accept(state: &mut AppState) {
             .network_setup_protocol
             .as_ref()
             .is_none_or(|protocol| protocol.locked)
-        || !super::view::accept_enabled(state)
+        || !super::view::accept_enabled(state, false)
     {
         return;
     }

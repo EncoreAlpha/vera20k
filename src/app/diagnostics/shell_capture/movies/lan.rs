@@ -99,9 +99,14 @@ pub enum LanTarget {
     LiveDesyncGuest,
     /// LAN Cooperative through BC6 Continue to the retried mission.
     LiveCoopHost,
+    /// LAN Cooperative through BC6 Continue, the kept-room intermission,
+    /// and the next mission.
+    LiveCoopAdvanceHost,
     /// The host takes Use Saved Campaign from a seeded coopsave.ini.
     LiveCoopSavedHost,
     LiveCoopGuest,
+    /// Guest half of LAN Cooperative victory→NEXT through the kept room.
+    LiveCoopAdvanceGuest,
     /// The saved last stage is won; `0xBC7` stays on the host's screen.
     LiveCoopFinalHost,
     /// The final guest presses `0xBC7`'s Continue back to the shell.
@@ -114,6 +119,13 @@ pub enum LanTarget {
     /// the map/config, Accepts and stops before GO.
     #[cfg(feature = "vmce")]
     LiveVmceGuest,
+    /// Host for the stale-series A03 handoff refusal capture.
+    #[cfg(feature = "vmce")]
+    LiveVmceA03Host,
+    /// Guest for A03: after admitted Ready, changes only an unselected later
+    /// map in its isolated fixture and observes the real GO refusal.
+    #[cfg(feature = "vmce")]
+    LiveVmceA03Guest,
     BattleHost,
     BattleGuest,
     Lobby,
@@ -256,8 +268,13 @@ pub(crate) fn lan_checkpoints() -> Vec<(&'static str, LanTarget)> {
         ("lan-live-desync-host", LanTarget::LiveDesyncHost),
         ("lan-live-desync-guest", LanTarget::LiveDesyncGuest),
         ("lan-live-coop-host", LanTarget::LiveCoopHost),
+        ("lan-live-coop-advance-host", LanTarget::LiveCoopAdvanceHost),
         ("lan-live-coop-saved-host", LanTarget::LiveCoopSavedHost),
         ("lan-live-coop-guest", LanTarget::LiveCoopGuest),
+        (
+            "lan-live-coop-advance-guest",
+            LanTarget::LiveCoopAdvanceGuest,
+        ),
         ("lan-live-coop-final-host", LanTarget::LiveCoopFinalHost),
         ("lan-live-coop-final-guest", LanTarget::LiveCoopFinalGuest),
     ];
@@ -265,6 +282,8 @@ pub(crate) fn lan_checkpoints() -> Vec<(&'static str, LanTarget)> {
     checkpoints.extend([
         ("lan-live-vera-campaign-host", LanTarget::LiveVmceHost),
         ("lan-live-vera-campaign-guest", LanTarget::LiveVmceGuest),
+        ("lan-live-vera-a03-host", LanTarget::LiveVmceA03Host),
+        ("lan-live-vera-a03-guest", LanTarget::LiveVmceA03Guest),
     ]);
     checkpoints.extend([
         ("lan-battle-host", LanTarget::BattleHost),
@@ -407,8 +426,10 @@ impl LanTarget {
                 | Self::LiveDesyncHost
                 | Self::LiveDesyncGuest
                 | Self::LiveCoopHost
+                | Self::LiveCoopAdvanceHost
                 | Self::LiveCoopSavedHost
                 | Self::LiveCoopGuest
+                | Self::LiveCoopAdvanceGuest
                 | Self::LiveCoopFinalHost
                 | Self::LiveCoopFinalGuest
                 | Self::BattleHost
@@ -420,7 +441,13 @@ impl LanTarget {
     pub(crate) fn is_live_vmce(self) -> bool {
         #[cfg(feature = "vmce")]
         {
-            matches!(self, Self::LiveVmceHost | Self::LiveVmceGuest)
+            matches!(
+                self,
+                Self::LiveVmceHost
+                    | Self::LiveVmceGuest
+                    | Self::LiveVmceA03Host
+                    | Self::LiveVmceA03Guest
+            )
         }
         #[cfg(not(feature = "vmce"))]
         {
@@ -431,7 +458,18 @@ impl LanTarget {
     pub(crate) fn is_live_vmce_host(self) -> bool {
         #[cfg(feature = "vmce")]
         {
-            self == Self::LiveVmceHost
+            matches!(self, Self::LiveVmceHost | Self::LiveVmceA03Host)
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            false
+        }
+    }
+    /// The live two-process VMCE guest target; never true in a stock build.
+    pub(crate) fn is_live_vmce_guest(self) -> bool {
+        #[cfg(feature = "vmce")]
+        {
+            matches!(self, Self::LiveVmceGuest | Self::LiveVmceA03Guest)
         }
         #[cfg(not(feature = "vmce"))]
         {
@@ -444,8 +482,10 @@ impl LanTarget {
             Self::OnlineCoopHost
                 | Self::OnlineCoopGuest
                 | Self::LiveCoopHost
+                | Self::LiveCoopAdvanceHost
                 | Self::LiveCoopSavedHost
                 | Self::LiveCoopGuest
+                | Self::LiveCoopAdvanceGuest
                 | Self::LiveCoopFinalHost
                 | Self::LiveCoopFinalGuest
         )

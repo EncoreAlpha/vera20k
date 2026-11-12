@@ -1013,6 +1013,74 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_feature_stock_coop_changed_map_drops_previous_source_identity() {
+        use crate::app::match_bootstrap::PreparedNetworkStartup;
+        use crate::app::match_runtime::session::{SessionMode, WolStartTerms};
+        use crate::map::source::LoadedMapSource;
+
+        let mut previous_launch = super::super::tests::network_fixture();
+        previous_launch.mode = crate::skirmish_launch::SkirmishLaunchMode::from_game_mode(
+            &crate::skirmish_modes::stock_skirmish_modes()
+                .into_iter()
+                .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Cooperative)
+                .expect("retail Cooperative mode"),
+        );
+        previous_launch.selected_map_file = Some("Maps/old.map".into());
+        let source = LoadedMapSource::Loose {
+            path: std::path::PathBuf::from("Maps/old.map"),
+            payload_len: 100,
+            source_sha256: "a".repeat(64),
+            cache_lease: Default::default(),
+        };
+        let digest = "b".repeat(64);
+        let previous = PreparedNetworkStartup::new(
+            previous_launch.clone(),
+            SEED,
+            SessionMode::Lan,
+            true,
+            2,
+            WolStartTerms::default(),
+        )
+        .with_local_map_source(Some(source.clone()), Some(digest.clone()));
+        let mut next_launch = previous_launch.clone();
+        next_launch.selected_map_file = Some("Maps/new.map".into());
+        let round = CooperativeRoundState {
+            ready: [true; 8],
+            local_ready: false,
+            assigned: true,
+            acked: [true; 8],
+            begin: true,
+            quit_enabled: true,
+            can_continue: true,
+            rows: 2,
+            outcome: Some(true),
+            vmce: None,
+        };
+
+        let freeze = vmce_round::prepare_freeze(&previous, &next_launch, &round).unwrap();
+        let startup = freeze.apply_startup(PreparedNetworkStartup::new(
+            next_launch,
+            SEED,
+            SessionMode::Lan,
+            true,
+            2,
+            WolStartTerms::default(),
+        ));
+        assert!(startup.local_map_source().is_none());
+        assert!(startup.effective_map_digest().is_none());
+
+        let mut owner = MatchSession::default();
+        owner.enter_network(NetworkReturnContext::LanLobby);
+        let network = owner.network.as_mut().unwrap();
+        network.local_map_source = Some(source);
+        network.local_map_effective_digest = Some(digest);
+        freeze.apply_network_identity(network);
+        assert!(network.local_map_source.is_none());
+        assert!(network.local_map_effective_digest.is_none());
+    }
+
     /// The same frozen two-player LAN start in the authored VMCE mode.
     #[cfg(feature = "vmce")]
     fn frozen_vera(

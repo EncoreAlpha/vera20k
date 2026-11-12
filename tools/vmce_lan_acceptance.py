@@ -11,6 +11,8 @@ Usage::
 
     python -m tools.vmce_lan_acceptance run --exe PATH \
         --retail-source DIR --series DIR [--suite fast|smoke|full]
+    python -m tools.vmce_lan_acceptance run --scenario a03-stale-later-map \
+        --exe PATH --retail-source DIR --series DIR
     python -m tools.vmce_lan_acceptance compare --players 2 \
         --receipt HOST/capture.json --receipt GUEST/capture.json \
         [--expect-victory] [--expect-can-continue] [--expect-rows 2] \
@@ -26,6 +28,13 @@ The v1 suites are:
 
 ``2p-final`` can be selected explicitly with a final-stage series. Each
 scenario needs a series authored for its outcome.
+
+The opt-in ``a03-stale-later-map`` scenario checks a real admitted Ready,
+changes only its unselected next map in the guest's isolated fixture, and waits
+for the production Start refusal. The runner gives both processes a unique
+marker file under that scenario's work directory; the host waits for the
+guest's atomic marker before pressing Start. A fresh ``2p-win`` recovery runs
+immediately afterward as ``a03-recovery-2p-win``. Ordinary suites are unchanged.
 
 Every scenario reuses the ``--series``/``--entry`` map.  ``--players`` selects
 the row count for the ``4p-*`` scenarios (2, 3 or 4); ``2p-win`` always runs two
@@ -49,8 +58,10 @@ invalid arguments or setup (bad paths, UDP port conflict, copy failure).
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import configparser
+import hashlib
 import json
 import math
 import os
@@ -84,6 +95,14 @@ CHECKPOINT_HOST = "lan-live-vera-campaign-host"
 CAPTURE_TIMEOUT_SECONDS = int(os.environ.get("VMCE_CAPTURE_TIMEOUT", "300"))
 
 CHECKPOINT_GUEST = "lan-live-vera-campaign-guest"
+CHECKPOINT_A03_HOST = "lan-live-vera-a03-host"
+CHECKPOINT_A03_GUEST = "lan-live-vera-a03-guest"
+A03_RENDEZVOUS_ENV = "VERA20K_A03_RENDEZVOUS_MARKER"
+A03_MARKER_SCHEMA = "vera20k.a03-later-map-ready.v1"
+A03_MARKER_TIMEOUT_FRAMES = 1_800
+A03_HOST_STARTUP_FAILURE = (
+    "Could not load map: initial active roster is not a majority of the original admission"
+)
 
 # A host room is normally advertised within a few render frames.  The current
 # capture path logs at debug level for its event stream, so these markers are
@@ -135,6 +154,7 @@ class Scenario:
     checkpoint_guest: str = CHECKPOINT_GUEST
     expect_retry: bool = False
     expect_final: bool = False
+    expect_a03_refusal: bool = False
     expect_screenshots: tuple[str, ...] = ()
     language: str = ""
 
@@ -176,7 +196,20 @@ SCENARIOS = {
         expect_final=True,
         expect_screenshots=("vera-campaign-credits", "vera-campaign-end"),
     ),
+    "a03-stale-later-map": Scenario(
+        name="a03-stale-later-map",
+        players=2,
+        expect_victory=False,
+        expect_can_continue=False,
+        expect_next_stage=False,
+        checkpoint_host=CHECKPOINT_A03_HOST,
+        checkpoint_guest=CHECKPOINT_A03_GUEST,
+        expect_a03_refusal=True,
+        expect_screenshots=("vera-a03-handoff-refused",),
+    ),
 }
+
+A03_RECOVERY_SCENARIO = replace(SCENARIOS["2p-win"], name="a03-recovery-2p-win")
 
 SUITES = {
     "dev": ("2p-retry",),
@@ -422,6 +455,11 @@ def selected_scenarios(args: argparse.Namespace) -> list[Scenario]:
         chosen.append(scenario)
     if not chosen:
         raise UsageError("no scenarios selected")
+    if any(scenario.expect_a03_refusal for scenario in chosen):
+        a03_index = next(
+            index for index, scenario in enumerate(chosen) if scenario.expect_a03_refusal
+        )
+        chosen.insert(a03_index + 1, A03_RECOVERY_SCENARIO)
     return chosen
 
 
@@ -480,6 +518,14 @@ def _is_int(value: Any) -> bool:
 
 def _is_str(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
 
 
 def _normalise(value: Any) -> Any:
@@ -1167,6 +1213,7 @@ def _process_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for key in [key for key in environment if key.upper().startswith("RA2_")]:
         del environment[key]
+    environment.pop(A03_RENDEZVOUS_ENV, None)
     environment["RUST_LOG"] = os.environ.get("VMCE_RUST_LOG", "info")
     return environment
 
@@ -1269,7 +1316,9 @@ def _prepare_process(
             if scenario.checkpoint_host in (CHECKPOINT_HOST, CHECKPOINT_GUEST)
             else ""
         ),
-        map_required=scenario.checkpoint_host == CHECKPOINT_HOST,
+        map_required=(
+            scenario.checkpoint_host == CHECKPOINT_HOST or scenario.expect_a03_refusal
+        ),
         language=scenario.language,
     )
     return ProcessSpec(
@@ -1480,6 +1529,558 @@ def _participant_count_check(
     return Check("configured participants", True, f"{players} rows")
 
 
+def _a03_part(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    try:
+        value = receipt_field(receipt, "lan.a03")
+    except KeyError:
+        return None
+    return value if isinstance(value, Mapping) else None
+
+
+def _a03_host_startup_log_checks(log_path: Path) -> list[Check]:
+    """Require the host's real pre-game majority refusal and zero-frame peer loss."""
+    try:
+        log = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [Check("A03 host startup log", False, f"cannot read {log_path}: {exc}")]
+
+    disconnect_line = next(
+        (
+            line
+            for line in log.splitlines()
+            if "Network connection destroyed: source=1, house=" in line
+        ),
+        "",
+    )
+    disconnect = log.find(disconnect_line) if disconnect_line else -1
+    # ConnectionError::Lost is code 1 in match_runtime/network_match.rs. The
+    # House index is resolved from the admitted assignment and can vary.
+    lost_before_gameplay = (
+        "reason=1, native_frame=0, startup_pending=false" in disconnect_line
+    )
+    refusal = log.find(A03_HOST_STARTUP_FAILURE)
+    returned = log.find("Returned to the shell", refusal + len(A03_HOST_STARTUP_FAILURE))
+    return [
+        Check(
+            "A03 host peer left at native frame zero",
+            disconnect >= 0 and lost_before_gameplay and refusal > disconnect,
+            f"lost-at-zero={lost_before_gameplay}; disconnect index={disconnect}; "
+            f"majority refusal index={refusal}",
+        ),
+        Check(
+            "A03 host original-admission majority refusal",
+            refusal >= 0,
+            f"expected exact startup reason in {log_path}",
+        ),
+        Check(
+            "A03 host returned to shell after startup refusal",
+            returned >= refusal >= 0,
+            f"majority refusal index={refusal}; shell return index={returned}",
+        ),
+    ]
+
+
+def _a03_refusal_receipt_checks(
+    receipts: Sequence[tuple[str, Mapping[str, Any]]],
+    *,
+    expected_entry: str,
+    series_name: str,
+    marker_path: Path,
+) -> list[Check]:
+    """Check the A03 two-process refusal and its admitted-Ready marker proof."""
+    if len(receipts) != 2:
+        return [Check("A03 receipts", False, f"expected 2 receipts, got {len(receipts)}")]
+
+    checks: list[Check] = [Check("A03 receipts", True, "host and guest receipts loaded")]
+    normalized_entry = _normalize_relative_map(
+        _safe_manifest_map_path(expected_entry).as_posix()
+    )
+    expected_checkpoints = (
+        ("host", "host", CHECKPOINT_A03_HOST),
+        ("guest1", "guest", CHECKPOINT_A03_GUEST),
+    )
+    marker_hashes: list[tuple[str, str]] = []
+    guest_a03: Mapping[str, Any] | None = None
+
+    for (label, receipt), (_, role, checkpoint) in zip(receipts, expected_checkpoints):
+        actual_checkpoint = receipt.get("checkpoint")
+        checks.append(
+            Check(
+                f"A03 checkpoint {label}",
+                actual_checkpoint == checkpoint,
+                f"expected {checkpoint}, got {format_value(actual_checkpoint)}",
+            )
+        )
+        a03 = _a03_part(receipt)
+        if a03 is None:
+            checks.append(Check(f"A03 receipt {label}", False, "missing lan.a03 object"))
+            continue
+        checks.append(
+            Check(
+                f"A03 role {label}",
+                a03.get("role") == role,
+                f"expected {role}, got {format_value(a03.get('role'))}",
+            )
+        )
+        for field, expected in (
+            ("handoff_refused", True),
+            ("notice_acknowledged", True),
+            ("room_exit_observed", True),
+        ):
+            checks.append(
+                Check(
+                    f"A03 {field} {label}",
+                    a03.get(field) is expected,
+                    f"got {format_value(a03.get(field))}",
+                )
+            )
+        checks.append(
+            Check(
+                f"A03 failure phase {label}",
+                a03.get("failure_phase") == ("loading" if role == "host" else "setup"),
+                f"expected {'loading' if role == 'host' else 'setup'}, got "
+                f"{format_value(a03.get('failure_phase'))}",
+            )
+        )
+        if role == "host":
+            for field, expected in (
+                ("locked_when_notice", False),
+                ("loading_observed", True),
+                ("startup_failure_observed", True),
+                ("gameplay_active_at_notice", False),
+            ):
+                checks.append(
+                    Check(
+                        f"A03 host {field}",
+                        a03.get(field) is expected,
+                        f"got {format_value(a03.get(field))}",
+                    )
+                )
+        else:
+            checks.append(
+                Check(
+                    f"A03 guest locked Go refusal {label}",
+                    a03.get("locked_when_notice") is True,
+                    f"got {format_value(a03.get('locked_when_notice'))}",
+                )
+            )
+        notice = a03.get("blocking_notice")
+        checks.append(
+            Check(
+                f"A03 blocking notice {label}",
+                _is_str(notice),
+                f"got {format_value(notice)}",
+            )
+        )
+        receipt_marker_path = a03.get("rendezvous_marker_path")
+        checks.append(
+            Check(
+                f"A03 marker path {label}",
+                _is_str(receipt_marker_path)
+                and Path(receipt_marker_path).resolve() == marker_path.resolve(),
+                f"expected {marker_path}, got {format_value(receipt_marker_path)}",
+            )
+        )
+        marker_hash = a03.get("rendezvous_marker_sha256")
+        if _is_sha256(marker_hash):
+            marker_hashes.append((label, marker_hash))
+        else:
+            checks.append(Check(f"A03 marker hash {label}", False, "invalid SHA-256 marker hash"))
+
+        if role == "host":
+            try:
+                route = receipt_field(receipt, "lan.route")
+            except KeyError:
+                route = None
+            marker_event = next(
+                (
+                    index
+                    for index, event in enumerate(route or [])
+                    if isinstance(event, Mapping)
+                    and "A03 host observed the guest's admitted-Ready mutation marker"
+                    in str(event.get("action", ""))
+                ),
+                None,
+            )
+            start_event = next(
+                (
+                    index
+                    for index, event in enumerate(route or [])
+                    if isinstance(event, Mapping)
+                    and event.get("action") == "host Start clicked; VMCE admission and frozen start"
+                ),
+                None,
+            )
+            checks.extend(
+                [
+                    Check(
+                        "A03 host Start",
+                        a03.get("host_start_clicked") is True,
+                        f"got {format_value(a03.get('host_start_clicked'))}",
+                    ),
+                    Check(
+                        "A03 host observed guest mutation",
+                        a03.get("rendezvous_marker_observed") is True,
+                        f"got {format_value(a03.get('rendezvous_marker_observed'))}",
+                    ),
+                    Check(
+                        "A03 host observed marker before Start",
+                        marker_event is not None
+                        and start_event is not None
+                        and marker_event < start_event,
+                        f"route marker index={format_value(marker_event)} "
+                        f"Start index={format_value(start_event)}",
+                    ),
+                ]
+            )
+            waited = a03.get("rendezvous_wait_frames")
+            timeout = a03.get("rendezvous_timeout_frames")
+            valid_wait = (
+                _is_int(waited)
+                and _is_int(timeout)
+                and timeout == A03_MARKER_TIMEOUT_FRAMES
+                and 0 <= waited < timeout
+            )
+            checks.append(
+                Check(
+                    "A03 host marker wait",
+                    valid_wait,
+                    f"wait={format_value(waited)} timeout={format_value(timeout)} frames",
+                )
+            )
+        else:
+            guest_a03 = a03
+            checks.append(
+                Check(
+                    "A03 guest published mutation marker",
+                    a03.get("rendezvous_marker_written") is True,
+                    f"got {format_value(a03.get('rendezvous_marker_written'))}",
+                )
+            )
+            before = a03.get("ready_generation_before")
+            after = a03.get("ready_generation_after")
+            checks.append(
+                Check(
+                    "A03 guest admitted Ready before mutation",
+                    _is_int(before) and _is_int(after) and after > before,
+                    f"generation {format_value(before)} → {format_value(after)}",
+                )
+            )
+            checks.append(
+                Check(
+                    "A03 guest mutation followed admitted Ready",
+                    a03.get("mutation_after_admitted_ready") is True,
+                    f"got {format_value(a03.get('mutation_after_admitted_ready'))}",
+                )
+            )
+            selected = a03.get("selected_map")
+            try:
+                selected_entry = (
+                    _a03_manifest_relative_path(selected, series_name).as_posix()
+                    if _is_str(selected)
+                    else ""
+                )
+            except ValueError:
+                selected_entry = ""
+            selected_ok = (
+                bool(selected_entry)
+                and _normalize_relative_map(selected_entry) == normalized_entry
+            )
+            checks.append(
+                Check(
+                    "A03 selected entry",
+                    selected_ok,
+                    f"expected {normalized_entry}, got {format_value(selected)}",
+                )
+            )
+            for before_field, after_field, label_name in (
+                ("campaign_sha256_before", "campaign_sha256_after", "manifest"),
+                ("selected_sha256_before", "selected_sha256_after", "selected map"),
+            ):
+                before_hash = a03.get(before_field)
+                after_hash = a03.get(after_field)
+                same = _is_str(before_hash) and before_hash == after_hash
+                checks.append(
+                    Check(
+                        f"A03 {label_name} unchanged",
+                    same and _is_sha256(before_hash),
+                        f"before={format_value(before_hash)} after={format_value(after_hash)}",
+                    )
+                )
+            later = a03.get("unselected_later_map")
+            try:
+                later_entry = (
+                    _a03_manifest_relative_path(later, series_name).as_posix()
+                    if _is_str(later)
+                    else ""
+                )
+            except ValueError:
+                later_entry = ""
+            later_ok = bool(later_entry) and _normalize_relative_map(later_entry) != normalized_entry
+            checks.append(
+                Check(
+                    "A03 unselected later map changed",
+                    later_ok
+                    and _is_sha256(a03.get("unselected_sha256_before"))
+                    and _is_sha256(a03.get("unselected_sha256_mutated"))
+                    and a03.get("unselected_sha256_before")
+                    != a03.get("unselected_sha256_mutated"),
+                    f"map={format_value(later)} before={format_value(a03.get('unselected_sha256_before'))} "
+                    f"mutated={format_value(a03.get('unselected_sha256_mutated'))}",
+                )
+            )
+            checks.append(
+                Check(
+                    "A03 exact map restoration hash",
+                    _is_sha256(a03.get("unselected_sha256_before"))
+                    and _is_sha256(a03.get("unselected_sha256_restored"))
+                    and a03.get("unselected_sha256_restored")
+                    == a03.get("unselected_sha256_before"),
+                    f"original={format_value(a03.get('unselected_sha256_before'))} "
+                    f"restored={format_value(a03.get('unselected_sha256_restored'))}",
+                )
+            )
+
+    if len(marker_hashes) == 2:
+        checks.append(
+            Check(
+                "A03 marker hash shared by both processes",
+                marker_hashes[0][1] == marker_hashes[1][1],
+                f"{marker_hashes[0][0]}={marker_hashes[0][1]} {marker_hashes[1][0]}={marker_hashes[1][1]}",
+            )
+        )
+
+    screenshot_check, names = _screenshot_names(receipts)
+    checks.append(screenshot_check)
+    for label, available in names.items():
+        checks.append(
+            Check(
+                f"A03 refusal screenshot {label}",
+                "vera-a03-handoff-refused" in available,
+                "vera-a03-handoff-refused present"
+                if "vera-a03-handoff-refused" in available
+                else "missing vera-a03-handoff-refused",
+            )
+        )
+    return checks
+
+
+def _normalize_relative_map(value: str) -> str:
+    return value.replace("\\", "/").strip("/").casefold()
+
+
+def _a03_manifest_relative_path(value: str, series_name: str) -> PurePosixPath:
+    """Accept a manifest path or this run's exact VMCE series-prefixed path."""
+    path = _safe_manifest_map_path(value)
+    parts = path.parts
+    if (
+        len(parts) >= 3
+        and parts[0].casefold() == "vmce"
+        and parts[1].casefold() == series_name.casefold()
+    ):
+        path = PurePosixPath(*parts[2:])
+    return _safe_manifest_map_path(path.as_posix())
+
+
+def _safe_manifest_map_path(value: str) -> PurePosixPath:
+    normalized = value.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if (
+        not normalized
+        or path.is_absolute()
+        or not path.parts
+        or ":" in path.parts[0]
+        or any(part in ("", ".", "..") for part in path.parts)
+    ):
+        raise ValueError(f"unsafe map path in A03 series manifest: {value!r}")
+    return path
+
+
+def _campaign_maps(series_root: Path) -> list[str]:
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    manifest = series_root / "campaign.ini"
+    try:
+        parser.read_string(manifest.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, configparser.Error) as exc:
+        raise ValueError(f"cannot parse A03 campaign manifest {manifest}: {exc}") from exc
+    section_name = next(
+        (section for section in parser.sections() if section.casefold() == "campaign"),
+        None,
+    )
+    if section_name is None:
+        raise ValueError(f"A03 campaign manifest has no [Campaign] section: {manifest}")
+    section = dict(parser.items(section_name, raw=True))
+    try:
+        count = int(section.get("ScenarioCount", "0"))
+    except ValueError as exc:
+        raise ValueError(f"invalid A03 ScenarioCount in {manifest}") from exc
+    if count < 2:
+        raise ValueError(f"A03 needs at least two manifest maps, got {count}")
+    maps = []
+    for index in range(1, count + 1):
+        value = section.get(f"Scenario{index}", "").strip()
+        path = _safe_manifest_map_path(value)
+        maps.append(path.as_posix())
+    return maps
+
+
+def _safe_series_file(root: Path, relative: str) -> Path:
+    path = _safe_manifest_map_path(relative)
+    root_resolved = root.resolve(strict=True)
+    candidate = root.joinpath(*path.parts)
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(f"A03 fixture path escapes its series root: {relative!r}") from exc
+    cursor = candidate
+    while cursor != root:
+        if cursor.is_symlink():
+            raise ValueError(f"A03 fixture path contains a symlink: {cursor}")
+        cursor = cursor.parent
+    if not resolved.is_file():
+        raise ValueError(f"A03 fixture path is not a regular non-symlink file: {candidate}")
+    return resolved
+
+
+def _a03_sandbox_restore_checks(
+    receipts: Sequence[tuple[str, Mapping[str, Any]]],
+    specs: Sequence[ProcessSpec],
+    *,
+    series_source: Path,
+    series_name: str,
+    expected_entry: str,
+    marker_path: Path,
+) -> list[Check]:
+    """Prove the controlled file edit was restored in both isolated settings trees."""
+    failures: list[Check] = []
+    if len(specs) != 2 or len(receipts) != 2:
+        return [Check("A03 sandbox restoration", False, "expected two process copies")]
+    guest_a03 = next(
+        (_a03_part(receipt) for label, receipt in receipts if label == "guest1"),
+        None,
+    )
+    if guest_a03 is None:
+        return [Check("A03 sandbox restoration", False, "guest receipt has no lan.a03")]
+    try:
+        selected = str(guest_a03["selected_map"])
+        later = str(guest_a03["unselected_later_map"])
+        selected_path = _a03_manifest_relative_path(selected, series_name)
+        later_path = _a03_manifest_relative_path(later, series_name)
+        manifest_maps = _campaign_maps(series_source)
+        selected_index = next(
+            (
+                index
+                for index, map_path in enumerate(manifest_maps)
+                if _normalize_relative_map(map_path) == _normalize_relative_map(selected_path.as_posix())
+            ),
+            None,
+        )
+        if selected_index is None:
+            raise ValueError("A03 selected map is absent from campaign.ini")
+        if selected_index + 1 >= len(manifest_maps):
+            raise ValueError("A03 selected map has no unselected later manifest entry")
+        expected_later = manifest_maps[selected_index + 1]
+        if _normalize_relative_map(expected_later) != _normalize_relative_map(later_path.as_posix()):
+            raise ValueError(
+                f"A03 mutated map {later!r} is not the next manifest entry {expected_later!r}"
+            )
+        if _normalize_relative_map(selected_path.as_posix()) != _normalize_relative_map(
+            expected_entry
+        ):
+            raise ValueError(f"A03 selected map {selected!r} differs from entry {expected_entry!r}")
+
+        selected_manifest_path = manifest_maps[selected_index]
+        source_paths = [
+            _safe_series_file(series_source, "campaign.ini"),
+            _safe_series_file(series_source, selected_manifest_path),
+            _safe_series_file(series_source, expected_later),
+        ]
+        source_bytes = [path.read_bytes() for path in source_paths]
+        source_hashes = [hashlib.sha256(content).hexdigest() for content in source_bytes]
+        for actual, expected, label in (
+            (source_hashes[0], guest_a03.get("campaign_sha256_before"), "campaign.ini"),
+            (source_hashes[1], guest_a03.get("selected_sha256_before"), "selected map"),
+            (source_hashes[2], guest_a03.get("unselected_sha256_before"), "later map original"),
+            (source_hashes[2], guest_a03.get("unselected_sha256_restored"), "later map restored"),
+        ):
+            if actual != expected:
+                raise ValueError(f"A03 {label} hash does not match exact source bytes")
+        checked: list[str] = []
+        for spec in specs:
+            isolated_series = spec.settings / "Maps" / "VMCE" / series_name
+            isolated_paths = [
+                _safe_series_file(isolated_series, relative)
+                for relative in ("campaign.ini", selected_manifest_path, expected_later)
+            ]
+            for relative, source, isolated in zip(
+                ("campaign.ini", selected_manifest_path, expected_later),
+                source_bytes,
+                isolated_paths,
+            ):
+                if isolated.read_bytes() != source:
+                    raise ValueError(
+                        f"{spec.role} fixture did not restore source bytes for {relative}"
+                    )
+            checked.append(spec.role)
+
+        if not marker_path.is_file():
+            raise ValueError(f"A03 rendezvous marker is missing: {marker_path}")
+        marker_bytes = marker_path.read_bytes()
+        marker_hash = hashlib.sha256(marker_bytes).hexdigest()
+        marker = json.loads(marker_bytes)
+        if not isinstance(marker, Mapping) or marker.get("schema") != A03_MARKER_SCHEMA:
+            raise ValueError("A03 rendezvous marker has an invalid schema")
+        if marker.get("mutation_after_admitted_ready") is not True:
+            raise ValueError("A03 marker does not prove mutation followed admitted Ready")
+        if marker.get("selected_map") != selected or marker.get("unselected_later_map") != later:
+            raise ValueError("A03 marker map paths differ from guest receipt")
+        if marker.get("ready_generation_before") != guest_a03.get("ready_generation_before"):
+            raise ValueError("A03 marker Ready generation before differs from guest receipt")
+        if marker.get("ready_generation_after") != guest_a03.get("ready_generation_after"):
+            raise ValueError("A03 marker Ready generation after differs from guest receipt")
+        if marker.get("campaign_sha256_before") != marker.get("campaign_sha256_after"):
+            raise ValueError("A03 marker reports changed campaign.ini bytes")
+        if marker.get("campaign_sha256_before") != guest_a03.get("campaign_sha256_before"):
+            raise ValueError("A03 marker campaign hash differs from guest receipt")
+        if marker.get("selected_sha256_before") != marker.get("selected_sha256_after"):
+            raise ValueError("A03 marker reports changed selected map bytes")
+        if marker.get("selected_sha256_before") != guest_a03.get("selected_sha256_before"):
+            raise ValueError("A03 marker selected-map hash differs from guest receipt")
+        if marker.get("unselected_sha256_before") == marker.get("unselected_sha256_mutated"):
+            raise ValueError("A03 marker does not report changed later-map bytes")
+        for marker_field, receipt_field_name in (
+            ("unselected_sha256_before", "unselected_sha256_before"),
+            ("unselected_sha256_mutated", "unselected_sha256_mutated"),
+        ):
+            if marker.get(marker_field) != guest_a03.get(receipt_field_name):
+                raise ValueError(f"A03 marker {marker_field} differs from guest receipt")
+        if marker.get("unselected_sha256_before") != source_hashes[2]:
+            raise ValueError("A03 marker original later-map hash differs from exact source bytes")
+        for label, receipt in receipts:
+            a03 = _a03_part(receipt)
+            if a03 is None or a03.get("rendezvous_marker_sha256") != marker_hash:
+                raise ValueError(f"{label} receipt marker hash does not match the marker file")
+        failures.append(
+            Check(
+                "A03 rendezvous marker contents",
+                True,
+                f"schema and hashes match {marker_path}; sha256={marker_hash}",
+            )
+        )
+        failures.append(
+            Check(
+                "A03 exact fixture restoration",
+                True,
+                f"campaign.ini, selected map and next manifest map match source in {', '.join(checked)}",
+            )
+        )
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        failures.append(Check("A03 sandbox restoration", False, str(exc)))
+    return failures
+
+
 def _cleanup_process_dirs(specs: Sequence[ProcessSpec]) -> list[str]:
     errors: list[str] = []
     for spec in specs:
@@ -1528,6 +2129,14 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
         )
 
     environment = _process_environment()
+    a03_marker_path: Path | None = None
+    if scenario.expect_a03_refusal:
+        rendezvous_dir = context.work_dir / scenario.name / "rendezvous"
+        rendezvous_dir.mkdir(parents=True, exist_ok=True)
+        a03_marker_path = rendezvous_dir / "guest-mutation.json"
+        if a03_marker_path.exists():
+            raise SetupError(f"A03 rendezvous marker already exists: {a03_marker_path}")
+        environment[A03_RENDEZVOUS_ENV] = str(a03_marker_path.resolve())
     launched: list[LaunchedProcess] = []
     checks: list[Check] = []
     error: str | None = None
@@ -1594,60 +2203,98 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
             receipts.append((process.spec.role, receipt))
             checks.append(Check(f"receipt {process.spec.role}", True, str(receipt_path)))
         if error is None and len(receipts) == players:
-            checks.extend(
-                evaluate_receipts(
-                    receipts,
-                    players=players,
-                    expect_victory=scenario.expect_victory,
-                    expect_can_continue=scenario.expect_can_continue,
-                    expect_rows=players,
-                    expect_next_stage=scenario.expect_next_stage,
-                    expect_retry=scenario.expect_retry,
-                    expect_final=scenario.expect_final,
-                    expect_screenshots=scenario.expect_screenshots,
+            if scenario.expect_a03_refusal:
+                assert a03_marker_path is not None
+                checks.extend(
+                    _a03_refusal_receipt_checks(
+                        receipts,
+                        expected_entry=context.entry,
+                        series_name=context.series_name,
+                        marker_path=a03_marker_path,
+                    )
                 )
-            )
-            for process in launched:
-                receipt = dict(receipts)[process.spec.role]
-                checkpoint = (
-                    scenario.checkpoint_host
-                    if process.spec.index == 0
-                    else scenario.checkpoint_guest
+                checks.extend(
+                    _a03_host_startup_log_checks(
+                        specs[0].settings / "logs" / "ra2.log"
+                    )
                 )
-                if scenario.expect_retry:
+                checks.extend(
+                    _a03_sandbox_restore_checks(
+                        receipts,
+                        specs,
+                        series_source=context.series,
+                        series_name=context.series_name,
+                        expected_entry=context.entry,
+                        marker_path=a03_marker_path,
+                    )
+                )
+                host_command = specs[0].command
+                host_map_ok = (
+                    "--lan-map" in host_command
+                    and host_command[host_command.index("--lan-map") + 1] == context.map_name
+                )
+                checks.append(
+                    Check(
+                        "A03 host selected-map input",
+                        host_map_ok,
+                        f"expected --lan-map {context.map_name}",
+                    )
+                )
+            else:
+                checks.extend(
+                    evaluate_receipts(
+                        receipts,
+                        players=players,
+                        expect_victory=scenario.expect_victory,
+                        expect_can_continue=scenario.expect_can_continue,
+                        expect_rows=players,
+                        expect_next_stage=scenario.expect_next_stage,
+                        expect_retry=scenario.expect_retry,
+                        expect_final=scenario.expect_final,
+                        expect_screenshots=scenario.expect_screenshots,
+                    )
+                )
+                for process in launched:
+                    receipt = dict(receipts)[process.spec.role]
+                    checkpoint = (
+                        scenario.checkpoint_host
+                        if process.spec.index == 0
+                        else scenario.checkpoint_guest
+                    )
+                    if scenario.expect_retry:
+                        checks.append(
+                            _retry_identity_check(
+                                process.spec.role,
+                                receipt,
+                                checkpoint,
+                                process.spec.bind,
+                                context.map_name,
+                            )
+                        )
+                        continue
                     checks.append(
-                        _retry_identity_check(
+                        _receipt_identity_check(
                             process.spec.role,
                             receipt,
                             checkpoint,
                             process.spec.bind,
                             context.map_name,
+                            process.spec.index == 0,
+                            "end" if scenario.expect_final else "real",
                         )
                     )
-                    continue
-                checks.append(
-                    _receipt_identity_check(
-                        process.spec.role,
-                        receipt,
-                        checkpoint,
-                        process.spec.bind,
-                        context.map_name,
-                        process.spec.index == 0,
-                        "end" if scenario.expect_final else "real",
-                    )
-                )
-                if not scenario.expect_final:
-                    checks.append(
-                        Check(
-                            f"next stage {process.spec.role}",
-                            _next_stage_loaded(receipt),
-                            "lan.vera_outcome.next_mission present"
-                            if _next_stage_loaded(receipt)
-                            else "missing lan.vera_outcome.next_mission",
+                    if not scenario.expect_final:
+                        checks.append(
+                            Check(
+                                f"next stage {process.spec.role}",
+                                _next_stage_loaded(receipt),
+                                "lan.vera_outcome.next_mission present"
+                                if _next_stage_loaded(receipt)
+                                else "missing lan.vera_outcome.next_mission",
+                            )
                         )
-                    )
-            if not scenario.expect_retry:
-                checks.append(_participant_count_check(receipts, players))
+                if not scenario.expect_retry:
+                    checks.append(_participant_count_check(receipts, players))
         else:
             checks.append(
                 Check(

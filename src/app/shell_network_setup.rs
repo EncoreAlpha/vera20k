@@ -12,10 +12,14 @@ pub(crate) mod vmce_map;
 #[cfg(not(feature = "vmce"))]
 #[path = "shell_network_setup/vmce_map_stub.rs"]
 pub(crate) mod vmce_map;
+#[cfg(feature = "vmce")]
+pub(super) mod vmce_setup;
 pub(crate) use vmce_map::{
     host_vmce_identity, refresh_vmce_entries, resolve_host_vmce_map_config,
     resolve_local_vmce_config,
 };
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_setup::{VmceLobbyProjection, VmceLobbyStatus, VmceMapDetails};
 mod cooperative;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,
@@ -27,9 +31,25 @@ pub(crate) use service::{
     apply_local_map_admission, fail_go_handoff, fail_go_handoff_with, invalidate_network_agreement,
     poll, prepare_lan_guest_handoff, refuse_local_acceptance, report_local_map_unavailable,
     service_event, set_network_map_progress, withdraw_local_acceptance,
+    withhold_local_map_admission,
 };
 pub(crate) mod view;
 mod wol;
+
+/// Result of resolving one host-options map revision. Session mutation stays
+/// in the shared setup transaction; VMCE-specific local verification and
+/// admission routing are prepared by `vmce_setup` first.
+pub(super) struct HostSetupMapOutcome {
+    pub(super) local_map: Option<(String, bool)>,
+    pub(super) map_admission: Option<crate::app::match_runtime::session::NetworkMapAdmission>,
+    pub(super) request_preview: bool,
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_local_source: Option<(crate::map::source::LoadedMapSource, String)>,
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_config_changed: bool,
+    #[cfg(feature = "vmce")]
+    pub(super) vmce_series_admission: bool,
+}
 pub(crate) use actions::{
     apply_action, begin_external_lan_go, commit_map_selection, commit_start, open_choose_map,
 };
@@ -139,48 +159,9 @@ pub(crate) enum OnlineStartPhase {
     Submitted,
 }
 
-#[cfg(feature = "vmce")]
-#[derive(Debug, Clone, Default)]
-pub(super) struct VmceMapDetails {
-    pub owners: [Option<String>; 4],
-    /// Each role House's authored `Country=`, for the lobby's role board.
-    pub countries: [Option<String>; 4],
-    pub colors: [Option<[u8; 3]>; 4],
-    pub briefing: Option<String>,
-}
-
-#[cfg(feature = "vmce")]
-impl VmceMapDetails {
-    /// The map's actual selectable primary roles: one authored `PlayerN` House
-    /// per row and slot. Without a resolved map the four-row shape stays.
-    pub(crate) fn role_count(&self) -> usize {
-        let count = self.owners.iter().filter(|owner| owner.is_some()).count();
-        if count == 0 { 4 } else { count.min(4) }
-    }
-}
-
-/// A VMCE guest's local campaign/map problem, shown in the lobby's inline
-/// status bar after the host's options revision is parsed.
-#[cfg(feature = "vmce")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VmceLobbyStatus {
-    /// The host's map or its campaign.ini is not installed locally.
-    MissingAssets,
-    /// A local copy exists but its bytes or series differ from the host's.
-    MapMismatch,
-}
-
 pub(crate) struct NetworkSetupProtocol {
-    /// Parsed map-authored Player1..Player4 labels, keyed by local map identity.
-    /// The lobby view is rebuilt every frame, so it must not reload a map there.
     #[cfg(feature = "vmce")]
-    pub(super) vmce_role_cache:
-        std::cell::RefCell<Option<(std::path::PathBuf, String, String, VmceMapDetails)>>,
-    /// The last local campaign/map admission failure a VMCE guest saw. The
-    /// lobby's inline status bar reads it; a later successful admission
-    /// clears it.
-    #[cfg(feature = "vmce")]
-    pub(super) vmce_lobby_status: Option<VmceLobbyStatus>,
+    vmce_setup: vmce_setup::VmceSetupState,
     locked: bool,
     /// WOL Quick Match (`[0xA8B244]` 1): the game channel's nodes and start
     /// run without C2/C9 (`0x007A6208..0x007A6229`, `0x0078A36C..0x0078A386`)
@@ -404,9 +385,7 @@ impl NetworkSetupProtocol {
         let wol_host = dialog.wol() && host && !quick_match;
         Self {
             #[cfg(feature = "vmce")]
-            vmce_role_cache: std::cell::RefCell::new(None),
-            #[cfg(feature = "vmce")]
-            vmce_lobby_status: None,
+            vmce_setup: vmce_setup::VmceSetupState::default(),
             locked: false,
             quick_match,
             external: false,
@@ -458,13 +437,6 @@ impl NetworkSetupProtocol {
 
     pub(crate) fn start_in_progress(&self) -> bool {
         self.wol_start_pending || self.online_start_preparing
-    }
-
-    /// Record or clear a VMCE guest's local campaign/map admission problem.
-    /// Display state only; the map-status owner remains the admission flag.
-    #[cfg(feature = "vmce")]
-    pub(crate) fn set_vmce_lobby_status(&mut self, status: Option<VmceLobbyStatus>) {
-        self.vmce_lobby_status = status;
     }
 
     /// VERA: the next join is the kept room's partner coming back.
@@ -1129,10 +1101,11 @@ pub(crate) fn vmce_solo_hint_key(_state: &AppState) -> Option<&'static str> {
 pub(crate) fn open_vmce_intermission(state: &mut AppState) -> anyhow::Result<()> {
     // The next stage is a new options identity: the whole series is verified
     // again for the intermission room instead of trusting the finished one.
-    if let Some(service) = state.match_state.lan_service.as_mut() {
-        service.vmce_series.cancel();
-    }
+    crate::app::lan_service::reset_vmce_setup(state);
     let stage = state.match_state.session.enter_vmce_intermission_setup()?;
+    if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+        protocol.reset_vmce_lobby_options(None);
+    }
     vmce_map::refresh_vmce_entries(state);
     let mut index = state
         .frontend
@@ -1398,9 +1371,7 @@ pub(crate) fn install_vmce_lobby_fixture(
         .network_setup_protocol
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("setup protocol was not installed"))?;
-    protocol
-        .vmce_role_cache
-        .replace(Some((root, file.to_ascii_lowercase(), digest, details)));
+    protocol.cache_vmce_role_details(root, file.to_ascii_lowercase(), digest, details);
     protocol.set_vmce_lobby_status(fixture.status);
     // The fixture map is a real local catalog map; let the ordinary preview
     // owner decode and cache its retail thumbnail for the setup box.

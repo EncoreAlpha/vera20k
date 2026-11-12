@@ -45,6 +45,8 @@ use crate::net::udp::UdpBindConfig;
 use crate::ui::multiplayer_setup::{SetupAction, SetupColumn};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(feature = "vmce")]
+mod a03;
 mod battle;
 mod cooperative;
 mod failure;
@@ -421,6 +423,9 @@ pub(super) struct LiveLanCapture {
     /// `--vera-outcome`: the mission outcome to inject after the prefix.
     #[cfg(feature = "vmce")]
     vera_outcome: Option<VmceOutcome>,
+    /// Explicit A03 stale-series mutation and expected handoff refusal only.
+    #[cfg(feature = "vmce")]
+    a03: Option<a03::A03Capture>,
     /// The VMCE retry capture saw the BC6 result page; the next InGame screen
     /// is the retried mission and completes the acceptance capture.
     #[cfg(feature = "vmce")]
@@ -438,6 +443,9 @@ pub(super) struct LiveLanCapture {
     /// First render frame of the continued next mission.
     #[cfg(feature = "vmce")]
     vera_outcome_next_frame: Option<u32>,
+    /// Capture the VMCE intermission lobby before either peer starts it.
+    #[cfg(feature = "vmce")]
+    vera_intermission_shot_done: bool,
     /// Render frames observed since the injection (the shared sim may be done).
     #[cfg(feature = "vmce")]
     vera_outcome_render_frames: u32,
@@ -543,6 +551,12 @@ impl LiveLanCapture {
             .map(setup_crash::SetupCrashCapture::new);
         #[cfg(feature = "vmce")]
         let vera_outcome = config.as_ref().and_then(|config| config.vera_outcome);
+        #[cfg(feature = "vmce")]
+        let a03 = match target {
+            LanTarget::LiveVmceA03Host => Some(a03::A03Capture::new(a03::Role::Host)),
+            LanTarget::LiveVmceA03Guest => Some(a03::A03Capture::new(a03::Role::Guest)),
+            _ => None,
+        };
         Self {
             target,
             config,
@@ -579,6 +593,8 @@ impl LiveLanCapture {
             #[cfg(feature = "vmce")]
             vera_outcome,
             #[cfg(feature = "vmce")]
+            a03,
+            #[cfg(feature = "vmce")]
             vera_retry_result_seen: false,
             #[cfg(feature = "vmce")]
             vera_result_shot_done: false,
@@ -592,6 +608,8 @@ impl LiveLanCapture {
             vera_outcome_dialog_frame: None,
             #[cfg(feature = "vmce")]
             vera_outcome_next_frame: None,
+            #[cfg(feature = "vmce")]
+            vera_intermission_shot_done: false,
             #[cfg(feature = "vmce")]
             vera_outcome_render_frames: 0,
             #[cfg(feature = "vmce")]
@@ -614,6 +632,9 @@ impl LiveLanCapture {
                             continue_to_shell: true,
                         },
                         LanTarget::OnlineCoopHost | LanTarget::OnlineCoopGuest => {
+                            cooperative::CoopEnding::Advance
+                        }
+                        LanTarget::LiveCoopAdvanceHost | LanTarget::LiveCoopAdvanceGuest => {
                             cooperative::CoopEnding::Advance
                         }
                         _ => cooperative::CoopEnding::Retry,
@@ -660,6 +681,7 @@ impl LiveLanCapture {
                 | LanTarget::LiveQuitHost
                 | LanTarget::LiveDesyncHost
                 | LanTarget::LiveCoopHost
+                | LanTarget::LiveCoopAdvanceHost
                 | LanTarget::LiveCoopSavedHost
                 | LanTarget::LiveCoopFinalHost
                 | LanTarget::BattleHost
@@ -943,13 +965,31 @@ impl LiveLanCapture {
         frame: u32,
     ) -> Result<()> {
         #[cfg(feature = "vmce")]
-        if matches!(
-            self.target,
-            LanTarget::LiveVmceHost | LanTarget::LiveVmceGuest
-        ) && matches!(
-            self.phase,
-            Phase::Discover | Phase::HostSetup | Phase::HostReady | Phase::GuestSetup
-        ) {
+        if let Some(a03) = self.a03.as_mut()
+            && a03.after_present(state, frame, &mut self.route, &mut self.screenshot_requests)?
+        {
+            self.final_receipt = Some(json!({
+                "target": format!("{:?}", self.target),
+                "route": self.route,
+                "a03": a03.receipt()?,
+            }));
+            self.phase = Phase::Finished;
+            return Ok(());
+        }
+        // A03 owns the intentional startup refusal after its controlled Start.
+        // Do not apply the ordinary successful-Start watchdog while its
+        // role-specific notice and room-exit observation is still running.
+        #[cfg(feature = "vmce")]
+        if self.a03.is_some() && self.phase == Phase::Loading {
+            return Ok(());
+        }
+        #[cfg(feature = "vmce")]
+        if self.target.is_live_vmce()
+            && matches!(
+                self.phase,
+                Phase::Discover | Phase::HostSetup | Phase::HostReady | Phase::GuestSetup
+            )
+        {
             let started = *self.coop_setup_started.get_or_insert_with(Instant::now);
             if started.elapsed() >= VMCE_SETUP_WATCHDOG {
                 anyhow::bail!(
@@ -960,7 +1000,7 @@ impl LiveLanCapture {
             }
         }
         #[cfg(feature = "vmce")]
-        if self.target == LanTarget::LiveVmceHost
+        if self.target.is_live_vmce_host()
             && self.phase == Phase::Loading
             && state.frontend.screen != GameScreen::Loading
             && state.frontend.screen != GameScreen::InGame
@@ -1192,7 +1232,7 @@ impl LiveLanCapture {
                 let mode_id = {
                     #[cfg(feature = "vmce")]
                     {
-                        if self.target == LanTarget::LiveVmceHost {
+                        if self.target.is_live_vmce_host() {
                             Some(vmce_mode_id(state)?)
                         } else {
                             None
@@ -1218,7 +1258,7 @@ impl LiveLanCapture {
                     result?
                 } else if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) {
                     #[cfg(feature = "vmce")]
-                    if self.target == LanTarget::LiveVmceHost {
+                    if self.target.is_live_vmce_host() {
                         // The production chooser runs this same discovery owner
                         // when its VMCE mode row is selected; the
                         // diagnostic commits the discovered Entry map directly
@@ -1252,7 +1292,7 @@ impl LiveLanCapture {
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, true) =>
             {
                 #[cfg(feature = "vmce")]
-                if self.target == LanTarget::LiveVmceHost {
+                if self.target.is_live_vmce_host() {
                     self.step_vmce_host_setup(state, frame)?;
                     return Ok(());
                 }
@@ -1281,7 +1321,7 @@ impl LiveLanCapture {
                 if rendered == PresentedShell::NetworkSetup && setup_settled(state, false) =>
             {
                 #[cfg(feature = "vmce")]
-                if self.target == LanTarget::LiveVmceGuest {
+                if self.target.is_live_vmce_guest() {
                     self.step_vmce_guest_setup(state, frame)?;
                     return Ok(());
                 }
@@ -1364,7 +1404,27 @@ impl LiveLanCapture {
             }
         }
         if self.phase == Phase::Running {
+            let host = self.host();
             if let Some(run) = self.cooperative.as_mut() {
+                if matches!(
+                    self.target,
+                    LanTarget::LiveCoopAdvanceHost | LanTarget::LiveCoopAdvanceGuest
+                ) && rendered == PresentedShell::NetworkSetup
+                    && run.room_returned(state, host, &mut self.route, frame)?
+                {
+                    self.screenshot_requests
+                        .push("vera-intermission-lobby".to_owned());
+                    self.route.push(json!({
+                        "render_frame": frame,
+                        "action": "returned to the LAN Cooperative intermission room"
+                    }));
+                    self.phase = if host {
+                        Phase::HostReady
+                    } else {
+                        Phase::GuestSetup
+                    };
+                    return Ok(());
+                }
                 run.step(state, &mut self.route, frame, &mut self.screenshot_requests)?;
                 if run.done() {
                     self.phase = Phase::Finished;
@@ -1567,8 +1627,29 @@ impl LiveLanCapture {
             None => {
                 self.coop_lobby_shot = Some(frame);
                 self.request_screenshot("vera-campaign-lobby");
-                self.event(frame, "real four-process VMCE lobby captured before Start");
+                self.event(
+                    frame,
+                    if self.target == LanTarget::LiveVmceA03Host {
+                        "A03 two-process VMCE lobby captured before its rendezvous Start gate"
+                    } else {
+                        "real four-process VMCE lobby captured before Start"
+                    },
+                );
                 return Ok(());
+            }
+            Some(_) if self.target == LanTarget::LiveVmceA03Host => {
+                let released = self
+                    .a03
+                    .as_mut()
+                    .context("A03 host rendezvous")?
+                    .wait_for_guest_mutation(frame)?;
+                if !released {
+                    return Ok(());
+                }
+                self.route.push(json!({
+                    "render_frame": frame,
+                    "action": "A03 host observed the guest's admitted-Ready mutation marker; Start gate released",
+                }));
             }
             Some(shot) if frame.saturating_sub(shot) < VMCE_LOBBY_SHOT_FRAMES => {
                 return Ok(());
@@ -1599,6 +1680,10 @@ impl LiveLanCapture {
         // against the effective map, then freezes it for the loader's own
         // re-verification and the shared command grants.
         setup_button(state, crate::ui::multiplayer_setup::START)?;
+        #[cfg(feature = "vmce")]
+        if let Some(a03) = self.a03.as_mut() {
+            a03.host_start_clicked(frame);
+        }
         self.event(frame, "host Start clicked; VMCE admission and frozen start");
         self.coop_setup_started_frame = Some(frame);
         self.phase = Phase::Loading;
@@ -1632,6 +1717,12 @@ impl LiveLanCapture {
                 "guest was already Ready before the diagnostic Accept"
             );
             self.coop_setup_initial = Some(vmce_setup_snapshot(state, self.player_name())?);
+            #[cfg(feature = "vmce")]
+            if let Some(a03) = self.a03.as_mut() {
+                a03.ready_request_issued(
+                    crate::app::lan_service::vmce_ready_admission_generation(state),
+                )?;
+            }
             setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
             let accepted = state
                 .match_state
@@ -3087,7 +3178,7 @@ impl LiveLanCapture {
             VeraOutcomePhase::NextMission => {
                 if state.frontend.shell_route.network_setup()
                     && state.match_state.session.vmce_intermission_map().is_some()
-                    && render_frame % 30 == 0
+                    && !crate::app::frontend::shell_transition::shell_slide_running(state)
                     && let Some(view) = setup::view(state)
                 {
                     let session = &state.match_state.session;
@@ -3101,20 +3192,31 @@ impl LiveLanCapture {
                                 && session.network_map_status(index) == Some(1))
                     });
                     let local_ready = session.network_player_ready(local);
-                    if self.host()
+                    let host_can_start = self.host()
                         && ready
                         && !view.start_requested
-                        && view.enabled(crate::ui::multiplayer_setup::START)
-                    {
+                        && view.enabled(crate::ui::multiplayer_setup::START);
+                    let guest_can_accept = !self.host()
+                        && !local_ready
+                        && view.enabled(crate::ui::multiplayer_setup::ACCEPT);
+                    if host_can_start || guest_can_accept {
+                        if !self.vera_intermission_shot_done {
+                            self.request_screenshot("vera-intermission-lobby");
+                            self.vera_intermission_shot_done = true;
+                            self.event(
+                                render_frame,
+                                "VMCE intermission lobby captured after role projection and map admission, before the next-stage action",
+                            );
+                            return Ok(());
+                        }
+                    }
+                    if host_can_start {
                         setup_button(state, crate::ui::multiplayer_setup::START)?;
                         self.event(
                             render_frame,
                             "VMCE intermission: host started the next stage",
                         );
-                    } else if !self.host()
-                        && !local_ready
-                        && view.enabled(crate::ui::multiplayer_setup::ACCEPT)
-                    {
+                    } else if guest_can_accept {
                         setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
                         self.event(
                             render_frame,

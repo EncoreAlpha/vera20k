@@ -53,154 +53,11 @@ fn team_value(team: LaunchTeam) -> i32 {
     }
 }
 
-#[cfg(feature = "vmce")]
-fn vmce_role_metadata(
-    ini: &crate::rules::ini_parser::IniFile,
-    rules: Option<&crate::rules::ruleset::RuleSet>,
-) -> super::VmceMapDetails {
-    let basic = crate::map::basic::parse_basic_section(ini);
-    let schemes = rules.map_or(&[][..], |rules| rules.color_schemes.as_slice());
-    let roster = crate::map::houses::parse_house_roster(ini, schemes, rules);
-    if basic
-        .campaign_players
-        .validate_against_roster(&roster)
-        .is_err()
-    {
-        return super::VmceMapDetails::default();
-    }
-    let owners = basic.campaign_players.players.map(|player| player.owner);
-    let houses: [Option<&crate::map::houses::HouseDefinition>; 4] = std::array::from_fn(|i| {
-        roster
-            .houses
-            .iter()
-            .find(|house| Some(house.name.as_str()) == owners[i].as_deref())
-    });
-    let colors = std::array::from_fn(|i| {
-        let house = houses[i]?;
-        let scheme = schemes.get(usize::from(house.color.0))?;
-        Some(crate::rules::color_scheme::hsv_to_rgb(scheme.hsv))
-    });
-    let countries =
-        std::array::from_fn(|i| houses[i].as_ref().and_then(|house| house.country.clone()));
-    super::VmceMapDetails {
-        owners,
-        countries,
-        colors,
-        briefing: None,
-    }
-}
-
-#[cfg(feature = "vmce")]
-fn vmce_role_metadata_with_config(
-    ini: &crate::rules::ini_parser::IniFile,
-    rules: Option<&crate::rules::ruleset::RuleSet>,
-    file: &str,
-    source_sha256: &str,
-    config: Option<&crate::app::match_bootstrap::NetworkVmceMapConfig>,
-) -> Option<super::VmceMapDetails> {
-    match config {
-        Some(config) => {
-            let effective = config.apply_to_map(file, source_sha256, ini).ok()?;
-            Some(vmce_role_metadata(&effective, rules))
-        }
-        None => Some(vmce_role_metadata(ini, rules)),
-    }
-}
-
 /// The map details derive their row budget from the map's actual selectable
 /// primary roles, so the lobby shows exactly as many rows and slots.
 #[cfg(feature = "vmce")]
 pub(crate) fn vmce_role_count(state: &AppState) -> usize {
-    vmce_map_details(state).role_count()
-}
-
-#[cfg(feature = "vmce")]
-fn vmce_map_details(state: &AppState) -> super::VmceMapDetails {
-    let session = &state.match_state.session;
-    let vmce_config = session.network_vmce_map_config();
-    // During a result round the editable launch already names the next map;
-    // its retained config still belongs to the mission that just finished.
-    let Some(file) = vmce_config
-        .map(|config| config.map_file.as_str())
-        .or_else(|| session.network_setup()?.selected_map_file.as_deref())
-    else {
-        return super::VmceMapDetails::default();
-    };
-    let (Some(config), Some(assets)) = (
-        state.platform.game_config.as_ref(),
-        state.process_assets.manager(),
-    ) else {
-        return super::VmceMapDetails::default();
-    };
-    let root = config.paths.settings_dir().join("Maps");
-    let source_digest = state
-        .match_state
-        .session
-        .network_map_metadata()
-        .map_or_else(String::new, |metadata| metadata.source_sha256.clone());
-    let digest = format!(
-        "{}:{}",
-        source_digest,
-        vmce_config.map_or("", |config| config.config_sha256.as_str())
-    );
-    let key_file = file.to_ascii_lowercase();
-    let protocol = state.frontend.network_setup_protocol.as_ref();
-    let cached = protocol.and_then(|protocol| {
-        protocol
-            .vmce_role_cache
-            .borrow()
-            .as_ref()
-            .filter(|(cached_root, cached_file, cached_digest, _)| {
-                *cached_root == root && *cached_file == key_file && *cached_digest == digest
-            })
-            .map(|(_, _, _, owners)| owners.clone())
-    });
-    cached.unwrap_or_else(|| {
-        let details = crate::map::source::load_network_map_ini(&root, file, assets)
-            .ok()
-            .and_then(|loaded| {
-                let actual_digest = loaded
-                    .source
-                    .physical_identity()
-                    .map_or("", |(_, digest)| digest);
-                let mut details = vmce_role_metadata_with_config(
-                    &loaded.ini,
-                    state.rules(),
-                    file,
-                    actual_digest,
-                    vmce_config,
-                )?;
-                // The campaign's Brief= is a movie; mission text lives in
-                // MISSIONMD.INI under the scenario filename (restate reader).
-                let briefing = crate::rules::retail_sources::select_ini(assets, "MISSIONMD.INI")
-                    .ok()
-                    .and_then(|mission| {
-                        let section = mission.ini.section(file)?;
-                        if !section.is_present("Briefing") {
-                            return None;
-                        }
-                        let key = crate::rules::campaign_loading::restate_briefing_key(
-                            &mission.ini,
-                            file,
-                        );
-                        state
-                            .process_assets
-                            .csf
-                            .as_ref()?
-                            .get(&key)
-                            .map(str::to_owned)
-                    });
-                details.briefing = briefing;
-                Some(details)
-            })
-            .unwrap_or_default();
-        if let Some(protocol) = protocol {
-            protocol
-                .vmce_role_cache
-                .replace(Some((root, key_file, digest, details.clone())));
-        }
-        details
-    })
+    super::vmce_setup::map_details(state).role_count()
 }
 
 /// The Owner combo's face and choice text: the campaign `PlayerN`-bound map
@@ -293,16 +150,8 @@ pub(crate) fn vmce_lobby_status_present(state: &AppState) -> bool {
     let Some(protocol) = state.frontend.network_setup_protocol.as_ref() else {
         return false;
     };
-    if protocol.vmce_lobby_status.is_some() {
-        return true;
-    }
-    let conflict = {
-        let cache = protocol.vmce_role_cache.borrow();
-        cache
-            .as_ref()
-            .is_some_and(|(_, _, _, details)| vmce_role_conflict(details).is_some())
-    };
-    conflict
+    let projection = protocol.vmce_lobby_projection(state);
+    projection.status.is_some() || vmce_role_conflict(&projection.details).is_some()
 }
 
 /// One settlement row's authored identity: role/House owner and its country.
@@ -319,7 +168,7 @@ pub(crate) struct VmceResultRoleInfo {
 /// map/metadata owner the lobby board uses.
 #[cfg(feature = "vmce")]
 pub(crate) fn vmce_result_roles(state: &AppState) -> Option<[VmceResultRoleInfo; 4]> {
-    let details = vmce_map_details(state);
+    let details = super::vmce_setup::map_details(state);
     let rules = state.rules();
     let country_text = |country: &str| {
         let Some(rules) = rules else {
@@ -363,13 +212,14 @@ pub(crate) fn vmce_result_roles(state: &AppState) -> Option<[VmceResultRoleInfo;
 fn vmce_lobby_board(
     state: &AppState,
     launch: &crate::skirmish_launch::SkirmishLaunchSession,
-    details: &super::VmceMapDetails,
+    projection: &super::VmceLobbyProjection,
     role_count: usize,
 ) -> (
     Vec<crate::ui::multiplayer_setup::VmceLobbyRoleSlot>,
     Option<String>,
 ) {
     use crate::ui::multiplayer_setup::{VmceLobbyRole, VmceLobbyRoleSlot};
+    let details = &projection.details;
     let session = &state.match_state.session;
     let rules = state.rules();
     let country_text = |country: &str| {
@@ -425,12 +275,7 @@ fn vmce_lobby_board(
     });
     // A guest whose local map/series cannot match the host's is the stronger
     // warning: the room cannot start until it is repaired.
-    if let Some(local) = state
-        .frontend
-        .network_setup_protocol
-        .as_ref()
-        .and_then(|protocol| protocol.vmce_lobby_status)
-    {
+    if let Some(local) = projection.status {
         status = Some(match local {
             super::VmceLobbyStatus::MissingAssets => crate::i18n::tr("VERA:VmceStatusMissingMap"),
             super::VmceLobbyStatus::MapMismatch => crate::i18n::tr("VERA:VmceStatusMapMismatch"),
@@ -440,13 +285,13 @@ fn vmce_lobby_board(
 }
 
 /// Whether the local player could press Accept (`SetupView::accept_enabled`).
-pub(super) fn accept_enabled(state: &AppState) -> bool {
+pub(super) fn accept_enabled(state: &AppState, vmce_retry_allowed: bool) -> bool {
     let session = &state.match_state.session;
-    state
-        .frontend
-        .network_setup_protocol
-        .as_ref()
-        .is_some_and(|protocol| protocol.accept_eligible)
+    let Some(protocol) = state.frontend.network_setup_protocol.as_ref() else {
+        return false;
+    };
+    let accept_eligible = protocol.accept_eligible || vmce_retry_allowed;
+    accept_eligible
         && session
             .network_setup()
             .is_some_and(|launch| !session.network_player_ready(launch.local_player_index))
@@ -479,14 +324,24 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let mode = mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)?;
     let mode_policy = mode.class.policy();
     #[cfg(feature = "vmce")]
-    let vera_details = mode_policy
+    let vera_projection = mode_policy
         .authored_campaign_roles
-        .then(|| vmce_map_details(state));
+        .then(|| protocol.vmce_lobby_projection(state));
+    #[cfg(feature = "vmce")]
+    let vera_details = vera_projection
+        .as_ref()
+        .map(|projection| &projection.details);
     // The map's actual selectable primary roles decide the lobby's rows/slots.
     #[cfg(feature = "vmce")]
-    let vmce_role_count = vera_details
+    let vmce_role_count = vera_projection
         .as_ref()
-        .map_or(4, |details| details.role_count());
+        .map_or(4, |projection| projection.details.role_count());
+    #[cfg(feature = "vmce")]
+    let vmce_retry_allowed = vera_projection
+        .as_ref()
+        .is_some_and(|projection| projection.retry_allowed);
+    #[cfg(not(feature = "vmce"))]
+    let vmce_retry_allowed = false;
     let host = session.host();
     let host_name = protocol.wol_host.as_deref();
     let local = launch.humans.get(launch.local_player_index)?;
@@ -886,7 +741,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         let authored_roles = mode_policy.authored_campaign_roles;
         #[cfg(feature = "vmce")]
         let (team, teams) = if authored_roles {
-            vmce_role_choices(state, row, vera_details.as_ref().expect("VERA map details"))
+            vmce_role_choices(state, row, vera_details.expect("VERA map details"))
         } else {
             (
                 team,
@@ -1018,7 +873,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         vmce_lobby_board(
             state,
             launch,
-            vera_details.as_ref().expect("VERA map details"),
+            vera_projection.as_ref().expect("VERA map details"),
             vmce_role_count,
         )
     } else {
@@ -1043,7 +898,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         short_game_locked: host && profile_is_wol(state) && room.tournament_or_clan(),
         campaign_options_locked: mode_policy.campaign_start_options_locked,
         team_header: !clan_room,
-        accept_enabled: accept_enabled(state),
+        accept_enabled: accept_enabled(state, vmce_retry_allowed),
         start_requested: protocol.start_requested
             && !session.network_player_ready(launch.local_player_index),
         combos,
@@ -1113,7 +968,7 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         cooperative_description: if mode.class.is_vmce() {
             Some(
                 vera_details
-                    .and_then(|details| details.briefing)
+                    .and_then(|details| details.briefing.clone())
                     .unwrap_or_else(|| crate::i18n::tr("VERA:VmceBriefingUnavailable")),
             )
         } else {
@@ -1170,7 +1025,7 @@ mod tests {
         let ini = IniFile::from_str(
             "[Basic]\nPlayer=First\nPlayer2=Second\n[Houses]\n0=First\n1=Second\n[First]\nCountry=Americans\nColor=Red\n[Second]\nCountry=Americans\n",
         );
-        let details = vmce_role_metadata(&ini, Some(&rules));
+        let details = super::super::vmce_setup::role_metadata(&ini, Some(&rules));
         assert_eq!(details.owners[0].as_deref(), Some("First"));
         assert_eq!(details.owners[1].as_deref(), Some("Second"));
         assert_eq!(details.colors[0], Some([255, 0, 0]));
@@ -1199,13 +1054,24 @@ mod tests {
             config,
         )
         .unwrap();
-        let details =
-            vmce_role_metadata_with_config(&ini, None, "mission.map", &digest, Some(&accepted))
-                .unwrap();
+        let details = super::super::vmce_setup::role_metadata_with_config(
+            &ini,
+            None,
+            "mission.map",
+            &digest,
+            Some(&accepted),
+        )
+        .unwrap();
         assert_eq!(details.owners[0].as_deref(), Some("Beta"));
         assert!(
-            vmce_role_metadata_with_config(&ini, None, "other.map", &digest, Some(&accepted),)
-                .is_none()
+            super::super::vmce_setup::role_metadata_with_config(
+                &ini,
+                None,
+                "other.map",
+                &digest,
+                Some(&accepted),
+            )
+            .is_none()
         );
     }
 }
