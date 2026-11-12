@@ -1268,6 +1268,89 @@ mod tests {
         assert_eq!(host.vmce_round_next_stage_map(), None);
     }
 
+    /// B57: the agreed result and next-stage identity expose the unlock
+    /// immediately, before Continue or the intermission room; a retry or a
+    /// campaign end exposes none.
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_agreed_unlock_appears_before_continue_and_only_for_a_next_stage() {
+        let (mut host, _) = frozen_vera(0);
+        let (mut guest, _) = frozen_vera(1);
+        for session in [&mut host, &mut guest] {
+            session
+                .enter_vmce_round(Some(next_stage("mission02.map")), true, 2)
+                .unwrap();
+        }
+        assert_eq!(host.vmce_agreed_unlock(), None);
+        assert_eq!(guest.vmce_agreed_unlock(), None);
+        agree_for_existing_round_test(&mut host);
+        agree_for_existing_round_test(&mut guest);
+        assert_eq!(
+            host.vmce_agreed_unlock(),
+            Some(("mission02.map", [9; 16])),
+            "the host unlocks as soon as every online participant confirmed"
+        );
+        assert_eq!(
+            guest.vmce_agreed_unlock(),
+            Some(("mission02.map", [9; 16])),
+            "the guest unlocks without Continue or the intermission room"
+        );
+
+        // A solo host confirms its own proposal; the same agreement exposes
+        // its next-stage unlock before Continue.
+        let (mut solo, _) = frozen_vera_solo();
+        solo.enter_vmce_round(Some(next_stage("mission02.map")), true, 1)
+            .unwrap();
+        solo.initialize_vmce_result_agreement([4, 0xff, 0xff, 0xff], Some([5; 16]))
+            .unwrap();
+        solo.vmce_result_record_queued(false).unwrap();
+        assert_eq!(solo.vmce_agreed_unlock(), None);
+        assert!(solo.vmce_result_next_record().unwrap().confirmed);
+        solo.vmce_result_record_queued(true).unwrap();
+        assert_eq!(
+            solo.vmce_agreed_unlock(),
+            Some(("mission02.map", [5; 16])),
+            "the solo host unlocks before its own Continue"
+        );
+
+        // A retry continuation has no next stage even after the same
+        // agreement, so it must not unlock anything.
+        let (mut host, _) = frozen_vera_solo();
+        host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 1)
+            .unwrap();
+        host.initialize_vmce_result_agreement([4, 0xff, 0xff, 0xff], Some([5; 16]))
+            .unwrap();
+        assert_eq!(host.vmce_agreed_unlock(), None);
+        host.vmce_result_record_queued(false).unwrap();
+        assert_eq!(
+            host.vmce_agreed_unlock(),
+            None,
+            "a proposal alone is not agreement"
+        );
+        assert!(host.vmce_result_next_record().unwrap().confirmed);
+        host.vmce_result_record_queued(true).unwrap();
+        assert_eq!(
+            host.vmce_agreed_unlock(),
+            None,
+            "a retry has no next stage to unlock"
+        );
+
+        // The campaign's last stage ends the campaign; it never unlocks.
+        let (mut end, _) = frozen_vera_solo();
+        end.enter_vmce_round_ending(None, true, VmceRoundEnding::CampaignEnd, 1)
+            .unwrap();
+        end.initialize_vmce_result_agreement([4, 0xff, 0xff, 0xff], Some([6; 16]))
+            .unwrap();
+        end.vmce_result_record_queued(false).unwrap();
+        assert!(end.vmce_result_next_record().unwrap().confirmed);
+        end.vmce_result_record_queued(true).unwrap();
+        assert_eq!(
+            end.vmce_agreed_unlock(),
+            None,
+            "a campaign end has no next stage to unlock"
+        );
+    }
+
     /// The result agreement is one nonce-bound, stage-bound record from every
     /// online participant; only after all proposals and confirmations does a
     /// Go advance any peer.

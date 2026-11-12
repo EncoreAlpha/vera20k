@@ -31,10 +31,7 @@ struct VmceResultAgreement {
     proposal_sent: bool,
     confirmation_sent: bool,
     deferred_go: bool,
-    early_records: Vec<(
-        usize,
-        crate::net::lan_messages::vmce::VmceResultRecord,
-    )>,
+    early_records: Vec<(usize, crate::net::lan_messages::vmce::VmceResultRecord)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +287,38 @@ impl MatchSession {
                 .map_file
                 .as_str(),
         )
+    }
+
+    /// The next-stage unlock this result round has earned: the resolved local
+    /// next stage and the round nonce, present only once every online
+    /// participant confirmed both the terminal result and this peer's stage
+    /// identity. `None` for a retry or a campaign end, which have no next
+    /// stage, and before agreement.
+    pub(crate) fn vmce_agreed_unlock(&self) -> Option<(&str, [u8; 16])> {
+        let nonce = self.vmce_result_nonce()?;
+        let network = self.network.as_ref()?;
+        let NetworkPhase::CooperativeRound {
+            connected,
+            launch,
+            round,
+            ..
+        } = &network.phase
+        else {
+            return None;
+        };
+        if !result_agreed(connected, launch, round) {
+            return None;
+        }
+        // Only a next-stage continuation unlocks; a retry or campaign end
+        // carries no next stage even if a future caller attaches one.
+        if round
+            .vmce
+            .as_ref()
+            .is_none_or(|vmce| vmce.ending() != VmceRoundEnding::Next)
+        {
+            return None;
+        }
+        Some((self.vmce_round_next_stage_map()?, nonce))
     }
 
     pub(crate) fn set_cooperative_round_page_victory(&mut self, victory: bool) {

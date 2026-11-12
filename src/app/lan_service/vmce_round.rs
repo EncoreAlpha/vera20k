@@ -26,6 +26,10 @@ pub(crate) struct VmceLanRoundState {
     intermission_entered: bool,
     campaign_completion_pending: bool,
     campaign_completion_enqueue_failed: bool,
+    /// The result nonce whose agreed next-stage unlock was already persisted.
+    /// Duplicate or stale confirmations keep the same nonce and do not write
+    /// again; a new round carries a new nonce.
+    result_unlock_nonce: Option<[u8; 16]>,
 }
 
 impl VmceLanRoundState {
@@ -37,6 +41,7 @@ impl VmceLanRoundState {
         self.intermission_entered = false;
         self.campaign_completion_pending = false;
         self.campaign_completion_enqueue_failed = false;
+        self.result_unlock_nonce = None;
     }
 
     pub(super) fn defer_pending_round(&mut self, incoming: GlobalMessage) {
@@ -108,6 +113,14 @@ impl VmceLanRoundState {
 
     pub(super) fn remember_result_nonce(&mut self, nonce: [u8; 16]) -> bool {
         self.used_result_nonces.insert(nonce)
+    }
+
+    pub(super) fn result_unlock_nonce(&self) -> Option<[u8; 16]> {
+        self.result_unlock_nonce
+    }
+
+    pub(super) fn mark_result_unlock_saved(&mut self, nonce: [u8; 16]) {
+        self.result_unlock_nonce = Some(nonce);
     }
 
     pub(super) fn campaign_completion_pending(&self) -> bool {
@@ -848,6 +861,34 @@ pub(super) fn next_stage_accepted(state: &AppState) -> bool {
         .is_some_and(|round| round.vmce_next_accepted())
 }
 
+/// Persist the next-stage unlock as soon as every online participant has
+/// confirmed the round's result and next-stage identity. Continue, entering
+/// the intermission room and loading the next stage are not required. The
+/// progress store is idempotent; this owner remembers the result nonce so a
+/// settled round does not touch it every frame, while a new round (new nonce)
+/// unlocks again.
+pub(super) fn unlock_agreed_next_stage(state: &mut AppState) {
+    let Some((map, nonce)) = state.match_state.session.vmce_agreed_unlock() else {
+        return;
+    };
+    let map = map.to_owned();
+    let Some(service) = state.match_state.lan_service.as_mut() else {
+        return;
+    };
+    if service.vmce_round.result_unlock_nonce() == Some(nonce) {
+        return;
+    }
+    match crate::app::vmce_campaign::try_unlock_catalog_stage(state, &map) {
+        Ok(_) => {
+            if let Some(service) = state.match_state.lan_service.as_mut() {
+                service.vmce_round.mark_result_unlock_saved(nonce);
+            }
+        }
+        // Not remembered as saved: the next poll retries the same agreement.
+        Err(error) => log::warn!("Could not persist the agreed VMCE unlock: {error:#}"),
+    }
+}
+
 pub(super) fn result_nonce(state: &AppState) -> Option<[u8; 16]> {
     state.match_state.session.vmce_result_nonce()
 }
@@ -1214,6 +1255,28 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_unlock_nonce_is_remembered_per_round_and_clears_with_the_visit() {
+        let mut state = VmceLanRoundState::default();
+        assert_eq!(state.result_unlock_nonce(), None);
+        state.mark_result_unlock_saved([3; 16]);
+        assert_eq!(state.result_unlock_nonce(), Some([3; 16]));
+        state.mark_result_unlock_saved([3; 16]);
+        assert_eq!(
+            state.result_unlock_nonce(),
+            Some([3; 16]),
+            "a duplicate confirmation keeps the same remembered nonce"
+        );
+        state.mark_result_unlock_saved([4; 16]);
+        assert_eq!(
+            state.result_unlock_nonce(),
+            Some([4; 16]),
+            "a new result round replaces the remembered nonce"
+        );
+        state.clear_visit();
+        assert_eq!(state.result_unlock_nonce(), None);
+    }
 
     #[test]
     fn vmce_control_admission_checks_the_host_and_round() {

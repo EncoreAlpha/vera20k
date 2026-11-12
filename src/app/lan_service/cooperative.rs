@@ -123,6 +123,7 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         if let Err(error) = receive(state, incoming) {
             log::debug!("Ignored queued co-op round packet: {error:#}");
         }
+        super::vmce_round::unlock_agreed_next_stage(state);
         if super::vmce_round::round_exit_pending(state) {
             return true;
         }
@@ -145,6 +146,8 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         if let Err(error) = receive(state, incoming) {
             log::debug!("Ignored co-op round packet: {error:#}");
         }
+        #[cfg(feature = "vmce")]
+        super::vmce_round::unlock_agreed_next_stage(state);
         #[cfg(feature = "vmce")]
         if super::vmce_round::round_exit_pending(state) {
             return true;
@@ -174,6 +177,8 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         crate::app::cooperative_round::return_to_shell(state);
         return false;
     }
+    #[cfg(feature = "vmce")]
+    super::vmce_round::unlock_agreed_next_stage(state);
     #[cfg(feature = "vmce")]
     if !super::vmce_round::continue_after_result(state) {
         return false;

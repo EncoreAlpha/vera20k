@@ -358,21 +358,28 @@ fn vmce_roots(state: &AppState) -> Result<(std::path::PathBuf, std::path::PathBu
 }
 
 /// Persist one unlocked stage of a VMCE series. The caller decides when the
-/// unlock is earned; this owner only validates and stores it.
+/// unlock is earned; this owner only validates and stores it. A write failure
+/// is logged for the caller that treats the unlock as best-effort.
 pub(crate) fn unlock_catalog_stage(state: &AppState, map_file: &str) {
-    let result = (|| -> Result<()> {
-        let config = state
-            .platform
-            .game_config
-            .as_ref()
-            .context("VMCE progress requires profile paths")?;
-        let (series, map) = split_catalog_map(map_file)?;
-        crate::app::persistence::vmce_progress::unlock(config.paths.settings_dir(), &series, &map)?;
-        Ok(())
-    })();
-    if let Err(error) = result {
+    if let Err(error) = try_unlock_catalog_stage(state, map_file) {
         log::warn!("Could not save VMCE stage unlock: {error:#}");
     }
+}
+
+/// The fallible form used where a failed write must not be remembered as
+/// saved, so a later poll can retry it.
+pub(crate) fn try_unlock_catalog_stage(state: &AppState, map_file: &str) -> Result<bool> {
+    let config = state
+        .platform
+        .game_config
+        .as_ref()
+        .context("VMCE progress requires profile paths")?;
+    let (series, map) = split_catalog_map(map_file)?;
+    Ok(crate::app::persistence::vmce_progress::unlock(
+        config.paths.settings_dir(),
+        &series,
+        &map,
+    )?)
 }
 
 fn load_vmce_map_ini(
