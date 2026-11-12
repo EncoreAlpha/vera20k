@@ -525,6 +525,186 @@ fn shared_vmce_mode_checks_have_pinned_policy_callers() {
     println!("VMCE specialized references (separate): 7 diagnostics + 1 result");
 }
 
+/// Files owned by the VMCE capability: their `#[cfg(feature = "vmce")]`
+/// gates belong to VMCE code, not to a shared owner. Diagnostics capture code
+/// is test tooling and is excluded here; the mode-check guard covers it.
+const VMCE_OWNED_FILE_PREFIXES: &[&str] = &[
+    "app/vmce_result/",
+    "app/vmce_round.rs",
+    "app/lan_service/vmce_",
+    "app/match_runtime/session/cooperative_round/vmce_round.rs",
+    "app/shell_network_setup/vmce_",
+    "app/diagnostics/",
+    "net/lan_messages/vmce.rs",
+    "net/udp/vmce.rs",
+    "sim/scenario_session/vmce.rs",
+];
+
+/// Production `#[cfg(feature = "vmce")]` gates in shared files, one ceiling per
+/// file. These are the coupling the mode-check metric does not see: a shared
+/// owner that branches on the capability. Ratchet them down as VMCE code moves
+/// behind its own modules; a new shared file that gates on `vmce` must be added
+/// here deliberately.
+const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
+    ("app/cooperative_round.rs", 12),
+    ("app/frame.rs", 1),
+    ("app/frontend/score_overlay.rs", 14),
+    ("app/frontend/skirmish_shell_render/multiplayer_setup.rs", 9),
+    ("app/frontend/state.rs", 1),
+    ("app/initialize.rs", 1),
+    ("app/input/multiplayer_setup.rs", 4),
+    ("app/lan_service.rs", 70),
+    ("app/lan_service/cooperative.rs", 18),
+    ("app/lan_service/maps.rs", 4),
+    ("app/lan_service/options.rs", 30),
+    ("app/loading/fresh_scenario.rs", 9),
+    ("app/loading/init.rs", 10),
+    ("app/loading/pump.rs", 12),
+    ("app/loading/transitions.rs", 1),
+    ("app/match_bootstrap.rs", 33),
+    ("app/match_runtime/session.rs", 30),
+    ("app/match_runtime/session/cooperative_round.rs", 36),
+    ("app/match_runtime/sim_tick.rs", 1),
+    ("app/mod.rs", 2),
+    ("app/persistence/mod.rs", 1),
+    ("app/shell_main_menu.rs", 4),
+    ("app/shell_network_setup.rs", 20),
+    ("app/shell_network_setup/actions.rs", 17),
+    ("app/shell_network_setup/actions/start.rs", 2),
+    ("app/shell_network_setup/service.rs", 20),
+    ("app/shell_network_setup/view.rs", 26),
+    ("app/shell_skirmish.rs", 6),
+    ("app/shell_wol/live_service/wire.rs", 1),
+    ("app/shell_wol/quick_match.rs", 1),
+    ("app/shell_wol/test_service.rs", 1),
+    ("map/mod.rs", 2),
+    ("map/skirmish_scenarios.rs", 3),
+    ("net/lan_messages/cooperative.rs", 34),
+    ("net/lan_messages/ingame.rs", 8),
+    ("net/udp.rs", 24),
+    ("rules/ini_parser.rs", 21),
+    ("rules/ruleset.rs", 1),
+    ("sim/multiplayer_checksum.rs", 1),
+    ("sim/scenario_bootstrap.rs", 6),
+    ("sim/scenario_post_map.rs", 2),
+    ("sim/scenario_session.rs", 34),
+    ("sim/score.rs", 2),
+    ("sim/snapshot.rs", 1),
+    ("sim/world/house_defeat.rs", 3),
+    ("skirmish_launch.rs", 5),
+    ("skirmish_modes.rs", 3),
+    ("ui/multiplayer_setup.rs", 9),
+];
+
+/// A shared file not named in the budget table may carry no production VMCE
+/// gate: adding one is a new coupling decision, not a drive-by branch.
+const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 556;
+
+fn is_vmce_owned_file(rel: &str) -> bool {
+    VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
+        if prefix.ends_with('/') || prefix.ends_with('_') {
+            rel.starts_with(prefix)
+        } else {
+            rel == *prefix
+        }
+    })
+}
+
+/// Occurrences of `feature = "vmce"` (any spacing around `=`) in code, i.e.
+/// every `#[cfg(feature = "vmce")]` and `#[cfg(all(..., feature = "vmce"))]`
+/// branch.
+fn count_vmce_feature_gates(code: &str) -> usize {
+    let bytes = code.as_bytes();
+    let mut count = 0;
+    let mut from = 0;
+    while let Some(at) = code[from..].find("feature") {
+        let start = from + at;
+        from = start + "feature".len();
+        let mut i = from;
+        while bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i += 1;
+        while bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            i += 1;
+        }
+        if bytes.get(i) == Some(&b'"') && code.get(i + 1..i + 6) == Some("vmce\"") {
+            count += 1;
+        }
+    }
+    count
+}
+
+#[test]
+fn vmce_production_gates_stay_within_budgets() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let gated = test_gated_files(files);
+    let budgets: BTreeMap<&str, usize> = VMCE_PRODUCTION_GATE_BUDGETS.iter().copied().collect();
+    let mut counts = BTreeMap::new();
+    let mut violations = Vec::new();
+    for file in files {
+        if is_vmce_owned_file(&file.rel) || gated.contains(&file.rel) || file.production.is_none() {
+            continue;
+        }
+        // Raw source keeps the `"vmce"` feature name the production projection
+        // blanks as a string literal; test-gated items are stripped first.
+        let production = strip_test_items(&file.source, &file.source);
+        let count = count_vmce_feature_gates(&production);
+        if count == 0 {
+            continue;
+        }
+        let budget = budgets
+            .get(file.rel.as_str())
+            .copied()
+            .unwrap_or(VMCE_PRODUCTION_GATE_UNLISTED_MAX);
+        if count > budget {
+            violations.push(format!("{}: {count} > {budget}", file.rel));
+        }
+        counts.insert(file.rel.clone(), count);
+    }
+    let total: usize = counts.values().sum();
+    assert!(
+        violations.is_empty(),
+        "shared files carry more VMCE feature gates than their budget: {violations:?}\n\
+         Move the VMCE branch behind its own module and leave one delegation hook, \
+         then lower the budget in this table."
+    );
+    assert!(
+        total <= VMCE_PRODUCTION_GATE_TOTAL,
+        "VMCE production feature gates in shared files: {total} > {}; \
+         move VMCE branches into VMCE-owned modules",
+        VMCE_PRODUCTION_GATE_TOTAL
+    );
+    println!(
+        "VMCE production feature gates in shared files: {total} in {} files",
+        counts.len()
+    );
+}
+
+#[test]
+fn vmce_feature_gate_scan_counts_gates_and_skips_owned_files() {
+    let code = "#[cfg(feature = \"vmce\")] fn a() {}\n\
+                #[cfg(feature=\"vmce\")] fn b() {}\n\
+                #[cfg(all(feature = \"vmce\", feature = \"dev-overlays\"))] fn c() {}\n\
+                #[cfg(feature = \"ares\")] fn d() {}\n";
+    assert_eq!(count_vmce_feature_gates(code), 3);
+    assert_eq!(count_vmce_feature_gates(""), 0);
+    let source = "#[cfg(feature = \"vmce\")] fn production() {}\n\
+                  #[cfg(test)] mod tests { #[cfg(feature = \"vmce\")] fn helper() {} }\n";
+    let production = strip_test_items(source, source);
+    assert_eq!(count_vmce_feature_gates(&production), 1);
+    assert!(is_vmce_owned_file("app/vmce_result/victory.rs"));
+    assert!(is_vmce_owned_file("app/lan_service/vmce_round.rs"));
+    assert!(is_vmce_owned_file("net/udp/vmce.rs"));
+    assert!(!is_vmce_owned_file("net/udp.rs"));
+    assert!(!is_vmce_owned_file("app/lan_service.rs"));
+}
+
 #[test]
 fn vmce_mode_scan_covers_test_projection_grouped_imports_and_qualifiers() {
     let source = "#[cfg(test)] fn test_only() { mode.is_vmce(); }\n";
