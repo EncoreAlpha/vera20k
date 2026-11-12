@@ -7,7 +7,7 @@ VMCE 是 VERA20K 的可选 LAN 战役扩展：最多 4 名玩家推进一套外�
 
 ## 构建
 
-VMCE 是编译期能力，用 mce Cargo feature 选择（Ares 现在改为由游戏数据启用，VMCE 仍是构建能力）：
+VMCE 是编译期能力，用 `vmce` Cargo feature 选择（Ares 现在改为由游戏数据启用，VMCE 仍是构建能力）：
 
 ```sh
 python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
@@ -16,7 +16,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 不带 `--features vmce` 时，不注册 `Multiplayer Campaign` 模式行，不扫描
 `Maps/VMCE/`，VMCE 专属的会话/LAN 字段也会被裁掉。
 
-当前 fork 版本：`0.3.2-vmce.6`，已合并上游 `v0.3.2`（合并提交 `70d569b86`）。LAN 双方应运行同一 VMCE 构建和同一套规则/数据（系列摘要不覆盖规则或 Ares/mod 数据，见 B102）；合并基线已复验（截图矩阵 800x600/1024x768/1600x900、LAN 4/4、原版续关），证据见 [VMCE 基线](../vmce-baseline.md)。
+当前 fork 版本：`0.3.2-vmce.6`，已合并上游 `v0.3.2`（合并提交 `70d569b86`）。LAN 双方应运行同一 VMCE 构建和同一套规则/数据；VMCE 准入会在进入任务前拒绝构建/规则不一致的对端（B102 已关闭）；合并基线已复验（截图矩阵 800x600/1024x768/1600x900、LAN 4/4、原版续关），证据见 [VMCE 基线](../vmce-baseline.md)。
 
 ## 状态
 
@@ -33,7 +33,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 
 ## 已知未修项
 
-权威清单见[审查总文档](vmce-review.md)，当前共 55 条（45 条 A 审查项 + 10 条仅 B 记录），另有 0.3.2 同步后的新基线项 B101–B105（B103/B105 已关闭）。
+查看精简的 [VMCE 待办](vmce-todo.md)；逐项证据、验收边界和历史记录保留在[审查详情](vmce-review.md)。
 与本页状态相关的玩家可见问题：
 
 - **A44/B99：** 关间房间的客人可能看不到下一关地图预览，也收不到「该地图有简报」提示；
@@ -51,7 +51,8 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
-- [VMCE 审查总文档](vmce-review.md) — 合并后的待修复项，按修复优先级排列。
+- [VMCE 待办](vmce-todo.md) — 下一步工作、待验证事项和完成记录。
+- [VMCE 审查详情](vmce-review.md) — 逐项证据、验收边界和历史记录。
 - [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。
 - [English hub](../vmce.md)。

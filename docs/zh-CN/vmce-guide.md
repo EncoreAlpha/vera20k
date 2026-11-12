@@ -69,7 +69,7 @@ python -m tools.cargo_run -- build --release --no-default-features --features vm
 
 不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`；VMCE 专属的会话状态、LAN 轮次/选项字段与大厅辅助逻辑同样按开关裁剪，非 VMCE 构建不包含它们。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
 
-本 fork 版本为 `0.3.2-vmce.N`（当前 `0.3.2-vmce.6`，已合并上游 `v0.3.2`，合并提交 `70d569b86`）；LAN 双方应运行同一 VMCE 构建和同一套规则/数据。系列摘要只覆盖 `campaign.ini` 与清单地图，不覆盖规则或 Ares/mod 数据，数据不同的双方仍可能通过准入后失步（B102）。
+本 fork 版本为 `0.3.2-vmce.N`（当前 `0.3.2-vmce.6`，已合并上游 `v0.3.2`，合并提交 `70d569b86`）；LAN 双方应运行同一 VMCE 构建和同一套规则/数据；系列摘要覆盖 `campaign.ini` 与清单地图，联机规则协议另行覆盖所选规则闭包与 Ares/扩展构建身份，VMCE 准入会在进入任务前拒绝构建或规则不同的对端（B102 已关闭）。客人侧拒绝有明确提示，房主侧经有界等待后显示通用启动失败。
 
 ### 战役目录
 

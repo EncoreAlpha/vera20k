@@ -41,8 +41,10 @@ surfaces that survive the merge:
 - LAN admission: the host advertises one content digest over the whole VMCE
   series (`campaign.ini` plus every manifest map's path, length and bytes) and
   a guest verifies it in a cancellable worker before reporting its map. The
-  digest does not cover the rules or extension data (`RuleSet::ares`, mods), so
-  peers must still run the same build and data (B102);
+  series digest covers `campaign.ini` and the manifest maps; the separate LAN rules
+  agreement covers the selected rules closure and the Ares/extension build identity, and the
+  VMCE setup handshake refuses a peer whose build or rules differ before the mission starts
+  (B102 closed);
 - campaign score `0x103`: upstream's shell slide path plus the VERA settlement
   board; the native Continue rect/input is unchanged. The board and statistics
   subpage are owned by `app::vmce_result` and read the finished world through

@@ -85,8 +85,10 @@ campaign directories are not scanned. VMCE-only session state, LAN round/options
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
 `0.3.2-vmce.N` (currently `0.3.2-vmce.6`, merged with upstream `v0.3.2`, merge commit
 `70d569b86`); LAN peers should run the same VMCE build and the same rules/data. The series
-digest covers only `campaign.ini` and the manifest maps, not rules or Ares/mod data, so peers
-with different data can still admit the same series and then desync (B102).
+series digest covers `campaign.ini` and the manifest maps; the LAN rules agreement separately
+covers the selected rules closure and the Ares/extension build identity, and the VMCE setup
+handshake refuses a peer whose build or rules differ before the mission starts (B102 closed). A
+guest's refusal is explicit; the host reports the generic LAN start failure after the bounded wait.
 
 ### Campaign directories
 

@@ -46,7 +46,8 @@ lang: zh-CN
 ## 游戏模式
 
 - [多人战役（VMCE）总览](vmce.md)
-- [VMCE 审查总文档](vmce-review.md)
+- [VMCE 待办](vmce-todo.md)
+- [VMCE 审查详情](vmce-review.md)
 - [VMCE 玩家与地图作者指南](vmce-guide.md)
 
 ## 扩展与原作者
