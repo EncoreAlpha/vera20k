@@ -19,13 +19,16 @@ Ready and Continue. Random roles display the House assigned when the mission sta
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
-This guide describes the current working tree. Per-player outcomes, the intermission room and
-local unlocks are implemented, and the local multi-process captures pass; the
+This guide describes the merged 0.3.2 working tree. Per-player outcomes, the intermission room and
+local unlocks are implemented. The full local validation — the B3 screenshot matrix and the B4 LAN
+acceptance — ran on the pre-sync base (`d5102c043`/`6322d411b`), before the 0.3.2 merge; on the
+merged baseline only compile/focused-test checks and one VMCE defeat-page smoke capture have run,
+so the captures must be repeated before they count as evidence (B103/B105). The
 [Chinese consolidated review](zh-CN/vmce-review.md) is the authoritative open-defect list, and
-the [backlog](vmce-backlog.md) tracks connected (cross-machine) acceptance and residuals.
-Prominent open defects include the guest intermission preview/briefing hint (A44), the full-room
-LAN listing (A45) and statistics-page name truncation (A38); the synthetic result/defeat capture
-fixtures also need the backlog's B91 workaround.
+the [backlog](vmce-backlog.md) tracks connected (cross-machine) acceptance, residuals and the
+B101–B105 post-0.3.2 interactions. Prominent open defects include the guest intermission
+preview/briefing hint (A44), the full-room LAN listing (A45) and statistics-page name truncation
+(A38); the synthetic result/defeat capture fixtures also need the backlog's B91 workaround.
 
 ## Relation to the original
 
@@ -43,8 +46,8 @@ VMCE takes another path:
   does not end the mission automatically.
 - Role and non-role Houses keep campaign semantics and are not auto-defeated merely because
   they have no units.
-- Inside a mission, random crates and ShortGame follow campaign semantics, and the
-  Special House auto-alliance and Secret Lab random assignment are skipped. The matching
+- Inside a mission, random skirmish crates and ShortGame are off, following campaign semantics,
+  and the Special House auto-alliance and Secret Lab random assignment are skipped. The matching
   lobby switches are shown disabled for VMCE.
 - Victory and campaign completion use the campaign score page `0x103`; defeat uses the BC6
   statistics page. Guests ready for the next mission or vote to retry, and the host continues
@@ -66,8 +69,8 @@ modes keep their original behavior and do not read the VMCE campaign format.
 
 ### Build feature
 
-VMCE is a compile-time capability like Ares, Phobos and VeraX, and is not part of the default
-or shipping profile:
+VMCE is a compile-time capability, not a runtime INI switch, and is not part of the default or
+shipping profile:
 
 ```bash
 # Developer build with VMCE enabled:
@@ -81,7 +84,9 @@ Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
 `0.3.2-vmce.N` (currently `0.3.2-vmce.6`, merged with upstream `v0.3.2`, merge commit
-`70d569b86`); LAN peers should run the same VMCE build.
+`70d569b86`); LAN peers should run the same VMCE build and the same rules/data. The series
+digest covers only `campaign.ini` and the manifest maps, not rules or Ares/mod data, so peers
+with different data can still admit the same series and then desync (B102).
 
 ### Campaign directories
 
@@ -186,7 +191,8 @@ base and units, or spawn them with triggers. VMCE does not grant an MCV or const
 
 VMCE victory and the campaign-end/last mission share the original campaign score page `0x103`
 (layout and input); the defeat result is the native BC6 cooperative statistics dialog instead.
-The result state, Continue and retry semantics belong to VMCE.
+The result state, Continue and retry semantics belong to VMCE. Both pages are authored at
+800x600 and fitted by `ShellScale` to the current 1024x768 default window (B103).
 
 - Victory/campaign-end `0x103`: par time, your time, rank and commendation stay native; the
   top report's destroyed-enemies label/value are hidden and the native panel keeps its height.
@@ -213,8 +219,9 @@ The result state, Continue and retry semantics belong to VMCE.
   lights the native button; the host's `重试` starts disabled and lights only after every online
   guest voted, then restarts the same frozen stage with the same seed, roles and map — no timeout
   and no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
-  The genuine VMCE 2p-retry capture passes: the guest votes, the host retries, both reload the
-  same VMCE stage, 300 native checksums match, and host/guest table stats are identical.
+  On the pre-sync B4 base, the genuine VMCE 2p-retry capture passed: the guest votes, the host
+  retries, both reload the same VMCE stage, 300 native checksums match, and host/guest table stats
+  are identical. The merged baseline still needs that re-run (B105).
   Defeat statistics use each player's frozen House assignment, including when command-source
   order differs from seat order.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
@@ -354,9 +361,10 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
 
 ## Automated acceptance
 
-After an upstream sync, see [VMCE fork baseline](vmce-baseline.md) for the
-merge/version/validation state. `tools/vmce_lan_acceptance.py` runs the
-real-process captures:
+The current baseline is upstream `v0.3.2` (merge `70d569b86`); see
+[VMCE fork baseline](vmce-baseline.md) for the validation state. The full B3 matrix and B4 LAN
+acceptance ran on the pre-sync base; re-run them on the merged baseline before treating the
+result as evidence (B103/B105). `tools/vmce_lan_acceptance.py` runs the real-process captures:
 
 - `--suite dev`: one short `2p-retry` flow probe. It caps each capture at 120 s
   and stops as soon as either peer exits non-zero, so a development probe
@@ -388,15 +396,15 @@ real-process captures:
   controls, nonce-bound result agreement and whole-series admission; cross-machine play and
   changing a guest's role after joining have not been covered. The merged 0.3.2 baseline still
   needs the full matrix and LAN acceptance re-run (B105).
-- A real two-process `EndOfGame` probe reached the credits on both peers, then used Escape
-  to return both to the main menu. It compared 300 checksums; it did not watch the entire
-  credits roll. The standard acceptance runner's `2p-final` scenario passes on the current build
-  (credits and campaign-end screenshots on both peers). VMCE `2p-retry`
-  capture passed on that base (BC6 page, guest votes → host retry → same stage, 300 matching
-  checksums). There are no result-page timers anywhere: defeat
-  uses the vote gate and campaign end the all-ready gate (B02 cancelled). Version
-  `0.3.2-vmce.6` is the current fork release; the VMCE `0x103`/`0xBC6` pages are authored at
-  800x600 and must also be verified at the new 1024x768 default window (B103).
+- On the pre-sync base, a real two-process `EndOfGame` probe reached the credits on both peers,
+  then used Escape to return both to the main menu. It compared 300 checksums; it did not watch
+  the entire credits roll. The standard acceptance runner's `2p-final` scenario also passed on
+  that base (credits and campaign-end screenshots on both peers), and the VMCE `2p-retry` capture
+  passed there too (BC6 page, guest votes → host retry → same stage, 300 matching checksums).
+  There are no result-page timers anywhere: defeat uses the vote gate and campaign end the
+  all-ready gate (B02 cancelled). Version `0.3.2-vmce.6` is the current fork version; the VMCE
+  `0x103`/`0xBC6` pages are authored at 800x600 and still need verification at the 1024x768
+  default window on the merged baseline (B103).
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
   five-column result board, the right-panel statistics button/page, and the BC6 defeat page.
   HUD and loading/transition presentation are not implemented in this cycle (B20/B21).
