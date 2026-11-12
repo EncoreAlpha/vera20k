@@ -84,7 +84,7 @@ Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered
 campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
 lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
 `0.3.2-vmce.N` (currently `0.3.2-vmce.6`, merged with upstream `v0.3.2`, merge commit
-`70d569b86`); LAN peers should run the same VMCE build and the same rules/data. The series
+`89ccbea49`); LAN peers should run the same VMCE build and the same rules/data. The series
 series digest covers `campaign.ini` and the manifest maps; the LAN rules agreement separately
 covers the selected rules closure and the Ares/extension build identity, and the VMCE setup
 handshake refuses a peer whose build or rules differ before the mission starts (B102 closed). A
@@ -365,7 +365,7 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
 
 ## Automated acceptance
 
-The current baseline is upstream `v0.3.2` (merge `70d569b86`); see
+The current baseline is upstream main `867ae2467` (merge `89ccbea49`); see
 [VMCE fork baseline](vmce-baseline.md) for the validation state. The screenshot matrix, B4 LAN
 acceptance and stock Cooperative continuation were re-run on the merged baseline and passed
 (93/93 checks; B103/B105 closed). `tools/vmce_lan_acceptance.py` runs the real-process captures:

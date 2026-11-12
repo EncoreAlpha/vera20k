@@ -17,8 +17,8 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 Without `--features vmce`, the `Multiplayer Campaign` mode row is absent, `Maps/VMCE/`
 is not scanned, and VMCE-only session/LAN fields are compiled out.
 
-Current fork version: `0.3.2-vmce.6`, merged with upstream `v0.3.2` (merge commit
-`70d569b86`). LAN peers should run the same VMCE build. The fork baseline and what the merge
+Current fork version: `0.3.2-vmce.6`, synced to upstream main `867ae2467` (merge
+commit `89ccbea49`). LAN peers should run the same VMCE build. The fork baseline and what the merge
 changed are in the [VMCE baseline](vmce-baseline.md); the merged baseline has been
 re-captured (screenshot matrix at 800x600/1024x768/1600x900, LAN acceptance 4/4, stock
 Cooperative continuation) and the evidence is recorded there.
@@ -32,10 +32,10 @@ Cooperative continuation) and the evidence is recorded there.
 | Outcomes | Per-player win/loss from the map's actual diplomacy; an eliminated primary House keeps its authorized control and the mission continues until a map outcome trigger |
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
 | Unlocks | The result and stage identity must be confirmed; the unlock is saved immediately on that agreement, before Continue or the intermission room (B57 closed, `9de82144e`). Loading the next stage is not required |
-| LAN validation | Validated on the merged 0.3.2 baseline (`b5-sync-70d569b86-r1`): two-, three- and four-process win and next mission, two-player retry, 93/93 checks, 300 matching checksums; the same set passed on the pre-sync B4 base, where each peer's local unlock file was checked |
+| LAN validation | Validated on the merged upstream-`867ae2467` tree (`vmce-upstream-867ae2467-r1`): two-process win/next mission, retry and campaign end, 300 matching checksums each; the earlier merged-0.3.2 93/93 capture matrix remains in the baseline page |
 | Module ownership | B5 (2026-11-12): VMCE wire records, the UDP intermission transport and session helpers live in VMCE-owned modules; the shared gate metric is a change record only (503 shared-owner gates, was 556; 193 diagnostics tooling gates pinned separately). Current-HEAD validation: `b5-core-1a5e02431-r1` passed `2p-win`/`2p-retry` (see the backlog) |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers. Authored at 800x600, fitted to the 1024x768 default window; both dialogs verified at 800x600, 1024x768 and 1600x900 |
-| i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. Upstream's Vietnamese catalog has none yet (B101) |
+| i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. The Vietnamese catalog now carries the same keys as English placeholders added by the upstream sync; translation remains open (B101) |
 
 ## Known open findings
 

@@ -16,7 +16,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 不带 `--features vmce` 时，不注册 `Multiplayer Campaign` 模式行，不扫描
 `Maps/VMCE/`，VMCE 专属的会话/LAN 字段也会被裁掉。
 
-当前 fork 版本：`0.3.2-vmce.6`，已合并上游 `v0.3.2`（合并提交 `70d569b86`）。LAN 双方应运行同一 VMCE 构建和同一套规则/数据；VMCE 准入会在进入任务前拒绝构建/规则不一致的对端（B102 已关闭）；合并基线已复验（截图矩阵 800x600/1024x768/1600x900、LAN 4/4、原版续关），证据见 [VMCE 基线](../vmce-baseline.md)。
+当前 fork 版本：`0.3.2-vmce.6`，已同步上游 main `867ae2467`（合并提交 `89ccbea49`）。LAN 双方应运行同一 VMCE 构建和同一套规则/数据；VMCE 准入会在进入任务前拒绝构建/规则不一致的对端（B102 已关闭）；同步后的基线已复验（双人胜利/重试/最终关 LAN 验收、300 checksum 一致），证据见 [VMCE 基线](../vmce-baseline.md)。
 
 ## 状态
 

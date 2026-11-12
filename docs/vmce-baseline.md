@@ -6,8 +6,8 @@ the upstream sync, not a native-parity certification.
 
 | Item | Value |
 | --- | --- |
-| Upstream baseline | `1ea16933b` (Ares enabled from a game's data, #4319) |
-| Merge commit | `70d569b86` (`Merge upstream/main (1ea16933b) into feature/vmce`) |
+| Upstream baseline | `867ae2467` (upstream main, 2026-11-13; room Teams/join queue, mods page, Ares in every build behind its switch) |
+| Merge commit | `89ccbea49` (`Merge upstream/main (867ae2467) into feature/vmce`) |
 | Fork version | `0.3.2-vmce.6` (all three workspace manifests and `Cargo.lock`) |
 | Capability | `vmce` (off by default; shipping builds do not enable it) |
 
@@ -27,6 +27,22 @@ the new `SimHost` accessors; the ten i18n catalogs were merged key by key (all
 fork and upstream keys present, no duplicates); the crate version became
 `0.3.2-vmce.6`; and the architecture guards pin upstream's new Ares
 superweapon-presentation reads and its rules-layer Ares switch setter.
+
+## Latest upstream sync (2026-11-13)
+
+Merged upstream main `867ae2467` (59 commits after 0.3.2) as `89ccbea49`; the
+per-file conflict resolutions are in that merge message. Validation on the
+merged tree: `check -p vera20k --lib --bins` with and without `--features
+vmce`, architecture guards 26/26 in both configurations, focused VMCE tests
+224, stock Cooperative/setup/LAN default tests 146, and a labelled VMCE build
+(`vmce-upstream-867ae2467-r1`, executable SHA-256
+`160163127F0FA58186456F88C06188113DA721BDB5F77295EA84AF5A51179749`) passing the
+real two-process `2p-win`, `2p-retry` and `2p-final` acceptance (300 matching
+checksums each; start, result, retry, intermission continue and campaign end).
+The 20,000-unit performance comparison and the VMCE+Ares combination were not
+run. Upstream's new AGENTS contract moves game behavior off build features
+(Ares uses its runtime switch); VMCE remains a compile-time capability by
+design, so that policy conflict is reported here rather than resolved.
 
 ## Resolution policy
 
@@ -95,8 +111,8 @@ JSONs, receipts).
 The shipped i18n baseline keeps every catalog the fork maintains key-complete:
 English carries the real VMCE labels, zh-CN keeps the fork's translations, and
 the other eight language files use the English text as explicit placeholders
-until translated. Upstream's Vietnamese catalog, added in 0.3.2, has no VMCE
-keys yet (B101).
+until translated. The 2026-11-13 upstream sync added the 32 VMCE keys to the
+Vietnamese catalog as English placeholders; translating them remains open (B101).
 
 ## Real-process captures
 

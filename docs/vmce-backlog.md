@@ -3,7 +3,7 @@
 This is the English engineering ledger. The [Chinese consolidated review](zh-CN/vmce-review.md) is
 authoritative for priorities and retains the original 55 audit entries (45 `A` findings plus 10
 B-only residuals), alongside later work; this ledger keeps the same numbering and records unfinished work, locked decisions
-and acceptance boundaries. The current baseline is upstream 0.3.2, merge `70d569b86`, fork
+and acceptance boundaries. The current baseline is upstream main `867ae2467`, merge `89ccbea49`, fork
 version `0.3.2-vmce.6`; the interactions the sync exposed are B101–B105 below
 (B103, B105 and B102 are closed; B101 and B104 stay open). Implemented
 paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits); an
@@ -19,10 +19,9 @@ The [Chinese consolidated review](zh-CN/vmce-review.md) orders the open work. B1
 
 These are new work created by the upstream 0.3.2 merge, not re-numbered audit findings.
 
-- **B101 — Vietnamese VMCE strings:** upstream added `src/i18n/vera20k.vi.ini`; it carries no
-  `VERA:VMCE*` keys, while the ten older catalogs carry 32 each (English and zh-CN real, the other
-  eight English placeholders). Add the 32 keys (English placeholders are acceptable) and keep the
-  i18n completeness suite green.
+- **B101 — Vietnamese VMCE strings (keys added 2026-11-13, translation open):** upstream added
+  `src/i18n/vera20k.vi.ini` without VMCE strings. The upstream sync added the 32 `VERA:Vmce*` keys
+  as English placeholders so the catalog completeness suite passes; translating them remains open.
 - **B102 — rules and extension identity in series admission (closed 2026-11-13, `b7f42e2aa`).**
   The audit found the existing owners already enforce the identity; no wire change was needed:
   - `MultiplayerAgreement` is published in every setup Options: `version` carries the package,

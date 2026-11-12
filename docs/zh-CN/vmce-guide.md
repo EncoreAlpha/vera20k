@@ -69,7 +69,7 @@ python -m tools.cargo_run -- build --release --no-default-features --features vm
 
 不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`；VMCE 专属的会话状态、LAN 轮次/选项字段与大厅辅助逻辑同样按开关裁剪，非 VMCE 构建不包含它们。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
 
-本 fork 版本为 `0.3.2-vmce.N`（当前 `0.3.2-vmce.6`，已合并上游 `v0.3.2`，合并提交 `70d569b86`）；LAN 双方应运行同一 VMCE 构建和同一套规则/数据；系列摘要覆盖 `campaign.ini` 与清单地图，联机规则协议另行覆盖所选规则闭包与 Ares/扩展构建身份，VMCE 准入会在进入任务前拒绝构建或规则不同的对端（B102 已关闭）。客人侧拒绝有明确提示，房主侧经有界等待后显示通用启动失败。
+本 fork 版本为 `0.3.2-vmce.N`（当前 `0.3.2-vmce.6`，已同步上游 main `867ae2467`，合并提交 `89ccbea49`）；LAN 双方应运行同一 VMCE 构建和同一套规则/数据；系列摘要覆盖 `campaign.ini` 与清单地图，联机规则协议另行覆盖所选规则闭包与 Ares/扩展构建身份，VMCE 准入会在进入任务前拒绝构建或规则不同的对端（B102 已关闭）。客人侧拒绝有明确提示，房主侧经有界等待后显示通用启动失败。
 
 ### 战役目录
 
@@ -528,7 +528,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 
 ### 自动化验收
 
-当前基线是上游 `v0.3.2`（合并提交 `70d569b86`）；验收状态见 [VMCE 基线](../vmce-baseline.md)。截图矩阵、B4 LAN 验收与原版 Cooperative 续关已在合并基线上复跑并通过（93/93 检查；B103/B105 已关闭）。`tools/vmce_lan_acceptance.py` 负责真实多进程采集：
+当前基线是上游 main `867ae2467`（合并提交 `89ccbea49`）；验收状态见 [VMCE 基线](../vmce-baseline.md)。截图矩阵、B4 LAN 验收与原版 Cooperative 续关已在合并基线上复跑并通过（93/93 检查；B103/B105 已关闭）。`tools/vmce_lan_acceptance.py` 负责真实多进程采集：
 
 - `--suite dev`：只跑一次短的 `2p-retry` 流程探针；单个采集默认 120 秒上限，任一端非零退出立即停止。
 - `--suite fast` 跑 `4p-win`；`--suite smoke` 和 `--suite full` 跑 `4p-win`、`2p-win`、`2p-retry`，做完整的 300 帧 checksum 比对。`4p-win` 接受 `--players 2|3|4`；`2p-final` 需要 `Entry` 为末关的系列（用 `--entry`），manifest-extra 探针复用 2p-final 流程。
@@ -560,7 +560,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 | 随机地图 | 不支持；必须是松散 authored `.map` |
 | 3–4 人联机 | 合并基线上的本机三人、四人胜利与下一关采集通过（合并前基线已核对各端解锁文件）；跨机器和客人中途更改角色尚未覆盖 |
 | 末关/失败重试真实采集 | 合并基线上 `2p-retry` 与 `2p-final` 通过；末关覆盖进入片尾及跳过后返回主菜单，未观看完整片尾。失败是投票闸门，末关是全员准备闸门 |
-| 上游基线 | 已合并 upstream `0.3.2`（合并提交 `70d569b86`）；版本 `0.3.2-vmce.6`；旧 2p/4p 收据作废，新基线见 [VMCE 基线](../vmce-baseline.md)；10 种旧语言各有 32 条 VMCE 键（en/zh-CN 真值，其余英文占位，B08），越南语无 VMCE 键（B101） |
+| 上游基线 | 已同步 upstream main `867ae2467`（合并提交 `89ccbea49`）；版本 `0.3.2-vmce.6`；旧 2p/4p 收据作废，新基线见 [VMCE 基线](../vmce-baseline.md)；10 种旧语言各有 32 条 VMCE 键（en/zh-CN 真值，其余英文占位，B08），越南语已加 32 条英文占位键、待翻译（B101） |
 
 ### 已知未修项
 
