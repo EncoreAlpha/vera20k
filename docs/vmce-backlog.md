@@ -8,7 +8,7 @@ version `0.3.2-vmce.6`; the interactions the sync exposed are B101–B105 below
 (B103 and B105 are closed by the merged-baseline acceptance; B101, B102 and B104 stay open). Implemented
 paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits); an
 implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md)
-describes current behavior. The refactor-only B5 series and its B106 follow-up are recorded below;
+describes current behavior. The refactor-only B5 series and the B106 campaign-data owner are recorded below;
 they change module ownership, not behavior. Planned or follow-up items are not implementation promises.
 
 ## Post-0.3.2 baseline interactions (B101–B105)
@@ -75,11 +75,37 @@ The series is `da212a8a4`, `86ca439a6`, `e8cfdcb93`, `dff07c1d9`, plus `7a722853
 - **Still open, not closed by the file moves:** B40 (map-details cache inside the per-frame setup
   view), B41 (synthetic catalog record on intermission), B10 (terminal LAN delivery) and the
   connected-validation items above. The moves change ownership, not those behaviors.
-- **Follow-up (not B5): B106 - campaign data vs lobby reverse dependency.** `lan_service/vmce_series.rs`
-  still calls `shell_network_setup::vmce_map`, and result logic resolves the next stage through
-  lobby modules. Consolidate series reading, content digests and next-stage resolution into a
-  campaign-data owner callable by LAN, lobby and result code; the lobby supplies inputs from app
-  state. Keep the existing map parsing, directory and progress owners; do not copy state or parsing.
+- **Follow-up (closed in B106, below): campaign data vs lobby reverse dependency.** LAN and the
+  result flow no longer reach campaign data through the lobby; see the B106 section below.
+
+## Campaign data owner (B106, 2026-11-12, closed)
+
+Closed by `a290f94de`. The VMCE campaign series reading, identity, whole-series digest and
+next-stage resolution moved from the lobby setup module into `src/app/vmce_campaign.rs`; the lobby,
+LAN admission and the result flow now call that owner directly.
+
+- **Owner:** series root and `campaign.ini` manifest parsing/validation, host/guest map config
+  resolution, `local_vmce_series_manifest`/`LocalVmceSeries`, `host_vmce_identity`,
+  `series_content_sha256`, `resolve_next_vmce_stage`/`VmceResolvedStage`, `unlock_catalog_stage`
+  and the catalog discovery that reads campaign files.
+- **Lobby:** `refresh_vmce_entries` is the only remaining campaign seam; it removes stale VMCE
+  catalog records and inserts the discovered ones, taking its inputs from `AppState`.
+- **LAN and result:** `lan_service/vmce_series`, `lan_service/vmce_setup/options`,
+  `vmce_result/victory`, `vmce_round` and the A03 diagnostic call `vmce_campaign` directly; no
+  module reaches campaign data through the lobby.
+- **Single owners kept:** the map loader/source, progress store, session/network config and wire
+  protocol are unchanged; the move reuses them instead of copying parsing or state.
+- **Validation (current HEAD `a290f94de`):** campaign owner 9 tests, LAN/series/setup/result/round/
+  lobby consumers 66 vmce + 12 default, architecture guards 26 in both configurations (504 shared
+  + 193 diagnostics pins), production `check -p vera20k --lib --bins` in both configurations, and
+  the labelled build `b106-a290f94de-r1` (exe SHA-256
+  `4F7D51C7AA3DFC08C46AD4BF1FD72075903EC483F6C7282C6D8454FC2A0D4B3F`) passing `2p-win` (campaign
+  start, next stage, 300 matching checksums) and `2p-retry` (300 matching checksums) LAN
+  acceptance. Evidence is under `.scratch/b106/` (not committed). A read-only critic reviewed the
+  commit: APPROVE WITH NOTES, no blocking findings.
+- **Residual:** `refresh_vmce_entries`/`discover_entries` has no direct retain/extend/early-return
+  test (the old refresh was also untested); `listed_houses` stays duplicated between the owner and
+  `map/vmce_config.rs` (pre-existing, different return shape, not introduced here).
 
 ## Connected validation (B36)
 

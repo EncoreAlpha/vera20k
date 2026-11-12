@@ -58,10 +58,29 @@ lang: zh-CN
 - **残余：** `finish_lan_intermission` 与 `cancel_retired_lan_sends_to` 仍无直接 UDP 测试（既有缺口，
   本次搬移未改变行为）。
 - **未关闭：** B40、B41、B10 以及上方 connected-validation 项继续有效，不因文件搬移关闭。
-- **后续（不属于 B5）：B106 战役数据与大厅反向依赖。** `lan_service/vmce_series.rs` 仍调用
-  `shell_network_setup::vmce_map`，结算也经大厅模块解析下一关；将系列读取、内容摘要、下一关解析
-  收拢到 LAN、大厅、结算都能调用的战役数据所有者，大厅只从应用状态提供输入；保留现有地图解析、
-  目录与进度所有者，不复制状态或解析逻辑。
+- **后续（已在 B106 关闭）：战役数据与大厅反向依赖。** 见下方“B106 战役数据所有者”一节。
+
+## B106 战役数据所有者（2026-11-12，已关闭）
+
+由 `a290f94de` 关闭。VMCE 系列读取、身份、整系列摘要与下一关解析从大厅设置模块移到
+`src/app/vmce_campaign.rs`；大厅、LAN 准入与结算流程直接调用该所有者。
+
+- **所有者：** 系列根与 `campaign.ini` 清单解析/校验、主客机地图配置解析、
+  `local_vmce_series_manifest`/`LocalVmceSeries`、`host_vmce_identity`、`series_content_sha256`、
+  `resolve_next_vmce_stage`/`VmceResolvedStage`、`unlock_catalog_stage`，以及读取战役文件的目录发现。
+- **大厅：** `refresh_vmce_entries` 是唯一保留的战役接缝，负责移除过期 VMCE 目录记录并插入发现结果，
+  输入来自 `AppState`。
+- **LAN 与结算：** `lan_service/vmce_series`、`lan_service/vmce_setup/options`、`vmce_result/victory`、
+  `vmce_round` 与 A03 诊断直接调用 `vmce_campaign`，不再经大厅读取战役数据。
+- **单一所有者保留：** 地图加载/来源、进度存储、会话/网络配置与线协议均未改动；搬移复用它们，
+  不复制解析或状态。
+- **验证（当前 HEAD `a290f94de`）：** 战役所有者 9 条测试，LAN/系列/设置/结算/回合/大厅消费者
+  66（vmce）+12（默认）；architecture guards 两种配置各 26 条（504 共享 + 193 诊断固定）；
+  `check -p vera20k --lib --bins` 两种配置通过；标签构建 `b106-a290f94de-r1` 的 `2p-win`
+  （战役开始、下一关、300 个 checksum 一致）与 `2p-retry`（300 个 checksum 一致）双进程验收通过；
+  证据在 `.scratch/b106/`（未提交）。提交另经一次只读 critic 审查：APPROVE WITH NOTES，无阻塞项。
+- **残余：** `refresh_vmce_entries`/`discover_entries` 无直接 retain/extend/早退测试（旧 refresh 也未测）；
+  `listed_houses` 在所有者与 `map/vmce_config.rs` 仍各有一份（既有、返回形状不同，本次未引入）。
 
 ## P1 — 优先修复
 
