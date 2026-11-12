@@ -217,6 +217,7 @@ const VMCE_REFERENCE_EXEMPT_FILES: &[&str] = &[
     "app/vmce_result/types.rs",
     "app/vmce_result/victory.rs",
     "app/vmce_round.rs",
+    "sim/scenario_session/vmce.rs",
     "skirmish_modes.rs",
 ];
 
@@ -370,7 +371,6 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         0,
         1,
     ),
-    ("sim/scenario_session.rs", "vmce_outcomes_valid", 1, 0),
     ("sim/score.rs", "cooperative_score_rows", 1, 0),
     ("sim/world/house_defeat.rs", "house_rung", 1, 0),
     ("skirmish_launch.rs", "all_allied", 1, 0),
@@ -588,7 +588,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("sim/multiplayer_checksum.rs", 1),
     ("sim/scenario_bootstrap.rs", 6),
     ("sim/scenario_post_map.rs", 2),
-    ("sim/scenario_session.rs", 34),
+    ("sim/scenario_session.rs", 22),
     ("sim/score.rs", 2),
     ("sim/snapshot.rs", 1),
     ("sim/world/house_defeat.rs", 3),
@@ -600,7 +600,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 /// A shared file not named in the budget table may carry no production VMCE
 /// gate: adding one is a new coupling decision, not a drive-by branch.
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 516;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 504;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
