@@ -33,6 +33,7 @@ Cooperative continuation) and the evidence is recorded there.
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
 | Unlocks | The result and stage identity must be confirmed; the current code also waits for Continue before saving, so leaving earlier can lose the unlock (B57). Loading the next stage is not required |
 | LAN validation | Validated on the merged 0.3.2 baseline (`b5-sync-70d569b86-r1`): two-, three- and four-process win and next mission, two-player retry, 93/93 checks, 300 matching checksums; the same set passed on the pre-sync B4 base, where each peer's local unlock file was checked |
+| Module ownership | B5 (2026-11-12): VMCE wire records, the UDP intermission transport and session helpers live in VMCE-owned modules; the shared gate metric is a change record only (503 shared-owner gates, was 556; 193 diagnostics tooling gates pinned separately). Current-HEAD validation: `b5-core-1a5e02431-r1` passed `2p-win`/`2p-retry` (see the backlog) |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers. Authored at 800x600, fitted to the 1024x768 default window; both dialogs verified at 800x600, 1024x768 and 1600x900 |
 | i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. Upstream's Vietnamese catalog has none yet (B101) |
 
@@ -40,7 +41,9 @@ Cooperative continuation) and the evidence is recorded there.
 
 The authoritative priority list is the [Chinese consolidated review](zh-CN/vmce-review.md), currently
 55 entries (45 `A` findings plus 10 B-only residuals), plus the post-0.3.2 baseline items
-B101–B105 in the [backlog](vmce-backlog.md) (B103/B105 closed). Player-visible gaps that matter to this overview:
+B101–B105 in the [backlog](vmce-backlog.md) (B103/B105 closed). B40/B41/B10 and the connected-validation
+items remain open; B106 records the campaign-data/lobby reverse dependency as follow-up work. Player-visible
+gaps that matter to this overview:
 
 - **A44/B99:** an intermission-room guest can miss the next-stage map preview and the "map has a
   briefing" chat hint; the host shows the preview when its local map carries decodable preview

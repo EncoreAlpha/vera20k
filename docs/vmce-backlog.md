@@ -8,7 +8,8 @@ version `0.3.2-vmce.6`; the interactions the sync exposed are B101–B105 below
 (B103 and B105 are closed by the merged-baseline acceptance; B101, B102 and B104 stay open). Implemented
 paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits); an
 implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md)
-describes current behavior. Planned or follow-up items are not implementation promises.
+describes current behavior. The refactor-only B5 series and its B106 follow-up are recorded below;
+they change module ownership, not behavior. Planned or follow-up items are not implementation promises.
 
 ## Post-0.3.2 baseline interactions (B101–B105)
 
@@ -42,6 +43,43 @@ These are new work created by the upstream 0.3.2 merge, not re-numbered audit fi
   pages were also pixel-identical to the B2 baseline at 800x600, 1024x768 and 1600x900. No empty
   or one-frame-late board was observed, so no extra regression test was added beyond the live
   receipts and screenshots.
+
+## Core-layer VMCE decoupling (B5, 2026-11-12)
+
+Refactor-only series after the merged baseline; no protocol, gameplay, serialization or hash change.
+The series is `da212a8a4`, `86ca439a6`, `e8cfdcb93`, `dff07c1d9`, plus `7a722853c`
+(critic fixes) and `1a5e02431` (byte pins and guard hardening).
+
+- **Done:** the VMCE-only LAN records (`0x36`-`0x3E` and the `VmceSignal` kinds `0x37`-`0x39`)
+  moved from `src/net/lan_messages/cooperative.rs` to `src/net/lan_messages/vmce.rs`; the shared
+  module keeps the native BC6 records. The LAN intermission transport moved from `src/net/udp.rs`
+  to `src/net/udp/vmce.rs`; with the feature off the field, module and state are absent, and the
+  shared owner keeps only clear gated access points. The VMCE campaign session helpers moved from
+  `src/sim/scenario_session.rs` to `src/sim/scenario_session/vmce.rs`; the fields remain on
+  `ScenarioSession` as their only owner, and the three `fold_identity` folds stay at their original
+  positions with the same inputs.
+- **Guard:** a production `#[cfg(feature = "vmce")]` gate-count guard records shared-owner gates
+  (556 -> 503 across 48 shared files; the 193 gates in diagnostics tooling are pinned separately). The number is a change record, not evidence that decoupling is
+  complete; the remaining shared access points and mode-check callers are deliberate.
+- **Validation (current HEAD `1a5e02431`, not the `70d569b86` baseline):** focused core tests 159
+  default / 195 vmce, app 275 default / 396 vmce (4 ignored), architecture guards 26 in both
+  configurations (503 shared + 193 diagnostics pinned), production `check -p vera20k --lib --bins`
+  in both configurations. Labelled build `b5-core-1a5e02431-r1` (exe SHA-256
+  `DB2FD58B58655D3D0A7B1C4A84086E743BD5AC9C52E4AEC99D6F1E8CEE8E7074`) passed `2p-win` (300
+  matching checksums) and `2p-retry` (300 matching checksums, no failure) LAN acceptance; earlier
+  stages also passed on `b5-udp-e8cfdcb93-r1` and `b5-core-dff07c1d9-r1`. Evidence is under
+  `.scratch/b5/` (not committed). Two read-only critics reviewed the series: APPROVE WITH NOTES, no
+  blocking findings; the actionable notes are addressed in `7a722853c` and `1a5e02431`.
+- **Residual:** `finish_lan_intermission` and `cancel_retired_lan_sends_to` still have no direct UDP
+  test (pre-existing gap; behavior unchanged by the moves).
+- **Still open, not closed by the file moves:** B40 (map-details cache inside the per-frame setup
+  view), B41 (synthetic catalog record on intermission), B10 (terminal LAN delivery) and the
+  connected-validation items above. The moves change ownership, not those behaviors.
+- **Follow-up (not B5): B106 - campaign data vs lobby reverse dependency.** `lan_service/vmce_series.rs`
+  still calls `shell_network_setup::vmce_map`, and result logic resolves the next stage through
+  lobby modules. Consolidate series reading, content digests and next-stage resolution into a
+  campaign-data owner callable by LAN, lobby and result code; the lobby supplies inputs from app
+  state. Keep the existing map parsing, directory and progress owners; do not copy state or parsing.
 
 ## Connected validation (B36)
 
