@@ -40,8 +40,11 @@ pub(crate) fn run_step(state: &mut AppState, step: VmceRoundStep) {
         VmceRoundStep::Assign { ending } => {
             if let Err(error) = assign(state, ending) {
                 log::error!("VMCE result assignment failed: {error:#}");
-                let _ = state.match_state.session.quit_vmce_result();
-                return_to_shell(state);
+                // The bounded terminal handoff could not complete. The LAN
+                // owner keeps the peer notification, the bounded departure and
+                // the player-visible reason; an assignment must never drop the
+                // page and return to the shell silently.
+                fail_handoff(state);
             }
         }
         VmceRoundStep::Next => {
@@ -65,31 +68,36 @@ pub(crate) fn run_step(state: &mut AppState, step: VmceRoundStep) {
 }
 
 fn assign(state: &mut AppState, ending: VmceRoundEnding) -> anyhow::Result<()> {
-    if ending == VmceRoundEnding::Next
-        && state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
-    {
-        crate::app::lan_service::vmce_round::begin_vmce_intermission_transition(state)?;
+    use crate::app::lan_service::vmce_round::VmceAssignment;
+    let lan =
+        state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan;
+    let assignment = if lan {
         let now = crate::app::match_runtime::frame_pacer::frame_bucket(
             crate::app::match_runtime::frame_pacer::wall_clock_ms(),
         );
-        if !crate::app::lan_service::vmce_round::vmce_intermission_transition_ready(state, now)? {
+        crate::app::lan_service::vmce_round::assign_vmce_result_lan(state, ending, now)
+    } else {
+        state.match_state.session.vmce_result_assigned()?;
+        VmceAssignment::Assigned
+    };
+    match assignment {
+        VmceAssignment::Waiting => {
+            // The host's intermission handoff is still inside its bounded
+            // delivery: keep the result page and poll; an expiry becomes a
+            // visible failure through the shared owner.
             return Ok(());
         }
-    }
-    if state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan {
-        crate::app::lan_service::vmce_round::mark_assignment_wait(state);
-    }
-    state.match_state.session.vmce_result_assigned()?;
-    if state.match_state.session_mode() == crate::app::match_runtime::session::SessionMode::Lan
-        && state.match_state.session.host()
-    {
-        state.match_state.session.vmce_result_queue_go()?;
+        VmceAssignment::Failed(key) => {
+            // The owner stopped the round and queued the peer notice; leave
+            // the page through the bounded departure and show the reason.
+            return_after_handoff_failure(state, key);
+            return Ok(());
+        }
+        VmceAssignment::Assigned => {}
     }
     match ending {
         VmceRoundEnding::Next => {
-            if state.match_state.session_mode()
-                == crate::app::match_runtime::session::SessionMode::Lan
-            {
+            if lan {
                 unlock_confirmed_stage(state);
                 advance_intermission(state);
             } else {
@@ -97,10 +105,7 @@ fn assign(state: &mut AppState, ending: VmceRoundEnding) -> anyhow::Result<()> {
             }
         }
         VmceRoundEnding::Retry => {
-            if state.match_state.session_mode()
-                == crate::app::match_runtime::session::SessionMode::Lan
-                && state.match_state.session.host()
-            {
+            if lan && state.match_state.session.host() {
                 // The adapter waits for the Go's reliable delivery before the
                 // host freezes into the reload; freezing now would drop it.
             } else {
@@ -117,6 +122,24 @@ fn assign(state: &mut AppState, ending: VmceRoundEnding) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Leave a VMCE result round after a terminal handoff failure: the round owner
+/// already stopped it and queued the peer notice, so the exit stays bounded and
+/// the recorded reason survives to the shell. Never return silently.
+pub(crate) fn return_after_handoff_failure(state: &mut AppState, key: &'static str) {
+    return_to_shell(state);
+    crate::app::lan_service::vmce_round::report_round_failure(state, key);
+}
+
+/// Leave a VMCE result round after a terminal handoff failure: the LAN owner
+/// notifies the peers over the reliable FIFO, bounds the departure and reports
+/// the player-visible delivery reason. Never return silently to the shell.
+fn fail_handoff(state: &mut AppState) {
+    crate::app::lan_service::vmce_round::fail_round_handoff(
+        state,
+        crate::app::match_runtime::session::VmceRoundFailure::Delivery,
+    );
+}
+
 /// Reopen the resolved next stage after every peer agreed on the result.
 pub(crate) fn advance_intermission(state: &mut AppState) {
     if state.match_state.session.host()
@@ -130,7 +153,7 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
             crate::app::lan_service::vmce_round::begin_vmce_intermission_transition(state)
     {
         log::error!("VMCE solo intermission preparation failed: {error:#}");
-        return_to_shell(state);
+        fail_handoff(state);
         return;
     }
     match crate::app::lan_service::vmce_round::enter_vmce_intermission(state) {
@@ -141,13 +164,12 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
             crate::app::vmce_result::close_vmce_result(state);
             if let Err(error) = crate::app::shell_network_setup::open_vmce_intermission(state) {
                 log::error!("Could not open VMCE intermission: {error:#}");
-                return_to_shell(state);
+                fail_handoff(state);
             }
         }
         Err(error) => {
             log::error!("VMCE intermission handoff failed: {error:#}");
-            return_to_shell(state);
-            crate::app::lan_service::vmce_round::report_round_send_failed(state);
+            fail_handoff(state);
         }
     }
 }

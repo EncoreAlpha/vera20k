@@ -6,7 +6,8 @@
 
 use super::{AppState, LOBBY_RETRY_TIMING, LanService, direct};
 use crate::app::match_runtime::session::{
-    NetworkLoadingRequest, SessionMode, VmceResultEvent, VmceRoundFailure, WallBucketTimer,
+    NetworkLoadingRequest, SessionMode, VmceResultEvent, VmceRoundEnding, VmceRoundFailure,
+    WallBucketTimer,
 };
 use crate::net::global::GlobalMessage;
 
@@ -998,37 +999,45 @@ pub(crate) fn defer_campaign_completion(state: &mut AppState) -> bool {
 
 pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow::Result<()> {
     anyhow::ensure!(
-        state.match_state.session_mode() == SessionMode::Lan && state.match_state.session.host(),
-        "VMCE intermission requires a LAN host"
+        state.match_state.session_mode() == SessionMode::Lan,
+        "VMCE intermission requires LAN"
     );
-    if state
-        .match_state
-        .lan_service
-        .as_ref()
-        .is_some_and(|service| service.vmce_round.intermission_epoch().is_some())
-    {
-        return Ok(());
-    }
     let now = super::super::match_runtime::frame_pacer::frame_bucket(
         super::super::match_runtime::frame_pacer::wall_clock_ms(),
     );
+    let name = super::local_name(state);
     let peers = peer_sources(state);
-    let endpoints = peer_endpoints(&state.match_state.session, &peers)?;
-    let epoch = super::fresh_nonce()?;
-    let solo = endpoints.is_empty();
-    let message = crate::net::lan_messages::vmce::encode_intermission_epoch(
-        &super::local_name(state),
-        epoch,
-    )?;
+    let session = &state.match_state.session;
     let service = state
         .match_state
         .lan_service
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("VMCE has no LAN service"))?;
+    begin_intermission_transition(session, service, &name, &peers, now)
+}
+
+/// The session/service half of [`begin_vmce_intermission_transition`]: prepare
+/// the intermission epoch and admit it to the scoped reliable FIFO. Idempotent
+/// while the epoch is outstanding; the app wrapper only adds the `AppState`
+/// lookups.
+fn begin_intermission_transition(
+    session: &crate::app::match_runtime::session::MatchSession,
+    service: &mut LanService,
+    local_name: &str,
+    peers: &[usize],
+    now: u32,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(session.host(), "VMCE intermission requires a LAN host");
+    if service.vmce_round.intermission_epoch().is_some() {
+        return Ok(());
+    }
+    let endpoints = peer_endpoints(session, peers)?;
+    let epoch = super::fresh_nonce()?;
+    let solo = endpoints.is_empty();
+    let message = crate::net::lan_messages::vmce::encode_intermission_epoch(local_name, epoch)?;
+    let scope = service.setup_scope;
     anyhow::ensure!(
-        service
-            .setup_scope
-            .is_some_and(|scope| scope.epoch != epoch),
+        scope.is_some_and(|scope| scope.epoch != epoch),
         "intermission has no prior scope or reused its epoch"
     );
     let transport = service
@@ -1036,7 +1045,7 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("VMCE has no scoped transport"))?;
     anyhow::ensure!(
-        transport.lan_scope() == service.setup_scope,
+        transport.lan_scope() == scope,
         "VMCE intermission scope differs from the admitted match"
     );
     transport.prepare_lan_intermission()?;
@@ -1054,15 +1063,10 @@ pub(crate) fn begin_vmce_intermission_transition(state: &mut AppState) -> anyhow
     Ok(())
 }
 
-pub(crate) fn vmce_intermission_transition_ready(
-    state: &AppState,
-    now: u32,
-) -> anyhow::Result<bool> {
-    let service = state
-        .match_state
-        .lan_service
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("VMCE has no LAN service"))?;
+/// The bounded intermission handoff's readiness: it is complete only once its
+/// reliable records drained and the transport still services. An expired
+/// handoff is a terminal error, never a successful assignment.
+fn intermission_transition_ready(service: &LanService, now: u32) -> anyhow::Result<bool> {
     anyhow::ensure!(
         service.vmce_round.intermission_epoch().is_some(),
         "VMCE intermission was not prepared"
@@ -1079,6 +1083,89 @@ pub(crate) fn vmce_intermission_transition_ready(
         "VMCE intermission delivery failed"
     );
     Ok(observation.queued == 0)
+}
+
+/// One VMCE result assignment attempt's bounded outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VmceAssignment {
+    /// The result is committed; a `Next` ending may now open the intermission.
+    Assigned,
+    /// The host's intermission handoff is still inside its bounded delivery;
+    /// the result page stays up and the caller polls again.
+    Waiting,
+    /// The bounded handoff could not complete. The owner already stopped the
+    /// round, queued the peer notice and returns the player-visible reason;
+    /// the caller bounds the exit and shows that reason.
+    Failed(&'static str),
+}
+
+/// Commit one VMCE result `Assign` step through the session and LAN owners.
+///
+/// The app advances the ending only on [`VmceAssignment::Assigned`]; `Waiting`
+/// leaves the result page up for its bounded wait. A terminal handoff error is
+/// stopped here with the shared visible failure owner, so no caller can treat
+/// an undelivered handoff as a success or drop the page silently. This is the
+/// one owner of the press path's assignment and of the poll path's late commit.
+fn assign_vmce_result(
+    session: &mut crate::app::match_runtime::session::MatchSession,
+    service: &mut LanService,
+    local_name: &str,
+    peers: &[usize],
+    ending: VmceRoundEnding,
+    now: u32,
+) -> VmceAssignment {
+    match try_assign_vmce_result(session, service, local_name, peers, ending, now) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            log::error!("VMCE result assignment failed: {error:#}");
+            let key = begin_round_failure(
+                session,
+                service,
+                local_name,
+                peers,
+                VmceRoundFailure::Delivery,
+            );
+            VmceAssignment::Failed(key)
+        }
+    }
+}
+
+fn try_assign_vmce_result(
+    session: &mut crate::app::match_runtime::session::MatchSession,
+    service: &mut LanService,
+    local_name: &str,
+    peers: &[usize],
+    ending: VmceRoundEnding,
+    now: u32,
+) -> anyhow::Result<VmceAssignment> {
+    if ending == VmceRoundEnding::Next {
+        begin_intermission_transition(session, service, local_name, peers, now)?;
+        if !intermission_transition_ready(service, now)? {
+            return Ok(VmceAssignment::Waiting);
+        }
+    }
+    service.vmce_round.mark_assignment_wait(now);
+    session.vmce_result_assigned()?;
+    if session.host() {
+        session.vmce_result_queue_go()?;
+    }
+    Ok(VmceAssignment::Assigned)
+}
+
+/// The `AppState` half of [`assign_vmce_result`] for a LAN result round.
+pub(crate) fn assign_vmce_result_lan(
+    state: &mut AppState,
+    ending: VmceRoundEnding,
+    now: u32,
+) -> VmceAssignment {
+    let name = super::local_name(state);
+    let peers = peer_sources(state);
+    let session = &mut state.match_state.session;
+    let Some(service) = state.match_state.lan_service.as_mut() else {
+        let _ = session.vmce_result_abort(VmceRoundFailure::Delivery);
+        return VmceAssignment::Failed(VmceRoundFailure::Delivery.i18n_key());
+    };
+    assign_vmce_result(session, service, &name, &peers, ending, now)
 }
 
 pub(crate) fn enter_vmce_intermission(state: &mut AppState) -> anyhow::Result<bool> {
@@ -1190,6 +1277,7 @@ pub(super) fn should_assign_intermission(state: &AppState) -> bool {
                     == Some(crate::app::match_runtime::session::VmceRoundEnding::Next)
                     && !round.vmce_next_accepted()
             })
+        && state.match_state.session.vmce_result_failure().is_none()
 }
 
 /// Keep the host's established transport-ready gate and assignment order in
@@ -1199,28 +1287,13 @@ pub(super) fn assign_intermission_if_ready(state: &mut AppState, now: u32) -> bo
     if !should_assign_intermission(state) {
         return true;
     }
-    match vmce_intermission_transition_ready(state, now) {
-        Ok(true) => {
-            if let Err(error) = state.match_state.session.vmce_result_assigned() {
-                log::error!("VMCE intermission assignment failed: {error:#}");
-                crate::app::vmce_round::return_to_shell(state);
-                return false;
-            }
-            if let Err(error) = state.match_state.session.vmce_result_queue_go() {
-                log::error!("VMCE intermission Go queue failed: {error:#}");
-                crate::app::vmce_round::return_to_shell(state);
-                return false;
-            }
+    match assign_vmce_result_lan(state, VmceRoundEnding::Next, now) {
+        VmceAssignment::Failed(key) => {
+            crate::app::vmce_round::return_after_handoff_failure(state, key);
+            false
         }
-        Ok(false) => {}
-        Err(error) => {
-            log::error!("VMCE intermission preparation failed: {error:#}");
-            crate::app::vmce_round::return_to_shell(state);
-            report_round_send_failed(state);
-            return false;
-        }
+        VmceAssignment::Assigned | VmceAssignment::Waiting => true,
     }
-    true
 }
 
 pub(super) fn next_stage_accepted(state: &AppState) -> bool {
@@ -1394,9 +1467,10 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
             .is_some_and(|service| service.vmce_round.assignment_wait_expired(now));
         if expired {
             log::error!("VMCE round assignment wait timed out");
-            let _ = state.match_state.session.quit_vmce_result();
-            crate::app::vmce_round::return_to_shell(state);
-            report_round_send_failed(state);
+            // The same bounded failure chain as every other terminal handoff:
+            // notify over the reliable FIFO, bound the departure and show the
+            // delivery reason, instead of dropping the round without a word.
+            fail_round_handoff(state, VmceRoundFailure::Delivery);
             return false;
         }
     } else if let Some(service) = state.match_state.lan_service.as_mut() {
@@ -1423,8 +1497,7 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
             .is_some_and(|service| service.vmce_round.intermission_wait_expired(now));
         if expired {
             log::error!("VMCE intermission Go wait timed out");
-            crate::app::vmce_round::return_to_shell(state);
-            report_round_send_failed(state);
+            fail_round_handoff(state, VmceRoundFailure::Delivery);
             return false;
         }
     }
@@ -1780,10 +1853,12 @@ pub(crate) fn begin_round_failure(
     failure.i18n_key()
 }
 
-/// A retry handoff that cannot finish is a local, visible failure. Neither
-/// peer may sit on the page while the other reloads; the bounded waits above
-/// call this on both the host and the guest.
-fn fail_round_handoff(
+/// A retry/assignment handoff that cannot finish is a local, visible failure.
+/// Neither peer may sit on the page while the other reloads; the bounded waits
+/// above call this on both the host and the guest. Kept crate-visible so the
+/// app's `Assign` step reports the same reason instead of dropping to the shell
+/// without a word.
+pub(crate) fn fail_round_handoff(
     state: &mut AppState,
     failure: crate::app::match_runtime::session::VmceRoundFailure,
 ) {
@@ -1800,15 +1875,6 @@ fn fail_round_handoff(
     };
     crate::app::vmce_round::return_to_shell(state);
     report_round_failure(state, key);
-}
-
-pub(crate) fn mark_assignment_wait(state: &mut AppState) {
-    let now = super::super::match_runtime::frame_pacer::frame_bucket(
-        super::super::match_runtime::frame_pacer::wall_clock_ms(),
-    );
-    if let Some(service) = state.match_state.lan_service.as_mut() {
-        service.vmce_round.mark_assignment_wait(now);
-    }
 }
 
 pub(crate) fn report_round_failure(state: &mut AppState, key: &'static str) {
@@ -2125,9 +2191,14 @@ mod tests {
         launch
     }
 
-    /// A frozen LAN start that entered the VMCE retry result round, with every
-    /// peer endpoint bound to a real loopback UDP service.
-    fn retry_session(players: usize, local: usize, endpoints: &[SocketAddrV4]) -> MatchSession {
+    /// A frozen LAN start that entered a VMCE result round, with every peer
+    /// endpoint bound to a real loopback UDP service.
+    fn result_session(
+        players: usize,
+        local: usize,
+        endpoints: &[SocketAddrV4],
+        ending: VmceRoundEnding,
+    ) -> MatchSession {
         let mut session = MatchSession::default();
         session.enter_network(NetworkReturnContext::LanLobby);
         let mut launch = vmce_launch(players);
@@ -2145,9 +2216,17 @@ mod tests {
         session.prepare_network_timing(2, || 0).unwrap();
         session.freeze_network_start(77).unwrap();
         session
-            .enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, players)
+            .enter_vmce_round_ending(None, true, ending, players)
             .unwrap();
         session
+    }
+
+    fn retry_session(players: usize, local: usize, endpoints: &[SocketAddrV4]) -> MatchSession {
+        result_session(players, local, endpoints, VmceRoundEnding::Retry)
+    }
+
+    fn next_session(players: usize, local: usize, endpoints: &[SocketAddrV4]) -> MatchSession {
+        result_session(players, local, endpoints, VmceRoundEnding::Next)
     }
 
     /// Run the production propose/confirm agreement to completion on every
@@ -2223,6 +2302,51 @@ mod tests {
             retry_session(2, 1, &[host_addr, guest_addr]),
         ];
         agree(&mut sessions);
+        let [host_session, guest_session] = sessions;
+        (
+            host,
+            host_session,
+            guest,
+            guest_session,
+            host_addr,
+            guest_addr,
+        )
+    }
+
+    /// The two-player VMCE `Next` result round with the host's Continue gate
+    /// exactly as the production page enables it: both peers agreed and the
+    /// guest is ready. Each side's transport carries the admitted LAN scope the
+    /// intermission handoff reads.
+    fn next_pair() -> (
+        LanService,
+        MatchSession,
+        LanService,
+        MatchSession,
+        SocketAddrV4,
+        SocketAddrV4,
+    ) {
+        let mut host = test_service();
+        let mut guest = test_service();
+        let host_addr = host.transport.as_ref().unwrap().primary_addr().unwrap();
+        let guest_addr = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        guest.admitted_host = Some(("Host".to_owned(), host_addr));
+        let scope = host.setup_scope.unwrap();
+        for service in [&mut host, &mut guest] {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .set_lan_scope(scope)
+                .unwrap();
+        }
+        let mut sessions = [
+            next_session(2, 0, &[host_addr, guest_addr]),
+            next_session(2, 1, &[host_addr, guest_addr]),
+        ];
+        agree(&mut sessions);
+        sessions[0]
+            .vmce_result_event(VmceResultEvent::PeerReady { source: 1 })
+            .unwrap();
         let [host_session, guest_session] = sessions;
         (
             host,
@@ -2792,6 +2916,204 @@ mod tests {
         // The host has no commit proof and never reloads.
         assert!(!host_session.vmce_result_retry_commit_acks_complete());
         assert!(!host.vmce_round.retry_start_sent());
+    }
+
+    // ------------------------------------------- intermission assignment (B10)
+
+    /// Press the host's production Continue and run its production assignment
+    /// step. The host page keeps Continue enabled until the round is assigned,
+    /// which is exactly why a press can still land after the deadline.
+    fn host_continue(
+        session: &mut MatchSession,
+        service: &mut LanService,
+        peers: &[usize],
+        now: u32,
+    ) -> VmceAssignment {
+        let step = session.vmce_result_continue().unwrap();
+        assert_eq!(
+            step,
+            VmceRoundStep::Assign {
+                ending: VmceRoundEnding::Next
+            }
+        );
+        assign_vmce_result(session, service, "Host", peers, VmceRoundEnding::Next, now)
+    }
+
+    /// Drain every received record, tolerating the records the shared result
+    /// owner handles (the intermission epoch arrives in the same batch).
+    fn drain_round(
+        service: &mut LanService,
+        session: &mut MatchSession,
+        now: u32,
+    ) -> Vec<VmceRoundAction> {
+        let mut actions = Vec::new();
+        loop {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .global_mut()
+                .retire_consumed();
+            let Some(incoming) = service.transport.as_mut().unwrap().pop_global_received() else {
+                break;
+            };
+            if let Some(action) = receive_round_record(session, service, &incoming, now).unwrap() {
+                actions.push(action);
+            }
+        }
+        actions
+    }
+
+    #[test]
+    fn vmce_continue_press_before_the_intermission_deadline_keeps_the_result_page() {
+        let (mut host, mut host_session, mut guest, _guest_session, host_addr, guest_addr) =
+            next_pair();
+        let peers = round_peers(&host_session);
+        // The production page keeps Continue enabled while the handoff waits.
+        assert!(host_session.vmce_result_continue_enabled());
+        // The first press prepares the intermission and queues its epoch.
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 100),
+            VmceAssignment::Waiting
+        );
+        assert!(host.vmce_round.intermission_epoch().is_some());
+        assert!(host_session.vmce_result_continue_enabled());
+        // One bucket before the deadline the handoff still waits; no player
+        // leaves and the result page stays up.
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 690),
+            VmceAssignment::Waiting
+        );
+        assert!(host_session.vmce_result_phase().is_some());
+        assert_eq!(host_session.vmce_result_failure(), None);
+        assert!(host.departure.is_none());
+        assert!(!intermission_transition_ready(&host, 690).unwrap());
+        // The peer acknowledges inside the bound, and the production transport
+        // pass retires the completed record; the next press commits the result
+        // instead of waiting.
+        transmit(&mut host, host_addr, &mut guest, guest_addr, 691, false);
+        transmit(&mut host, host_addr, &mut guest, guest_addr, 692, false);
+        assert!(intermission_transition_ready(&host, 692).unwrap());
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 692),
+            VmceAssignment::Assigned
+        );
+        assert!(
+            host_session
+                .vmce_result_phase()
+                .unwrap()
+                .vmce_next_accepted()
+        );
+        assert!(!host_session.vmce_result_continue_enabled());
+    }
+
+    #[test]
+    fn vmce_continue_press_at_the_intermission_deadline_fails_visibly() {
+        let (mut host, mut host_session, _guest, _guest_session, _host_addr, _guest_addr) =
+            next_pair();
+        let peers = round_peers(&host_session);
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 100),
+            VmceAssignment::Waiting
+        );
+        // Exactly at the 700 bucket the gate is terminal. An undelivered
+        // intermission must never be committed as a success.
+        assert!(host_session.vmce_result_continue_enabled());
+        assert!(!intermission_transition_ready(&host, 699).unwrap());
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 700),
+            VmceAssignment::Failed(FAILURE_KEY)
+        );
+        assert!(!host_session.vmce_result_continue_enabled());
+        assert!(
+            host_session.vmce_result_phase().is_some(),
+            "the result page must not be dropped silently"
+        );
+        assert_eq!(
+            host_session.vmce_result_failure(),
+            Some(VmceRoundFailure::Delivery)
+        );
+        assert!(message(FAILURE_KEY).contains("Could not send the round message"));
+        // The app leaves through the same bounded departure the other terminal
+        // failures use, and the reason survives to the shell.
+        assert!(host.begin_vmce_round_departure(700));
+        host.mark_vmce_round_failure_notice(FAILURE_KEY);
+        assert_eq!(host.departure.as_ref().unwrap().notice, Some(FAILURE_KEY));
+        assert_eq!(
+            host.departure_ready(1_301, true),
+            Some(crate::app::lan_service::DepartureReason::RoundResult)
+        );
+    }
+
+    #[test]
+    fn vmce_continue_press_after_the_intermission_deadline_reaches_the_waiting_peer() {
+        let (mut host, mut host_session, mut guest, mut guest_session, host_addr, guest_addr) =
+            next_pair();
+        let peers = round_peers(&host_session);
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 100),
+            VmceAssignment::Waiting
+        );
+        // A later click still finds Continue enabled; it is exactly the input
+        // path that used to drop the page without a reason.
+        assert!(host_session.vmce_result_continue_enabled());
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 750),
+            VmceAssignment::Failed(FAILURE_KEY)
+        );
+        assert!(host.begin_vmce_round_departure(750));
+        host.mark_vmce_round_failure_notice(FAILURE_KEY);
+        // The still-waiting peer learns the reason instead of waiting forever.
+        transmit(&mut host, host_addr, &mut guest, guest_addr, 751, false);
+        let actions = drain_round(&mut guest, &mut guest_session, 751);
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, VmceRoundAction::Step(VmceRoundStep::Exit(true))))
+        );
+        assert_eq!(
+            guest_session.vmce_result_failure(),
+            Some(VmceRoundFailure::Delivery)
+        );
+        assert!(guest.begin_vmce_round_departure(751));
+        guest.mark_vmce_round_failure_notice(FAILURE_KEY);
+        assert!(guest.departure_ready(1_352, true).is_some());
+        assert!(host.departure_ready(1_352, true).is_some());
+    }
+
+    #[test]
+    fn vmce_failed_assignment_keeps_the_local_reason_when_the_notice_cannot_be_queued() {
+        let (mut host, mut host_session, _guest, _guest_session, _host_addr, _guest_addr) =
+            next_pair();
+        let peers = round_peers(&host_session);
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 100),
+            VmceAssignment::Waiting
+        );
+        // Fill the reliable setup FIFO beyond its failure-priority reservation
+        // before the terminal press: the peer notice cannot be admitted, but
+        // the player still sees why.
+        let blocked = SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, 30999);
+        for _ in 0..4_300 {
+            host.pending_setup
+                .push_back((vec![0xff; 7], direct(blocked)));
+        }
+        assert_eq!(
+            host_continue(&mut host_session, &mut host, &peers, 700),
+            VmceAssignment::Failed(FAILURE_KEY)
+        );
+        assert!(
+            !host
+                .pending_setup
+                .iter()
+                .any(|(bytes, _)| VmceSignal::decode(bytes) == Some(VmceSignal::RoundFailed)),
+            "the failure notice could not be queued"
+        );
+        assert!(message(FAILURE_KEY).contains("Could not send the round message"));
+        assert!(host.begin_vmce_round_departure(700));
+        host.mark_vmce_round_failure_notice(FAILURE_KEY);
+        assert_eq!(host.departure.as_ref().unwrap().notice, Some(FAILURE_KEY));
+        assert!(host.departure_ready(1_301, true).is_some());
     }
 
     // ------------------------------------------------------------- liveness
