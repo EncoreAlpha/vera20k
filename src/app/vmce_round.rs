@@ -157,7 +157,7 @@ pub(crate) fn retry_last_mission(state: &mut AppState) {
         .network_setup()
         .map_or(0, |launch| launch.options.game_speed);
     let (max_ahead, latency_fudge) =
-        crate::net::lockstep::cooperative_continuation_timing(game_speed, &[]);
+        crate::net::lockstep::continuation_timing(game_speed, &[]);
     match state
         .match_state
         .session
@@ -184,7 +184,7 @@ fn begin_next_mission(state: &mut AppState) {
         .network_setup()
         .map_or(0, |launch| launch.options.game_speed);
     let (max_ahead, latency_fudge) =
-        crate::net::lockstep::cooperative_continuation_timing(game_speed, &[]);
+        crate::net::lockstep::continuation_timing(game_speed, &[]);
     state.frontend.campaign_score_art = None;
     match state
         .match_state

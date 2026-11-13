@@ -46,35 +46,18 @@ fn channel(send_capacity: usize, receive_capacity: usize) -> GlobalChannel {
 
 #[cfg(feature = "vmce")]
 #[test]
-fn vmce_round_records_survive_lost_begin_and_ack() {
-    use crate::net::lan_messages::cooperative::{
-        CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord,
-    };
-    use crate::net::lan_messages::vmce::VmceRoundControl;
+fn vmce_retry_messages_survive_a_lost_commit_and_ack() {
+    use crate::net::lan_messages::vmce::{VmceRoundControl, VmceSignal};
     let host = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12001);
     let guest = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12002);
-    let nonce = [7; 16];
-    let begin = VmceRoundControl::Begin.encode("Host", nonce).unwrap();
-    let options = CooperativeOptionsRecord {
-        difficulty: 1,
-        humans: [CooperativeHumanWords {
-            start: -1,
-            country: -1,
-            color: -1,
-        }; 8],
-        ai: [CooperativeAiWords {
-            country: -1,
-            color: -1,
-            difficulty: 0,
-            start: -2,
-            team: -2,
-        }; 8],
-    }
-    .encode_vmce("Host", nonce)
-    .unwrap();
+    let commit = VmceRoundControl::RetryCommit
+        .encode("Host", [7; 16])
+        .unwrap();
+    let ack = VmceSignal::RetryAck.encode("Guest").unwrap();
+    let payloads: [&[u8]; 2] = [commit.as_bytes(), &ack];
     let mut sender = channel(8, 8);
     let mut receiver = channel(8, 8);
-    for payload in [begin.as_bytes(), options.as_bytes()] {
+    for payload in payloads {
         assert!(sender.send(
             payload,
             GlobalDestination::direct(guest),
@@ -85,44 +68,49 @@ fn vmce_round_records_survive_lost_begin_and_ack() {
     let mut sent = Vec::new();
     sender.service(3, &mut |_, frame| sent.push(frame.to_vec()));
     assert_eq!(sent.len(), 2);
-    let mut ack = Vec::new();
+    let mut ack_frames = Vec::new();
+    // The commit datagram is lost; only the RetryAck reaches the peer.
     receiver
         .receive(host, 0, &sent[1], 3, &mut |_, frame| {
-            ack.push(frame.to_vec())
+            ack_frames.push(frame.to_vec())
         })
         .unwrap();
-    assert_eq!(receiver.pop_received().unwrap().payload, options.as_bytes());
+    assert_eq!(receiver.pop_received().unwrap().payload, ack);
     receiver.retire_consumed();
     sender
-        .receive(guest, 0, &ack[0], 3, &mut |_, _| {})
+        .receive(guest, 0, &ack_frames[0], 3, &mut |_, _| {})
         .unwrap();
     sent.clear();
+    // The reliable FIFO retransmits the still-unacknowledged commit.
     sender.service(6, &mut |_, frame| sent.push(frame.to_vec()));
     assert_eq!(sent.len(), 1);
-    ack.clear();
+    ack_frames.clear();
     receiver
         .receive(host, 0, &sent[0], 6, &mut |_, frame| {
-            ack.push(frame.to_vec())
+            ack_frames.push(frame.to_vec())
         })
         .unwrap();
-    assert_eq!(receiver.pop_received().unwrap().payload, begin.as_bytes());
+    assert_eq!(
+        receiver.pop_received().unwrap().payload,
+        commit.as_bytes()
+    );
     receiver.retire_consumed();
     sent.clear();
     sender.service(9, &mut |_, frame| sent.push(frame.to_vec()));
     assert_eq!(sent.len(), 1);
-    ack.clear();
+    ack_frames.clear();
     assert_eq!(
         receiver
-            .receive(host, 0, &sent[0], 9, &mut |_, frame| ack
+            .receive(host, 0, &sent[0], 9, &mut |_, frame| ack_frames
                 .push(frame.to_vec()))
             .unwrap(),
         GlobalReceiveOutcome::DuplicateAcknowledged
     );
     assert!(receiver.pop_received().is_none());
     sender
-        .receive(guest, 0, &ack[0], 9, &mut |_, _| {})
+        .receive(guest, 0, &ack_frames[0], 9, &mut |_, _| {})
         .unwrap();
-    sender.service(10, &mut |_, _| panic!("acknowledged Begin retransmitted"));
+    sender.service(10, &mut |_, _| panic!("acknowledged commit retransmitted"));
     assert_eq!(sender.queued_send_count(), 0);
 }
 

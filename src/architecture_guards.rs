@@ -554,7 +554,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/frontend/skirmish_shell_render.rs", 2),
     ("app/frontend/score_overlay.rs", 6),
     ("app/frontend/skirmish_shell_render/multiplayer_setup.rs", 9),
-    ("app/handler.rs", 4),
+    ("app/handler.rs", 5),
     ("app/in_game.rs", 1),
     ("app/input/precedence.rs", 2),
     ("app/frontend/state.rs", 1),
@@ -569,7 +569,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/loading/pump.rs", 12),
     ("app/loading/transitions.rs", 1),
     ("app/match_bootstrap.rs", 33),
-    ("app/match_runtime/session.rs", 48),
+    ("app/match_runtime/session.rs", 43),
     ("app/match_runtime/session/cooperative_round.rs", 37),
     ("app/match_runtime/sim_tick.rs", 3),
     ("app/mod.rs", 3),
@@ -609,7 +609,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 467;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 463;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -3722,54 +3722,131 @@ fn test_gated_files(files: &[SourceFile]) -> BTreeSet<String> {
 
 /// The VMCE settlement flow must not call a stock Cooperative result owner.
 /// It may read shared simulation, roster and difficulty helpers, but not the
-/// Cooperative round state/flow, its result page model or its transport owner.
+/// Cooperative round state/flow, its result page model, its transport owner or
+/// its message definitions.
+const VMCE_FORBIDDEN_COOPERATIVE_TOKENS: &[&str] = &[
+    "cooperative_round",
+    "cooperative_round::",
+    "cooperative_round_",
+    "enter_cooperative_round",
+    "freeze_cooperative_round",
+    "quit_cooperative_round",
+    "CooperativeRound",
+    "cooperative_continuation_timing",
+    "lan_messages::cooperative::",
+    "lan_service::cooperative::",
+    "super::cooperative",
+    "::cooperative::",
+    "ui::coop_score_shell",
+    "CoopScorePage",
+    "CoopScoreModel",
+    "CoopScoreView",
+    "CoopScoreAction",
+    "CoopOverlay",
+    "CooperativeRoundEvent",
+    "CooperativeRoundStep",
+    "CooperativeSignal",
+    "CooperativeOptionsRecord",
+    "CooperativeAiWords",
+    "CooperativeHumanWords",
+];
+
+/// Line numbers and tokens in `source` that reference a Cooperative-owned
+/// result flow. Comments are ignored; the caller decides which files/regions
+/// are VMCE-owned so stock Cooperative diagnostics stay legal.
+fn vmce_forbidden_references(source: &str) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    for (line_number, line) in source.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or("");
+        for token in VMCE_FORBIDDEN_COOPERATIVE_TOKENS {
+            if code.contains(token) {
+                found.push((line_number + 1, *token));
+            }
+        }
+    }
+    found
+}
+
+fn marked_region<'a>(source: &'a str, begin: &str, end: &str) -> &'a str {
+    let start = source
+        .find(begin)
+        .unwrap_or_else(|| panic!("missing {begin}"));
+    let stop = source[start..]
+        .find(end)
+        .unwrap_or_else(|| panic!("missing {end} after {begin}"));
+    &source[start..start + stop]
+}
+
 #[test]
 fn vmce_result_owners_do_not_call_the_cooperative_result_flow() {
     let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let files = source_files(&src_root);
-    let owned = [
+    let whole = [
         "app/vmce_result/",
         "app/vmce_round.rs",
         "app/lan_service/vmce_round.rs",
-        "app/match_runtime/session/vmce_result.rs",
+        "app/match_runtime/session/vmce_result",
         "app/frontend/skirmish_shell_render/vmce_defeat.rs",
     ];
-    let forbidden = [
-        "cooperative_round::",
-        "ui::coop_score_shell",
-        "lan_service::cooperative::",
-        "CoopScorePage",
-        "CoopScoreModel",
-        "CoopScoreView",
-        "cooperative_round_retry",
-        "cooperative_round_continue",
-        "cooperative_round_slot",
-        "enter_cooperative_round",
-        "freeze_cooperative_round",
-        "quit_cooperative_round",
+    let regions = [
+        (
+            "app/diagnostics/shell_capture/score.rs",
+            "// VMCE-FIXTURE-BEGIN",
+            "// VMCE-FIXTURE-END",
+        ),
+        (
+            "app/diagnostics/shell_capture/movies/lan/live.rs",
+            "// VMCE-RESULT-BEGIN",
+            "// VMCE-RESULT-END",
+        ),
     ];
     let mut violations = Vec::new();
     for file in files {
-        if !owned.iter().any(|prefix| file.rel.starts_with(prefix)) {
-            continue;
+        let mut inspected = Vec::new();
+        if whole.iter().any(|prefix| file.rel.starts_with(prefix)) {
+            inspected.push(file.source.as_str());
         }
-        // Test-only fixtures may still compare against stock layout ids.
-        let production = file
-            .source
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap_or(file.source.as_str());
-        for (line_number, line) in production.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("");
-            for token in forbidden {
-                if code.contains(token) {
-                    violations.push(format!("{}:{}: {token}", file.rel, line_number + 1));
-                }
+        for (path, begin, end) in regions {
+            if file.rel == path {
+                inspected.push(marked_region(&file.source, begin, end));
+            }
+        }
+        for source in inspected {
+            for (line, token) in vmce_forbidden_references(source) {
+                violations.push(format!("{}:{}: {token}", file.rel, line));
             }
         }
     }
     assert!(
         violations.is_empty(),
         "VMCE result code calls a Cooperative result owner: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_detects_a_planted_cooperative_reference() {
+    for token in VMCE_FORBIDDEN_COOPERATIVE_TOKENS {
+        let sample = format!("fn planted() {{ let _ = \"{token}\"; }}");
+        assert!(
+            !vmce_forbidden_references(&sample).is_empty(),
+            "the guard missed forbidden token {token:?}"
+        );
+    }
+    // A source alias still contains the forbidden module path, so the
+    // dependency is visible even when the call uses a short alias.
+    let aliased = "use crate::app::cooperative_round as round;";
+    assert_eq!(
+        vmce_forbidden_references(aliased)
+            .into_iter()
+            .map(|(_, token)| token)
+            .collect::<Vec<_>>(),
+        vec!["cooperative_round"]
+    );
+    let allowed = "simulation.cooperative_score_rows();\n\
+                   runtime.cooperative_difficulty();\n\
+                   launch.cooperative_admits(country);";
+    assert!(
+        vmce_forbidden_references(allowed).is_empty(),
+        "shared roster/score/difficulty helpers are not a Cooperative result flow"
     );
 }

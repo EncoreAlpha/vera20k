@@ -188,7 +188,12 @@ fn vmce_retry_ack_loss_keeps_the_host_waiting_until_the_ack_arrives() {
         "the host must not reload before the guest consumed the retry Go"
     );
     let step = guest.vmce_result_event(VmceResultEvent::Go).unwrap();
-    assert_eq!(step, VmceRoundStep::Retry);
+    assert_eq!(
+        step,
+        VmceRoundStep::None,
+        "the guest must not reload before the host commits"
+    );
+    assert!(guest.vmce_result_retry_go_pending());
     // The Go reached the guest; its ACK was lost in transit, so the host still
     // waits. A duplicate ACK is idempotent.
     host.vmce_result_event(VmceResultEvent::RetryAck { source: 1 })
@@ -197,6 +202,19 @@ fn vmce_retry_ack_loss_keeps_the_host_waiting_until_the_ack_arrives() {
     host.vmce_result_event(VmceResultEvent::RetryAck { source: 1 })
         .unwrap();
     assert!(host.vmce_result_retry_acks_complete());
+    assert_eq!(
+        guest
+            .vmce_result_event(VmceResultEvent::RetryCommit)
+            .unwrap(),
+        VmceRoundStep::Retry
+    );
+    assert_eq!(
+        guest
+            .vmce_result_event(VmceResultEvent::RetryCommit)
+            .unwrap(),
+        VmceRoundStep::None,
+        "a repeated commit cannot reload twice"
+    );
 }
 
 #[test]
@@ -210,10 +228,19 @@ fn vmce_go_produces_the_step_named_by_the_terminal_ending() {
         guest
             .enter_vmce_round_ending(None, true, ending, 2)
             .unwrap();
-        assert_eq!(
-            guest.vmce_result_event(VmceResultEvent::Go).unwrap(),
-            expected
-        );
+        let step = guest.vmce_result_event(VmceResultEvent::Go).unwrap();
+        if ending == VmceRoundEnding::Retry {
+            assert_eq!(step, VmceRoundStep::None);
+            assert!(guest.vmce_result_retry_go_pending());
+            assert_eq!(
+                guest
+                    .vmce_result_event(VmceResultEvent::RetryCommit)
+                    .unwrap(),
+                expected
+            );
+        } else {
+            assert_eq!(step, expected);
+        }
     }
 }
 

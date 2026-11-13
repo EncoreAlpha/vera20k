@@ -191,13 +191,15 @@ pub fn game_speed_for_frame_rate(frames_per_second: u16) -> Option<i32> {
         .find(|&speed| speed_frame_budget(speed).1 == i32::from(frames_per_second))
 }
 
-/// The timing block of Cooperative `+0xAC` (`0x005C49A2..0x005C4ABC`),
-/// which every peer runs before the next co-op mission: MaxAhead from the
-/// game speed, and LatencyFudge 1, or 2 when the highest of `pings`
-/// (`0xB7790C`, over the live nodes, signed maximum from 0) exceeds 1000.
+/// The shared continuation timing every peer runs before the next mission:
+/// MaxAhead from the game speed, and LatencyFudge 1, or 2 when the highest of
+/// `pings` (over the live nodes, signed maximum from 0) exceeds 1000. The
+/// native source is Cooperative `+0xAC` (`0x005C49A2..0x005C4ABC`); the values
+/// are transport timing, not a Cooperative flow decision, so both the VMCE
+/// and stock Cooperative continuations use this one owner.
 /// Returns `(max_ahead, latency_fudge)`; the PreCalc values, FrameSendRate
 /// and the IPX retry timing are transport and not returned.
-pub fn cooperative_continuation_timing(game_speed: i32, pings: &[i32]) -> (i32, i32) {
+pub fn continuation_timing(game_speed: i32, pings: &[i32]) -> (i32, i32) {
     let (max_ahead, _) = speed_frame_budget(game_speed);
     let ping = pings.iter().copied().fold(0, i32::max);
     let latency_fudge = if ping > 1000 { 2 } else { 1 };
@@ -740,22 +742,22 @@ mod tests {
     }
 
     #[test]
-    fn cooperative_continuation_timing_follows_the_speed_table_and_ping() {
+    fn continuation_timing_follows_the_speed_table_and_ping() {
         let speeds: Vec<i32> = [0, 1, 2, 3, 4, 5, 6, -1]
             .into_iter()
-            .map(|speed| super::cooperative_continuation_timing(speed, &[]).0)
+            .map(|speed| super::continuation_timing(speed, &[]).0)
             .collect();
         assert_eq!(speeds, [40, 40, 30, 20, 20, 20, 10, 10]);
         assert_eq!(
-            super::cooperative_continuation_timing(2, &[0, 1000]),
+            super::continuation_timing(2, &[0, 1000]),
             (30, 1)
         );
         assert_eq!(
-            super::cooperative_continuation_timing(2, &[999, -5]),
+            super::continuation_timing(2, &[999, -5]),
             (30, 1)
         );
         assert_eq!(
-            super::cooperative_continuation_timing(2, &[200, 1001]),
+            super::continuation_timing(2, &[200, 1001]),
             (30, 2)
         );
     }

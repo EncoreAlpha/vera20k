@@ -70,13 +70,25 @@ pub(crate) fn mouse(state: &mut AppState, button: MouseButton, pressed: bool) {
 }
 
 pub(crate) fn key(state: &mut AppState, event: &winit::event::KeyEvent) {
-    if !event.state.is_pressed() || !active(state) {
+    if !event.state.is_pressed() {
         return;
     }
-    if matches!(
-        event.physical_key,
-        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape)
-    ) {
-        defeat::apply_action(state, VmceDefeatAction::Leave);
+    if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+        key_code(state, code);
+    }
+}
+
+/// The production key decision, shared with the LAN capture driver so the
+/// Escape regression is checked through the input handler rather than by
+/// calling a page action.
+pub(crate) fn key_code(state: &mut AppState, code: winit::keyboard::KeyCode) {
+    if !active(state) || crate::app::frontend::shell_transition::blocks_shell_input(state) {
+        return;
+    }
+    // The native BC6 result dialog ignores Escape instead of leaving the
+    // room. Keep that behavior on the VMCE-owned page: leaving stays an
+    // explicit Leave Room control.
+    if code == winit::keyboard::KeyCode::Escape {
+        state.platform.window.request_redraw();
     }
 }

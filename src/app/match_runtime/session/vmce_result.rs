@@ -6,9 +6,7 @@
 
 use super::{MatchSession, NetworkLoadingRequest, NetworkPhase, NetworkSession};
 use crate::app::match_bootstrap::{PreparedNetworkStartup, VmceNextStage, VmceStageIdentity};
-use crate::skirmish_launch::{
-    LaunchHumanRole, LaunchStartPosition, SkirmishLaunchSession,
-};
+use crate::skirmish_launch::{LaunchHumanRole, LaunchStartPosition, SkirmishLaunchSession};
 use std::sync::Arc;
 
 /// The VMCE result phase in the session's network visit.
@@ -51,7 +49,10 @@ impl VmceResultPhase {
     }
 
     pub(crate) fn awaiting_assignment(&self) -> bool {
-        self.outcome.is_none() && (self.assigned || self.begin)
+        // Before the host commits (or the guest consumes the host's Go) the
+        // result page is waiting on the other peer; that wait is bounded by
+        // the adapter's assignment/Go deadline.
+        self.outcome.is_none()
     }
 
     pub(crate) fn can_continue(&self) -> bool {
@@ -65,7 +66,6 @@ impl VmceResultPhase {
     pub(crate) fn local_ready(&self) -> bool {
         self.local_ready
     }
-
 }
 
 /// The VMCE result phase's fields, split from the visit so a step can queue
@@ -110,6 +110,9 @@ pub(super) struct VmceRoundState {
     ending: VmceRoundEnding,
     retry_votes: [bool; 4],
     retry_acks: [bool; 4],
+    /// This guest consumed the retry Go and is waiting for the host's
+    /// delivery commit before it reloads.
+    retry_go_pending: bool,
     result_agreement: Option<VmceResultAgreement>,
 }
 
@@ -137,13 +140,24 @@ pub(crate) enum VmceRoundEnding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VmceResultEvent {
     Go,
-    PeerReady { source: usize },
-    PeerLeft { source: usize },
+    PeerReady {
+        source: usize,
+    },
+    PeerLeft {
+        source: usize,
+    },
     StageIdentity(VmceStageIdentity),
     StageAbsent,
     StageRejected,
-    RetryVote { source: usize },
-    RetryAck { source: usize },
+    RetryVote {
+        source: usize,
+    },
+    RetryAck {
+        source: usize,
+    },
+    /// The host proved the retry Go reached every guest and committed the
+    /// reload; the guest may now freeze.
+    RetryCommit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +184,7 @@ impl VmceRoundState {
             ending: VmceRoundEnding::Next,
             retry_votes: [false; 4],
             retry_acks: [false; 4],
+            retry_go_pending: false,
             result_agreement: None,
         }
     }
@@ -223,6 +238,29 @@ impl VmceRoundState {
         }
     }
 
+    pub(super) fn retry_go_pending(&self) -> bool {
+        self.retry_go_pending
+    }
+
+    /// Record the guest's one accepted retry Go. A duplicate Go is ignored.
+    pub(super) fn mark_retry_go_pending(&mut self) -> bool {
+        if self.retry_go_pending {
+            return false;
+        }
+        self.retry_go_pending = true;
+        true
+    }
+
+    /// Consume the host's retry delivery commit; only a guest that already
+    /// accepted the Go may reload.
+    pub(super) fn commit_retry_go(&mut self) -> bool {
+        if !self.retry_go_pending {
+            return false;
+        }
+        self.retry_go_pending = false;
+        true
+    }
+
     pub(super) fn note_retry_ack(&mut self, row: usize) {
         if let Some(ack) = self.retry_acks.get_mut(row) {
             *ack = true;
@@ -234,10 +272,6 @@ impl VmceRoundState {
             *vote = false;
         }
     }
-
-
-
-
 
     pub(super) fn result_nonce(&self) -> Option<[u8; 16]> {
         self.result_agreement.as_ref()?.nonce
@@ -262,7 +296,6 @@ impl VmceRoundState {
     pub(super) fn result_stage_digest(&self, nonce: [u8; 16]) -> [u8; 32] {
         vmce_result_stage_digest(nonce, self.stage_identity().as_ref())
     }
-
 }
 
 pub(super) fn vmce_result_stage_digest(
@@ -440,7 +473,6 @@ impl MatchSession {
         }
         Some((self.vmce_round_next_stage_map()?, nonce))
     }
-
 
     /// Reopen the existing VMCE roster on the resolved next map. Transport
     /// handoff must complete before this is exposed as an editable room.
@@ -1101,11 +1133,22 @@ impl MatchSession {
             let Some(human) = launch.humans.get(*index) else {
                 return true;
             };
+            if human.is_observer() {
+                return true;
+            }
             match human.raw_slot_index {
                 Some(0) | None => true,
-                Some(row) => vmce.retry_acks[usize::from(row)],
+                Some(row) if row < 4 => vmce.retry_acks[usize::from(row)],
+                Some(_) => true,
             }
         })
+    }
+
+    /// This guest accepted the retry Go and still waits for the host commit.
+    pub(crate) fn vmce_result_retry_go_pending(&self) -> bool {
+        self.vmce_result_phase()
+            .and_then(|round| round.vmce.as_ref())
+            .is_some_and(VmceRoundState::retry_go_pending)
     }
 
     pub(crate) fn vmce_result_continue_enabled(&self) -> bool {
@@ -1137,7 +1180,6 @@ impl MatchSession {
             .and_then(|human| human.raw_slot_index)
             .is_some_and(|row| round.ready[usize::from(row)])
     }
-
 
     pub(crate) fn vmce_result_can_continue(&self) -> bool {
         self.vmce_result_phase()
@@ -1287,22 +1329,21 @@ impl MatchSession {
                     return Ok(VmceRoundStep::None);
                 }
                 // The host's Go is the guest's accepted result: Next opens the
-                // agreed intermission, Retry reloads the stage, CampaignEnd
-                // ends the campaign on both peers.
+                // agreed intermission, Retry waits for the host's delivery
+                // commit, CampaignEnd ends the campaign on both peers.
                 round.outcome = Some(true);
-                let ending = round
+                let vmce = round
                     .vmce
-                    .as_ref()
-                    .map(VmceRoundState::ending)
+                    .as_mut()
                     .ok_or_else(|| anyhow::anyhow!("not a VMCE round"))?;
+                let ending = vmce.ending();
                 if ending == VmceRoundEnding::Retry {
-                    requests.push(NetworkLoadingRequest::VmceResultRetryAck);
+                    if vmce.mark_retry_go_pending() {
+                        requests.push(NetworkLoadingRequest::VmceResultRetryAck);
+                    }
+                    return Ok(VmceRoundStep::None);
                 }
-                Ok(round
-                    .vmce
-                    .as_ref()
-                    .expect("checked VMCE round")
-                    .result_step())
+                Ok(vmce.result_step())
             }
             VmceResultEvent::PeerReady { source } => {
                 if let Some(row) = row_of(source) {
@@ -1329,10 +1370,19 @@ impl MatchSession {
                 }
                 Ok(VmceRoundStep::None)
             }
+            VmceResultEvent::RetryCommit => {
+                if !host
+                    && round.vmce.as_mut().is_some_and(|vmce| {
+                        vmce.ending() == VmceRoundEnding::Retry && vmce.commit_retry_go()
+                    })
+                {
+                    return Ok(VmceRoundStep::Retry);
+                }
+                Ok(VmceRoundStep::None)
+            }
         }
     }
 }
-
 
 pub(super) fn stage_event(
     round: &mut VmceResultPhase,
@@ -1382,13 +1432,6 @@ pub(super) fn peer_left(
     requests.push(NetworkLoadingRequest::VmceResultLeave);
     Some(VmceRoundStep::Exit(false))
 }
-
-
-
-
-
-
-
 
 pub(super) struct FreezeData {
     pub(super) seed: u32,

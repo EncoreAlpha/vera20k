@@ -6,12 +6,16 @@
 //! unchanged from the pre-split module; the shared `cooperative` module keeps
 //! only the native BC6 records.
 
-use super::cooperative::{CooperativeOptionsRecord, OPTIONS_KIND, SIGNAL_LEN};
 use super::{LAN_MESSAGE_LEN, LanMessage, LanMessageError, LanMessageKind};
 
 /// VMCE-only new lobby identity, delivered reliably over the previous match's
 /// scope before Go. The revision starts at zero for the normal setup owner.
 pub const INTERMISSION_KIND: u32 = 0x3B;
+
+/// The shared LAN envelope's kind-and-name prefix. VMCE records keep the
+/// same header layout as every native LAN signal; this module owns the value
+/// so its records do not depend on the stock Cooperative payload module.
+pub const SIGNAL_LEN: usize = 0x2f;
 
 /// A VMCE terminal-result agreement, scoped to this result round. Each byte
 /// is either an empty raw slot (0xff), or role 0..3 plus bit 2 for victory.
@@ -20,14 +24,14 @@ pub const RESULT_KIND: u32 = 0x3C;
 /// VMCE control messages carry the result agreement's round nonce. These
 /// kinds are distinct from the native BC6 records, which remain unchanged.
 pub const VMCE_CONTROL_KIND: u32 = 0x3D;
-pub const VMCE_OPTIONS_KIND: u32 = 0x3E;
-const VMCE_OPTIONS_NONCE: usize = 0x130;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VmceRoundControl {
     Begin,
     Ack,
     Go,
+    /// The host proved the retry Go reached every guest; guests may reload.
+    RetryCommit,
 }
 
 impl VmceRoundControl {
@@ -40,6 +44,7 @@ impl VmceRoundControl {
             Self::Begin => 0,
             Self::Ack => 1,
             Self::Go => 2,
+            Self::RetryCommit => 3,
         };
         message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].copy_from_slice(&nonce);
         Ok(message)
@@ -53,6 +58,7 @@ impl VmceRoundControl {
             0 => Self::Begin,
             1 => Self::Ack,
             2 => Self::Go,
+            3 => Self::RetryCommit,
             _ => return None,
         };
         let nonce: [u8; 16] = message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17]
@@ -302,36 +308,8 @@ fn digest_is_valid(digest: &str) -> bool {
     digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-impl CooperativeOptionsRecord {
-    pub fn encode_vmce(&self, name: &str, nonce: [u8; 16]) -> Result<LanMessage, LanMessageError> {
-        if nonce == [0; 16] {
-            return Err(LanMessageError::InvalidStageRecord);
-        }
-        let mut message = self.encode(name)?;
-        message.put_u32(0, VMCE_OPTIONS_KIND);
-        message.bytes[VMCE_OPTIONS_NONCE..VMCE_OPTIONS_NONCE + 16].copy_from_slice(&nonce);
-        Ok(message)
-    }
-
-    pub fn decode_vmce(message: &LanMessage) -> Option<(Self, [u8; 16])> {
-        if message.u32(0) != VMCE_OPTIONS_KIND {
-            return None;
-        }
-        let nonce: [u8; 16] = message.bytes[VMCE_OPTIONS_NONCE..VMCE_OPTIONS_NONCE + 16]
-            .try_into()
-            .ok()?;
-        if nonce == [0; 16] {
-            return None;
-        }
-        let mut original = message.clone();
-        original.put_u32(0, OPTIONS_KIND);
-        Some((Self::decode(&original)?, nonce))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::cooperative::{CooperativeAiWords, CooperativeHumanWords};
     use super::*;
 
     #[test]
@@ -410,25 +388,5 @@ mod tests {
         let mut bad_digest = record;
         bad_digest.source_sha256 = String::from("not-a-digest");
         assert!(bad_digest.encode("Host").is_err());
-        // A record of another round kind is never read as a stage identity.
-        let options = CooperativeOptionsRecord {
-            difficulty: 1,
-            humans: [CooperativeHumanWords {
-                start: -1,
-                country: -1,
-                color: -1,
-            }; 8],
-            ai: [CooperativeAiWords {
-                country: -1,
-                color: -1,
-                difficulty: 0,
-                start: -2,
-                team: -2,
-            }; 8],
-        };
-        assert_eq!(
-            VmceStageRecord::decode(&options.encode("Host").unwrap()),
-            None
-        );
     }
 }

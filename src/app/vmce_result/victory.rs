@@ -92,9 +92,7 @@ pub(super) fn open_victory(state: &mut AppState) {
             crate::app::match_runtime::session::VmceRoundEnding::CampaignEnd,
         ),
     };
-    open_page(
-        state, model, next, true, ending, rows, true, "victory", true,
-    );
+    open_page(state, model, next, true, ending, rows, "victory", true);
 }
 
 /// Run a VMCE victory/campaign-end page's Continue. Returns false when the
@@ -111,11 +109,7 @@ pub(super) fn continue_pressed(state: &mut AppState) -> bool {
         App::leave_mission_result_screen(state);
         return true;
     }
-    if !state
-        .match_state
-        .session
-        .vmce_result_continue_enabled()
-    {
+    if !state.match_state.session.vmce_result_continue_enabled() {
         state.platform.window.request_redraw();
         return true;
     }
@@ -185,12 +179,7 @@ pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
                 .session()
                 .vmce_outcome(sim.interner().get(&info.owner)?)?
                 == crate::sim::house_state::HouseOutcomeKind::Victory,
-            ready: can_continue.then(|| {
-                state
-                    .match_state
-                    .session
-                    .vmce_result_slot_ready(index)
-            }),
+            ready: can_continue.then(|| state.match_state.session.vmce_result_slot_ready(index)),
             host: human.raw_slot_index == Some(0),
             rgb: info.color,
         });
@@ -272,7 +261,6 @@ fn open_page(
     can_continue: bool,
     ending: crate::app::match_runtime::session::VmceRoundEnding,
     rows: usize,
-    admit_slots: bool,
     what: &str,
     victory: bool,
 ) {
@@ -298,30 +286,6 @@ fn open_page(
         .match_state
         .session
         .set_vmce_result_page_victory(victory);
-    if admit_slots {
-        // The repaint's country pass 0x0046F6D0 against the next stage.
-        let runtime = &state.frontend.multiplayer_shell_runtime;
-        let admit = |slot: &mut crate::skirmish_launch::SkirmishLocalSlot| {
-            let requested = if slot.country_random {
-                -2
-            } else {
-                i32::from(slot.country.raw_index())
-            };
-            if runtime.cooperative_admits(requested) {
-                return;
-            }
-            match runtime.cooperative_default_country() {
-                Some(country) => {
-                    slot.country = country;
-                    slot.country_random = false;
-                }
-                None => slot.country_random = true,
-            }
-        };
-        // VMCE's countries are already the frozen role bindings; the stock
-        // Cooperative admission belongs to the BC6 result page.
-        let _ = &admit;
-    }
     let board = result_board(state);
     // The settlement board's flags/host/ready glyphs come from the skirmish
     // chrome the lobby already loaded; VMCE result pages only exist after it.

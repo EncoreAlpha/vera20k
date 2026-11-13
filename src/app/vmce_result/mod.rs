@@ -179,8 +179,8 @@ pub(crate) fn button_pressed(state: &mut AppState, released: Option<u16>) -> boo
                     .map_or(0, |page| page.dialog.continue_button());
                 victory_button_intent(victory_page, id, continue_id)
             }
-            // The BC6 defeat page's Continue/Quit route through the B2 round
-            // owner's `CoopScoreAction`; its statistics page has no buttons.
+            // The VMCE defeat page owns only Retry/Leave; its statistics
+            // view has no result-page buttons.
             VmceResultPage::Defeat(_) => None,
         }
     };

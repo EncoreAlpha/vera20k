@@ -30,6 +30,24 @@ fn capture_render_continues(deadline: &mut Option<Instant>, outcome: FrameRender
     }
 }
 
+/// The CoopScore screen's VMCE defeat-page key dispatch. The window handler
+/// calls this before the stock Cooperative adapter; captures call the same
+/// function so Escape is verified through the production dispatch, not by
+/// invoking a page action.
+pub(crate) fn handle_vmce_defeat_key_code(
+    state: &mut AppState,
+    code: winit::keyboard::KeyCode,
+) -> bool {
+    #[cfg(feature = "vmce")]
+    if crate::app::vmce_result::defeat_page_active(state) {
+        crate::app::vmce_result::defeat_input::key_code(state, code);
+        return true;
+    }
+    #[cfg(not(feature = "vmce"))]
+    let _ = (state, code);
+    false
+}
+
 impl App {
     /// An event can interrupt WaitUntil before a capture's render cadence.
     /// Keep that render deadline while still waking for independently due
@@ -1282,9 +1300,9 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if screen == ScreenPage::CoopScore {
-                    #[cfg(feature = "vmce")]
-                    if crate::app::vmce_result::defeat_page_active(state) {
-                        crate::app::vmce_result::defeat_input::key(state, &event);
+                    if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key
+                        && handle_vmce_defeat_key_code(state, code)
+                    {
                         return;
                     }
                     crate::app::input::coop_score::key(state, &event);

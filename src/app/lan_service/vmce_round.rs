@@ -1,4 +1,4 @@
-//! VMCE-only LAN adapters for the shared Cooperative round.
+//! VMCE-only LAN adapters for the VMCE result round.
 //!
 //! The transport, reliable queue, and bounded departure wait remain owned by
 //! LanService. This module owns VMCE protocol state and its LAN-specific
@@ -16,6 +16,13 @@ use crate::net::lan_messages::{LanMessage, LanMessageKind, SessionScope};
 use std::collections::{BTreeSet, VecDeque};
 use std::net::SocketAddrV4;
 
+/// Host ACK wait, host commit-drain wait and the guest's longer overall wait.
+/// The guest must not time out while the host may still legally be in either
+/// of its own bounded phases.
+const RETRY_ACK_WAIT_BUCKETS: u32 = 600;
+const RETRY_COMMIT_WAIT_BUCKETS: u32 = 600;
+const RETRY_GUEST_WAIT_BUCKETS: u32 = 1_500;
+
 #[derive(Debug, Default)]
 pub(crate) struct VmceLanRoundState {
     pending_round: VecDeque<GlobalMessage>,
@@ -32,6 +39,11 @@ pub(crate) struct VmceLanRoundState {
     intermission_deadline: Option<WallBucketTimer>,
     campaign_completion_deadline: Option<WallBucketTimer>,
     assignment_deadline: Option<WallBucketTimer>,
+    /// Bounded host ACK / guest commit wait for the retry handoff, plus the
+    /// host's commit-admission flag. The retry reload never starts on one peer
+    /// while the other is still waiting or has failed.
+    retry_wait_deadline: Option<WallBucketTimer>,
+    retry_commit_queued: bool,
     /// The result nonce whose agreed next-stage unlock was already persisted.
     /// Duplicate or stale confirmations keep the same nonce and do not write
     /// again; a new round carries a new nonce.
@@ -50,6 +62,8 @@ impl VmceLanRoundState {
         self.intermission_deadline = None;
         self.campaign_completion_deadline = None;
         self.assignment_deadline = None;
+        self.retry_wait_deadline = None;
+        self.retry_commit_queued = false;
         self.result_unlock_nonce = None;
     }
 
@@ -171,6 +185,50 @@ impl VmceLanRoundState {
         self.assignment_deadline = None;
     }
 
+    /// The guest waits through the host's ACK phase and its commit-drain
+    /// phase, so its single deadline is longer than either host phase. A
+    /// duplicate Go does not extend it.
+    pub(super) fn mark_guest_retry_wait(&mut self, now: u32) {
+        if self.retry_wait_deadline.is_none() {
+            self.retry_wait_deadline = Some(WallBucketTimer::start(now, RETRY_GUEST_WAIT_BUCKETS));
+        }
+        self.retry_commit_queued = false;
+    }
+
+    pub(super) fn mark_retry_wait(&mut self, now: u32) {
+        self.retry_wait_deadline = Some(WallBucketTimer::start(now, RETRY_ACK_WAIT_BUCKETS));
+        self.retry_commit_queued = false;
+        self.assignment_deadline = None;
+    }
+
+    pub(super) fn retry_wait_expired(&self, now: u32) -> bool {
+        self.retry_wait_deadline
+            .is_some_and(|deadline| deadline.remaining(now) == 0)
+    }
+
+    pub(super) fn clear_retry_wait(&mut self) {
+        self.retry_wait_deadline = None;
+        self.retry_commit_queued = false;
+    }
+
+    pub(super) fn retry_commit_queued(&self) -> bool {
+        self.retry_commit_queued
+    }
+
+    pub(super) fn mark_retry_commit_queued(&mut self, queued: bool, now: u32) {
+        self.retry_commit_queued = queued;
+        if queued {
+            self.retry_wait_deadline = Some(WallBucketTimer::start(now, RETRY_COMMIT_WAIT_BUCKETS));
+        }
+    }
+
+    /// Clear the retry wait after every guest committed (or after a failure
+    /// exit) so a later round cannot read a stale deadline.
+    pub(super) fn finish_retry_wait(&mut self) {
+        self.retry_wait_deadline = None;
+        self.retry_commit_queued = false;
+    }
+
     pub(super) fn mark_campaign_completion_enqueue_failed(&mut self, failed: bool) {
         self.campaign_completion_enqueue_failed = failed;
     }
@@ -201,7 +259,7 @@ impl VmceLanRoundState {
 }
 
 pub(crate) fn is_round_record(payload: &[u8]) -> bool {
-    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
+    if payload.len() == crate::net::lan_messages::vmce::SIGNAL_LEN {
         return VmceSignal::decode(payload).is_some();
     }
     if payload.len() != crate::net::lan_messages::LAN_MESSAGE_LEN {
@@ -434,10 +492,11 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
         let Ok(message) = LanMessage::decode(payload) else {
             return Ok(false);
         };
-        // Go is the only remaining live result control; the old BC6
-        // Begin/Ack/Options handshake has no VMCE sender or receiver.
+        // Go and the retry delivery commit are the only live host controls.
+        // The old BC6 Begin/Ack/Options handshake has no VMCE sender or
+        // receiver.
         if let Some((kind, nonce)) = VmceRoundControl::decode(&message) {
-            if !matches!(kind, VmceRoundControl::Go) {
+            if !matches!(kind, VmceRoundControl::Go | VmceRoundControl::RetryCommit) {
                 return Ok(true);
             }
             let source = connected_source(state, incoming.source)?;
@@ -459,17 +518,30 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             ) {
                 return Ok(true);
             }
-            // A guest acknowledges the retry Go before the app freezes the
-            // result phase into the reload; the host waits for every ACK.
-            if !host
-                && state.match_state.session.vmce_result_ending()
-                    == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
-                && let Ok(message) = VmceSignal::RetryAck.encode(&super::local_name(state))
-            {
-                let peers = peer_sources(state);
-                let _ = queue_encoded_to_peers(state, &message, &peers);
+            match kind {
+                VmceRoundControl::Go => {
+                    let retry = state.match_state.session.vmce_result_ending()
+                        == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry);
+                    // The guest queues its RetryAck and waits for the host's
+                    // commit; it does not reload merely because Go arrived.
+                    crate::app::vmce_round::service_event(state, VmceResultEvent::Go)?;
+                    if retry {
+                        let now = super::super::match_runtime::frame_pacer::frame_bucket(
+                            super::super::match_runtime::frame_pacer::wall_clock_ms(),
+                        );
+                        if let Some(service) = state.match_state.lan_service.as_mut() {
+                            service.vmce_round.mark_guest_retry_wait(now);
+                        }
+                    }
+                }
+                VmceRoundControl::RetryCommit => {
+                    if let Some(service) = state.match_state.lan_service.as_mut() {
+                        service.vmce_round.finish_retry_wait();
+                    }
+                    crate::app::vmce_round::service_event(state, VmceResultEvent::RetryCommit)?;
+                }
+                _ => {}
             }
-            crate::app::vmce_round::service_event(state, VmceResultEvent::Go)?;
             return Ok(true);
         }
         if let Some(epoch) = crate::net::lan_messages::vmce::decode_intermission_epoch(&message) {
@@ -559,7 +631,7 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             return Ok(true);
         }
     }
-    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
+    if payload.len() == crate::net::lan_messages::vmce::SIGNAL_LEN {
         if let Some(signal) = VmceSignal::decode(payload) {
             let source = connected_source(state, incoming.source)?;
             let event = match signal {
@@ -937,7 +1009,6 @@ pub(super) fn unlock_agreed_next_stage(state: &mut AppState) {
     }
 }
 
-
 pub(super) fn service_result_agreement(state: &mut AppState) -> anyhow::Result<()> {
     if !active_round(state) {
         return Ok(());
@@ -1118,17 +1189,101 @@ fn queue_encoded_to_peers(state: &mut AppState, bytes: &[u8], peers: &[usize]) -
         .match_state
         .lan_service
         .as_mut()
-        .is_some_and(|service| {
-            service
-                .queue_setup(
-                    endpoints
-                        .into_iter()
-                        .map(|endpoint| (bytes.to_vec(), direct(endpoint))),
-                )
-                .unwrap_or(false)
-        })
+        .is_some_and(|service| queue_round_bytes(service, bytes, endpoints.into_iter()))
 }
 
+/// Admit one VMCE round packet to the shared reliable setup FIFO. A full queue
+/// or transport failure is reported to the caller; VMCE never treats a
+/// rejected enqueue as delivered.
+pub(super) fn queue_round_bytes(
+    service: &mut LanService,
+    bytes: &[u8],
+    endpoints: impl ExactSizeIterator<Item = SocketAddrV4>,
+) -> bool {
+    service
+        .queue_setup(endpoints.map(|endpoint| (bytes.to_vec(), direct(endpoint))))
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryHandoffDecision {
+    Wait,
+    QueueCommit,
+    Freeze,
+    Fail(&'static str),
+}
+
+/// The host may reload only after every RetryAck and after the delivery
+/// commit has drained on the reliable queue. Every other outcome is a wait or
+/// a bounded, visible failure: ACK loss, transport loss, a full queue, or a
+/// peer that stopped answering.
+fn host_retry_decision(
+    acks_complete: bool,
+    commit_queued: bool,
+    wait_expired: bool,
+    transport: Option<(bool, bool)>,
+) -> RetryHandoffDecision {
+    if !acks_complete {
+        return match transport {
+            Some((false, _)) | None => RetryHandoffDecision::Fail("the retry Go transport failed"),
+            _ if wait_expired => RetryHandoffDecision::Fail("timed out waiting for guest RetryAck"),
+            Some(_) => RetryHandoffDecision::Wait,
+        };
+    }
+    if !commit_queued {
+        return RetryHandoffDecision::QueueCommit;
+    }
+    match transport {
+        Some((false, _)) | None => {
+            RetryHandoffDecision::Fail("the retry delivery commit transport failed")
+        }
+        Some((true, true)) => RetryHandoffDecision::Freeze,
+        Some((true, false)) if wait_expired => {
+            RetryHandoffDecision::Fail("timed out delivering the retry commit")
+        }
+        Some((true, false)) => RetryHandoffDecision::Wait,
+    }
+}
+
+fn guest_retry_decision(
+    wait_expired: bool,
+    transport: Option<(bool, bool)>,
+) -> RetryHandoffDecision {
+    match transport {
+        Some((false, _)) | None => {
+            RetryHandoffDecision::Fail("the retry handoff transport failed on the guest")
+        }
+        _ if wait_expired => {
+            RetryHandoffDecision::Fail("timed out waiting for the retry delivery commit")
+        }
+        Some(_) => RetryHandoffDecision::Wait,
+    }
+}
+
+fn queue_retry_commit(state: &mut AppState) -> bool {
+    let Some(nonce) = state.match_state.session.vmce_result_nonce() else {
+        return false;
+    };
+    let name = super::local_name(state);
+    let Ok(message) = VmceRoundControl::RetryCommit.encode(&name, nonce) else {
+        return false;
+    };
+    let peers = peer_sources(state);
+    queue_encoded_to_peers(state, message.as_bytes(), &peers)
+}
+
+/// A retry handoff that cannot finish is a local, visible failure. Neither
+/// peer may sit on the page while the other reloads; the bounded wait above
+/// calls this on both the host and the guest.
+fn fail_round_handoff(state: &mut AppState, reason: &str) {
+    log::error!("VMCE retry handoff failed: {reason}");
+    let _ = state.match_state.session.quit_vmce_result();
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_round.finish_retry_wait();
+    }
+    crate::app::vmce_round::return_to_shell(state);
+    report_round_failure(state);
+}
 
 pub(crate) fn mark_assignment_wait(state: &mut AppState) {
     let now = super::super::match_runtime::frame_pacer::frame_bucket(
@@ -1281,6 +1436,18 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
             // the shell still needs the local failure instead of a silent wait.
             crate::app::vmce_round::return_to_shell(state);
             report_round_failure(state);
+        };
+        if queued
+            && state.match_state.session.vmce_result_ending()
+                == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
+            && state.match_state.session.host()
+        {
+            let now = super::super::match_runtime::frame_pacer::frame_bucket(
+                super::super::match_runtime::frame_pacer::wall_clock_ms(),
+            );
+            if let Some(service) = state.match_state.lan_service.as_mut() {
+                service.vmce_round.mark_retry_wait(now);
+            }
         }
         return true;
     }
@@ -1519,6 +1686,95 @@ mod tests {
         assert_eq!(round.take_pending_round().unwrap().sequence, 3);
         assert_eq!(round.pending_round.back().unwrap().sequence, 64);
     }
+    #[test]
+    fn retry_handoff_decisions_bound_ack_loss_and_no_response() {
+        use RetryHandoffDecision::*;
+
+        // No ACK yet: the host waits, then fails at the deadline.
+        assert_eq!(
+            host_retry_decision(false, false, false, Some((true, false))),
+            Wait
+        );
+        assert_eq!(
+            host_retry_decision(false, false, true, Some((true, false))),
+            Fail("timed out waiting for guest RetryAck")
+        );
+        assert_eq!(
+            host_retry_decision(false, false, false, None),
+            Fail("the retry Go transport failed")
+        );
+        assert_eq!(
+            host_retry_decision(false, false, false, Some((false, false))),
+            Fail("the retry Go transport failed")
+        );
+        // Once every ACK arrives the commit is queued even in the expiry
+        // bucket; the commit's own delivery wait is then bounded.
+        assert_eq!(
+            host_retry_decision(true, false, true, Some((true, false))),
+            QueueCommit
+        );
+        assert_eq!(
+            host_retry_decision(true, true, false, Some((true, false))),
+            Wait
+        );
+        assert_eq!(
+            host_retry_decision(true, true, true, Some((true, false))),
+            Fail("timed out delivering the retry commit")
+        );
+        assert_eq!(
+            host_retry_decision(true, true, false, Some((true, true))),
+            Freeze
+        );
+        assert_eq!(
+            host_retry_decision(true, true, false, Some((false, true))),
+            Fail("the retry delivery commit transport failed")
+        );
+        // The guest never reloads without the host's commit, and its wait is
+        // bounded even when the host disappears.
+        assert_eq!(
+            guest_retry_decision(false, None),
+            Fail("the retry handoff transport failed on the guest")
+        );
+        assert_eq!(
+            guest_retry_decision(true, Some((true, false))),
+            Fail("timed out waiting for the retry delivery commit")
+        );
+        assert_eq!(guest_retry_decision(false, Some((true, false))), Wait);
+    }
+
+    #[test]
+    fn retry_wait_and_commit_share_one_bounded_deadline() {
+        let mut state = VmceLanRoundState::default();
+        state.mark_retry_wait(0);
+        assert!(!state.retry_wait_expired(599));
+        assert!(state.retry_wait_expired(600));
+        assert!(!state.retry_commit_queued());
+        state.mark_retry_commit_queued(true, 1_000);
+        assert!(state.retry_commit_queued());
+        assert!(!state.retry_wait_expired(1_599));
+        assert!(state.retry_wait_expired(1_600));
+        state.finish_retry_wait();
+        assert!(!state.retry_wait_expired(2_000));
+        assert!(!state.retry_commit_queued());
+        state.clear_visit();
+        assert!(!state.retry_wait_expired(2_000));
+    }
+
+    #[test]
+    fn retry_commit_control_requires_its_round_nonce() {
+        let message = VmceRoundControl::RetryCommit
+            .encode("Host", [5; 16])
+            .unwrap();
+        assert_eq!(
+            VmceRoundControl::decode(&message),
+            Some((VmceRoundControl::RetryCommit, [5; 16]))
+        );
+        assert!(
+            VmceRoundControl::RetryCommit
+                .encode("Host", [0; 16])
+                .is_err()
+        );
+    }
 }
 
 /// VMCE's result-phase service loop. Stock Cooperative keeps its own poll; a
@@ -1612,30 +1868,82 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
     }
     unlock_agreed_next_stage(state);
     super::drain_match_requests(state);
-    if state
+    if state.match_state.session.vmce_result_phase().is_none() {
+        return true;
+    }
+    let now = super::super::match_runtime::frame_pacer::frame_bucket(
+        super::super::match_runtime::frame_pacer::wall_clock_ms(),
+    );
+    let retry_round = state
         .match_state
         .session
         .vmce_result_phase()
         .is_some_and(|round| {
             round.vmce_ending() == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
                 && round.outcome_committed()
-        })
-        && state.match_state.session.host()
-    {
-        let observation = state
+        });
+    if retry_round && state.match_state.session.host() {
+        let acks_complete = state.match_state.session.vmce_result_retry_acks_complete();
+        let (commit_queued, wait_expired, transport) = state
             .match_state
             .lan_service
             .as_ref()
-            .and_then(|service| service.go_transport_observation(service_ok));
-        // The reliable setup queue retransmits the Go during loading; waiting
-        // for the transport queue to drain would strand the host after the
-        // guest already consumed it and changed scope. The request was drained
-        // above this branch, so the Go is queued before the freeze.
-        let delivered = observation.is_some_and(|observation| observation.service_ok)
-            && state.match_state.session.vmce_result_retry_acks_complete();
-        if delivered {
-            crate::app::vmce_round::retry_last_mission(state);
-            return true;
+            .map_or((false, true, None), |service| {
+                (
+                    service.vmce_round.retry_commit_queued(),
+                    service.vmce_round.retry_wait_expired(now),
+                    service
+                        .go_transport_observation(service_ok)
+                        .map(|observation| (observation.service_ok, observation.queued == 0)),
+                )
+            });
+        match host_retry_decision(acks_complete, commit_queued, wait_expired, transport) {
+            RetryHandoffDecision::Wait => {}
+            RetryHandoffDecision::QueueCommit => {
+                let queued = queue_retry_commit(state);
+                if let Some(service) = state.match_state.lan_service.as_mut() {
+                    service.vmce_round.mark_retry_commit_queued(queued, now);
+                }
+                if !queued {
+                    fail_round_handoff(state, "the retry delivery commit could not be queued");
+                    return true;
+                }
+            }
+            RetryHandoffDecision::Freeze => {
+                if let Some(service) = state.match_state.lan_service.as_mut() {
+                    service.vmce_round.finish_retry_wait();
+                }
+                crate::app::vmce_round::retry_last_mission(state);
+                return true;
+            }
+            RetryHandoffDecision::Fail(reason) => {
+                fail_round_handoff(state, reason);
+                return true;
+            }
+        }
+    } else if retry_round {
+        // The guest reloads only on the host's RetryCommit. Until then it
+        // stays on the result page with a bounded wait.
+        let (wait_expired, transport) =
+            state
+                .match_state
+                .lan_service
+                .as_ref()
+                .map_or((true, None), |service| {
+                    (
+                        service.vmce_round.retry_wait_expired(now),
+                        service
+                            .go_transport_observation(service_ok)
+                            .map(|observation| (observation.service_ok, observation.queued == 0)),
+                    )
+                });
+        match guest_retry_decision(wait_expired, transport) {
+            RetryHandoffDecision::Wait => {}
+            RetryHandoffDecision::Fail(reason) => {
+                fail_round_handoff(state, reason);
+                return true;
+            }
+            _ => unreachable!("guest retry has no commit/freeze decision"),
         }
     }
     continue_after_result(state)

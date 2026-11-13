@@ -185,7 +185,7 @@ manifest-extra 2p-final probe; a preview-capable host lobby was also captured wi
 Cross-machine play, guest-side intermission preview (A44), the full-room LAN listing (A45) and
 long-name statistics (A38) remain uncovered; the synthetic result/defeat fixtures additionally
 need the backlog's B91 workaround.
-## Phase 2 â€?VMCE-owned settlement flow (feature/vmce)
+## Phase 2 ï¿½?VMCE-owned settlement flow (feature/vmce)
 
 VMCE now owns the result round end-to-end: its own session phase
 (`NetworkPhase::VmceResult` in `app/match_runtime/session/vmce_result.rs`), result
@@ -234,3 +234,62 @@ internet play are outside this stage.
 Critic findings (fixed in the final revision): assignment now requires the full propose/confirm agreement, a stale BC6 Ack no longer commits a result, and the defeat page carries Your Time/Par Time labels, the per-row Lost verdict, name ellipsis and a pointer press frame.
 
 Remaining, not fixed in this stage: no local retry-ACK deadline or dedicated resend timer (reliable setup queue only); a guest whose host never assigns has no result-page timeout without a received intermission epoch; no hover status/STT row on the VMCE defeat page; the native BC6 statics animation and exact static placement are not ported; superseded BC6 helper paths and the old encode_scoped_request stub remain in the LAN adapter; the architecture guard scans five VMCE-owned paths and has no negative fixture (it proves absence of named Cooperative calls, not full isolation); LAN diagnostics call page actions directly and hard-code verdict/can-continue, so hover/press/hit-test and an old-BC6 pixel comparison remain uncovered. Cross-machine and internet play stay out of scope.
+
+## Phase 2 review fixes (feature/vmce)
+
+The retry handoff now has two bounded phases instead of one open wait: the host
+queues the nonce-scoped retry Go, waits for every guest RetryAck, then queues a
+RetryCommit on the same reliable setup FIFO and only reloads after that commit
+has drained; a guest that sees Go queues its ACK and stays on the result page
+until RetryCommit arrives. ACK loss, commit loss, a full reliable queue, a
+transport failure, or an absent peer all end in a local visible
+`VERA:VmceRoundSendFailed` return to the LAN lobby on both peers (600-bucket
+deadlines); neither side reloads while the other waits. The new control and its
+kind are VMCE-owned (`VmceRoundControl::RetryCommit`).
+
+The native BC6 Escape behavior is restored on the VMCE defeat page: Escape does
+not leave the room; only the explicit Leave Room control does. The LAN capture
+calls the window handler's own dispatch function (the same function
+`handler.rs` uses for the CoopScore screen), asserts the page is not in a
+blocked transition, and records `escape_preserved_page` in both receipts.
+
+Cooperative dependency cleanup: the shared continuation timing is owned as
+`net::lockstep::continuation_timing` (the native Cooperative timing values are
+transport timing, not a Cooperative result decision); VMCE result messages have
+their own `SIGNAL_LEN` and no longer import Cooperative options or payload
+types. Remaining generic VERA helpers (`cooperative_score_rows`,
+`cooperative_difficulty`, `cooperative_admits/default_country`) are shared
+simulation/roster data, not the stock Cooperative result flow.
+
+The architecture guard now scans VMCE production files, VMCE session tests and
+marked VMCE diagnostic regions, forbids the old timing name, bare and aliased
+`cooperative_round` module paths and Cooperative message/state types, and has a
+combined negative fixture test that probes every forbidden token plus an alias. It is intentionally
+source-level: it proves the named dependencies are absent, not that every
+future indirect call is impossible.
+
+Evidence (local, labelled fast build `vmce-phase3-final-r6` with
+`vmce,dev-overlays`, SHA-256
+`3268D6FF77E523C8AFF13EFB7F62ACF40C840ED97DBBD9DA477E2284A45A8D17`):
+`2p-win`, `2p-retry` and `2p-final` LAN acceptance all PASS under
+`.scratch/phase3-accept-r6/`; each receipt records 300 native checksums, the
+retry receipt records the same stage on both peers, and both receipts record
+`escape_preserved_page: true`. The retry run additionally proves the new
+handoff, because the old direct-Guest freeze would not wait for RetryCommit.
+
+Focused tests added: real reliable-queue ACK loss and full-queue rejection
+(`lan_service` tests), lost VMCE commit/ACK datagrams (`global_tests`), host and
+guest bounded handoff decisions, and the session Go/RetryCommit state machine.
+Retail checks: default and VMCE `cargo_run check --lib --bins` pass; workspace
+check with `vmce` passes; `architecture_guards` passes both ways (28 tests);
+full `vera20k --lib`: default 3989 pass / 8 known environment-retail failures,
+VMCE 4102 pass / the same 8 failures. Still uncovered: cross-machine play,
+internet play, a guest that hangs while the host transport stays healthy (no
+pre-Go deadline by design), and an acceptance run with an externally injected
+lost ACK; the
+in-process reliable-queue and global-channel tests drop/withhold packets but
+the LAN scenarios do not manipulate the OS network path. The shared generic
+helpers whose names still begin with `cooperative_` are simulation score rows,
+campaign difficulty and roster admission, not the Cooperative result flow. The retry capture still drives the page action directly for the
+Retry click (only Escape goes through the input handler), and there is no
+old-BC6-versus-new-page pixel baseline comparison.

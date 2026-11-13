@@ -17,6 +17,14 @@ lang: zh-CN
 
 独立阶段只修阻塞当前流程或验收的问题；审查通过后再处理该阶段相关的已知问题。下方条目保留作为缺陷索引，并非要求先全部清空。
 
+## 阶段 2 审查修复（已完成，待用户审查）
+
+- 失败重试改为有界两阶段交接：房主等待全部 RetryAck 后经可靠队列发送 RetryCommit，并在其送达后才重载；客人收到 Go 后只回 ACK，收到 RetryCommit 才重载。ACK/提交丢失、队列满、传输失败和端无响应均有 600 bucket 上限，并以 `VERA:VmceRoundSendFailed` 返回大厅；客人在主机点 Continue/Retry 前等待 Go 不计时（无法与玩家慢操作区分），传输失败仍会退出。
+- 失败页 Esc 恢复原生存为：不直接离开房间；LAN 捕获通过 window handler 的生产分发函数验证，并在回执写 `escape_preserved_page`。
+- `cooperative_continuation_timing` 已改为共享的 `continuation_timing`；VMCE 消息使用自己的 `SIGNAL_LEN`，不再引用 Cooperative 消息/选项类型。`cooperative_score_rows`、`cooperative_difficulty`、`cooperative_admits/default_country` 继续作为通用模拟/名单数据使用。
+- 架构检查覆盖 VMCE 正式代码、会话测试和标记的 VMCE 诊断区域，并有覆盖全部禁止 token 与别名写法的负向注入用例。
+- 证据：构建 `vmce-phase3-final-r6`，`.scratch/phase3-accept-r6/` 的 `2p-win`、`2p-retry`、`2p-final` 全部通过；详见[基线](../vmce-baseline.md)。
+
 ## 优先核查
 
 1. **B10 残余：联机退出与换关。** 修复期限到期时按 Continue 可能无提示退出的问题；其余未验证场景见下方。B10 的主要实现已完成。

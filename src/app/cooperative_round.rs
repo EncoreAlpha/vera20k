@@ -748,7 +748,7 @@ fn begin_next_mission(state: &mut AppState) {
         .map_or(0, |launch| launch.options.game_speed);
     // LAN has no writer of the ping table 0xB7790C: every ping reads 0.
     let (max_ahead, latency_fudge) =
-        crate::net::lockstep::cooperative_continuation_timing(game_speed, &[]);
+        crate::net::lockstep::continuation_timing(game_speed, &[]);
     state.frontend.campaign_score_art = None;
     match state
         .match_state

@@ -1123,6 +1123,7 @@ impl ScoreCapture {
     }
 }
 
+// VMCE-FIXTURE-BEGIN
 /// Install one synthetic VMCE settlement page state through the production
 /// session/UI owners: a VMCE LAN room supplies the real role/country data, the
 /// page model stays the retail `0x103` example, and the board carries only the
@@ -1367,3 +1368,4 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
     let _ = App::ensure_skirmish_shell_chrome(state);
     Ok(())
 }
+// VMCE-FIXTURE-END

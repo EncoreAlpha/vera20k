@@ -39,9 +39,7 @@ pub(crate) use cooperative_round::{
 #[cfg(feature = "vmce")]
 mod vmce_result;
 #[cfg(feature = "vmce")]
-pub(crate) use vmce_result::{
-    VmceResultEvent, VmceResultPhase, VmceRoundEnding, VmceRoundStep,
-};
+pub(crate) use vmce_result::{VmceResultEvent, VmceResultPhase, VmceRoundEnding, VmceRoundStep};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NetworkReturnContext {
@@ -323,26 +321,6 @@ pub(crate) enum NetworkLoadingRequest {
     CooperativeAck,
     /// The master's `0x31`.
     CooperativeGo,
-    /// VMCE Go retains its result identity when retry changes the phase before send.
-    #[cfg(feature = "vmce")]
-    CooperativeVmceGo {
-        nonce: [u8; 16],
-    },
-    /// VERA-only, before the native begin: the host's resolved next stage
-    /// identity, so a guest can refuse a different mission before loading.
-    #[cfg(feature = "vmce")]
-    CooperativeStage(crate::app::match_bootstrap::VmceStageIdentity),
-    /// VERA-only: the guest's next stage differs from the host's; both peers
-    /// abandon the round to the lobby instead of loading different missions.
-    #[cfg(feature = "vmce")]
-    CooperativeStageRejected,
-    /// VERA-only: this peer has no next stage (defeat or last mission), so
-    /// the other peer must not continue with one.
-    #[cfg(feature = "vmce")]
-    CooperativeStageAbsent,
-    /// VERA-only: one guest's retry vote on the BC6 defeat page.
-    #[cfg(feature = "vmce")]
-    CooperativeRetryVote,
     /// VMCE result round: this peer accepted Continue (ready) or Retry.
     #[cfg(feature = "vmce")]
     VmceResultReady,
@@ -852,8 +830,7 @@ impl MatchSession {
     fn editable_network_setup(&mut self) -> anyhow::Result<&mut SkirmishLaunchSession> {
         match self.network.as_mut().map(|network| &mut network.phase) {
             Some(
-                NetworkPhase::Setup { launch, .. }
-                | NetworkPhase::CooperativeRound { launch, .. },
+                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
             ) => Ok(launch),
             #[cfg(feature = "vmce")]
             Some(NetworkPhase::VmceResult { launch, .. }) => Ok(launch),
@@ -1072,8 +1049,7 @@ impl MatchSession {
         let several = self.network_several_observers();
         let launch = match self.network.as_ref().map(|network| &network.phase) {
             Some(
-                NetworkPhase::Setup { launch, .. }
-                | NetworkPhase::CooperativeRound { launch, .. },
+                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
             ) => launch,
             #[cfg(feature = "vmce")]
             Some(NetworkPhase::VmceResult { launch, .. }) => launch,

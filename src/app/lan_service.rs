@@ -5278,6 +5278,92 @@ mod tests {
 
     #[cfg(feature = "vmce")]
     #[test]
+    fn vmce_retry_ack_survives_a_withheld_acknowledgement_through_the_reliable_queue() {
+        let mut host = service();
+        let mut guest = service();
+        let scope = host.setup_scope.unwrap();
+        let host_addr = host.transport.as_ref().unwrap().primary_addr().unwrap();
+        for service in [&mut host, &mut guest] {
+            service
+                .transport
+                .as_mut()
+                .unwrap()
+                .set_lan_scope(scope)
+                .unwrap();
+        }
+        let ack = crate::net::lan_messages::vmce::VmceSignal::RetryAck
+            .encode("Guest")
+            .unwrap();
+        assert!(vmce_round::queue_round_bytes(
+            &mut guest,
+            &ack,
+            std::iter::once(host_addr)
+        ));
+        // The peer withholds the ACK: the guest sends the RetryAck, the host
+        // is not serviced at all. The reliable setup FIFO must retain and
+        // retransmit it; this exercises the production queue and transport,
+        // not a manually injected event.
+        guest.transport.as_mut().unwrap().service(1);
+        assert!(
+            host.transport
+                .as_mut()
+                .unwrap()
+                .pop_global_received()
+                .is_none(),
+            "the first ACK was intentionally lost"
+        );
+        assert!(guest.queued_setup_count() > 0, "the ACK stays queued");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            guest
+                .transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            host.transport
+                .as_mut()
+                .unwrap()
+                .service(LOBBY_RETRY_TIMING.retry_delta + 2);
+            if let Some(received) = host.transport.as_mut().unwrap().pop_global_received() {
+                assert_eq!(received.payload, ack);
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the retried RetryAck never arrived"
+            );
+            std::thread::yield_now();
+        }
+        guest.transport.as_mut().unwrap().service(64);
+        assert_eq!(
+            guest.queued_setup_count(),
+            0,
+            "the transport acknowledgement drains the reliable queue"
+        );
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn vmce_retry_ack_reports_a_full_reliable_queue_instead_of_dropping_it() {
+        let mut guest = service();
+        let endpoint = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 30123);
+        for sequence in 0..4096 {
+            guest
+                .pending_setup
+                .push_back((vec![sequence as u8], direct(endpoint)));
+        }
+        let ack = crate::net::lan_messages::vmce::VmceSignal::RetryAck
+            .encode("Guest")
+            .unwrap();
+        assert!(
+            !vmce_round::queue_round_bytes(&mut guest, &ack, std::iter::once(endpoint)),
+            "a full queue must be a visible enqueue failure"
+        );
+        assert_eq!(guest.pending_setup.len(), 4096);
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
     fn vmce_campaign_completion_times_out_when_the_go_ack_never_arrives() {
         let mut host = service();
         let mut guest = service();

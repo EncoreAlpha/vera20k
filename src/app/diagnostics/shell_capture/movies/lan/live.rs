@@ -2389,6 +2389,7 @@ impl LiveLanCapture {
         Ok(())
     }
 
+    // VMCE-RESULT-BEGIN
     /// After the injection the app retires the mission on its own; this tail
     /// only observes the result dialog (or the continued mission) in render
     /// frames, so it keeps running while the shared simulation is paused.
@@ -2453,6 +2454,31 @@ impl LiveLanCapture {
                 VmceOutcome::Real | VmceOutcome::End | VmceOutcome::Retry => {
                     // End/retry use the same 0x103 page as a real win or
                     // defeat; any VMCE page here is the one to continue.
+                    // Escape on the native BC6 page does not leave the
+                    // room. Exercise the production input handler once the
+                    // defeat page is actually open, then prove the page and
+                    // round are still open.
+                    if crate::app::vmce_result::defeat::page(state).is_some() {
+                        ensure!(
+                            !crate::app::frontend::shell_transition::blocks_shell_input(state),
+                            "VMCE defeat page input was unexpectedly blocked"
+                        );
+                        ensure!(
+                            crate::app::handler::handle_vmce_defeat_key_code(
+                                state,
+                                winit::keyboard::KeyCode::Escape,
+                            ),
+                            "the window dispatch did not route Escape to the VMCE defeat page"
+                        );
+                        ensure!(
+                            crate::app::vmce_result::defeat::page(state).is_some(),
+                            "Escape dismissed the VMCE defeat page"
+                        );
+                        ensure!(
+                            state.match_state.session.vmce_result_phase().is_some(),
+                            "Escape left the VMCE result round"
+                        );
+                    }
                     let victory_page = state.frontend.campaign_score_page.as_ref().filter(|_| {
                         state
                             .match_state
@@ -2591,12 +2617,13 @@ impl LiveLanCapture {
                         if crate::i18n::selected_language() == "zh-CN" {
                             let (width, height) =
                                 crate::app::frontend::shell_layout::shell_screen_size(state);
-                            let scale = crate::app::vmce_result::defeat_layout::VmceDefeatLayout::new(
-                                width as i32,
-                                height as i32,
-                                crate::app::frontend::shell_layout::fills_window(state),
-                            )
-                            .scale();
+                            let scale =
+                                crate::app::vmce_result::defeat_layout::VmceDefeatLayout::new(
+                                    width as i32,
+                                    height as i32,
+                                    crate::app::frontend::shell_layout::fills_window(state),
+                                )
+                                .scale();
                             let layout = crate::app::vmce_result::types::statistics_layout(scale);
                             for header in layout.headers {
                                 let label = if let Some(key) = header.key.strip_prefix("VERA:") {
@@ -2642,17 +2669,10 @@ impl LiveLanCapture {
                             .vmce_result_phase()
                             .is_some_and(|round| round.local_ready());
                         let slot_ready: Vec<bool> = (0..4)
-                            .map(|index| {
-                                state
-                                    .match_state
-                                    .session
-                                    .vmce_result_slot_ready(index)
-                            })
+                            .map(|index| state.match_state.session.vmce_result_slot_ready(index))
                             .collect();
-                        let continue_enabled = state
-                            .match_state
-                            .session
-                            .vmce_result_continue_enabled();
+                        let continue_enabled =
+                            state.match_state.session.vmce_result_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2670,6 +2690,7 @@ impl LiveLanCapture {
                             },
                             "native_frame": native_frame,
                             "state_hash": state_hash,
+                            "escape_preserved_page": true,
                         }));
                         if let (Some(receipt), Some(evidence)) = (
                             self.final_receipt.as_mut(),
@@ -2701,8 +2722,7 @@ impl LiveLanCapture {
                             rows == self.expected_players,
                             "VMCE result rows do not match the admitted players"
                         );
-                        let can_continue =
-                            state.match_state.session.vmce_result_can_continue();
+                        let can_continue = state.match_state.session.vmce_result_can_continue();
                         let victory = state
                             .match_state
                             .session
@@ -2724,17 +2744,10 @@ impl LiveLanCapture {
                             .vmce_result_phase()
                             .is_some_and(|round| round.local_ready());
                         let slot_ready: Vec<bool> = (0..4)
-                            .map(|index| {
-                                state
-                                    .match_state
-                                    .session
-                                    .vmce_result_slot_ready(index)
-                            })
+                            .map(|index| state.match_state.session.vmce_result_slot_ready(index))
                             .collect();
-                        let continue_enabled = state
-                            .match_state
-                            .session
-                            .vmce_result_continue_enabled();
+                        let continue_enabled =
+                            state.match_state.session.vmce_result_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2781,7 +2794,7 @@ impl LiveLanCapture {
                     ensure!(
                         state.frontend.screen == GameScreen::InGame
                             && state.frontend.coop_score_page.is_none()
-                    && crate::app::vmce_result::defeat::page(state).is_none()
+                            && crate::app::vmce_result::defeat::page(state).is_none()
                             && crate::app::vmce_result::defeat::page(state).is_none()
                             && state.match_state.scenario_exit.is_none(),
                         "VMCE ended after every player House was marked defeated"
@@ -2991,16 +3004,9 @@ impl LiveLanCapture {
                     render_frame < opened.saturating_add(1_200),
                     "VMCE round did not become ready: host={}, continue_enabled={}",
                     self.host(),
-                    state
-                        .match_state
-                        .session
-                        .vmce_result_continue_enabled()
+                    state.match_state.session.vmce_result_continue_enabled()
                 );
-                if !state
-                    .match_state
-                    .session
-                    .vmce_result_continue_enabled()
-                {
+                if !state.match_state.session.vmce_result_continue_enabled() {
                     return Ok(());
                 }
                 // On the VMCE retry page the host's Retry record is only
@@ -3058,10 +3064,7 @@ impl LiveLanCapture {
                             crate::app::vmce_result::defeat::VmceDefeatAction::Retry,
                         );
                     } else {
-                        crate::app::cooperative_round::apply_action(
-                            state,
-                            crate::ui::coop_score_shell::CoopScoreAction::Continue,
-                        );
+                        stock_cooperative_continue(state);
                     }
                 }
                 if let Some(evidence) = self.vera_outcome_evidence.as_mut()
@@ -3315,10 +3318,7 @@ impl LiveLanCapture {
                             crate::app::vmce_result::defeat::VmceDefeatAction::Leave,
                         );
                     } else {
-                        crate::app::cooperative_round::apply_action(
-                            state,
-                            crate::ui::coop_score_shell::CoopScoreAction::Quit,
-                        );
+                        stock_cooperative_quit(state);
                     }
                     if let Some(evidence) = self.vera_outcome_evidence.as_mut()
                         && let Some(object) = evidence.as_object_mut()
@@ -3342,6 +3342,7 @@ impl LiveLanCapture {
         }
         Ok(())
     }
+    // VMCE-RESULT-END
 
     fn issue_move(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
         // Authored campaign maps may open with scripted input-lock actions
@@ -4280,4 +4281,21 @@ fn startup_receipt(state: &AppState) -> Result<Value> {
         .context("simulation")?
         .simulation;
     crate::app::diagnostics::shell_capture::network_startup_receipt(state, launch, Some(sim))
+}
+
+/// The shared LAN capture still drives stock Cooperative result pages for the
+/// non-VMCE targets. Keeping these calls outside the VMCE result region lets
+/// the architecture guard distinguish the two owners.
+fn stock_cooperative_continue(state: &mut AppState) {
+    crate::app::cooperative_round::apply_action(
+        state,
+        crate::ui::coop_score_shell::CoopScoreAction::Continue,
+    );
+}
+
+fn stock_cooperative_quit(state: &mut AppState) {
+    crate::app::cooperative_round::apply_action(
+        state,
+        crate::ui::coop_score_shell::CoopScoreAction::Quit,
+    );
 }
