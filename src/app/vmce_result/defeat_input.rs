@@ -80,9 +80,3 @@ pub(crate) fn key(state: &mut AppState, event: &winit::event::KeyEvent) {
         defeat::apply_action(state, VmceDefeatAction::Leave);
     }
 }
-
-pub(crate) fn poll(
-    _state: &mut AppState,
-) -> Option<crate::ui::main_menu_dialogs::options::LauncherCue> {
-    None
-}

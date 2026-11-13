@@ -434,10 +434,13 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
         let Ok(message) = LanMessage::decode(payload) else {
             return Ok(false);
         };
-        let control = VmceRoundControl::decode(&message);
-        if let Some((kind, nonce)) = control {
+        // Go is the only remaining live result control; the old BC6
+        // Begin/Ack/Options handshake has no VMCE sender or receiver.
+        if let Some((kind, nonce)) = VmceRoundControl::decode(&message) {
+            if !matches!(kind, VmceRoundControl::Go) {
+                return Ok(true);
+            }
             let source = connected_source(state, incoming.source)?;
-            let from_host = !matches!(kind, VmceRoundControl::Ack);
             let host = state.match_state.session.host();
             let local = state
                 .match_state
@@ -446,7 +449,7 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
                 .map_or(usize::MAX, |launch| launch.local_player_index);
             if !control_admitted(
                 host,
-                from_host,
+                true,
                 incoming.source,
                 admitted_host(state),
                 source,
@@ -456,31 +459,17 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             ) {
                 return Ok(true);
             }
-            if matches!(kind, VmceRoundControl::Begin) {
-                let now = super::super::match_runtime::frame_pacer::frame_bucket(
-                    super::super::match_runtime::frame_pacer::wall_clock_ms(),
-                );
-                if let Some(service) = state.match_state.lan_service.as_mut() {
-                    service.vmce_round.mark_assignment_wait(now);
-                }
-            }
             // A guest acknowledges the retry Go before the app freezes the
             // result phase into the reload; the host waits for every ACK.
-            if matches!(kind, VmceRoundControl::Go)
-                && !host
+            if !host
                 && state.match_state.session.vmce_result_ending()
                     == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
                 && let Ok(message) = VmceSignal::RetryAck.encode(&super::local_name(state))
             {
                 let peers = peer_sources(state);
-                let queued = queue_encoded_to_peers(state, &message, &peers);
+                let _ = queue_encoded_to_peers(state, &message, &peers);
             }
-            let event = match kind {
-                VmceRoundControl::Begin => VmceResultEvent::Begin,
-                VmceRoundControl::Ack => VmceResultEvent::Ack { source },
-                VmceRoundControl::Go => VmceResultEvent::Go,
-            };
-            crate::app::vmce_round::service_event(state, event)?;
+            crate::app::vmce_round::service_event(state, VmceResultEvent::Go)?;
             return Ok(true);
         }
         if let Some(epoch) = crate::net::lan_messages::vmce::decode_intermission_epoch(&message) {
@@ -948,9 +937,6 @@ pub(super) fn unlock_agreed_next_stage(state: &mut AppState) {
     }
 }
 
-pub(super) fn result_nonce(state: &AppState) -> Option<[u8; 16]> {
-    state.match_state.session.vmce_result_nonce()
-}
 
 pub(super) fn service_result_agreement(state: &mut AppState) -> anyhow::Result<()> {
     if !active_round(state) {
@@ -1143,14 +1129,6 @@ fn queue_encoded_to_peers(state: &mut AppState, bytes: &[u8], peers: &[usize]) -
         })
 }
 
-fn encode_scoped_request(
-    request: &NetworkLoadingRequest,
-    name: &str,
-    result_nonce: Option<[u8; 16]>,
-) -> Option<Option<LanMessage>> {
-    let _ = (request, name, result_nonce);
-    None
-}
 
 pub(crate) fn mark_assignment_wait(state: &mut AppState) {
     let now = super::super::match_runtime::frame_pacer::frame_bucket(
@@ -1307,17 +1285,6 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
         return true;
     }
 
-    if let Some(encoded) = encode_scoped_request(request, &name, result_nonce(state)) {
-        let queued = encoded
-            .as_ref()
-            .is_some_and(|message| queue_encoded_to_peers(state, message.as_bytes(), &peers));
-        if !queued {
-            // Recognized VMCE controls remain consumed on missing nonce or
-            // encoding failure; never retry them as unscoped native BC6.
-            fail_round_delivery(state);
-        }
-        return true;
-    }
     if vmce {
         match request {
             NetworkLoadingRequest::VmceResultRetryAck => {
@@ -1515,24 +1482,6 @@ mod tests {
             nonce,
             Some(nonce)
         ));
-    }
-
-    #[test]
-    fn vmce_result_requests_use_their_own_scoped_form() {
-        // VMCE Ready/Leave/Retry are header signals, and Go is a nonce-scoped
-        // control in `send`; none of them go through the old shared encoder.
-        assert_eq!(
-            encode_scoped_request(&NetworkLoadingRequest::VmceResultReady, "Host", None),
-            None
-        );
-        assert_eq!(
-            encode_scoped_request(
-                &NetworkLoadingRequest::VmceResultGo { nonce: [1; 16] },
-                "Host",
-                None
-            ),
-            None
-        );
     }
 
     #[test]

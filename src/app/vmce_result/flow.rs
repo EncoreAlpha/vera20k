@@ -106,39 +106,6 @@ fn format_campaign_score_time(total_seconds: i32) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
-pub(crate) fn score_rows(state: &AppState) -> Option<Vec<crate::ui::score_shell::ScoreRow>> {
-    use crate::app::frontend::shell_pass::resolve_csf;
-    let sim = &state.match_state.sim_runtime.runtime()?.simulation;
-    let computer = resolve_csf(state, "TXT_COMPUTER");
-    let sources = crate::app::presentation::house_ui::HouseUiSources::from_state(state, &computer);
-    Some(
-        sim.cooperative_score_rows()
-            .into_iter()
-            .map(|row| crate::ui::score_shell::ScoreRow {
-                name: crate::app::presentation::house_ui::house_ui_name(state, row.owner)
-                    .unwrap_or_default(),
-                rgb: sources.text_rgb(sim, row.owner),
-                kills: row.kills,
-                losses: row.losses,
-                built: row.built,
-                score: row.score,
-            })
-            .collect(),
-    )
-}
-
-pub(crate) fn score_time(state: &AppState, elapsed: i32) -> String {
-    use crate::app::frontend::shell_pass::resolve_csf;
-    let time_model = crate::ui::score_shell::ScoreScreenModel {
-        elapsed_seconds: (elapsed / 60) as u32,
-        ..Default::default()
-    };
-    crate::ui::score_shell::format_elapsed(
-        &time_model,
-        &resolve_csf(state, "TXT_TIME_FORMAT_HOURS"),
-    )
-}
-
 pub(crate) fn score_side(state: &AppState) -> i32 {
     let Some(sim) = state
         .match_state
@@ -153,34 +120,4 @@ pub(crate) fn score_side(state: &AppState) -> i32 {
         .and_then(|owner| sim.interner().get(owner))
         .and_then(|owner| sim.houses().get(&owner))
         .map_or(0, |house| house.side_index())
-}
-
-pub(crate) fn score_map(state: &AppState) -> (Option<usize>, String) {
-    let runtime = &state.frontend.multiplayer_shell_runtime;
-    let catalog = &state.frontend.scenario_catalog;
-    let map_index = catalog
-        .records()
-        .get(runtime.scenario_index())
-        .and_then(|record| {
-            catalog
-                .shell_maps()
-                .iter()
-                .position(|map| map.file_name.eq_ignore_ascii_case(&record.file_name))
-        });
-    let map_name = map_index
-        .and_then(|index| catalog.shell_maps().get(index))
-        .map(|map| map.display_name.clone())
-        .unwrap_or_default();
-    (map_index, map_name)
-}
-
-pub(crate) fn score_mode_key(state: &AppState) -> Option<String> {
-    state
-        .match_state
-        .session
-        .network_setup()
-        .and_then(|launch| {
-            crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, launch.mode.id)
-        })
-        .map(|mode| mode.ui_name_key.clone())
 }

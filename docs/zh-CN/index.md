@@ -47,6 +47,7 @@ lang: zh-CN
 
 - [多人战役（VMCE）总览](vmce.md)
 - [VMCE 待办](vmce-todo.md)
+- [VMCE 发展路线](vmce-roadmap.md)
 - [VMCE 审查详情](vmce-review.md)
 - [VMCE 玩家与地图作者指南](vmce-guide.md)
 

@@ -52,6 +52,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
 - [VMCE 待办](vmce-todo.md) — 下一步工作、待验证事项和完成记录。
+- [VMCE 发展路线](vmce-roadmap.md) — 已确定的独立边界、存档和互联网阶段。
 - [VMCE 审查详情](vmce-review.md) — 逐项证据、验收边界和历史记录。
 - [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。

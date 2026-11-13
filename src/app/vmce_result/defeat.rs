@@ -94,14 +94,7 @@ pub(crate) fn apply_action(state: &mut AppState, action: VmceDefeatAction) {
     match action {
         VmceDefeatAction::Retry => {
             let result = if state.match_state.session.host() {
-                let difficulty = state
-                    .frontend
-                    .multiplayer_shell_runtime
-                    .cooperative_difficulty();
-                state
-                    .match_state
-                    .session
-                    .vmce_result_retry_start(difficulty)
+                state.match_state.session.vmce_result_retry_start()
             } else {
                 state.match_state.session.vmce_result_retry_vote()
             };

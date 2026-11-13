@@ -7,7 +7,7 @@
 use super::{MatchSession, NetworkLoadingRequest, NetworkPhase, NetworkSession};
 use crate::app::match_bootstrap::{PreparedNetworkStartup, VmceNextStage, VmceStageIdentity};
 use crate::skirmish_launch::{
-    LaunchHumanRole, LaunchStartPosition, SkirmishAiSlot, SkirmishLaunchSession,
+    LaunchHumanRole, LaunchStartPosition, SkirmishLaunchSession,
 };
 use std::sync::Arc;
 
@@ -66,13 +66,6 @@ impl VmceResultPhase {
         self.local_ready
     }
 
-    fn vmce_result_agreed(&self) -> bool {
-        self.vmce.as_ref().is_some_and(|vmce| {
-            vmce.result_agreement
-                .as_ref()
-                .is_some_and(|agreement| agreement.confirmation_sent || agreement.proposal_sent)
-        })
-    }
 }
 
 /// The VMCE result phase's fields, split from the visit so a step can queue
@@ -113,8 +106,6 @@ fn vmce_result_parts(session: &mut MatchSession) -> anyhow::Result<VmceResultPar
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct VmceRoundState {
     next_stage: Option<VmceNextStage>,
-    options_received: bool,
-    ack_queued: bool,
     page_victory: bool,
     ending: VmceRoundEnding,
     retry_votes: [bool; 4],
@@ -145,19 +136,14 @@ pub(crate) enum VmceRoundEnding {
 /// event type is shared with Cooperative.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VmceResultEvent {
-    Begin,
-    Ack { source: usize },
     Go,
-    Options,
     PeerReady { source: usize },
-    PeerWaiting { source: usize },
     PeerLeft { source: usize },
     StageIdentity(VmceStageIdentity),
     StageAbsent,
     StageRejected,
     RetryVote { source: usize },
     RetryAck { source: usize },
-    KeepAlive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,8 +166,6 @@ impl VmceRoundState {
     pub(super) fn new(next_stage: Option<VmceNextStage>) -> Self {
         Self {
             next_stage,
-            options_received: false,
-            ack_queued: false,
             page_victory: false,
             ending: VmceRoundEnding::Next,
             retry_votes: [false; 4],
@@ -251,30 +235,9 @@ impl VmceRoundState {
         }
     }
 
-    pub(super) fn acknowledge_after_begin(&mut self, host: bool) -> bool {
-        if host || !self.options_received || self.ack_queued {
-            return false;
-        }
-        self.ack_queued = true;
-        true
-    }
 
-    pub(super) fn acknowledge_after_options(&mut self, begin: bool, host: bool) -> bool {
-        self.options_received = true;
-        if host || !begin || self.ack_queued {
-            return false;
-        }
-        self.ack_queued = true;
-        true
-    }
 
-    pub(super) fn options_received(&self) -> bool {
-        self.options_received
-    }
 
-    pub(super) fn ack_queued(&self) -> bool {
-        self.ack_queued
-    }
 
     pub(super) fn result_nonce(&self) -> Option<[u8; 16]> {
         self.result_agreement.as_ref()?.nonce
@@ -300,15 +263,6 @@ impl VmceRoundState {
         vmce_result_stage_digest(nonce, self.stage_identity().as_ref())
     }
 
-    pub(super) fn confirmed_count(&self) -> usize {
-        self.result_agreement.as_ref().map_or(0, |agreement| {
-            agreement
-                .confirmed
-                .iter()
-                .filter(|confirmed| **confirmed)
-                .count()
-        })
-    }
 }
 
 pub(super) fn vmce_result_stage_digest(
@@ -487,20 +441,6 @@ impl MatchSession {
         Some((self.vmce_round_next_stage_map()?, nonce))
     }
 
-    pub(crate) fn set_cooperative_round_page_victory(&mut self, victory: bool) {
-        if let Some(round) = self
-            .network
-            .as_mut()
-            .and_then(|network| match &mut network.phase {
-                NetworkPhase::VmceResult { round, .. } => Some(round),
-                _ => None,
-            })
-        {
-            if let Some(vmce) = round.vmce.as_mut() {
-                vmce.set_page_victory(victory);
-            }
-        }
-    }
 
     /// Reopen the existing VMCE roster on the resolved next map. Transport
     /// handoff must complete before this is exposed as an editable room.
@@ -904,7 +844,7 @@ pub(super) fn continue_round(
     }
     if ending == VmceRoundEnding::Retry {
         if host {
-            return Ok((VmceRoundStep::Assign { ending }));
+            return Ok(VmceRoundStep::Assign { ending });
         }
         return Ok(VmceRoundStep::None);
     }
@@ -918,7 +858,7 @@ pub(super) fn continue_round(
             "the host Continue waits for every guest"
         );
         log::debug!("VMCE round: host Continue pressed; starting the next stage");
-        return Ok((VmceRoundStep::Assign { ending }));
+        return Ok(VmceRoundStep::Assign { ending });
     }
     let local = launch.local_player_index;
     round.local_ready = true;
@@ -998,7 +938,7 @@ fn retry_vote(session: &mut MatchSession) -> anyhow::Result<VmceRoundStep> {
     Ok(VmceRoundStep::None)
 }
 
-fn retry_start(session: &mut MatchSession, difficulty: i32) -> anyhow::Result<VmceRoundStep> {
+fn retry_start(session: &mut MatchSession) -> anyhow::Result<VmceRoundStep> {
     anyhow::ensure!(session.host(), "only the host starts the retry");
     {
         let VmceResultParts {
@@ -1128,10 +1068,7 @@ impl MatchSession {
         Ok(())
     }
 
-    pub(crate) fn vmce_result_continue(
-        &mut self,
-        difficulty: i32,
-    ) -> anyhow::Result<VmceRoundStep> {
+    pub(crate) fn vmce_result_continue(&mut self) -> anyhow::Result<VmceRoundStep> {
         let host = self.host;
         let online = self
             .network
@@ -1201,12 +1138,6 @@ impl MatchSession {
             .is_some_and(|row| round.ready[usize::from(row)])
     }
 
-    /// The result was committed locally for this ending.
-    pub(crate) fn vmce_result_committed(&self) -> bool {
-        self.vmce_result_phase()
-            .and_then(|round| round.outcome)
-            .is_some()
-    }
 
     pub(crate) fn vmce_result_can_continue(&self) -> bool {
         self.vmce_result_phase()
@@ -1264,11 +1195,8 @@ impl MatchSession {
     }
 
     /// Host retry start after the child round confirms all guest votes.
-    pub(crate) fn vmce_result_retry_start(
-        &mut self,
-        difficulty: i32,
-    ) -> anyhow::Result<VmceRoundStep> {
-        retry_start(self, difficulty)
+    pub(crate) fn vmce_result_retry_start(&mut self) -> anyhow::Result<VmceRoundStep> {
+        retry_start(self)
     }
 
     /// Set fixture votes for the synthetic defeat-page capture.
@@ -1339,9 +1267,9 @@ impl MatchSession {
         let host = self.host;
         let VmceResultParts {
             requests,
-            connected,
             launch,
             round,
+            ..
         } = vmce_result_parts(self)?;
         let row_of = |source: usize| {
             launch
@@ -1352,13 +1280,6 @@ impl MatchSession {
                 .filter(|row| *row < 4)
         };
         match event {
-            VmceResultEvent::Begin => {
-                round.begin = true;
-                let should_ack = begin_received(round, host);
-                let _ = should_ack;
-                Ok(VmceRoundStep::None)
-            }
-            VmceResultEvent::Ack { .. } => Ok(VmceRoundStep::None),
             VmceResultEvent::Go => {
                 round.begin = true;
                 round.assigned = true;
@@ -1383,20 +1304,10 @@ impl MatchSession {
                     .expect("checked VMCE round")
                     .result_step())
             }
-            VmceResultEvent::Options => {
-                let _ = options_received(round, host);
-                Ok(VmceRoundStep::None)
-            }
             VmceResultEvent::PeerReady { source } => {
                 if let Some(row) = row_of(source) {
                     round.ready[row] = true;
                     log::debug!("VMCE result: peer source={source} row={row} is ready");
-                }
-                Ok(VmceRoundStep::None)
-            }
-            VmceResultEvent::PeerWaiting { source } => {
-                if let Some(row) = row_of(source) {
-                    round.ready[row] = false;
                 }
                 Ok(VmceRoundStep::None)
             }
@@ -1418,18 +1329,10 @@ impl MatchSession {
                 }
                 Ok(VmceRoundStep::None)
             }
-            VmceResultEvent::KeepAlive => Ok(VmceRoundStep::None),
         }
     }
 }
 
-pub(super) fn assignment_allowed(
-    connected: &[usize],
-    launch: &SkirmishLaunchSession,
-    round: &VmceResultPhase,
-) -> bool {
-    result_agreed(connected, launch, round)
-}
 
 pub(super) fn stage_event(
     round: &mut VmceResultPhase,
@@ -1480,90 +1383,12 @@ pub(super) fn peer_left(
     Some(VmceRoundStep::Exit(false))
 }
 
-pub(super) fn peer_ready(round: &VmceResultPhase, source: usize, host: bool) {
-    if round.vmce.is_some() {
-        log::debug!(
-            "VMCE round: PeerReady source={source}, all_ready={}, host={host}",
-            round.all_ready()
-        );
-    }
-}
 
-pub(super) fn begin_received(round: &mut VmceResultPhase, host: bool) -> bool {
-    round
-        .vmce
-        .as_mut()
-        .is_some_and(|vmce| vmce.acknowledge_after_begin(host))
-}
 
-pub(super) fn ignore_duplicate_options(round: &VmceResultPhase) -> bool {
-    round
-        .vmce
-        .as_ref()
-        .is_some_and(VmceRoundState::options_received)
-}
 
-pub(super) fn options_received(round: &mut VmceResultPhase, host: bool) -> bool {
-    round
-        .vmce
-        .as_mut()
-        .is_some_and(|vmce| vmce.acknowledge_after_options(round.begin, host))
-}
 
-pub(super) fn ack_allowed(
-    host: bool,
-    connected: &[usize],
-    launch: &SkirmishLaunchSession,
-    round: &VmceResultPhase,
-    source: usize,
-) -> bool {
-    let Some(vmce) = round.vmce.as_ref() else {
-        return true;
-    };
-    host && round.assigned
-        && result_agreed(connected, launch, round)
-        && source != launch.local_player_index
-        && connected.contains(&source)
-        && vmce.result_nonce().is_some()
-}
 
-pub(super) fn acknowledge_all(
-    round: &mut VmceResultPhase,
-    requests: &mut Vec<NetworkLoadingRequest>,
-) -> VmceRoundStep {
-    round.outcome = Some(true);
-    let nonce = round
-        .vmce
-        .as_ref()
-        .and_then(VmceRoundState::result_nonce)
-        .expect("an agreed VMCE round has a nonce");
-    requests.push(NetworkLoadingRequest::VmceResultGo { nonce });
-    result_step(round)
-}
 
-pub(super) fn go_received(
-    host: bool,
-    connected: &[usize],
-    launch: &SkirmishLaunchSession,
-    round: &mut VmceResultPhase,
-) -> Option<VmceRoundStep> {
-    let vmce = round.vmce.as_ref()?;
-    if host || !round.begin || !vmce.options_received() || !vmce.ack_queued() {
-        return Some(VmceRoundStep::None);
-    }
-    if !result_agreed(connected, launch, round) {
-        if let Some(agreement) = round
-            .vmce
-            .as_mut()
-            .and_then(|vmce| vmce.result_agreement.as_mut())
-        {
-            agreement.deferred_go = true;
-        }
-        return Some(VmceRoundStep::None);
-    }
-    round.outcome = Some(true);
-    Some(result_step(round))
-}
 
 pub(super) struct FreezeData {
     pub(super) seed: u32,

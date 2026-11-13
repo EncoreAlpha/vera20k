@@ -202,17 +202,6 @@ fn begin_next_mission(state: &mut AppState) {
     }
 }
 
-/// Result 0: the last mission's campaign end page, then the shell.
-pub(crate) fn finish_result(state: &mut AppState) {
-    crate::app::vmce_result::close_vmce_result(state);
-    state.frontend.campaign_score_page = None;
-    if state.match_state.session.vmce_result_ending() == Some(VmceRoundEnding::CampaignEnd) {
-        App::vmce_campaign_end(state);
-    } else {
-        crate::app::lan_service::vmce_round::release_round_transport(state);
-        return_to_shell(state);
-    }
-}
 
 /// Main_Game's return after GameExit: the mode's shell.
 pub(crate) fn return_to_shell(state: &mut AppState) {

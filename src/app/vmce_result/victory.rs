@@ -119,15 +119,7 @@ pub(super) fn continue_pressed(state: &mut AppState) -> bool {
         state.platform.window.request_redraw();
         return true;
     }
-    let difficulty = state
-        .frontend
-        .multiplayer_shell_runtime
-        .cooperative_difficulty();
-    match state
-        .match_state
-        .session
-        .vmce_result_continue(difficulty)
-    {
+    match state.match_state.session.vmce_result_continue() {
         Ok(step) => crate::app::vmce_round::run_step(state, step),
         Err(error) => log::warn!("VMCE result Continue refused: {error:#}"),
     }
@@ -247,15 +239,7 @@ fn leave_after_stage_error(state: &mut AppState) {
         crate::app::vmce_round::return_to_shell(state);
         return;
     }
-    let difficulty = state
-        .frontend
-        .multiplayer_shell_runtime
-        .cooperative_difficulty();
-    match state
-        .match_state
-        .session
-        .vmce_result_continue(difficulty)
-    {
+    match state.match_state.session.vmce_result_continue() {
         Ok(step) => crate::app::vmce_round::run_step(state, step),
         Err(error) => {
             log::warn!("VMCE result exit after a stage error was refused: {error:#}");
