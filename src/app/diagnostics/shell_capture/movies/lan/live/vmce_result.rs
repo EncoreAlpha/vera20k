@@ -16,8 +16,8 @@ use crate::app::vmce_result::victory::VictoryResultPage;
 
 /// Both peers use the same absolute frame so the injected outcome enters the
 /// shared world at the same native frame, not at a per-process readiness edge.
-const VERA_OUTCOME_MISSION_SHOT_FRAME: u32 = 1_100;
-const VERA_OUTCOME_INJECT_FRAME: u32 = 1_400;
+const VERA_OUTCOME_MISSION_SHOT_FRAME: u32 = 400;
+const VERA_OUTCOME_INJECT_FRAME: u32 = 500;
 /// Render-frame budget for a real map trigger chain. Authored delays can be
 /// minutes of native time (the test map's chain is 20 s + 4 s / 30 s + 12 s).
 const VERA_OUTCOME_REAL_TIMEOUT_FRAMES: u32 = 4_000;
@@ -1086,15 +1086,25 @@ impl LiveLanCapture {
         match self.vera_outcome_phase {
             VeraOutcomePhase::Prefix => {
                 if committed >= VERA_OUTCOME_MISSION_SHOT_FRAME {
+                    let input_locked = crate::app::input::campaign_input::is_locked(state);
+                    let movement_verified = self.stopped
+                        && self.simple_inputs_applied()
+                        && self.observed_movement
+                        && self.stop_observation.position().is_some();
+                    // Some authored maps deliberately lock tactical input through
+                    // the whole early mission. Do not manufacture a Move there:
+                    // keep the checksum prefix, and record the explicit reason.
+                    // If input was already attempted, it must have completed.
+                    let locked_without_input =
+                        input_locked && self.actor.is_none() && self.actions.is_empty();
                     ensure!(
                         self.checksums.len() >= self.required_frames() as usize
-                            && self.stopped
-                            && self.simple_inputs_applied()
-                            && self.observed_movement
-                            && self.stop_observation.position().is_some(),
-                        "VERA outcome prefix was incomplete before its screenshot: frame={committed}, checksums={}/{}, stopped={}, inputs={}, moved={}, stop_settled={}",
+                            && !self.simulation_hashes.is_empty()
+                            && (movement_verified || locked_without_input),
+                        "VERA outcome prefix was incomplete before its screenshot: frame={committed}, checksums={}/{}, input_locked={}, stopped={}, inputs={}, moved={}, stop_settled={}",
                         self.checksums.len(),
                         self.required_frames(),
+                        input_locked,
                         self.stopped,
                         self.simple_inputs_applied(),
                         self.observed_movement,
@@ -1103,7 +1113,18 @@ impl LiveLanCapture {
                     self.request_screenshot("vera-mission");
                     // Build the receipt while the world and its roster are still
                     // resident; the outcome run retires the match before exiting.
-                    self.final_receipt = Some(self.vera_receipt(state)?);
+                    let mut receipt = self.vera_receipt(state)?;
+                    receipt["outcome_prefix"] = json!({
+                        "input_locked": input_locked,
+                        "movement_verified": movement_verified,
+                        "checksum_count": self.checksums.len(),
+                    });
+                    if locked_without_input {
+                        receipt["scope"] = json!(
+                            "VMCE LAN result diagnostic: real room setup and a 300-frame checksum prefix; authored input lock prevented Move/Stop, which were not validated"
+                        );
+                    }
+                    self.final_receipt = Some(receipt);
                     self.vera_outcome_phase = VeraOutcomePhase::Inject;
                     self.event(
                         committed,
@@ -1118,6 +1139,15 @@ impl LiveLanCapture {
                         .sim_runtime
                         .write_sim(SimWrite::Debug)
                         .context("live simulation")?;
+                    let actual_frame = runtime.simulation.session().binary_frame();
+                    ensure!(
+                        actual_frame == VERA_OUTCOME_INJECT_FRAME,
+                        "VMCE outcome injection missed the shared committed frame: observed={committed}, actual={actual_frame}, expected={VERA_OUTCOME_INJECT_FRAME}"
+                    );
+                    ensure!(
+                        !runtime.simulation.pending_network_wait(),
+                        "VMCE outcome injection reached frame {actual_frame} during an unfinished network tick"
+                    );
                     // Direct field projections keep the rules borrow disjoint
                     // from the mutable simulation borrow.
                     let rules = &runtime.resources.rules;
@@ -1151,7 +1181,7 @@ impl LiveLanCapture {
                             unreachable!("real-trigger mode never injects an outcome")
                         }
                     }
-                    self.vera_outcome_injected_frame = Some(committed);
+                    self.vera_outcome_injected_frame = Some(actual_frame);
                     self.vera_outcome_phase = VeraOutcomePhase::Observe;
                     self.vera_outcome_render_frames = 0;
                     self.event(

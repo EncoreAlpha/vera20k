@@ -327,8 +327,8 @@ proof and closes the result-page/loading-stage fault path:
   with two or more guests, unresponsive peer and lost commit/ACK all end through
   the existing LAN departure owner: peers are notified first, both show a
   localized reason (`VERA:VmceRoundSendFailed` / `VERA:VmcePeerUnresponsive`),
-  and the room returns to the LAN lobby. No peer reloads while another waits or
-  fails.
+  and the room returns to the LAN lobby. Network faults can temporarily leave
+  peers in different phases; the loading failure path provides a bounded exit.
 - **Loading stage:** a VMCE LAN start/retry/next-stage load whose peer wait times
   out no longer installs the mission with the straggler dropped (native stock
   behavior). It aborts through the existing VMCE loading-failure owner with
@@ -347,10 +347,10 @@ proof and closes the result-page/loading-stage fault path:
   (including the VMCE wire module and this phase's vmce-named production
   functions in shared files), the whole VMCE session tests, VMCE test functions
   in shared test files, and no marked regions. The guard enforces the documented
-  shared-capability allowlist and walks a source-level call graph so free,
-  associated-function, method-wrapper, aliased-import and `macro_rules!`
-  wrapper chains cannot hide a Cooperative result dependency; negative fixtures
-  prove each bypass. Generic shared capabilities (`release_transport`, the
+  shared-capability allowlist and walks resolvable source-level calls, with
+  negative fixtures for direct, aliased and selected wrapper references. It
+  cannot resolve every receiver type or deeper ambiguous method chain, so a
+  read-only review remains necessary. Generic shared capabilities (`release_transport`, the
   renamed generic `DepartureReason::RoundResult`, reliable queue/transport,
   session/roster accessors, simulation score rows/difficulty and continuation
   timing) are listed with responsibility and callers.
@@ -374,19 +374,22 @@ architecture guards 41/41, `app::lan_service` 91, `app::lan_service::vmce_round`
 `net::lan_messages` 18, and i18n shipped-language completeness;
 `check -p vera20k --lib --bins` passes with and without `vmce`.
 
-Residual: the injected `--vera-outcome win`/`lose` two-process live captures do
-NOT complete on this machine: both peers reach the mission result page, but the
-injected-outcome tail keeps waiting on render frames without matching the VMCE
-page predicate (the page repaints slowly and the 900-render-frame guard is not
-reached inside the run budget); the same hang happens with the r6 build, so it is
-a pre-existing capture-harness limitation, not a regression. Their page
-detection is covered only by the four unit tests. Also uncovered: cross-machine
-and internet play; the two-process acceptance does not inject OS-level packet
-loss (the in-process tests drop specific datagrams/ACKs through the production
-reliable/UDP channel); a process paused by the OS for more than about 9.6 s is
-declared unresponsive by design; the guard is source-level, so trait/dynamic
-dispatch, function-pointer passing and generated code stay outside it; VMCE
-setup-lobby/intermission diagnostics and remaining Cooperative-module
+The follow-up repair starts result-round liveness before the guest receives its
+first result nonce and preserves a bounded opportunity to deliver a failure
+notice when the setup FIFO is backpressured. The injected diagnostic continues
+observing committed frames after its prefix; on the authored test maps it records
+the input lock rather than claiming to have issued Move/Stop. Local two-process
+`win` and `lose` captures both reached the expected VMCE page, with 300 matching
+checksums and an actual injection frame of 500 on each peer. The same fast build
+passed `2p-win`, `2p-retry` and `2p-final` with 300 matching checksums. The two
+new network regression tests and diagnostic phase test were seen to fail with
+the corresponding fixes temporarily reverted and pass with the fixes restored.
+
+Residual: cross-machine and internet play and OS-level packet loss were not run;
+the in-process tests drop specific datagrams/ACKs through the reliable channel.
+A process paused by the OS for more than about 9.6 s is declared unresponsive.
+The source-level guard cannot resolve every receiver type: deeper ambiguous
+method wrappers, dynamic dispatch, function pointers and generated code need
+read-only review. VMCE setup/intermission diagnostics and remaining Cooperative
 dependencies in the stage-3 lobby/setup path are follow-ups; non-retry
-intermission/campaign-end Go delivery keeps the pre-existing reliable-drain
-wait.
+intermission/campaign-end Go delivery keeps its existing reliable-drain wait.

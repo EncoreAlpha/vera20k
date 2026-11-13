@@ -822,13 +822,12 @@ impl LanService {
         Ok(())
     }
 
-    /// Record the visible reason for a bounded VMCE round failure and make the
-    /// exit fail fast instead of waiting for a possibly gone peer.
+    /// Record the visible reason for a bounded VMCE round failure. Keep the
+    /// departure alive for its reliable notification, but not past its bound.
     #[cfg(feature = "vmce")]
     fn mark_vmce_round_failure_notice(&mut self, key: &'static str) {
         if let Some(wait) = self.departure.as_mut() {
             wait.notice = Some(key);
-            wait.failed = true;
         }
     }
 

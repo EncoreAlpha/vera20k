@@ -485,6 +485,28 @@ enum VeraOutcomePhase {
     Quit,
 }
 
+#[cfg(feature = "vmce")]
+impl VeraOutcomePhase {
+    /// These phases keep the live match observation running. Inject must
+    /// continue receiving committed frames after the prefix screenshot.
+    fn observes_live_match(self) -> bool {
+        matches!(self, Self::Prefix | Self::Inject)
+    }
+}
+
+#[cfg(all(test, feature = "vmce"))]
+mod outcome_phase_tests {
+    use super::VeraOutcomePhase;
+
+    #[test]
+    fn injecting_after_the_prefix_still_observes_committed_frames() {
+        assert!(VeraOutcomePhase::Prefix.observes_live_match());
+        assert!(VeraOutcomePhase::Inject.observes_live_match());
+        assert!(!VeraOutcomePhase::Observe.observes_live_match());
+        assert!(!VeraOutcomePhase::Retrying.observes_live_match());
+    }
+}
+
 impl LiveLanCapture {
     pub(super) fn new(target: LanTarget, config: LiveLanConfig) -> Self {
         let flow = matches!(
@@ -1871,27 +1893,11 @@ impl LiveLanCapture {
             state.frontend.screen == GameScreen::InGame || self.vera_outcome_pending(),
             "live LAN match left gameplay before completion"
         );
-        // A real-trigger retry world changes identity at the retry load; the
-        // ordinary prefix observation cannot span that reset. The retry phase
-        // records its own 300-frame ring, and the other outcome phases were
-        // already handled above; prefix mode keeps the shared recording below.
-        #[cfg(all(feature = "vmce", feature = "dev-overlays"))]
-        if matches!(self.vera_outcome_phase, VeraOutcomePhase::Retrying)
-            && self.vera_outcome.is_some()
-        {
-            let committed = state
-                .match_state
-                .sim_runtime
-                .runtime()
-                .map(|runtime| runtime.simulation.session().binary_frame())
-                .unwrap_or(0);
-            self.step_vera_outcome(state, committed)?;
-            return Ok(());
-        }
+        // Both Prefix and Inject need live committed frames: the latter waits
+        // for the fixed injection frame after the prefix screenshot. All later
+        // phases are driven by the result-page observer above.
         #[cfg(feature = "vmce")]
-        if self.vera_outcome.is_some()
-            && !matches!(self.vera_outcome_phase, VeraOutcomePhase::Prefix)
-        {
+        if self.vera_outcome.is_some() && !self.vera_outcome_phase.observes_live_match() {
             return Ok(());
         }
         if self.battle.is_none() && self.mass.is_none() && self.latency.is_none() {

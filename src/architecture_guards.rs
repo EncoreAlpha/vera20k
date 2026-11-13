@@ -3776,9 +3776,8 @@ fn vmce_diagnostic_tokens() -> Vec<&'static str> {
 /// identifier a VMCE production path, test or diagnostic may call, with the
 /// owner's responsibility and the VMCE callers. Any `cooperative_*`-prefixed
 /// identifier used by VMCE-owned code must appear here; Cooperative-owned
-/// module and type names never do. The dependency check treats a listed helper
-/// as a shared boundary, so its body is not traversed for result-flow
-/// dependencies.
+/// module and type names never do. Only a listed helper's actual defining file
+/// is a shared boundary; a same-named helper elsewhere is still inspected.
 const VMCE_SHARED_CAPABILITY_ALLOWLIST: &[(&str, &str, &str)] = &[
     (
         "cooperative_score_rows",
@@ -3794,6 +3793,11 @@ const VMCE_SHARED_CAPABILITY_ALLOWLIST: &[(&str, &str, &str)] = &[
         "continuation_timing",
         "net/lockstep: shared continuation frame timing table",
         "app/vmce_round.rs, app/cooperative_round.rs",
+    ),
+    (
+        "advance_master_frame",
+        "sim/world/master_frame: shared deterministic simulation tick",
+        "VMCE command tests",
     ),
     (
         "drain_match_requests",
@@ -3832,6 +3836,24 @@ fn vmce_shared_capability_allowed(identifier: &str) -> bool {
     VMCE_SHARED_CAPABILITY_ALLOWLIST
         .iter()
         .any(|(capability, _, _)| *capability == identifier)
+}
+
+/// A shared name is a boundary only at its actual owner. A different module
+/// may define the same name and must still be inspected.
+fn vmce_shared_owner(rel: &str, identifier: &str) -> bool {
+    match identifier {
+        "cooperative_score_rows" => rel == "sim/score.rs",
+        "cooperative_difficulty" => rel == "app/frontend/skirmish_session.rs",
+        "continuation_timing" => rel == "net/lockstep.rs",
+        "advance_master_frame" => rel == "sim/world/master_frame.rs",
+        "drain_match_requests" => rel == "app/lan_service.rs",
+        "network_setup"
+        | "network_vmce_assignments"
+        | "network_connected_source_indices"
+        | "network_player_ready"
+        | "network_map_status" => rel == "app/match_runtime/session.rs",
+        _ => false,
+    }
 }
 
 fn is_identifier_byte(byte: u8) -> bool {
@@ -4307,7 +4329,10 @@ fn macro_definitions(code: &str) -> Vec<(String, String)> {
             cursor += 1;
         }
         let name_start = cursor;
-        while bytes.get(cursor).is_some_and(|byte| is_identifier_byte(*byte)) {
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| is_identifier_byte(*byte))
+        {
             cursor += 1;
         }
         if cursor == name_start {
@@ -4625,8 +4650,8 @@ struct VmceCallGraph<'a> {
     definitions: BTreeMap<&'a str, Vec<FunctionDefinition>>,
     aliases: BTreeMap<&'a str, BTreeMap<String, Vec<String>>>,
     /// Every method/associated function defined outside VMCE-owned files, by
-    /// name. A VMCE-owned call is walked through each definition, so a wrapper
-    /// chain cannot hide the dependency in a method body.
+    /// name. A uniquely named method is walked transitively; ambiguous names
+    /// are checked for direct forbidden references without inferring a type.
     method_definitions: BTreeMap<String, Vec<(&'a str, FunctionDefinition)>>,
     /// `macro_rules!` definitions outside VMCE-owned files whose body names the
     /// Cooperative result flow; a VMCE-owned invocation of one is a violation.
@@ -4648,7 +4673,7 @@ impl<'a> VmceCallGraph<'a> {
             let definitions_in_file = function_definitions(&file.blanked, &impl_blocks_in_file);
             if !vmce_owned_result_file(&file.rel) {
                 for definition in &definitions_in_file {
-                    if vmce_shared_capability_allowed(&definition.name) {
+                    if vmce_shared_owner(&file.rel, &definition.name) {
                         continue;
                     }
                     if definition.method {
@@ -4709,19 +4734,13 @@ impl<'a> VmceCallGraph<'a> {
     }
 }
 
-/// Walk one function/method body and report the first forbidden Cooperative
-/// result dependency it reaches, transitively. Method and associated-function
-/// calls are walked through every resolvable definition, macros are checked
-/// against the tainted-macro table, and unresolved names fall back to the
-/// conservative tainted-name tables. `visited` is keyed by definition site, so
-/// recursion terminates without a depth cap that a deeper wrapper could evade.
-fn vmce_walk_body<'a>(
-    graph: &VmceCallGraph<'a>,
+/// Check a definition's own body, without guessing the type of its receivers.
+fn vmce_direct_body_violation(
+    graph: &VmceCallGraph<'_>,
     rel: &str,
     definition: &FunctionDefinition,
-    visited: &mut BTreeSet<(String, usize)>,
 ) -> Option<String> {
-    if !visited.insert((rel.to_owned(), definition.start)) {
+    if vmce_shared_owner(rel, &definition.name) {
         return None;
     }
     let file = graph.source_file(rel)?;
@@ -4740,28 +4759,49 @@ fn vmce_walk_body<'a>(
             ));
         }
     }
+    None
+}
+
+/// Walk one function/method body and report the first forbidden Cooperative
+/// result dependency it reaches. Uniquely named methods and resolvable
+/// associated functions are followed transitively. Ambiguous method names are
+/// checked directly but their deeper calls need review because receiver types
+/// cannot be resolved here. `visited` terminates recursion by definition site.
+fn vmce_walk_body<'a>(
+    graph: &VmceCallGraph<'a>,
+    rel: &str,
+    definition: &FunctionDefinition,
+    visited: &mut BTreeSet<(String, usize)>,
+) -> Option<String> {
+    if vmce_shared_owner(rel, &definition.name) {
+        return None;
+    }
+    if !visited.insert((rel.to_owned(), definition.start)) {
+        return None;
+    }
+    if let Some(violation) = vmce_direct_body_violation(graph, rel, definition) {
+        return Some(violation);
+    }
+    let file = graph.source_file(rel)?;
+    let body = &file.blanked[definition.body_start..=definition.body_end];
     for call in function_calls(body) {
         let Some(call_name) = call.path.last() else {
             continue;
         };
-        if vmce_shared_capability_allowed(call_name) {
-            continue;
-        }
         if call.method {
-            // The receiver's type is not resolved by this source-level scan, so
-            // a method body is walked only when its name names exactly one
-            // definition outside the owned files; common std/trait method names
-            // must not collide with unrelated bodies.
-            if let Some(instances) = graph
-                .method_definitions
-                .get(call_name.as_str())
-                .filter(|instances| instances.len() == 1)
-            {
-                let (method_file, method_definition) = &instances[0];
-                if let Some(violation) =
-                    vmce_walk_body(graph, method_file, method_definition, visited)
-                {
-                    return Some(violation);
+            // Receiver types are unresolved. Walk a unique definition; for
+            // ambiguous names check each candidate's direct body without
+            // recursively mixing unrelated receivers' call graphs.
+            if let Some(instances) = graph.method_definitions.get(call_name.as_str()) {
+                for (method_file, method_definition) in instances {
+                    let violation = if instances.len() == 1 {
+                        vmce_walk_body(graph, method_file, method_definition, visited)
+                    } else {
+                        vmce_direct_body_violation(graph, method_file, method_definition)
+                    };
+                    if let Some(violation) = violation {
+                        return Some(violation);
+                    }
                 }
             }
             if call.path.len() >= 2
@@ -4788,8 +4828,7 @@ fn vmce_walk_body<'a>(
             .and_then(|aliases| resolve_call(graph.files, aliases, rel, &call.path))
             && let Some(callee_definition) = graph.definition(callee_file, &callee)
         {
-            if let Some(violation) =
-                vmce_walk_body(graph, callee_file, callee_definition, visited)
+            if let Some(violation) = vmce_walk_body(graph, callee_file, callee_definition, visited)
             {
                 return Some(violation);
             }
@@ -4800,8 +4839,7 @@ fn vmce_walk_body<'a>(
                 resolve_type_method(graph, &call.path[call.path.len() - 2], call_name)
             && let Some(callee_definition) = graph.definition(method_file, &callee)
         {
-            if let Some(violation) =
-                vmce_walk_body(graph, method_file, callee_definition, visited)
+            if let Some(violation) = vmce_walk_body(graph, method_file, callee_definition, visited)
             {
                 return Some(violation);
             }
@@ -4818,22 +4856,19 @@ fn vmce_reachable_violation(
     name: &str,
     visited: &mut BTreeSet<(String, usize)>,
 ) -> Option<String> {
-    if vmce_shared_capability_allowed(name) {
+    if vmce_shared_owner(rel, name) {
         return None;
     }
     let definition = graph.definition(rel, name)?;
     vmce_walk_body(graph, rel, definition, visited)
 }
 
-
 /// Direct and indirect dependency violations for VMCE-owned production code,
-/// tests and diagnostics. A `.method()` call is walked through every method
-/// definition of that name outside the owned files (not just ones with an
-/// inline token), `Type::helper(...)` is walked through its `impl`, macro
-/// invocations are checked against tainted `macro_rules!` bodies, and aliased
-/// imports resolve through their module path. The walk has no depth cap: a
-/// definition-site visited set terminates recursion, so a deeper wrapper
-/// cannot evade the scan.
+/// tests and diagnostics. A `.method()` call is followed transitively when its
+/// name is unique, and checked for direct violations in all candidates when it
+/// is not. `Type::helper(...)`, known macros and aliased imports are followed
+/// when their owner can be resolved. Unresolved receiver types, dynamic
+/// dispatch and generated code still require a read-only architecture review.
 fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
     let scopes = vmce_owned_scopes(files);
     let mut violations = vmce_owned_reference_violations(&scopes);
@@ -4843,27 +4878,21 @@ fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
             let Some(call_name) = call.path.last() else {
                 continue;
             };
-            if vmce_shared_capability_allowed(call_name) {
-                continue;
-            }
             if call.method {
-                // Walk only a uniquely named method definition (see the walker
-                // comment): distinctive wrapper chains are followed, common
-                // std/trait names cannot collide.
-                if let Some(instances) = graph
-                    .method_definitions
-                    .get(call_name.as_str())
-                    .filter(|instances| instances.len() == 1)
-                {
-                    let (file, definition) = &instances[0];
-                    let mut visited = BTreeSet::new();
-                    if let Some(chain) =
-                        vmce_walk_body(&graph, file, definition, &mut visited)
-                    {
-                        violations.push(format!(
-                            "{}: method wrapper {call_name:?} reaches {chain}",
-                            scope.label
-                        ));
+                if let Some(instances) = graph.method_definitions.get(call_name.as_str()) {
+                    for (file, definition) in instances {
+                        let mut visited = BTreeSet::new();
+                        let violation = if instances.len() == 1 {
+                            vmce_walk_body(&graph, file, definition, &mut visited)
+                        } else {
+                            vmce_direct_body_violation(&graph, file, definition)
+                        };
+                        if let Some(chain) = violation {
+                            violations.push(format!(
+                                "{}: method wrapper {call_name:?} may reach {chain}",
+                                scope.label
+                            ));
+                        }
                     }
                 }
                 continue;
@@ -4923,9 +4952,8 @@ fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
 /// scans VMCE-owned production files whole (there is no marked region to move a
 /// call out of), the VMCE session tests whole, the VMCE result diagnostic and
 /// its score-capture fixture file whole, and VMCE test functions in shared test
-/// files, then walks the source-level call graph so a wrapper helper, method,
-/// associated function or aliased import outside those scopes cannot hide the
-/// dependency.
+/// files, then checks resolvable wrapper helpers, methods, associated functions
+/// and aliased imports. This source-level scan is not a complete call graph.
 #[test]
 fn vmce_owned_code_does_not_depend_on_the_cooperative_result_flow() {
     let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4963,10 +4991,7 @@ fn vmce_owned_code_does_not_depend_on_the_cooperative_result_flow() {
         "the whole VMCE wire module",
     );
     require_scope(
-        &|label| {
-            label
-                == "function:app/loading/pump.rs::fail_vmce_loading_peer_timeout"
-        },
+        &|label| label == "function:app/loading/pump.rs::fail_vmce_loading_peer_timeout",
         "this phase's VMCE loading fault owner in the shared pump",
     );
     assert!(
@@ -5100,6 +5125,43 @@ fn vmce_dependency_guard_catches_a_method_wrapper() {
             .iter()
             .any(|violation| violation.contains("continue_vmce")),
         "the call graph missed a method wrapper: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_catches_an_ambiguous_method_wrapper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave(state: &mut AppState) { state.finish_result(); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_impl.rs",
+            "impl AppState { fn finish_result(&self) { crate::app::cooperative_round::open_result(); } }\n\
+             impl Other { fn finish_result(&self) {} }\n",
+        ),
+    ];
+    assert!(
+        !vmce_owned_dependency_violations(&files).is_empty(),
+        "a same-named method must not conceal a forbidden wrapper"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_does_not_exempt_a_same_named_foreign_helper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave() { crate::app::hidden_wrapper::continuation_timing(); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_wrapper.rs",
+            "fn continuation_timing() { crate::app::cooperative_round::open_result(); }\n",
+        ),
+    ];
+    assert!(
+        !vmce_owned_dependency_violations(&files).is_empty(),
+        "an unrelated same-named function must not inherit a shared owner's exception"
     );
 }
 

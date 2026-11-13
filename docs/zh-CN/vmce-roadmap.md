@@ -21,7 +21,7 @@ VMCE 留在 VERA 同一仓库中，作为 `vmce` 可选构建能力，继续使�
 
 ## 当前基线
 
-上游 `main` 的 `867ae2467` 已合并到 `feature/vmce`，合并提交为 `89ccbea49`；同步记录在 `da66750ea`，阶段 1 的审查已完成。阶段 2 的结算、失败重试、下一关和最后一关结束已由 VMCE 独立持有；验收修复构建 `vmce-phase3-accept-r8` 的双人胜利、重试、最终关、`--vera-outcome win/lose` 诊断及普通 Cooperative 重试/续关均通过，双端各 300 个 checksum 一致，详见[基线](../vmce-baseline.md)。当前停点是阶段 3，阶段 2 待用户审查通过后再进入。
+上游 `main` 的 `867ae2467` 已合并到 `feature/vmce`，合并提交为 `89ccbea49`；同步记录在 `da66750ea`，阶段 1 的审查已完成。阶段 2 的结算、失败重试、下一关和最后一关结束已由 VMCE 独立持有；本轮审查修复后的双人胜利、重试、最终关和注入 `win/lose` 诊断通过，双端各 300 个 checksum 一致，详见[基线](../vmce-baseline.md)。阶段 2 等待用户审查，通过后再进入阶段 3。
 
 结算相关的流程已经分开：[vmce_round.rs](../../src/app/vmce_round.rs)、[session/vmce_result.rs](../../src/app/match_runtime/session/vmce_result.rs) 和 [LAN VMCE 服务](../../src/app/lan_service/vmce_round.rs) 持有 VMCE 自己的阶段状态、result agreement、Retry ACK 和关间交接；失败页由 [vmce_defeat.rs](../../src/app/frontend/skirmish_shell_render/vmce_defeat.rs) 独立绘制。大厅、建房、选图、角色、准备和任务中接入仍有 Cooperative 依赖，属于阶段 3；已有的独立消息、战役数据所有者及 B10/B57 实现不代表整个模式已经独立。
 

@@ -1286,8 +1286,13 @@ impl MatchSession {
     /// Stop the round locally with a visible handoff failure: the page closes,
     /// the departure owner notifies peers, and nothing may reload.
     pub(crate) fn vmce_result_abort(&mut self, failure: VmceRoundFailure) -> anyhow::Result<()> {
-        let VmceResultParts { round, .. } = vmce_result_parts(self)?;
+        let VmceResultParts {
+            round, requests, ..
+        } = vmce_result_parts(self)?;
         round.outcome = Some(false);
+        // Requests from the abandoned round must not be sent after its failure
+        // notice, for example when the result owner's FIFO was backpressured.
+        requests.clear();
         if let Some(vmce) = round.vmce.as_mut() {
             vmce.note_failure(failure);
             vmce.retry_go_pending = false;
@@ -1549,6 +1554,7 @@ impl MatchSession {
             }
             VmceResultEvent::HandoffFailed(failure) => {
                 round.outcome = Some(false);
+                requests.clear();
                 if let Some(vmce) = round.vmce.as_mut() {
                     vmce.note_failure(failure);
                     vmce.retry_go_pending = false;

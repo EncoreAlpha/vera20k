@@ -60,10 +60,9 @@ pub(crate) struct VmceLanRoundState {
     retry_commit_resend: Option<WallBucketTimer>,
     /// Host: RetryStart was queued; the freeze follows in the same pass.
     retry_start_sent: bool,
-    /// Result-round application liveness, keyed by the round nonce so a later
-    /// round starts fresh. Heartbeats keep a healthy idle peer waiting
-    /// indefinitely; silence ends the round in bounded time.
-    round_liveness_nonce: Option<[u8; 16]>,
+    /// `Some(None)` is an active result round before the host's nonce arrives;
+    /// `Some(Some(nonce))` is the same round after agreement starts.
+    round_liveness_nonce: Option<Option<[u8; 16]>>,
     round_heartbeat_sent: Option<WallBucketTimer>,
     peer_heartbeats: BTreeMap<usize, u32>,
     /// The result nonce whose agreed next-stage unlock was already persisted.
@@ -288,14 +287,24 @@ impl VmceLanRoundState {
         self.retry_start_sent = false;
     }
 
-    /// Start (or keep) the open round's liveness window for the given nonce.
+    /// Start (or keep) the open round's liveness window, including before the
+    /// host's result nonce arrives. Learning the nonce does not restart it.
     /// Every currently connected peer begins with a fresh allowance; peers
     /// that left are dropped instead of being mistaken for unresponsive.
-    pub(super) fn begin_round_liveness(&mut self, nonce: [u8; 16], peers: &[usize], now: u32) {
-        if self.round_liveness_nonce != Some(nonce) {
+    pub(super) fn begin_round_liveness(
+        &mut self,
+        nonce: Option<[u8; 16]>,
+        peers: &[usize],
+        now: u32,
+    ) {
+        if self.round_liveness_nonce.is_none()
+            || matches!((self.round_liveness_nonce, nonce), (Some(Some(old)), Some(new)) if old != new)
+        {
             self.round_liveness_nonce = Some(nonce);
             self.round_heartbeat_sent = None;
             self.peer_heartbeats.clear();
+        } else if nonce.is_some() {
+            self.round_liveness_nonce = Some(nonce);
         }
         self.peer_heartbeats
             .retain(|source, _| peers.contains(source));
@@ -1702,7 +1711,10 @@ pub(crate) fn round_liveness_step(
     peers: &[usize],
     now: u32,
 ) -> Option<VmceRoundFailure> {
-    let nonce = session.vmce_result_nonce()?;
+    if session.vmce_result_phase().is_none() {
+        return None;
+    }
+    let nonce = session.vmce_result_nonce();
     service.vmce_round.begin_round_liveness(nonce, peers, now);
     if service.vmce_round.round_heartbeat_due(now) {
         if let Ok(bytes) = VmceSignal::Heartbeat.encode(local_name)
@@ -1734,8 +1746,35 @@ pub(crate) fn begin_round_failure(
         VmceRoundFailure::Delivery => VmceSignal::RoundFailed,
         VmceRoundFailure::PeerUnresponsive => VmceSignal::PeerUnresponsive,
     };
-    let _ = queue_round_signal(session, service, local_name, peers, signal);
     let _ = session.vmce_result_abort(failure);
+    // Remove only unsent records of the abandoned VMCE round. Other setup
+    // traffic stays with its existing owner. A bounded priority reservation
+    // lets the terminal failure precede that traffic even when the FIFO is
+    // full; the global reliable queue remains the sole delivery owner.
+    service
+        .pending_setup
+        .retain(|(bytes, _)| !is_round_record(bytes));
+    let queued = signal
+        .encode(local_name)
+        .ok()
+        .and_then(|bytes| {
+            let endpoints = peer_endpoints(session, peers).ok()?;
+            let limit = 4096 + crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT;
+            if service.pending_setup.len().saturating_add(endpoints.len()) > limit {
+                return None;
+            }
+            for endpoint in endpoints.into_iter().rev() {
+                service
+                    .pending_setup
+                    .push_front((bytes.to_vec(), direct(endpoint)));
+            }
+            service.flush_setup();
+            Some(())
+        })
+        .is_some();
+    if !queued {
+        log::warn!("VMCE failure notice could not be queued");
+    }
     service.vmce_round.finish_retry_wait();
     service.vmce_round.clear_round_liveness();
     failure.i18n_key()
@@ -1807,10 +1846,7 @@ pub(super) fn fail_round_delivery(state: &mut AppState) -> bool {
     if !active_round(state) {
         return false;
     }
-    log::error!("VMCE round delivery failed; returning to the lobby");
-    let _ = state.match_state.session.quit_vmce_result();
-    crate::app::vmce_round::return_to_shell(state);
-    report_round_send_failed(state);
+    fail_round_handoff(state, VmceRoundFailure::Delivery);
     true
 }
 
@@ -1824,6 +1860,7 @@ pub(crate) fn hold_round_transport(state: &mut AppState) {
         return;
     };
     if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.vmce_round.clear_round_liveness();
         let mut transport = live.into_transport();
         transport.connections_mut().reset();
         service.transport = Some(transport);
@@ -1837,6 +1874,7 @@ pub(crate) fn release_round_transport(state: &mut AppState) {
 }
 
 fn release_service_transport(service: &mut LanService) {
+    service.vmce_round.clear_round_liveness();
     let vmce_exit = service.vmce_round_exit_pending();
     if let Some(transport) = service.transport.as_mut() {
         transport.connections_mut().reset();
@@ -2759,6 +2797,119 @@ mod tests {
     // ------------------------------------------------------------- liveness
 
     #[test]
+    fn vmce_guest_detects_silent_host_before_first_result_nonce() {
+        let mut host = test_service();
+        let mut guest = test_service();
+        let host_addr = host.transport.as_ref().unwrap().primary_addr().unwrap();
+        let guest_addr = guest.transport.as_ref().unwrap().primary_addr().unwrap();
+        let mut host_session = retry_session(2, 0, &[host_addr, guest_addr]);
+        let mut guest_session = retry_session(2, 1, &[host_addr, guest_addr]);
+        let entries = [4, 5, 0xff, 0xff];
+        host_session
+            .initialize_vmce_result_agreement(entries, Some(NONCE))
+            .unwrap();
+        guest_session
+            .initialize_vmce_result_agreement(entries, None)
+            .unwrap();
+        let host_peers = round_peers(&host_session);
+        let guest_peers = round_peers(&guest_session);
+        assert_eq!(guest_session.vmce_result_nonce(), None);
+
+        // Before the proposal, live host heartbeats allow a slow player to
+        // wait even beyond the silence bound.
+        for now in (0..=1_200).step_by(60) {
+            assert_eq!(
+                round_liveness_step(&guest_session, &mut guest, "Guest", &guest_peers, now),
+                None
+            );
+            assert_eq!(
+                round_liveness_step(&host_session, &mut host, "Host", &host_peers, now),
+                None
+            );
+            transmit(&mut host, host_addr, &mut guest, guest_addr, now, false);
+            drain(&mut guest, &mut guest_session, now);
+            transmit(&mut guest, guest_addr, &mut host, host_addr, now, false);
+            drain(&mut host, &mut host_session, now);
+        }
+        assert_eq!(guest_session.vmce_result_nonce(), None);
+        assert_eq!(
+            round_liveness_step(&guest_session, &mut guest, "Guest", &guest_peers, 1_799),
+            None
+        );
+        assert_eq!(
+            round_liveness_step(&guest_session, &mut guest, "Guest", &guest_peers, 1_800),
+            Some(VmceRoundFailure::PeerUnresponsive)
+        );
+    }
+
+    #[test]
+    fn vmce_failure_notice_survives_a_backpressured_departure() {
+        let (mut host, mut host_session, mut guest, mut guest_session, host_addr, guest_addr) =
+            agreed_pair();
+        let blocked = SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, 30999);
+        while guest.send(&[1], direct(blocked), true) {}
+        for _ in 0..4096 {
+            guest.pending_setup.push_back((vec![1], direct(blocked)));
+        }
+        let peers = round_peers(&guest_session);
+        let key = begin_round_failure(
+            &mut guest_session,
+            &mut guest,
+            "Guest",
+            &peers,
+            VmceRoundFailure::Delivery,
+        );
+        assert_eq!(key, FAILURE_KEY);
+        assert_eq!(
+            guest.pending_setup.len(),
+            4097,
+            "the bounded priority slot preserves other pending traffic"
+        );
+        assert_eq!(
+            VmceSignal::decode(&guest.pending_setup.front().unwrap().0),
+            Some(VmceSignal::RoundFailed)
+        );
+        assert!(guest.begin_vmce_round_departure(5));
+        guest.mark_vmce_round_failure_notice(key);
+        assert_eq!(
+            guest.departure_ready(6, true),
+            None,
+            "the pending notice must not be dropped"
+        );
+        assert_eq!(guest.pending_setup.len(), 4097);
+
+        // The existing global queue clears, and the production FIFO flushes
+        // and delivers the notice to the other result owner.
+        guest
+            .transport
+            .as_mut()
+            .unwrap()
+            .global_mut()
+            .cancel_sends_to_endpoint(blocked);
+        guest.flush_setup();
+        transmit(&mut guest, guest_addr, &mut host, host_addr, 7, false);
+        let actions = drain(&mut host, &mut host_session, 7);
+        assert!(matches!(
+            actions.last(),
+            Some(VmceRoundAction::Step(VmceRoundStep::Exit(true)))
+        ));
+        assert_eq!(
+            host_session.vmce_result_failure(),
+            Some(VmceRoundFailure::Delivery)
+        );
+        assert_eq!(
+            guest.departure_ready(8, true),
+            None,
+            "other queued traffic remains within the departure bound"
+        );
+        assert!(guest.pending_setup.iter().all(|(bytes, _)| bytes == &[1]));
+        assert_eq!(
+            guest.departure_ready(605, true),
+            Some(crate::app::lan_service::DepartureReason::RoundResult)
+        );
+    }
+
+    #[test]
     fn vmce_idle_but_alive_host_keeps_the_guest_waiting_indefinitely() {
         let (mut host, mut host_session, mut guest, mut guest_session, host_addr, guest_addr) =
             agreed_pair();
@@ -3140,7 +3291,7 @@ mod tests {
     #[test]
     fn round_liveness_window_resets_for_a_new_round_and_drops_departed_peers() {
         let mut state = VmceLanRoundState::default();
-        state.begin_round_liveness([1; 16], &[1], 0);
+        state.begin_round_liveness(Some([1; 16]), &[1], 0);
         state.note_peer_heartbeat(1, 100);
         assert_eq!(
             state.expired_round_peer(ROUND_HEARTBEAT_TIMEOUT_BUCKETS + 99),
@@ -3152,12 +3303,12 @@ mod tests {
         );
         // A departed peer is dropped, not reported as unresponsive; the peer
         // still present keeps only its own window.
-        state.begin_round_liveness([1; 16], &[1, 2], 700);
+        state.begin_round_liveness(Some([1; 16]), &[1, 2], 700);
         state.note_peer_heartbeat(2, 700);
-        state.begin_round_liveness([1; 16], &[2], 700);
+        state.begin_round_liveness(Some([1; 16]), &[2], 700);
         assert_eq!(state.expired_round_peer(1_000), None);
         // A later round starts every window fresh.
-        state.begin_round_liveness([2; 16], &[1, 2], 5_000);
+        state.begin_round_liveness(Some([2; 16]), &[1, 2], 5_000);
         assert_eq!(
             state.expired_round_peer(5_000 + ROUND_HEARTBEAT_TIMEOUT_BUCKETS - 1),
             None
