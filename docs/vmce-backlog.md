@@ -13,7 +13,7 @@ they change module ownership, not behavior. Planned or follow-up items are not i
 
 ## Priority and remaining verification
 
-The [Chinese consolidated review](zh-CN/vmce-review.md) orders the open work. B102 (rules and extension identity) is closed by the audit below: the existing rules agreement and series admission already refuse different data before a mission starts. B104 shared-House auto repair is P2 alongside B70/B75; B101 translation is P3. B10, B57 and B58 are implemented; their loss, departure and revalidation gaps remain open below and in B36.
+The [Chinese consolidated review](zh-CN/vmce-review.md) orders the open work. B102 (rules and extension identity) is closed by the audit below: the existing rules agreement and series admission already refuse different data before a mission starts. B104 shared-House auto repair is P2 alongside B70/B75; B101 translation is P3. B10, B57 and B58 are implemented (B10's Continue-at-deadline residual is fixed below); their loss, departure and revalidation gaps remain open below and in B36.
 
 ## Post-0.3.2 baseline interactions (B101–B105)
 
@@ -354,7 +354,8 @@ The implementations below are closed. The explicit residuals and missing validat
 - **B84 — final installation failure (closed in B4):** a failed network installation shows a local error without
   notifying peers. Use the reliable shared failure/exit path; see [audit A32](zh-CN/vmce-review.md).
 
-- **B10 — terminal LAN delivery (closed 2026-11-13, `ff9ecb725`).** Every terminal handoff now
+- **B10 — terminal LAN delivery (closed 2026-11-13, `ff9ecb725`; Continue-at-deadline
+  continuation fixed 2026-11-13, `b2806138e`).** Every terminal handoff now
   keeps the existing scoped reliable queue until its records are acknowledged or a bounded wait
   expires, then reports the existing local failure notice instead of stranding a peer:
   - departure (leave, stage rejection, loading failure) already drained with a 600-bucket
@@ -370,6 +371,14 @@ The implementations below are closed. The explicit residuals and missing validat
   - a timeout returns to the shell first and then reports through the existing departure-failure
     notice, so the started departure carries `VERA:VmceRoundSendFailed` instead of dropping it on
     the result page (which has neither the setup dialog nor the LAN chat sink);
+  - the result page's Continue press and the poll now share one assignment owner: a terminal
+    intermission handoff (deadline expiry, full setup FIFO, transport failure, missing service)
+    stops the round, queues the peer `RoundFailed` record and returns the existing visible reason,
+    and the caller bounds the departure and reports it (`b2806138e`). The old Assign error arm
+    logged, dropped the round with `quit_vmce_result` and returned to the shell with no notice, so
+    a Continue click processed after the 600-bucket deadline but before the next poll pass observed
+    it exited silently; the poll's expiry and Go-wait paths now use the same bounded failure chain
+    instead of quitting locally without telling the peer;
   - no second transport or round state machine was added; the reliable queue, round state and
     wire protocol are unchanged, and stock Cooperative behavior is untouched.
   Validation: unit tests for campaign-completion timeout with an unacknowledged Go and success
@@ -379,20 +388,34 @@ The implementations below are closed. The explicit residuals and missing validat
   `b10-ff9ecb725-r1` (exe SHA-256
   `4EF874FFBBEBC335A1BE8058A12B8177A588BEB1CF2A70A8399E6D47D712639A`) passed `2p-win`,
   `2p-retry` and `2p-final` LAN acceptance (300 matching checksums each; the final run reached
-  credits and the campaign-end page on both peers). Guards pin 507 shared + 193 diagnostics. Residuals: packet/ACK loss is simulated at
+  credits and the campaign-end page on both peers). Guards pin 507 shared + 193 diagnostics. The
+  continuation fix adds press-path tests before, exactly at and after the intermission deadline
+  (page kept, then assigned inside the ACK bound; `Failed(VERA:VmceRoundSendFailed)` at/after
+  expiry with the bounded departure notice and the waiting peer's visible exit), the
+  notice-enqueue-full case, and a reverted-handling run that fails the two expiry tests; focused
+  20 `app::lan_service::vmce_round`, 19 `app::vmce_result`, 29 `app::lan_service::tests` and 7
+  stock Cooperative session-round tests pass, architecture guards 43/43 in both configs, both
+  checks pass, and fresh fast build `b10-continue-94eea03f6-r3` (exe SHA-256
+  `BF05B4F73ACBF87981F3FDB689AE2611D1F9421B03BA7F439CED63CA0D1FBD8E`) passed `2p-win`,
+  `2p-retry` and `2p-final` (300 matching checksums; next stage, retry and campaign-end receipts
+  as before).
+  Residuals: packet/ACK loss is simulated at
   the reliable-queue level, not captured as a live lossy multi-process run; the guest waiting for
   the host's intermission epoch/Go before any deadline is set can still leave via the bounded
   departure; the 600-bucket (~10 s) guest Go wait can auto-exit an idle guest while the host
   waits; before the host starts assigning, a guest's wait has no deadline (Leave Room is still
-  enabled there); a local timeout returns without queuing a Leave record, so the peer relies on
-  its own bounded wait rather than being told; the host assignment-timeout and frozen-round Go
-  failure have no AppState-level test. Narrower residuals: the deferred Next assignment relies on
-  the intermission deadline instead of a separate assignment mark; a Continue press in the frame
-  the intermission deadline expires exits through the Assign error handler without the notice
-  (the poll path reports the same timeout); the assignment test stops at Begin and the ACK test
-  proves drained-queue precedence rather than an ACK inside the deadline bucket; a successful
-  Retry freeze keeps the assignment deadline until the next visit (traced harmless because a new
-  round starts after `return_transport`). Evidence is under `.scratch/b10/` (not committed).
+  enabled there); a local timeout on the result-exit paths (stage mismatch) queues no Leave record,
+  so the peer relies on its own bounded wait rather than being told; the assignment/expiry decision
+  and peer notification are covered at the session/service owner, but the AppState glue that calls
+  `return_after_handoff_failure` and the poll's Failed branch still have no direct AppState-level
+  test, and the actual notice display is not asserted. Narrower residuals: the deferred Next
+  assignment relies on the intermission deadline instead of a separate assignment mark; a VMCE
+  receive path that rejects an inconsistent result record still logs and returns without a notice
+  or peer record (pre-existing adjacent path, unchanged); the older assignment test stops at Begin
+  and its ACK test proves drained-queue precedence rather than an ACK inside the deadline bucket; a
+  successful Retry freeze keeps the assignment deadline until the next visit (traced harmless
+  because a new round starts after `return_transport`). Evidence is under `.scratch/b10/` (not
+  committed).
 
 - **B80 — in-mission Observe (closed in B4):** the abort dialog may offer Observe and queue local destruction.
   Exclude that action in VMCE while preserving ordinary LAN; see [audit A28](zh-CN/vmce-review.md).
