@@ -4,6 +4,13 @@
 //! sorting. The simulation owns the raw house statistics and the Scenario RNG
 //! draws used by the existing Rust victory-bonus projection.
 //!
+//! Settlement ownership: [`HouseScoreFacts`] is the shared, read-only per-House
+//! statistics projection. Each mode's result owner decides which Houses are
+//! its player rows — the stock Cooperative result page keeps its own selection
+//! in [`Simulation::cooperative_score_rows`], and VERA's extension result pages
+//! select their role rows from the same facts without this module naming a
+//! mode.
+//!
 //! The score follows `ScoreDialog__FillEntries` (`0x005C98A0`) as read from its
 //! instructions (not executed): only a positive `house+0x54E8` enters the entry
 //! (`0x005C99EB`), and a surviving house then gets `v + v/2 + Random(v/2, v)`,
@@ -62,19 +69,22 @@ impl TerminalScore {
     }
 }
 
-/// One human House's row for the co-op result dialogs: `0x0046DA70` (BC6)
-/// and `0x0049B7E0` (the progress record) fill the same fields.
+/// One House's settlement statistics: the shared, read-only facts a result
+/// page projects. The counters remain owned by [`crate::sim::house_state::HouseState`]
+/// (`MatchStatistics`/`Economy`/`HouseTracking`); this is a snapshot, never a
+/// second authority, so a mode's row selection cannot drift from the sim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CooperativeScoreRow {
+pub struct HouseScoreFacts {
     pub owner: InternedId,
     /// `+0x2C`: the House is not defeated (`+0x1F5`).
     pub survived: bool,
     pub kills: u32,
     pub losses: u32,
-    /// Losses plus the four on-map counters' totals (`+0x5550`, `+0x5564`,
-    /// `+0x5578`, `+0x558C`), not the produced count.
+    /// The co-op result page's built column: losses plus the four on-map
+    /// counters' totals (`+0x5550`, `+0x5564`, `+0x5578`, `+0x558C`), not the
+    /// produced count.
     pub built: u32,
-    /// `+0x54E8` when positive, else 0; no survivor bonus and no draw.
+    /// `+0x54E8` when positive, else 0.
     pub score: i32,
     /// Positive credit gains during the mission (display statistic only).
     pub credits_earned: i64,
@@ -96,50 +106,35 @@ fn score_contenders(houses: &Houses, session: &ScenarioSession) -> Vec<InternedI
 }
 
 impl Simulation {
-    /// `0x0046DA70`/`0x0049B7E0`: one row per human House, in `Houses[]` order.
-    /// VMCE's grant table names one primary House per network source, and
-    /// a shared House another source also controls is not a separate player,
-    /// so its rows follow the same role viewpoints the mission outcome uses.
-    pub fn cooperative_score_rows(&self) -> Vec<CooperativeScoreRow> {
-        #[cfg(feature = "vmce")]
-        let owners = if self
-            .session()
-            .multiplayer_mode_class()
-            .is_some_and(|class| class.is_vmce())
-        {
-            self.outcome_viewpoints()
-        } else {
-            self.houses
-                .in_order()
-                .filter(|house| !house.multiplay_passive() && house.is_human())
-                .map(|house| house.name())
-                .collect()
-        };
-        #[cfg(not(feature = "vmce"))]
-        let owners: Vec<InternedId> = self
-            .houses
+    /// One registered House's settlement facts, or `None` when the House is not
+    /// registered. This is the only shared per-House projection; callers own
+    /// the player-row selection (human Houses for the stock Cooperative page,
+    /// the frozen role assignments for VMCE's pages).
+    pub fn house_score_facts(&self, owner: InternedId) -> Option<HouseScoreFacts> {
+        let house = self.houses.get(&owner)?;
+        let stats = house.stats();
+        Some(HouseScoreFacts {
+            owner: house.name(),
+            survived: !house.is_defeated(),
+            kills: stats.kills(),
+            losses: stats.losses(),
+            built: stats
+                .losses()
+                .wrapping_add(house.tracking().active_total() as u32),
+            score: house.economy().score().max(0),
+            credits_earned: house.economy().credits_earned(),
+        })
+    }
+
+    /// `0x0046DA70`/`0x0049B7E0`: the stock Cooperative result page's rows, one
+    /// per human House in `Houses[]` order. Cooperative owns this selection; a
+    /// mode with its own player mapping selects its rows itself from
+    /// [`Self::house_score_facts`].
+    pub fn cooperative_score_rows(&self) -> Vec<HouseScoreFacts> {
+        self.houses
             .in_order()
             .filter(|house| !house.multiplay_passive() && house.is_human())
-            .map(|house| house.name())
-            .collect();
-        owners
-            .into_iter()
-            .filter_map(|owner| self.houses.get(&owner))
-            .filter(|house| !house.multiplay_passive())
-            .map(|house| {
-                let stats = house.stats();
-                CooperativeScoreRow {
-                    owner: house.name(),
-                    survived: !house.is_defeated(),
-                    kills: stats.kills(),
-                    losses: stats.losses(),
-                    built: stats
-                        .losses()
-                        .wrapping_add(house.tracking().active_total() as u32),
-                    score: house.economy().score().max(0),
-                    credits_earned: house.economy().credits_earned(),
-                }
-            })
+            .filter_map(|house| self.house_score_facts(house.name()))
             .collect()
     }
 
@@ -877,7 +872,7 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                CooperativeScoreRow {
+                HouseScoreFacts {
                     owner: host,
                     survived: false,
                     kills: 3,
@@ -887,7 +882,7 @@ mod tests {
                     score: 0,
                     credits_earned: 77,
                 },
-                CooperativeScoreRow {
+                HouseScoreFacts {
                     owner: guest,
                     survived: true,
                     kills: 0,
@@ -904,6 +899,85 @@ mod tests {
             .unwrap()
             .set_is_defeated_for_test(true);
         assert!(!sim.cooperative_humans_won(), "the enemy is not human");
+    }
+
+    #[cfg(feature = "vmce")]
+    #[test]
+    fn cooperative_rows_stay_mode_blind_in_a_campaign_grant_world() {
+        use crate::sim::scenario_session::ScenarioGameMode;
+
+        let mut sim = Simulation::with_seed(0x5C4E_F004);
+        sim.session.set_game_mode(ScenarioGameMode::Lan);
+        let host = insert_house(
+            &mut sim,
+            HouseFixture {
+                name: "Host",
+                defeated: false,
+                passive: false,
+                score: 10,
+                units_killed: 3,
+                buildings_killed: 0,
+                units_lost: 0,
+                buildings_lost: 0,
+                built: 0,
+            },
+        );
+        let guest = insert_house(
+            &mut sim,
+            HouseFixture {
+                name: "Guest",
+                defeated: false,
+                passive: false,
+                score: 20,
+                units_killed: 9,
+                buildings_killed: 0,
+                units_lost: 0,
+                buildings_lost: 0,
+                built: 0,
+            },
+        );
+        let shared = insert_house(
+            &mut sim,
+            HouseFixture {
+                name: "Shared",
+                defeated: false,
+                passive: false,
+                score: 30,
+                units_killed: 5,
+                buildings_killed: 0,
+                units_lost: 0,
+                buildings_lost: 0,
+                built: 0,
+            },
+        );
+        sim.session.install_multiplayer_house_identity(
+            crate::skirmish_modes::MpModeClass::Vmce,
+            Vec::new(),
+        );
+        sim.session.install_network_house_grants_for_test(
+            vec![0, 1],
+            vec![vec![0, 2], vec![1, 2]],
+            Some(0),
+        );
+        // The role primaries are map-authored Houses; only Host and the shared
+        // House carry the human flag here, so this proves the Cooperative page
+        // selects human Houses instead of VMCE's outcome viewpoints (which
+        // would be Host and Guest).
+        for owner in [host, shared] {
+            sim.houses
+                .get_mut(&owner)
+                .unwrap()
+                .set_is_human_for_test(true);
+        }
+        let _ = guest;
+        let rows = sim.cooperative_score_rows();
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.owner, row.kills))
+                .collect::<Vec<_>>(),
+            vec![(host, 3), (shared, 5)],
+            "the Cooperative selection stays mode-blind"
+        );
     }
 
     #[cfg(feature = "vmce")]
@@ -940,112 +1014,5 @@ mod tests {
         ));
         assert!(sim.terminal_score_snapshot().is_none());
         assert_eq!(sim.clone_scenario_rng().state(), before);
-    }
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn vmce_rows_take_role_primaries_not_the_shared_house() {
-        use crate::sim::scenario_session::ScenarioGameMode;
-
-        let mut sim = Simulation::with_seed(0x5C4E_F002);
-        sim.session.set_game_mode(ScenarioGameMode::Lan);
-        let mut insert = |name: &str, score: i32| {
-            insert_house(
-                &mut sim,
-                HouseFixture {
-                    name,
-                    defeated: false,
-                    passive: false,
-                    score,
-                    units_killed: 0,
-                    buildings_killed: 0,
-                    units_lost: 0,
-                    buildings_lost: 0,
-                    built: 0,
-                },
-            )
-        };
-        let host = insert("Host", 10);
-        let guest = insert("Guest", 20);
-        let shared = insert("Shared", 30);
-        sim.session.install_multiplayer_house_identity(
-            crate::skirmish_modes::MpModeClass::Vmce,
-            Vec::new(),
-        );
-        sim.session.install_network_house_grants_for_test(
-            vec![0, 1],
-            vec![vec![0, 2], vec![1, 2]],
-            Some(0),
-        );
-        for owner in [host, guest, shared] {
-            sim.houses
-                .get_mut(&owner)
-                .unwrap()
-                .set_is_human_for_test(true);
-        }
-        let rows = sim.cooperative_score_rows();
-        let owners: Vec<_> = rows.iter().map(|row| row.owner).collect();
-        assert_eq!(
-            owners,
-            vec![host, guest],
-            "the shared House is not a player row"
-        );
-        let _ = shared;
-    }
-
-    #[cfg(feature = "vmce")]
-    #[test]
-    fn vmce_rows_and_sources_ignore_a_seat_without_a_grant() {
-        use crate::sim::scenario_session::ScenarioGameMode;
-
-        let mut sim = Simulation::with_seed(0x5C4E_F003);
-        sim.session.set_game_mode(ScenarioGameMode::Lan);
-        let mut insert = |name: &str, score: i32| {
-            insert_house(
-                &mut sim,
-                HouseFixture {
-                    name,
-                    defeated: false,
-                    passive: false,
-                    score,
-                    units_killed: 0,
-                    buildings_killed: 0,
-                    units_lost: 0,
-                    buildings_lost: 0,
-                    built: 0,
-                },
-            )
-        };
-        let host = insert("Host", 10);
-        let guest = insert("Guest", 20);
-        let shared = insert("Shared", 30);
-        sim.session.install_multiplayer_house_identity(
-            crate::skirmish_modes::MpModeClass::Vmce,
-            Vec::new(),
-        );
-        // The third source has no row: an observer seat, which must not become
-        // a player viewpoint or add a result row.
-        sim.session.install_network_house_grants_for_test(
-            vec![0, 1, 0],
-            vec![vec![0, 2], vec![1, 2], Vec::new()],
-            Some(0),
-        );
-        for owner in [host, guest, shared] {
-            sim.houses
-                .get_mut(&owner)
-                .unwrap()
-                .set_is_human_for_test(true);
-        }
-        let rows = sim.cooperative_score_rows();
-        let owners: Vec<_> = rows.iter().map(|row| row.owner).collect();
-        assert_eq!(
-            owners,
-            vec![host, guest],
-            "a seat without a grant is no row"
-        );
-        assert_eq!(
-            sim.session.campaign_source_houses().collect::<Vec<_>>(),
-            vec![0, 1]
-        );
     }
 }

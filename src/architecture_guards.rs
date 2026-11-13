@@ -371,7 +371,6 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         0,
         1,
     ),
-    ("sim/score.rs", "cooperative_score_rows", 1, 0),
     ("sim/world/house_defeat.rs", "house_rung", 1, 0),
     ("skirmish_launch.rs", "all_allied", 1, 0),
 ];
@@ -571,7 +570,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/match_bootstrap.rs", 33),
     ("app/match_runtime/session.rs", 44),
     ("app/match_runtime/session/cooperative_round.rs", 37),
-    ("app/match_runtime/sim_tick.rs", 3),
+    ("app/match_runtime/sim_tick.rs", 2),
     ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
@@ -596,7 +595,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("sim/scenario_bootstrap.rs", 6),
     ("sim/scenario_post_map.rs", 2),
     ("sim/scenario_session.rs", 22),
-    ("sim/score.rs", 2),
+    ("sim/score.rs", 0),
     ("sim/snapshot.rs", 1),
     ("sim/world/house_defeat.rs", 3),
     ("skirmish_launch.rs", 5),
@@ -609,7 +608,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 472;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 469;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -3780,11 +3779,6 @@ fn vmce_diagnostic_tokens() -> Vec<&'static str> {
 /// is a shared boundary; a same-named helper elsewhere is still inspected.
 const VMCE_SHARED_CAPABILITY_ALLOWLIST: &[(&str, &str, &str)] = &[
     (
-        "cooperative_score_rows",
-        "simulation: House score rows of a finished match, projected into a result page",
-        "app/vmce_result/flow.rs, app/vmce_result/victory.rs, VMCE result diagnostics",
-    ),
-    (
         "cooperative_difficulty",
         "simulation: the difficulty projection a cooperative campaign match runs at",
         "app/vmce_result/flow.rs",
@@ -3842,7 +3836,6 @@ fn vmce_shared_capability_allowed(identifier: &str) -> bool {
 /// may define the same name and must still be inspected.
 fn vmce_shared_owner(rel: &str, identifier: &str) -> bool {
     match identifier {
-        "cooperative_score_rows" => rel == "sim/score.rs",
         "cooperative_difficulty" => rel == "app/frontend/skirmish_session.rs",
         "continuation_timing" => rel == "net/lockstep.rs",
         "advance_master_frame" => rel == "sim/world/master_frame.rs",
@@ -5315,7 +5308,7 @@ fn vmce_dependency_guard_allows_documented_shared_capabilities() {
             "app/lan_service/vmce_round.rs",
             "fn pump(state: &mut AppState) {\n\
                  super::drain_match_requests(state);\n\
-                 let rows = sim.cooperative_score_rows();\n\
+                 let assignments = session.network_vmce_assignments();\n\
                  let difficulty = runtime.cooperative_difficulty();\n\
              }\n",
         ),
@@ -5331,6 +5324,122 @@ fn vmce_dependency_guard_allows_documented_shared_capabilities() {
         violations.is_empty(),
         "the documented shared capabilities were treated as result-flow dependencies: {violations:#?}"
     );
+}
+
+#[test]
+fn vmce_dependency_guard_rejects_the_cooperative_score_selection() {
+    // VMCE's settlement statistics select their own role rows from the frozen
+    // assignment table and read the shared per-House facts; the stock
+    // Cooperative row selection is not a shared capability.
+    let files = vec![fixture_source_file(
+        "app/vmce_result/statistics.rs",
+        "fn rows() { let rows = sim.cooperative_score_rows(); }\n",
+    )];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("cooperative_score_rows")),
+        "the Cooperative score selection escaped the VMCE dependency scan: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_settlement_statistics_own_their_role_rows_and_share_only_house_facts() {
+    // The boundary is semantic, not a name ban: VMCE's statistics owner selects
+    // its own role rows from the frozen assignment table and reads only the
+    // shared per-House facts; the shared facts projection names no mode and no
+    // rows; the stock Cooperative selector chooses human Houses without knowing
+    // VMCE exists.
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let file = |rel: &str| {
+        files
+            .iter()
+            .find(|file| file.rel == rel)
+            .unwrap_or_else(|| panic!("missing scanned file {rel}"))
+    };
+    let function = |source: &SourceFile, name: &str| {
+        let code = source.production.as_deref().unwrap_or(&source.blanked);
+        let impls = impl_blocks(code);
+        let definitions = function_definitions(code, &impls);
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("missing fn {name} in {}", source.rel));
+        code[definition.body_start..=definition.body_end].to_owned()
+    };
+
+    let score = file("sim/score.rs");
+    let cooperative = function(score, "cooperative_score_rows");
+    for forbidden in [
+        "is_vmce",
+        "multiplayer_mode_class",
+        "outcome_viewpoints",
+        "session",
+        "campaign_source_houses",
+        "has_network_house_grants",
+        "Vmce",
+    ] {
+        assert!(
+            !cooperative.contains(forbidden),
+            "the stock Cooperative row selection must stay mode-blind ({forbidden}):\n{cooperative}"
+        );
+    }
+    assert!(
+        cooperative.contains("is_human"),
+        "the Cooperative row selection no longer chooses human Houses:\n{cooperative}"
+    );
+    assert!(
+        cooperative.contains("house_score_facts"),
+        "the Cooperative row selection no longer reads the shared House facts:\n{cooperative}"
+    );
+
+    let facts = function(score, "house_score_facts");
+    for forbidden in [
+        "is_vmce",
+        "multiplayer_mode_class",
+        "outcome_viewpoints",
+        "is_human",
+        "in_order",
+        "Vmce",
+    ] {
+        assert!(
+            !facts.contains(forbidden),
+            "the shared House facts projection must only read one House ({forbidden}):\n{facts}"
+        );
+    }
+
+    let statistics_file = file("app/vmce_result/statistics.rs");
+    let production = statistics_file
+        .production
+        .as_deref()
+        .unwrap_or(&statistics_file.blanked);
+    for required in [
+        "role_rows_from",
+        "network_vmce_assignments",
+        "house_score_facts",
+    ] {
+        assert!(
+            production.contains(required),
+            "VMCE's settlement statistics lost its own input {required}"
+        );
+    }
+    assert!(
+        !production.contains("cooperative_score_rows"),
+        "VMCE's settlement statistics still read the Cooperative row selection"
+    );
+    for source in files
+        .iter()
+        .filter(|source| source.rel.starts_with("app/vmce_result/"))
+    {
+        let code = source.production.as_deref().unwrap_or(&source.blanked);
+        assert!(
+            !code.contains("cooperative_score_rows"),
+            "{} reads the Cooperative score selection",
+            source.rel
+        );
+    }
 }
 
 #[test]

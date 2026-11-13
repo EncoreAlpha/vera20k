@@ -3,8 +3,8 @@
 
 use crate::app::{App, AppState};
 
+use super::statistics::{VmceScoreSource, statistics};
 use super::types::VmceStatistics;
-use super::victory::{VmceScoreSource, statistics_page};
 
 /// A released control of VMCE's defeat page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +38,13 @@ pub(super) fn open_defeat(state: &mut AppState) {
         .match_state
         .scenario_elapsed_clock
         .stop_buckets(crate::app::match_runtime::frame_pacer::wall_clock_ms());
-    let ranking_model = super::flow::build_vmce_victory_score_model(state, elapsed);
-    let Some(statistics) = statistics_page(state, &ranking_model, VmceScoreSource::Live) else {
+    let Some(role_rows) = super::statistics::role_rows(state) else {
         log::error!("Could not build the VMCE defeat statistics");
         App::leave_mission_result_screen(state);
         return;
     };
+    let ranking_model = super::flow::build_vmce_score_model(state, elapsed, &role_rows);
+    let statistics = statistics(state, &role_rows, &ranking_model, VmceScoreSource::Live);
     let rows = statistics.rows.len();
     crate::app::lan_service::vmce_round::hold_round_transport(state);
     App::retire_finished_scenario(state);

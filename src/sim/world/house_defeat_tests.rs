@@ -1350,6 +1350,24 @@ fn vmce_fixture() -> (Simulation, Vec<InternedId>, InternedId, RuleSet) {
 
 #[cfg(feature = "vmce")]
 #[test]
+fn vmce_sources_without_a_grant_row_are_not_player_viewpoints() {
+    let (mut sim, houses, _shared, _rules) = vmce_fixture();
+    // A frozen source without any grant row is an observer/non-participant
+    // seat: the mission viewpoints (and the old Cooperative VMCE rows) omit it.
+    sim.session.install_network_house_grants_for_test(
+        vec![0, 1, 2],
+        vec![vec![0, 2], vec![1, 2], Vec::new()],
+        Some(0),
+    );
+    assert_eq!(
+        sim.session.campaign_source_houses().collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(sim.player_outcome_viewpoints(), houses);
+}
+
+#[cfg(feature = "vmce")]
+#[test]
 fn vmce_empty_houses_keep_their_view_and_control_without_ending_the_mission() {
     use crate::sim::world::SimSoundEvent;
 

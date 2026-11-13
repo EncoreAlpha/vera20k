@@ -17,6 +17,7 @@ pub(crate) mod defeat_input;
 pub(crate) mod defeat_layout;
 pub(crate) mod flow;
 pub(crate) mod paint_victory;
+pub(crate) mod statistics;
 pub(crate) mod types;
 pub(crate) mod victory;
 

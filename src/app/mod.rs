@@ -51,6 +51,7 @@ pub(crate) mod audio_runtime;
 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
 mod browser_lifecycle;
 pub(crate) mod campaign_defeat;
+pub(crate) mod campaign_score_model;
 pub(crate) mod campaign_victory;
 pub(crate) mod chrono_screen;
 mod cncnet;

@@ -500,7 +500,8 @@ impl Simulation {
     ///
     /// The mission's player viewpoints: each VMCE role's primary House,
     /// every human House in a stock network match, or the current House
-    /// offline. Diagnostics and result rows read this owner.
+    /// offline. Mission outcome and diagnostics read this owner; result-page
+    /// statistics read their own mode's row selection.
     pub fn player_outcome_viewpoints(&self) -> Vec<InternedId> {
         self.outcome_viewpoints()
     }

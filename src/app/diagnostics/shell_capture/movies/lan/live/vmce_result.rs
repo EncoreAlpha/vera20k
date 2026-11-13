@@ -312,17 +312,22 @@ impl LiveLanCapture {
                             .runtime()
                             .context("VMCE defeat simulation")?
                             .simulation;
-                        let score_rows = sim.cooperative_score_rows();
-                        let first_seat = assignments
-                            .participants
+                        let role_rows = crate::app::vmce_result::statistics::role_rows(state)
+                            .context("VMCE defeat role rows")?;
+                        let first_seat = role_rows.first().context("VMCE defeat has no players")?;
+                        // The retry probe reverses the raw House order and the
+                        // admitted seat order; a projection that reads Houses[]
+                        // order instead of VMCE's assignment table fails here.
+                        let role_owners: Vec<_> =
+                            role_rows.iter().filter_map(|row| row.owner_id).collect();
+                        let first_house = sim
+                            .houses()
+                            .order()
                             .iter()
-                            .min_by_key(|assignment| assignment.raw_slot_index)
-                            .context("VMCE defeat has no participants")?;
+                            .find(|owner| role_owners.contains(*owner))
+                            .context("VMCE defeat Houses are not registered")?;
                         ensure!(
-                            score_rows
-                                .first()
-                                .is_some_and(|score| sim.interner().resolve(score.owner)
-                                    != first_seat.owner_name),
+                            first_seat.owner != sim.interner().resolve(*first_house),
                             "retry probe did not reverse the actual score and seat order"
                         );
                         let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)
@@ -339,21 +344,29 @@ impl LiveLanCapture {
                                 "VMCE defeat player {} has the wrong House or colour",
                                 row.player
                             );
-                            let score = score_rows
+                            let role = role_rows
                                 .iter()
-                                .find(|score| {
-                                    sim.interner().resolve(score.owner) == assignment.owner_name
-                                })
-                                .context("VMCE defeat House has no score row")?;
+                                .find(|role| role.player == row.player)
+                                .context("VMCE defeat player has no role row")?;
                             ensure!(
-                                (row.kills, row.losses, row.built, row.score, row.income)
-                                    == (
-                                        score.kills,
-                                        score.losses,
-                                        score.built,
-                                        score.score,
-                                        score.credits_earned
-                                    ),
+                                row.owner == role.owner,
+                                "VMCE defeat player {} has the wrong role House",
+                                row.player
+                            );
+                            let values = role
+                                .facts
+                                .map(|facts| {
+                                    (
+                                        facts.kills,
+                                        facts.losses,
+                                        facts.built,
+                                        facts.score,
+                                        facts.credits_earned,
+                                    )
+                                })
+                                .unwrap_or((0, 0, 0, 0, 0));
+                            ensure!(
+                                (row.kills, row.losses, row.built, row.score, row.income) == values,
                                 "VMCE defeat statistics for {} do not match House {}",
                                 row.player,
                                 assignment.owner_name
@@ -474,12 +487,8 @@ impl LiveLanCapture {
                         // VMCE's won mission uses the native campaign score
                         // page 0x103; the lost mission opened VMCE's own
                         // defeat page above.
-                        let rows = state
-                            .match_state
-                            .sim_runtime
-                            .runtime()
-                            .map(|runtime| runtime.simulation.cooperative_score_rows().len())
-                            .unwrap_or(0);
+                        let rows =
+                            crate::app::vmce_result::statistics::role_count(state).unwrap_or(0);
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
                         ensure!(
                             rows == self.expected_players,
@@ -695,7 +704,8 @@ impl LiveLanCapture {
                         .context("VMCE victory simulation")?
                         .simulation;
                     let terminal = sim.terminal_score_snapshot();
-                    let live_scores = sim.cooperative_score_rows();
+                    let role_rows = crate::app::vmce_result::statistics::role_rows(state)
+                        .context("VMCE victory role rows")?;
                     ensure!(
                         statistics.rows.len() == self.expected_players,
                         "VMCE victory statistics have the wrong number of rows"
@@ -706,6 +716,10 @@ impl LiveLanCapture {
                             .iter()
                             .find(|assignment| assignment.participant_name == row.player)
                             .context("VMCE victory player has no frozen assignment")?;
+                        let role = role_rows
+                            .iter()
+                            .find(|role| role.player == row.player)
+                            .context("VMCE victory player has no role row")?;
                         let values = terminal
                             .and_then(|snapshot| {
                                 snapshot
@@ -725,24 +739,20 @@ impl LiveLanCapture {
                                     })
                             })
                             .or_else(|| {
-                                live_scores
-                                    .iter()
-                                    .find(|score| {
-                                        sim.interner().resolve(score.owner) == assignment.owner_name
-                                    })
-                                    .map(|score| {
-                                        (
-                                            score.kills,
-                                            score.losses,
-                                            score.built,
-                                            score.score,
-                                            score.credits_earned,
-                                        )
-                                    })
+                                role.facts.map(|facts| {
+                                    (
+                                        facts.kills,
+                                        facts.losses,
+                                        facts.built,
+                                        facts.score,
+                                        facts.credits_earned,
+                                    )
+                                })
                             })
                             .context("VMCE victory House has no score")?;
                         ensure!(
                             row.owner == assignment.owner_name
+                                && row.owner == role.owner
                                 && (row.kills, row.losses, row.built, row.score, row.income)
                                     == values,
                             "VMCE victory statistics for {} do not match House {}",
