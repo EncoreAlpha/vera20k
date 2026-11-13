@@ -2451,6 +2451,10 @@ fn poll_network_load_wait(
         return finish_network_load(state, session, observer);
     }
     if poll == NetworkLoadPoll::TimedOut {
+        #[cfg(feature = "vmce")]
+        if fail_vmce_loading_peer_timeout(state) {
+            return Ok(LoadingPump::Pending);
+        }
         let timed_out = native.progress_row.incomplete_remote_indices();
         let LoadingStage::AwaitingPeers { result, .. } = session.stage else {
             unreachable!()
@@ -2460,6 +2464,34 @@ fn poll_network_load_wait(
         state.frontend.loading_session = Some(session);
         Ok(LoadingPump::Pending)
     }
+}
+
+/// A VMCE LAN start/retry/next-stage load timed out waiting for a peer. It must
+/// not install the mission with a peer that never reached the loading screen:
+/// abort through the existing VMCE loading-failure owner so the peer is told,
+/// both peers show the reason, and the room returns to the LAN lobby. Stock
+/// Cooperative and native loads keep their original straggler-drop behavior
+/// because [`vmce_loading_peer_timeout`] returns `None` outside a VMCE load.
+#[cfg(feature = "vmce")]
+fn fail_vmce_loading_peer_timeout(state: &mut AppState) -> bool {
+    let Some(service) = state.match_state.lan_service.as_ref() else {
+        return false;
+    };
+    let Some(reason) = crate::app::lan_service::vmce_round::vmce_loading_peer_timeout(
+        &state.match_state.session,
+        service,
+    ) else {
+        return false;
+    };
+    let message = vmce_load_failure_message(reason);
+    fail_loading_with(
+        state,
+        LoadingFailurePolicy::RetryNetworkShell,
+        anyhow::anyhow!("{message}"),
+        true,
+        Some((reason.code(), true)),
+    );
+    true
 }
 
 /// Consuming handoff after the native wait has completed exactly once. A
@@ -3467,6 +3499,7 @@ pub(crate) fn vmce_load_failure_message(
         LoadingFailureReason::ConfigMismatch => "VERA:VmceLoadConfigMismatch",
         LoadingFailureReason::IdentityMismatch => "VERA:VmceLoadIdentityMismatch",
         LoadingFailureReason::LoadFailed => "VERA:VmceLoadFailed",
+        LoadingFailureReason::PeerTimeout => "VERA:VmceLoadPeerTimeout",
     })
 }
 

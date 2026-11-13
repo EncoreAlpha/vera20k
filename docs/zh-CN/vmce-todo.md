@@ -11,7 +11,7 @@ lang: zh-CN
 ## 当前路线
 
 1. 上游同步审查：已完成。
-2. 独立结算、重试和续关：已完成并待用户审查；验收构建 `vmce-phase2-final-r3` 的胜利进下一关、失败重试、最后一关结束均通过，残留风险见[基线](../vmce-baseline.md)。
+2. 独立结算、重试和续关：已完成并待用户审查；验收修复构建 `vmce-phase3-accept-r8` 的胜利进下一关、失败重试、最后一关结束、`--vera-outcome win/lose` 诊断及普通 Cooperative 重试/续关均通过，残留风险见[基线](../vmce-baseline.md)。
 3. 下一步：分阶段独立大厅、建房、选图、角色、准备、开局和任务中流程；每阶段验证并停下审查。
 4. 整个 VMCE 独立后实现 LAN/本地任务中存档，随后接入互联网建房和开局。
 
@@ -19,11 +19,14 @@ lang: zh-CN
 
 ## 阶段 2 审查修复（已完成，待用户审查）
 
-- 失败重试改为有界两阶段交接：房主等待全部 RetryAck 后经可靠队列发送 RetryCommit，并在其送达后才重载；客人收到 Go 后只回 ACK，收到 RetryCommit 才重载。ACK/提交丢失、队列满、传输失败和端无响应均有 600 bucket 上限，并以 `VERA:VmceRoundSendFailed` 返回大厅；客人在主机点 Continue/Retry 前等待 Go 不计时（无法与玩家慢操作区分），传输失败仍会退出。
-- 失败页 Esc 恢复原生存为：不直接离开房间；LAN 捕获通过 window handler 的生产分发函数验证，并在回执写 `escape_preserved_page`。
-- `cooperative_continuation_timing` 已改为共享的 `continuation_timing`；VMCE 消息使用自己的 `SIGNAL_LEN`，不再引用 Cooperative 消息/选项类型。`cooperative_score_rows`、`cooperative_difficulty`、`cooperative_admits/default_country` 继续作为通用模拟/名单数据使用。
-- 架构检查覆盖 VMCE 正式代码、会话测试和标记的 VMCE 诊断区域，并有覆盖全部禁止 token 与别名写法的负向注入用例。
-- 证据：构建 `vmce-phase3-final-r6`，`.scratch/phase3-accept-r6/` 的 `2p-win`、`2p-retry`、`2p-final` 全部通过；详见[基线](../vmce-baseline.md)。
+- **重试交接改为三段式、以应用层确认为准：** 房主 Go → 客人 RetryAck；房主 RetryCommit → 客人应用后回新的应用层 `RetryCommitAck`（不立即重载），房主每 120 bucket 重发提交（丢失的传输确认或应用确认都由新提交修复），收齐后才发 `RetryStart` 并冻结重载；客人只在收到 `RetryStart` 时重载。可靠队列排空不再被当作对端已应用；提交总期限只在进入提交阶段时设置一次（600 bucket），重发、重复 Go/提交/开始都不会延长。
+- **应用层存活检测：** 结算轮打开期间双方每 60 bucket 发 VMCE 心跳；玩家正常慢慢操作时对方无限等待，600 bucket 无心跳才以 `VERA:VmcePeerUnresponsive` 有界退出。重试交接进行中由交接自身期限判定，避免不可靠心跳发送饥饿抢先误判。
+- **有界可见失败：** 队列满、传输失败、多客人只收到部分提交、对端不响应、提交/确认丢失均经既有 LAN 离开所有者通知对端并显示本地化原因（`VERA:VmceRoundSendFailed`/`VmcePeerUnresponsive`）后返回 LAN 大厅；任何一端都不会在另一端等待或失败时重载。
+- **加载阶段：** VMCE 的开局/重试/续关网络加载在对端等待超时时不再按原版丢弃对端继续安装，而是经既有 VMCE 加载失败所有者以 `VERA:VmceLoadPeerTimeout` 取消并返回大厅；普通 Cooperative/原生加载保持原行为。
+- **结果诊断拆分：** VMCE 实时结果诊断（含 `--vera-outcome` 注入/武装段）与比分采集 VMCE fixture 各自成为独立 VMCE 文件，无标记区域、不调用 Cooperative 结果流程；`--vera-outcome win/lose` 改为识别 VMCE 自己的 `0x103` 胜利页与 VMCE 失败页（不再等待 VMCE 从不打开的旧 `coop_score_page`），退出走 VMCE 的 Leave。
+- **架构检查：** 整文件扫描 VMCE 生产代码（含 VMCE 线报文模块和共享文件中本阶段的 vmce 命名函数）、VMCE 会话测试及共享测试文件中的 VMCE 测试函数；共享能力允许清单记录职责和调用者；源码级调用图覆盖自由函数、关联函数、方法包装链、别名导入和 `macro_rules!` 包装，负向 fixture 逐项证明不会因移动或包装而通过。
+- 失败页 Esc 行为、结果页布局与现有胜利/重试/最终关流程、模拟和校验和保持不变。
+- 证据：构建 `vmce-phase3-accept-r8`，`.scratch/phase3-accept-r8/` 的 `2p-win`、`2p-retry`、`2p-final` 全部通过，`--vera-outcome win/lose` 双进程诊断与普通 Cooperative 重试/续关通过；详见[基线](../vmce-baseline.md)。
 
 ## 优先核查
 
@@ -48,7 +51,8 @@ lang: zh-CN
 
 ## 待验证
 
-- B10 已有有界投递与失败处理；真实丢包/ACK 丢失多进程场景、部分目标确认和部分应用层故障仍需验证。
+- B10 已有有界投递与失败处理，重试交接改为应用层提交确认 + `RetryStart`，对端静默/丢包/部分提交/加载阶段超时均有自动化测试；真实 OS 级丢包、跨机器和关间未响应场景仍未验证。
+- B94 结算页已加应用层心跳与静默检测（正常慢操作不计时）；关间房间的保活仍为残余。
 - B57 已实现结果确认后解锁；确认后立即离开及成员离开影响确认集合的边界仍需验证。
 - B58 已实现 Ready/Go 请求级复验；真实双进程修改、恢复与旧扫描迟到仍需验证。
 - B102 已确认现有规则协议与系列准入覆盖开局/关间/重试；房主侧原因提示、关间房间握手本身与真实数据变更采集仍为残余。

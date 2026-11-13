@@ -781,7 +781,7 @@ fn finish(state: &mut AppState) {
         .and_then(|page| page.campaign_end);
     match campaign_end {
         Some(model) => {
-            crate::app::lan_service::cooperative::release_transport(state);
+            crate::app::lan_service::release_transport(state);
             App::open_campaign_end_page(state, model);
         }
         None => return_to_shell(state),
@@ -791,7 +791,7 @@ fn finish(state: &mut AppState) {
 /// Main_Game's return after GameExit: the session toggles persist, then
 /// the mode's shell (LAN: a new BB).
 fn return_to_shell(state: &mut AppState) {
-    crate::app::lan_service::cooperative::release_transport(state);
+    crate::app::lan_service::release_transport(state);
     leave_result(state);
 }
 

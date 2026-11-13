@@ -38,29 +38,6 @@ pub(crate) fn hold_transport(state: &mut AppState) {
     }
 }
 
-/// BC6's exit to the shell: its last records (Quit's `0x24`) go out first,
-/// then the visit leaves the match scope as [`return_transport`] does.
-/// RESIDUAL: the `0x24` gets one transmission here; native's global manager
-/// keeps retrying it from the shell. A lost one leaves the partner on BC6
-/// until it quits too.
-pub(crate) fn release_transport(state: &mut AppState) {
-    if state.match_state.session_mode() != SessionMode::Lan {
-        return;
-    }
-    drain_match_requests(state);
-    let now = super::super::match_runtime::frame_pacer::frame_bucket(
-        super::super::match_runtime::frame_pacer::wall_clock_ms(),
-    );
-    service_transport(state, now);
-    if let Some(service) = state.match_state.lan_service.as_mut() {
-        if let Some(transport) = service.transport.as_mut() {
-            transport.connections_mut().reset();
-            transport.clear_lan_scope();
-        }
-        service.clear_setup();
-    }
-}
-
 /// One service pass while the round is open; false outside it.
 pub(super) fn poll(state: &mut AppState, now: u32) -> bool {
     if state.match_state.live_network.is_some()

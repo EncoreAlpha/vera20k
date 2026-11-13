@@ -39,7 +39,9 @@ pub(crate) use cooperative_round::{
 #[cfg(feature = "vmce")]
 mod vmce_result;
 #[cfg(feature = "vmce")]
-pub(crate) use vmce_result::{VmceResultEvent, VmceResultPhase, VmceRoundEnding, VmceRoundStep};
+pub(crate) use vmce_result::{
+    VmceResultEvent, VmceResultPhase, VmceRoundEnding, VmceRoundFailure, VmceRoundStep,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NetworkReturnContext {
@@ -327,6 +329,10 @@ pub(crate) enum NetworkLoadingRequest {
     /// A guest consumed the host's retry Go and is reloading.
     #[cfg(feature = "vmce")]
     VmceResultRetryAck,
+    /// A guest's application applied the host's retry delivery commit. The
+    /// host waits for this application proof, not for a queue drain.
+    #[cfg(feature = "vmce")]
+    VmceResultRetryCommitAck,
     #[cfg(feature = "vmce")]
     VmceResultRetryVote,
     /// VMCE result round: leave the room from the result page.
@@ -1831,6 +1837,23 @@ impl MatchSession {
         network.local_map_source = Some(source);
         network.local_map_effective_digest = Some(effective_digest);
         Ok(())
+    }
+
+    /// Test-only: install the map identity a frozen start validates. The
+    /// interactive lobby derives the same fields through capacity/verification
+    /// owners that a fixture has no lobby for.
+    #[cfg(test)]
+    pub(crate) fn set_network_test_map_identity(
+        &mut self,
+        metadata: NetworkMapMetadata,
+        source: crate::map::source::LoadedMapSource,
+        effective_digest: String,
+    ) {
+        if let Some(network) = self.network.as_mut() {
+            network.map_metadata = Some(metadata);
+            network.local_map_source = Some(source);
+            network.local_map_effective_digest = Some(effective_digest);
+        }
     }
 
     pub(crate) fn accept_verified_network_map_source(

@@ -113,7 +113,38 @@ pub(super) struct VmceRoundState {
     /// This guest consumed the retry Go and is waiting for the host's
     /// delivery commit before it reloads.
     retry_go_pending: bool,
+    /// Host: per raw row, the guest reported that its application applied the
+    /// retry delivery commit. A transport acknowledgement is not this proof.
+    retry_commit_acks: [bool; 4],
+    /// Guest: this application applied the host's retry commit. The reload
+    /// still waits for the host's RetryStart.
+    retry_commit_received: bool,
+    /// Guest: the host's RetryStart was consumed; a duplicate never reloads
+    /// the retry stage twice.
+    retry_started: bool,
+    /// A bounded handoff failure the app must report when the round exits.
+    failure: Option<VmceRoundFailure>,
     result_agreement: Option<VmceResultAgreement>,
+}
+
+/// A result-round handoff that cannot complete. Its i18n key is the visible
+/// reason the round owner shows before returning both peers to the LAN lobby.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VmceRoundFailure {
+    /// A round message could not be queued or the transport failed.
+    Delivery,
+    /// A connected peer stopped answering the result-round application
+    /// heartbeat for the bounded window.
+    PeerUnresponsive,
+}
+
+impl VmceRoundFailure {
+    pub(crate) const fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Delivery => "VERA:VmceRoundSendFailed",
+            Self::PeerUnresponsive => "VERA:VmcePeerUnresponsive",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,9 +186,18 @@ pub(crate) enum VmceResultEvent {
     RetryAck {
         source: usize,
     },
-    /// The host proved the retry Go reached every guest and committed the
-    /// reload; the guest may now freeze.
+    /// The host proved the retry Go reached every guest; the guest now waits
+    /// for the host's delivery commit.
     RetryCommit,
+    /// The host proved every guest applied the retry commit and reloaded it
+    /// with RetryStart; the guest may reload now.
+    RetryStart,
+    /// A guest's application applied the host's retry delivery commit.
+    RetryCommitAck {
+        source: usize,
+    },
+    /// A peer proved the round handoff cannot complete; leave with the reason.
+    HandoffFailed(VmceRoundFailure),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,7 +210,8 @@ pub(crate) enum VmceRoundStep {
     Next,
     Retry,
     CampaignEnd,
-    /// Leave the round and return to the shell.
+    /// Leave the round and return to the shell. `true` carries a visible
+    /// handoff failure reason from [`Self::failure`].
     Exit(bool),
     /// A WOL-style room continues without another loading round.
     ContinueInRoom,
@@ -185,6 +226,10 @@ impl VmceRoundState {
             retry_votes: [false; 4],
             retry_acks: [false; 4],
             retry_go_pending: false,
+            retry_commit_acks: [false; 4],
+            retry_commit_received: false,
+            retry_started: false,
+            failure: None,
             result_agreement: None,
         }
     }
@@ -238,6 +283,7 @@ impl VmceRoundState {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn retry_go_pending(&self) -> bool {
         self.retry_go_pending
     }
@@ -265,6 +311,47 @@ impl VmceRoundState {
         if let Some(ack) = self.retry_acks.get_mut(row) {
             *ack = true;
         }
+    }
+
+    pub(super) fn retry_commit_acked(&self, row: usize) -> bool {
+        self.retry_commit_acks.get(row).copied().unwrap_or(false)
+    }
+
+    pub(super) fn note_retry_commit_ack(&mut self, row: usize) {
+        if let Some(ack) = self.retry_commit_acks.get_mut(row) {
+            *ack = true;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn retry_commit_received(&self) -> bool {
+        self.retry_commit_received
+    }
+
+    /// Record the guest's application-level commit. Applied duplicates keep
+    /// answering the host's retransmitted commit, so the flag is idempotent.
+    pub(super) fn mark_retry_commit_received(&mut self) {
+        self.retry_commit_received = true;
+    }
+
+    /// Record the guest's one accepted RetryStart. A duplicate returns false
+    /// and must not reload a second time.
+    pub(super) fn mark_retry_started(&mut self) -> bool {
+        if self.retry_started {
+            return false;
+        }
+        self.retry_started = true;
+        true
+    }
+
+    pub(super) fn failure(&self) -> Option<VmceRoundFailure> {
+        self.failure
+    }
+
+    /// Stop the round with a visible handoff failure. The first failure stays
+    /// authoritative; a later record cannot overwrite the player's reason.
+    pub(super) fn note_failure(&mut self, failure: VmceRoundFailure) {
+        self.failure.get_or_insert(failure);
     }
 
     pub(super) fn clear_retry_vote(&mut self, row: usize) {
@@ -1145,10 +1232,67 @@ impl MatchSession {
     }
 
     /// This guest accepted the retry Go and still waits for the host commit.
+    #[cfg(test)]
     pub(crate) fn vmce_result_retry_go_pending(&self) -> bool {
         self.vmce_result_phase()
             .and_then(|round| round.vmce.as_ref())
             .is_some_and(VmceRoundState::retry_go_pending)
+    }
+
+    /// Every connected guest's application applied the host's retry commit.
+    pub(crate) fn vmce_result_retry_commit_acks_complete(&self) -> bool {
+        let Some(NetworkPhase::VmceResult {
+            connected,
+            launch,
+            round,
+            ..
+        }) = self.network.as_ref().map(|network| &network.phase)
+        else {
+            return false;
+        };
+        let Some(vmce) = round.vmce.as_ref() else {
+            return false;
+        };
+        connected.iter().all(|index| {
+            let Some(human) = launch.humans.get(*index) else {
+                return true;
+            };
+            if human.is_observer() {
+                return true;
+            }
+            match human.raw_slot_index {
+                Some(0) | None => true,
+                Some(row) if row < 4 => vmce.retry_commit_acked(usize::from(row)),
+                Some(_) => true,
+            }
+        })
+    }
+
+    /// This guest applied the retry commit and waits for the host's start.
+    #[cfg(test)]
+    pub(crate) fn vmce_result_retry_commit_received(&self) -> bool {
+        self.vmce_result_phase()
+            .and_then(|round| round.vmce.as_ref())
+            .is_some_and(VmceRoundState::retry_commit_received)
+    }
+
+    /// The bounded handoff failure this round must report when it exits.
+    pub(crate) fn vmce_result_failure(&self) -> Option<VmceRoundFailure> {
+        self.vmce_result_phase()
+            .and_then(|round| round.vmce.as_ref())
+            .and_then(VmceRoundState::failure)
+    }
+
+    /// Stop the round locally with a visible handoff failure: the page closes,
+    /// the departure owner notifies peers, and nothing may reload.
+    pub(crate) fn vmce_result_abort(&mut self, failure: VmceRoundFailure) -> anyhow::Result<()> {
+        let VmceResultParts { round, .. } = vmce_result_parts(self)?;
+        round.outcome = Some(false);
+        if let Some(vmce) = round.vmce.as_mut() {
+            vmce.note_failure(failure);
+            vmce.retry_go_pending = false;
+        }
+        Ok(())
     }
 
     pub(crate) fn vmce_result_continue_enabled(&self) -> bool {
@@ -1371,14 +1515,46 @@ impl MatchSession {
                 Ok(VmceRoundStep::None)
             }
             VmceResultEvent::RetryCommit => {
+                // The guest applies the delivery commit now and proves it with
+                // an application ACK; it still stays on the page until the
+                // host's RetryStart. A retransmitted commit re-answers the
+                // host, which repairs a lost application ACK.
                 if !host
-                    && round.vmce.as_mut().is_some_and(|vmce| {
-                        vmce.ending() == VmceRoundEnding::Retry && vmce.commit_retry_go()
-                    })
+                    && round.outcome.is_some()
+                    && let Some(vmce) = round.vmce.as_mut()
+                    && vmce.ending() == VmceRoundEnding::Retry
+                {
+                    let _ = vmce.commit_retry_go();
+                    vmce.mark_retry_commit_received();
+                    requests.push(NetworkLoadingRequest::VmceResultRetryCommitAck);
+                }
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::RetryStart => {
+                if !host
+                    && round.outcome.is_some()
+                    && let Some(vmce) = round.vmce.as_mut()
+                    && vmce.ending() == VmceRoundEnding::Retry
+                    && vmce.mark_retry_started()
                 {
                     return Ok(VmceRoundStep::Retry);
                 }
                 Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::RetryCommitAck { source } => {
+                if host && let (Some(row), Some(vmce)) = (row_of(source), round.vmce.as_mut()) {
+                    vmce.note_retry_commit_ack(row);
+                }
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::HandoffFailed(failure) => {
+                round.outcome = Some(false);
+                if let Some(vmce) = round.vmce.as_mut() {
+                    vmce.note_failure(failure);
+                    vmce.retry_go_pending = false;
+                }
+                requests.push(NetworkLoadingRequest::VmceResultLeave);
+                Ok(VmceRoundStep::Exit(true))
             }
         }
     }

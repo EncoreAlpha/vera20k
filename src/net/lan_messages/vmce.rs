@@ -1,8 +1,9 @@
 //! VMCE-only records on the global connection envelope.
 //!
-//! Kinds `0x36..0x3E` are VERA-only, outside the native BC6 records: the
+//! Kinds `0x36..0x45` are VERA-only, outside the native BC6 records: the
 //! intermission identity, the terminal-result agreement, round control, the
-//! VMCE options record and the next-stage identity. The wire layout is
+//! VMCE options record, the next-stage identity and the result-round signals
+//! (retry commit proof, application liveness and visible handoff failure). The wire layout is
 //! unchanged from the pre-split module; the shared `cooperative` module keeps
 //! only the native BC6 records.
 
@@ -30,8 +31,14 @@ pub enum VmceRoundControl {
     Begin,
     Ack,
     Go,
-    /// The host proved the retry Go reached every guest; guests may reload.
+    /// The host queues the retry gate to every guest once the Go was
+    /// acknowledged; a guest applies it and proves that application with a
+    /// `RetryCommitAck` before it may reload.
     RetryCommit,
+    /// The host proved every guest applied the retry commit; guests reload
+    /// now. The host freezes immediately after queueing this record, so its
+    /// own reload is not evidence that the guest applied it.
+    RetryStart,
 }
 
 impl VmceRoundControl {
@@ -45,6 +52,7 @@ impl VmceRoundControl {
             Self::Ack => 1,
             Self::Go => 2,
             Self::RetryCommit => 3,
+            Self::RetryStart => 4,
         };
         message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17].copy_from_slice(&nonce);
         Ok(message)
@@ -59,6 +67,7 @@ impl VmceRoundControl {
             1 => Self::Ack,
             2 => Self::Go,
             3 => Self::RetryCommit,
+            4 => Self::RetryStart,
             _ => return None,
         };
         let nonce: [u8; 16] = message.bytes[SIGNAL_LEN + 1..SIGNAL_LEN + 17]
@@ -81,6 +90,16 @@ pub enum VmceSignal {
     Leave,
     /// A guest consumed the host's retry Go and is about to reload.
     RetryAck,
+    /// A guest's application applied the host's retry delivery commit. This
+    /// is application-layer proof, unlike a transport acknowledgement.
+    RetryCommitAck,
+    /// Result-round application liveness while a human decides: a healthy but
+    /// idle peer keeps the other side waiting; silence is bounded.
+    Heartbeat,
+    /// The sender's result round cannot complete; the receiver leaves too.
+    RoundFailed,
+    /// The sender's counterpart stopped answering result-round heartbeats.
+    PeerUnresponsive,
 }
 
 impl VmceSignal {
@@ -92,6 +111,10 @@ impl VmceSignal {
             Self::Ready => 0x3f,
             Self::Leave => 0x40,
             Self::RetryAck => 0x41,
+            Self::RetryCommitAck => 0x42,
+            Self::Heartbeat => 0x43,
+            Self::RoundFailed => 0x44,
+            Self::PeerUnresponsive => 0x45,
         }
     }
 
@@ -115,6 +138,10 @@ impl VmceSignal {
             0x3f => Some(Self::Ready),
             0x40 => Some(Self::Leave),
             0x41 => Some(Self::RetryAck),
+            0x42 => Some(Self::RetryCommitAck),
+            0x43 => Some(Self::Heartbeat),
+            0x44 => Some(Self::RoundFailed),
+            0x45 => Some(Self::PeerUnresponsive),
             _ => None,
         }
     }
@@ -318,6 +345,13 @@ mod tests {
             (VmceSignal::StageRejected, 0x37u32),
             (VmceSignal::StageAbsent, 0x38),
             (VmceSignal::RetryVote, 0x39),
+            (VmceSignal::Ready, 0x3f),
+            (VmceSignal::Leave, 0x40),
+            (VmceSignal::RetryAck, 0x41),
+            (VmceSignal::RetryCommitAck, 0x42),
+            (VmceSignal::Heartbeat, 0x43),
+            (VmceSignal::RoundFailed, 0x44),
+            (VmceSignal::PeerUnresponsive, 0x45),
         ] {
             let bytes = signal.encode("Host").unwrap();
             assert_eq!(bytes.len(), SIGNAL_LEN);

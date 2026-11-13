@@ -560,16 +560,16 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/frontend/state.rs", 1),
     ("app/initialize.rs", 1),
     ("app/input/multiplayer_setup.rs", 4),
-    ("app/lan_service.rs", 75),
+    ("app/lan_service.rs", 81),
     ("app/lan_service/cooperative.rs", 19),
     ("app/lan_service/maps.rs", 4),
     ("app/lan_service/options.rs", 30),
     ("app/loading/fresh_scenario.rs", 9),
     ("app/loading/init.rs", 10),
-    ("app/loading/pump.rs", 12),
+    ("app/loading/pump.rs", 14),
     ("app/loading/transitions.rs", 1),
     ("app/match_bootstrap.rs", 33),
-    ("app/match_runtime/session.rs", 43),
+    ("app/match_runtime/session.rs", 44),
     ("app/match_runtime/session/cooperative_round.rs", 37),
     ("app/match_runtime/sim_tick.rs", 3),
     ("app/mod.rs", 3),
@@ -609,7 +609,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 463;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 472;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -707,7 +707,7 @@ fn blank_source_ranges(source: &str, ranges: &[(usize, usize)]) -> String {
 /// Capture/diagnostics tooling is compiled into the app but is not a gameplay
 /// owner. It is reported separately and pinned so the cluster stays visible
 /// without being treated as shared-owner coupling.
-const VMCE_DIAGNOSTICS_GATE_TOTAL: usize = 193;
+const VMCE_DIAGNOSTICS_GATE_TOTAL: usize = 189;
 
 #[test]
 fn vmce_production_gates_stay_within_budgets() {
@@ -3720,10 +3720,15 @@ fn test_gated_files(files: &[SourceFile]) -> BTreeSet<String> {
     gated
 }
 
-/// The VMCE settlement flow must not call a stock Cooperative result owner.
-/// It may read shared simulation, roster and difficulty helpers, but not the
-/// Cooperative round state/flow, its result page model, its transport owner or
-/// its message definitions.
+/// VMCE's production result flow, its session tests and its diagnostics must
+/// not call a stock Cooperative result owner. Shared simulation, roster,
+/// transport and UI capabilities stay callable through the documented
+/// allowlist below; the Cooperative result flow itself (its round, page model,
+/// transport owner and messages) is forbidden by name. The bare
+/// `CooperativeRound` name is not listed: `NetworkPhase::CooperativeRound` is
+/// the shared stock network visit phase that shared session accessors legitimately
+/// match for both modes, while the result-flow types below name the actual
+/// Cooperative result owners.
 const VMCE_FORBIDDEN_COOPERATIVE_TOKENS: &[&str] = &[
     "cooperative_round",
     "cooperative_round::",
@@ -3731,7 +3736,6 @@ const VMCE_FORBIDDEN_COOPERATIVE_TOKENS: &[&str] = &[
     "enter_cooperative_round",
     "freeze_cooperative_round",
     "quit_cooperative_round",
-    "CooperativeRound",
     "cooperative_continuation_timing",
     "lan_messages::cooperative::",
     "lan_service::cooperative::",
@@ -3749,17 +3753,229 @@ const VMCE_FORBIDDEN_COOPERATIVE_TOKENS: &[&str] = &[
     "CooperativeOptionsRecord",
     "CooperativeAiWords",
     "CooperativeHumanWords",
+    "stock_cooperative",
 ];
 
-/// Line numbers and tokens in `source` that reference a Cooperative-owned
-/// result flow. Comments are ignored; the caller decides which files/regions
-/// are VMCE-owned so stock Cooperative diagnostics stay legal.
-fn vmce_forbidden_references(source: &str) -> Vec<(usize, &'static str)> {
+/// Tokens only VMCE's diagnostics must never use. Production result owners
+/// clear the shared stock result-page slots for page exclusivity (the slot is
+/// shared frontend state, not the Cooperative result flow), but a diagnostic
+/// that waits on or reads the stock Cooperative page instead of VMCE's own
+/// page is the defect the result-diagnostic split removes.
+const VMCE_FORBIDDEN_DIAGNOSTIC_TOKENS: &[&str] = &["coop_score"];
+
+/// Every token the diagnostic scan rejects.
+fn vmce_diagnostic_tokens() -> Vec<&'static str> {
+    VMCE_FORBIDDEN_COOPERATIVE_TOKENS
+        .iter()
+        .chain(VMCE_FORBIDDEN_DIAGNOSTIC_TOKENS)
+        .copied()
+        .collect()
+}
+
+/// VERA capabilities VMCE-owned code shares with stock Cooperative: every
+/// identifier a VMCE production path, test or diagnostic may call, with the
+/// owner's responsibility and the VMCE callers. Any `cooperative_*`-prefixed
+/// identifier used by VMCE-owned code must appear here; Cooperative-owned
+/// module and type names never do. The dependency check treats a listed helper
+/// as a shared boundary, so its body is not traversed for result-flow
+/// dependencies.
+const VMCE_SHARED_CAPABILITY_ALLOWLIST: &[(&str, &str, &str)] = &[
+    (
+        "cooperative_score_rows",
+        "simulation: House score rows of a finished match, projected into a result page",
+        "app/vmce_result/flow.rs, app/vmce_result/victory.rs, VMCE result diagnostics",
+    ),
+    (
+        "cooperative_difficulty",
+        "simulation: the difficulty projection a cooperative campaign match runs at",
+        "app/vmce_result/flow.rs",
+    ),
+    (
+        "continuation_timing",
+        "net/lockstep: shared continuation frame timing table",
+        "app/vmce_round.rs, app/cooperative_round.rs",
+    ),
+    (
+        "drain_match_requests",
+        "reliable LAN setup queue: one dispatcher observes queued participant state and sends NetworkLoadingRequest variants (setup, cooperative round, VMCE result)",
+        "app/lan_service.rs, app/lan_service/vmce_round.rs",
+    ),
+    (
+        "network_setup",
+        "session/roster: the live network visit's admitted launch and roster",
+        "app/vmce_result/*, VMCE result diagnostics",
+    ),
+    (
+        "network_vmce_assignments",
+        "session/roster: frozen VMCE role/House assignments of the live visit",
+        "app/vmce_result/*, VMCE result diagnostics",
+    ),
+    (
+        "network_connected_source_indices",
+        "session/roster: connected participant indices of the live visit",
+        "app/vmce_result/victory.rs",
+    ),
+    (
+        "network_player_ready",
+        "session/roster observation: a participant's Ready state in the live visit",
+        "app/shell_network_setup, VMCE setup/result diagnostics",
+    ),
+    (
+        "network_map_status",
+        "session/roster observation: a participant's map acceptance status in the live visit",
+        "app/shell_network_setup, VMCE setup/result diagnostics",
+    ),
+];
+
+/// Whether `identifier` is a documented shared capability.
+fn vmce_shared_capability_allowed(identifier: &str) -> bool {
+    VMCE_SHARED_CAPABILITY_ALLOWLIST
+        .iter()
+        .any(|(capability, _, _)| *capability == identifier)
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Whole identifiers in blanked `code` that begin with `cooperative_`.
+fn cooperative_prefixed_identifiers(code: &str) -> Vec<&str> {
+    const PREFIX: &str = "cooperative_";
+    let bytes = code.as_bytes();
     let mut found = Vec::new();
-    for (line_number, line) in source.lines().enumerate() {
-        let code = line.split("//").next().unwrap_or("");
-        for token in VMCE_FORBIDDEN_COOPERATIVE_TOKENS {
-            if code.contains(token) {
+    for (at, _) in code.match_indices(PREFIX) {
+        if at > 0 && is_identifier_byte(bytes[at - 1]) {
+            continue;
+        }
+        let mut end = at + PREFIX.len();
+        while bytes.get(end).is_some_and(|byte| is_identifier_byte(*byte)) {
+            end += 1;
+        }
+        found.push(&code[at..end]);
+    }
+    found
+}
+
+/// Files that hold VMCE's own result flow. Their whole source is owned: the
+/// result pages, the round/session owners, their tests, the VMCE result
+/// diagnostic and the VMCE score-capture fixtures are scanned end to end. No
+/// marked region exists, so moving a call out of a region cannot hide it.
+/// `net/lan_messages/vmce.rs` is VMCE's whole wire module for this phase.
+const VMCE_RESULT_OWNED_FILES: &[&str] = &[
+    "app/vmce_result/",
+    "app/vmce_round.rs",
+    "app/lan_service/vmce_round.rs",
+    "app/match_runtime/session/vmce_result",
+    "app/frontend/skirmish_shell_render/vmce_defeat.rs",
+    "app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+    "app/diagnostics/shell_capture/score/vmce_fixture.rs",
+    "net/lan_messages/vmce.rs",
+];
+
+fn vmce_owned_result_file(rel: &str) -> bool {
+    VMCE_RESULT_OWNED_FILES.iter().any(|entry| {
+        if entry.ends_with('/') {
+            rel.starts_with(entry)
+        } else if let Some(rest) = rel.strip_prefix(entry) {
+            rest.is_empty() || rest.starts_with(".rs") || rest.starts_with('/')
+        } else {
+            false
+        }
+    })
+}
+
+/// One owned segment the dependency guard reads: a whole VMCE-owned file, one
+/// VMCE-named production function in a shared file, or one VMCE test function
+/// in a shared test file.
+#[derive(Debug, Clone)]
+struct VmceOwnedScope {
+    /// Human-readable scope for violation messages.
+    label: String,
+    /// Path from `src/` of the file that defines the module context.
+    file: String,
+    /// Whole-file ownership: same-file function calls stay internal.
+    whole_file: bool,
+    /// Comments and literals blanked, so only code is scanned.
+    code: String,
+}
+
+fn vmce_owned_scopes(files: &[SourceFile]) -> Vec<VmceOwnedScope> {
+    let mut scopes = Vec::new();
+    for file in files {
+        // The guard's own source contains the forbidden token names as data.
+        if file.rel == "architecture_guards.rs" {
+            continue;
+        }
+        if vmce_owned_result_file(&file.rel) {
+            scopes.push(VmceOwnedScope {
+                label: format!("file:{}", file.rel),
+                file: file.rel.clone(),
+                whole_file: true,
+                code: file.blanked.clone(),
+            });
+            continue;
+        }
+        // This phase's VMCE production and test functions in shared files are
+        // owned by name: `vmce_*` code may not reach the Cooperative result
+        // flow, no matter which shared module houses it.
+        let test_only_file = file.production.is_none();
+        let test_ranges = if test_only_file {
+            Vec::new()
+        } else {
+            cfg_test_items(&file.blanked)
+        };
+        for definition in function_definitions(&file.blanked, &impl_blocks(&file.blanked)) {
+            if !definition.name.to_ascii_lowercase().contains("vmce") {
+                continue;
+            }
+            let in_test_code = test_only_file
+                || test_ranges
+                    .iter()
+                    .any(|&(start, end)| definition.start >= start && definition.start <= end);
+            let label = if in_test_code {
+                format!("test-function:{}::{}", file.rel, definition.name)
+            } else {
+                format!("function:{}::{}", file.rel, definition.name)
+            };
+            scopes.push(VmceOwnedScope {
+                label,
+                file: file.rel.clone(),
+                whole_file: false,
+                code: file.blanked[definition.start..=definition.body_end].to_owned(),
+            });
+        }
+    }
+    scopes
+}
+
+/// A qualified shared-capability allowlist entry (a shared enum variant, if
+/// one is ever listed) is stripped before the token scan: it names shared
+/// LAN lifecycle, not the Cooperative result flow.
+fn vmce_allowed_qualified_reference(identifier: &str) -> bool {
+    identifier.contains("::")
+}
+
+fn strip_allowed_qualified_references(line: &str) -> Option<String> {
+    let mut stripped: Option<String> = None;
+    for (capability, _, _) in VMCE_SHARED_CAPABILITY_ALLOWLIST {
+        if !vmce_allowed_qualified_reference(capability) || !line.contains(capability) {
+            continue;
+        }
+        let target = stripped.get_or_insert_with(|| line.to_owned());
+        *target = target.replace(capability, " ");
+    }
+    stripped
+}
+
+/// Line numbers and tokens in blanked `code` that reference a Cooperative
+/// result owner.
+fn vmce_forbidden_references(code: &str, tokens: &[&'static str]) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    for (line_number, line) in code.lines().enumerate() {
+        let stripped = strip_allowed_qualified_references(line);
+        let scanned = stripped.as_deref().unwrap_or(line);
+        for token in tokens {
+            if scanned.contains(token) {
                 found.push((line_number + 1, *token));
             }
         }
@@ -3767,86 +3983,1392 @@ fn vmce_forbidden_references(source: &str) -> Vec<(usize, &'static str)> {
     found
 }
 
-fn marked_region<'a>(source: &'a str, begin: &str, end: &str) -> &'a str {
-    let start = source
-        .find(begin)
-        .unwrap_or_else(|| panic!("missing {begin}"));
-    let stop = source[start..]
-        .find(end)
-        .unwrap_or_else(|| panic!("missing {end} after {begin}"));
-    &source[start..start + stop]
+/// Diagnostics live under `app/diagnostics/`: their scan also rejects a wait on
+/// a stock Cooperative result page slot.
+fn vmce_diagnostics_scope(scope: &VmceOwnedScope) -> bool {
+    scope.file.starts_with("app/diagnostics/")
 }
 
-#[test]
-fn vmce_result_owners_do_not_call_the_cooperative_result_flow() {
-    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let files = source_files(&src_root);
-    let whole = [
-        "app/vmce_result/",
-        "app/vmce_round.rs",
-        "app/lan_service/vmce_round.rs",
-        "app/match_runtime/session/vmce_result",
-        "app/frontend/skirmish_shell_render/vmce_defeat.rs",
-    ];
-    let regions = [
-        (
-            "app/diagnostics/shell_capture/score.rs",
-            "// VMCE-FIXTURE-BEGIN",
-            "// VMCE-FIXTURE-END",
-        ),
-        (
-            "app/diagnostics/shell_capture/movies/lan/live.rs",
-            "// VMCE-RESULT-BEGIN",
-            "// VMCE-RESULT-END",
-        ),
-    ];
+/// Direct dependency violations inside the owned scopes: a forbidden
+/// Cooperative result token, or a `cooperative_*` identifier that is not a
+/// documented shared capability.
+fn vmce_owned_reference_violations(scopes: &[VmceOwnedScope]) -> Vec<String> {
+    let diagnostic_tokens = vmce_diagnostic_tokens();
     let mut violations = Vec::new();
-    for file in files {
-        let mut inspected = Vec::new();
-        if whole.iter().any(|prefix| file.rel.starts_with(prefix)) {
-            inspected.push(file.source.as_str());
+    for scope in scopes {
+        let tokens: &[&str] = if vmce_diagnostics_scope(scope) {
+            &diagnostic_tokens
+        } else {
+            VMCE_FORBIDDEN_COOPERATIVE_TOKENS
+        };
+        for (line, token) in vmce_forbidden_references(&scope.code, tokens) {
+            violations.push(format!(
+                "{}:{}: Cooperative result token {token:?} in VMCE-owned code",
+                scope.label, line
+            ));
         }
-        for (path, begin, end) in regions {
-            if file.rel == path {
-                inspected.push(marked_region(&file.source, begin, end));
-            }
-        }
-        for source in inspected {
-            for (line, token) in vmce_forbidden_references(source) {
-                violations.push(format!("{}:{}: {token}", file.rel, line));
+        for identifier in cooperative_prefixed_identifiers(&scope.code) {
+            if !vmce_shared_capability_allowed(identifier) {
+                violations.push(format!(
+                    "{}: cooperative_* identifier {identifier:?} is not a documented shared capability",
+                    scope.label
+                ));
             }
         }
     }
+    violations
+}
+
+/// One `impl` block of a blanked source: its body range and the implemented
+/// type's terminal name, when the header names one.
+#[derive(Debug, Clone)]
+struct ImplBlock {
+    open: usize,
+    close: usize,
+    type_name: Option<String>,
+}
+
+/// One `fn` item of a blanked source.
+#[derive(Debug, Clone)]
+struct FunctionDefinition {
+    name: String,
+    /// Byte offset of the `fn` keyword.
+    start: usize,
+    /// Byte offsets of the body braces, inclusive.
+    body_start: usize,
+    body_end: usize,
+    /// Declared inside an `impl` block.
+    method: bool,
+}
+
+fn function_definitions(code: &str, impl_blocks: &[ImplBlock]) -> Vec<FunctionDefinition> {
+    let bytes = code.as_bytes();
+    let mut definitions = Vec::new();
+    for (at, _) in code.match_indices("fn") {
+        if at > 0 && is_identifier_byte(bytes[at - 1]) {
+            continue;
+        }
+        let mut cursor = at + 2;
+        if !bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            continue;
+        }
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| is_identifier_byte(*byte))
+        {
+            cursor += 1;
+        }
+        if cursor == name_start {
+            continue;
+        }
+        let name = code[name_start..cursor].to_owned();
+        let mut depth: i32 = 0;
+        let mut previous = 0u8;
+        let mut body_open = None;
+        while cursor < bytes.len() {
+            let byte = bytes[cursor];
+            match byte {
+                b'(' | b'[' | b'<' => depth += 1,
+                b')' | b']' => depth -= 1,
+                b'>' if previous != b'-' && previous != b'=' => depth -= 1,
+                b'{' if depth <= 0 => {
+                    body_open = Some(cursor);
+                    break;
+                }
+                b';' if depth <= 0 => break,
+                _ => {}
+            }
+            previous = byte;
+            cursor += 1;
+        }
+        let Some(open) = body_open else {
+            continue;
+        };
+        let Some(close) = closing(code, open, b'{', b'}') else {
+            continue;
+        };
+        definitions.push(FunctionDefinition {
+            name,
+            start: at,
+            body_start: open,
+            body_end: close,
+            method: impl_blocks
+                .iter()
+                .any(|block| at > block.open && at < block.close),
+        });
+    }
+    definitions
+}
+
+fn impl_blocks(code: &str) -> Vec<ImplBlock> {
+    let bytes = code.as_bytes();
+    let mut blocks = Vec::new();
+    for (at, _) in code.match_indices("impl") {
+        if at > 0 && is_identifier_byte(bytes[at - 1]) {
+            continue;
+        }
+        let after = at + 4;
+        let Some(&next) = bytes.get(after) else {
+            continue;
+        };
+        if !next.is_ascii_whitespace() && next != b'<' {
+            continue;
+        }
+        let mut depth: i32 = 0;
+        let mut previous = 0u8;
+        let mut cursor = after;
+        let mut body_open = None;
+        while cursor < bytes.len() {
+            let byte = bytes[cursor];
+            match byte {
+                b'(' | b'[' | b'<' => depth += 1,
+                b')' | b']' => depth -= 1,
+                b'>' if previous != b'-' && previous != b'=' => depth -= 1,
+                b'{' if depth <= 0 => {
+                    body_open = Some(cursor);
+                    break;
+                }
+                b';' if depth <= 0 => break,
+                _ => {}
+            }
+            previous = byte;
+            cursor += 1;
+        }
+        if let Some(open) = body_open
+            && let Some(close) = closing(code, open, b'{', b'}')
+        {
+            blocks.push(ImplBlock {
+                open,
+                close,
+                type_name: impl_type_name(&code[after..open]),
+            });
+        }
+    }
+    blocks
+}
+
+/// The implemented type's terminal name from an `impl` header, e.g. `App` for
+/// `impl App`, `VmceSignal` for `impl VmceSignal`, and `Foo` for
+/// `impl<T> Trait for Foo<T>`. `None` for tuple/primitive impls.
+fn impl_type_name(header: &str) -> Option<String> {
+    let mut target = match header.rfind(" for ") {
+        Some(index) => &header[index + 5..],
+        None => header,
+    }
+    .trim();
+    // Skip a leading generic parameter list: `impl<T> Foo<T>`.
+    if target.starts_with('<') {
+        let mut depth = 0i32;
+        let mut close = None;
+        for (offset, byte) in target.bytes().enumerate() {
+            match byte {
+                b'<' => depth += 1,
+                b'>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        target = target.get(close? + 1..)?.trim();
+    }
+    if let Some(index) = target.find('<') {
+        target = target[..index].trim();
+    }
+    let target = target
+        .rsplit("::")
+        .next()
+        .unwrap_or(target)
+        .trim()
+        .trim_start_matches('&')
+        .trim();
+    if target.is_empty() || !target.bytes().all(is_identifier_byte) {
+        return None;
+    }
+    Some(target.to_owned())
+}
+
+#[derive(Debug, Clone)]
+struct FunctionCall {
+    path: Vec<String>,
+    /// `receiver.method(...)`: the receiver's type is not resolved by this
+    /// source-level scan, so method bodies are covered by the direct token scan
+    /// of owned files instead of the call graph.
+    method: bool,
+}
+
+const RUST_NON_CALL_KEYWORDS: &[&str] = &[
+    "if", "else", "while", "loop", "for", "match", "return", "let", "fn", "in", "as", "where",
+    "impl", "pub", "crate", "self", "super", "use", "mod", "struct", "enum", "trait", "type",
+    "const", "static", "unsafe", "async", "await", "move", "ref", "mut", "dyn", "box", "true",
+    "false",
+];
+
+/// Call sites in blanked `code`, with whole-path segments for `a::b::call(...)`
+/// and one segment for `call(...)`.
+fn function_calls(code: &str) -> Vec<FunctionCall> {
+    let bytes = code.as_bytes();
+    let mut calls = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if !is_identifier_byte(bytes[at]) || (at > 0 && is_identifier_byte(bytes[at - 1])) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        let mut end = at + 1;
+        while end < bytes.len() && is_identifier_byte(bytes[end]) {
+            end += 1;
+        }
+        at = end;
+        let mut before = start;
+        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+            before -= 1;
+        }
+        let is_definition = before >= 2 && &code[before - 2..before] == "fn";
+        let mut path = vec![code[start..end].to_owned()];
+        let mut cursor = end;
+        loop {
+            let mut probe = cursor;
+            while probe < bytes.len() && bytes[probe].is_ascii_whitespace() {
+                probe += 1;
+            }
+            if !code[probe..].starts_with("::") {
+                break;
+            }
+            let mut segment_start = probe + 2;
+            while segment_start < bytes.len() && bytes[segment_start].is_ascii_whitespace() {
+                segment_start += 1;
+            }
+            if !bytes
+                .get(segment_start)
+                .is_some_and(|byte| is_identifier_byte(*byte))
+            {
+                break;
+            }
+            let mut segment_end = segment_start + 1;
+            while segment_end < bytes.len() && is_identifier_byte(bytes[segment_end]) {
+                segment_end += 1;
+            }
+            path.push(code[segment_start..segment_end].to_owned());
+            cursor = segment_end;
+        }
+        let mut after = cursor;
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= bytes.len() || bytes[after] != b'(' || is_definition {
+            continue;
+        }
+        let mut receiver = start;
+        while receiver > 0 && bytes[receiver - 1].is_ascii_whitespace() {
+            receiver -= 1;
+        }
+        let method = receiver > 0 && bytes[receiver - 1] == b'.';
+        if path.len() == 1 && RUST_NON_CALL_KEYWORDS.contains(&path[0].as_str()) {
+            continue;
+        }
+        calls.push(FunctionCall { path, method });
+        at = after + 1;
+    }
+    calls
+}
+
+/// `macro_rules!` definitions in blanked `code`: `(name, body)`.
+fn macro_definitions(code: &str) -> Vec<(String, String)> {
+    let bytes = code.as_bytes();
+    let mut found = Vec::new();
+    for (at, _) in code.match_indices("macro_rules") {
+        if at > 0 && is_identifier_byte(bytes[at - 1]) {
+            continue;
+        }
+        let mut cursor = at + "macro_rules".len();
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'!') {
+            continue;
+        }
+        cursor += 1;
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while bytes.get(cursor).is_some_and(|byte| is_identifier_byte(*byte)) {
+            cursor += 1;
+        }
+        if cursor == name_start {
+            continue;
+        }
+        let name = code[name_start..cursor].to_owned();
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            cursor += 1;
+        }
+        let (open_byte, close_byte) = match bytes.get(cursor) {
+            Some(b'{') => (b'{', b'}'),
+            Some(b'(') => (b'(', b')'),
+            Some(b'[') => (b'[', b']'),
+            _ => continue,
+        };
+        if let Some(close) = closing(code, cursor, open_byte, close_byte) {
+            found.push((name, code[cursor..=close].to_owned()));
+        }
+    }
+    found
+}
+
+/// Names of `name!(...)` / `name![...]` / `name!{...}` invocations in blanked
+/// `code`. The `!` must be part of the macro token shape, not `!=`.
+fn macro_invocations(code: &str) -> Vec<&str> {
+    let bytes = code.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if !is_identifier_byte(bytes[at]) || (at > 0 && is_identifier_byte(bytes[at - 1])) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        let mut end = at + 1;
+        while bytes.get(end).is_some_and(|byte| is_identifier_byte(*byte)) {
+            end += 1;
+        }
+        at = end;
+        let mut probe = end;
+        while bytes
+            .get(probe)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            probe += 1;
+        }
+        if bytes.get(probe) != Some(&b'!') {
+            continue;
+        }
+        let mut after = probe + 1;
+        while bytes
+            .get(after)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            after += 1;
+        }
+        if bytes
+            .get(after)
+            .is_some_and(|byte| matches!(byte, b'(' | b'[' | b'{'))
+        {
+            found.push(&code[start..end]);
+        }
+    }
+    found
+}
+
+fn module_segments(rel: &str) -> Vec<String> {
+    let mut path = rel.strip_suffix(".rs").unwrap_or(rel).to_owned();
+    if let Some(parent) = path.strip_suffix("/mod") {
+        path = parent.to_owned();
+    }
+    path.split('/').map(str::to_owned).collect()
+}
+
+fn file_for_module<'a>(files: &'a [SourceFile], segments: &[String]) -> Option<&'a str> {
+    let joined = segments.join("/");
+    let module_file = format!("{joined}.rs");
+    let nested_file = format!("{joined}/mod.rs");
+    files
+        .iter()
+        .find(|file| file.rel == module_file || file.rel == nested_file)
+        .map(|file| file.rel.as_str())
+}
+
+/// `use` statements of blanked `code`, trimmed after the keyword.
+fn use_statements(code: &str) -> Vec<&str> {
+    let bytes = code.as_bytes();
+    let mut statements = Vec::new();
+    for (at, _) in code.match_indices("use") {
+        if at > 0 && is_identifier_byte(bytes[at - 1]) {
+            continue;
+        }
+        let after = at + 3;
+        if !bytes.get(after).is_some_and(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if let Some(end) = code[after..].find(';') {
+            statements.push(&code[after..after + end]);
+        }
+    }
+    statements
+}
+
+/// `use` aliases visible in file `rel`, including the ones its `use super::*;`
+/// or `use crate::x::*;` globs pull from ancestor modules: local name -> path
+/// segments. A `crate::` prefix is stripped.
+fn module_aliases(files: &[SourceFile], rel: &str) -> BTreeMap<String, Vec<String>> {
+    let mut aliases = BTreeMap::new();
+    let mut visited = BTreeSet::new();
+    collect_module_aliases(files, rel, &mut aliases, &mut visited);
+    aliases
+}
+
+fn collect_module_aliases(
+    files: &[SourceFile],
+    rel: &str,
+    aliases: &mut BTreeMap<String, Vec<String>>,
+    visited: &mut BTreeSet<String>,
+) {
+    if !visited.insert(rel.to_owned()) {
+        return;
+    }
+    let Some(file) = files.iter().find(|file| file.rel == rel) else {
+        return;
+    };
+    for statement in use_statements(&file.blanked) {
+        let statement = statement.trim();
+        if let Some(glob) = statement.strip_suffix("::*") {
+            let segments: Vec<String> = glob
+                .trim()
+                .split("::")
+                .map(str::trim)
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if let Some(expanded) = expand_module_path(rel, &segments, aliases)
+                && let Some(parent) = file_for_module(files, &expanded)
+            {
+                collect_module_aliases(files, parent, aliases, visited);
+            }
+            continue;
+        }
+        for (alias, mut path) in parse_use_statement(statement) {
+            if path.first().map(String::as_str) == Some("crate") {
+                path.remove(0);
+            }
+            if !path.is_empty() {
+                aliases.entry(alias).or_insert(path);
+            }
+        }
+    }
+}
+
+/// Path segments of a `use` statement and the local names it binds. A grouped
+/// `self` (and `self as name`) item aliases the prefix itself.
+fn parse_use_statement(statement: &str) -> Vec<(String, Vec<String>)> {
+    let statement = statement.trim();
+    if statement.ends_with('*') {
+        return Vec::new();
+    }
+    let segments_of = |text: &str| -> Vec<String> {
+        text.split("::")
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    if let Some(open) = statement.find('{') {
+        let prefix = statement[..open].trim().trim_end_matches("::").trim();
+        let inner = &statement[open + 1..];
+        let inner = inner.split('}').next().unwrap_or(inner);
+        let mut entries = Vec::new();
+        for item in inner.split(',') {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let (name, alias) = match item.split_once(" as ") {
+                Some((name, alias)) => (name.trim(), Some(alias.trim().to_owned())),
+                None => (item, None),
+            };
+            let mut path = segments_of(prefix);
+            let alias = if name == "self" {
+                alias.or_else(|| path.last().cloned())
+            } else {
+                path.extend(segments_of(name));
+                Some(alias.unwrap_or_else(|| last_path_segment(name)))
+            };
+            if let Some(alias) = alias {
+                entries.push((alias, path));
+            }
+        }
+        return entries;
+    }
+    let (path_text, alias) = match statement.split_once(" as ") {
+        Some((path, alias)) => (path.trim(), alias.trim().to_owned()),
+        None => (statement, String::new()),
+    };
+    let path = segments_of(path_text);
+    let Some(last) = path.last().cloned() else {
+        return Vec::new();
+    };
+    let alias = if alias.is_empty() { last } else { alias };
+    vec![(alias, path)]
+}
+
+fn last_path_segment(path: &str) -> String {
+    path.rsplit("::").next().unwrap_or(path).trim().to_owned()
+}
+
+/// Expand `crate::`, `self::`, `super::` and imported-module prefixes to module
+/// path segments, or `None` when the path is a bare relative path.
+fn expand_module_path(
+    current_rel: &str,
+    segments: &[String],
+    aliases: &BTreeMap<String, Vec<String>>,
+) -> Option<Vec<String>> {
+    let Some(first) = segments.first() else {
+        return None;
+    };
+    let module = module_segments(current_rel);
+    match first.as_str() {
+        "crate" => Some(segments[1..].to_vec()),
+        "self" => {
+            let mut path = module;
+            path.extend_from_slice(&segments[1..]);
+            Some(path)
+        }
+        "super" => {
+            let mut supers = 0;
+            while supers < segments.len() && segments[supers] == "super" {
+                supers += 1;
+            }
+            if supers > module.len() {
+                return None;
+            }
+            let mut path = module[..module.len() - supers].to_vec();
+            path.extend_from_slice(&segments[supers..]);
+            Some(path)
+        }
+        _ => {
+            let base = aliases.get(first)?;
+            let mut path = base.clone();
+            if path.first().map(String::as_str) == Some("crate") {
+                path.remove(0);
+            }
+            path.extend_from_slice(&segments[1..]);
+            Some(path)
+        }
+    }
+}
+
+/// Resolve one call path to the file that defines the callee, if this
+/// source-level scan can place it. Simple names resolve only through a `use`
+/// alias; bare qualified paths are tried as sibling/child modules of the
+/// current module and as crate-root modules.
+fn resolve_call<'a>(
+    files: &'a [SourceFile],
+    aliases: &BTreeMap<String, Vec<String>>,
+    current_rel: &str,
+    path: &[String],
+) -> Option<(&'a str, String)> {
+    let (name, modules) = path.split_last()?;
+    if modules.is_empty() {
+        let target = aliases.get(name)?;
+        let mut segments = target.clone();
+        if segments.first().map(String::as_str) == Some("crate") {
+            segments.remove(0);
+        }
+        let resolved = segments.pop()?;
+        let file = file_for_module(files, &segments)?;
+        return Some((file, resolved));
+    }
+    if let Some(expanded) = expand_module_path(current_rel, modules, aliases)
+        && let Some(file) = file_for_module(files, &expanded)
+    {
+        return Some((file, name.clone()));
+    }
+    let current = module_segments(current_rel);
+    let mut attempts = vec![current.len().saturating_sub(1), current.len(), 0];
+    attempts.dedup();
+    for take in attempts {
+        let mut candidate = current[..take.min(current.len())].to_vec();
+        candidate.extend_from_slice(modules);
+        if let Some(file) = file_for_module(files, &candidate) {
+            return Some((file, name.clone()));
+        }
+    }
+    None
+}
+
+/// The implemented type's method named `method`, when the call graph can place
+/// it. `Type::method(...)` calls resolve through their type, not a module path.
+fn resolve_type_method<'a>(
+    graph: &VmceCallGraph<'a>,
+    type_name: &str,
+    method: &str,
+) -> Option<(&'a str, String)> {
+    graph
+        .type_methods
+        .get(type_name)?
+        .iter()
+        .find(|(name, _)| name == method)
+        .map(|(_, file)| (*file, method.to_owned()))
+}
+
+/// The source-level call graph the dependency check walks: function bodies,
+/// `use` aliases, implemented type/method pairs and the shared helpers whose
+/// bodies name the Cooperative result flow.
+struct VmceCallGraph<'a> {
+    files: &'a [SourceFile],
+    definitions: BTreeMap<&'a str, Vec<FunctionDefinition>>,
+    aliases: BTreeMap<&'a str, BTreeMap<String, Vec<String>>>,
+    /// Every method/associated function defined outside VMCE-owned files, by
+    /// name. A VMCE-owned call is walked through each definition, so a wrapper
+    /// chain cannot hide the dependency in a method body.
+    method_definitions: BTreeMap<String, Vec<(&'a str, FunctionDefinition)>>,
+    /// `macro_rules!` definitions outside VMCE-owned files whose body names the
+    /// Cooperative result flow; a VMCE-owned invocation of one is a violation.
+    tainted_macros: BTreeSet<String>,
+    /// Implemented type name -> (method name, defining file).
+    type_methods: BTreeMap<String, Vec<(String, &'a str)>>,
+}
+
+impl<'a> VmceCallGraph<'a> {
+    fn new(files: &'a [SourceFile]) -> Self {
+        let mut definitions = BTreeMap::new();
+        let mut aliases = BTreeMap::new();
+        let mut method_definitions: BTreeMap<String, Vec<(&'a str, FunctionDefinition)>> =
+            BTreeMap::new();
+        let mut tainted_macros: BTreeSet<String> = BTreeSet::new();
+        let mut type_methods: BTreeMap<String, Vec<(String, &'a str)>> = BTreeMap::new();
+        for file in files {
+            let impl_blocks_in_file = impl_blocks(&file.blanked);
+            let definitions_in_file = function_definitions(&file.blanked, &impl_blocks_in_file);
+            if !vmce_owned_result_file(&file.rel) {
+                for definition in &definitions_in_file {
+                    if vmce_shared_capability_allowed(&definition.name) {
+                        continue;
+                    }
+                    if definition.method {
+                        method_definitions
+                            .entry(definition.name.clone())
+                            .or_default()
+                            .push((file.rel.as_str(), definition.clone()));
+                        if let Some(owner) = impl_blocks_in_file
+                            .iter()
+                            .find(|block| {
+                                definition.start > block.open && definition.start < block.close
+                            })
+                            .and_then(|block| block.type_name.as_deref())
+                        {
+                            type_methods
+                                .entry(owner.to_owned())
+                                .or_default()
+                                .push((definition.name.clone(), file.rel.as_str()));
+                        }
+                        continue;
+                    }
+                }
+                for (name, body) in macro_definitions(&file.blanked) {
+                    if VMCE_FORBIDDEN_COOPERATIVE_TOKENS
+                        .iter()
+                        .any(|token| body.contains(token))
+                    {
+                        tainted_macros.insert(name);
+                    }
+                }
+            }
+            aliases.insert(file.rel.as_str(), module_aliases(files, &file.rel));
+            definitions.insert(file.rel.as_str(), definitions_in_file);
+        }
+        Self {
+            files,
+            definitions,
+            aliases,
+            method_definitions,
+            tainted_macros,
+            type_methods,
+        }
+    }
+
+    fn source_file(&self, rel: &str) -> Option<&'a SourceFile> {
+        self.files.iter().find(|file| file.rel == rel)
+    }
+
+    fn definition(&self, rel: &str, name: &str) -> Option<&FunctionDefinition> {
+        self.definitions
+            .get(rel)?
+            .iter()
+            .find(|definition| definition.name == name)
+    }
+
+    fn aliases_for(&self, rel: &str) -> Option<&BTreeMap<String, Vec<String>>> {
+        self.aliases.get(rel)
+    }
+}
+
+/// Walk one function/method body and report the first forbidden Cooperative
+/// result dependency it reaches, transitively. Method and associated-function
+/// calls are walked through every resolvable definition, macros are checked
+/// against the tainted-macro table, and unresolved names fall back to the
+/// conservative tainted-name tables. `visited` is keyed by definition site, so
+/// recursion terminates without a depth cap that a deeper wrapper could evade.
+fn vmce_walk_body<'a>(
+    graph: &VmceCallGraph<'a>,
+    rel: &str,
+    definition: &FunctionDefinition,
+    visited: &mut BTreeSet<(String, usize)>,
+) -> Option<String> {
+    if !visited.insert((rel.to_owned(), definition.start)) {
+        return None;
+    }
+    let file = graph.source_file(rel)?;
+    let body = &file.blanked[definition.body_start..=definition.body_end];
+    if let Some(token) = VMCE_FORBIDDEN_COOPERATIVE_TOKENS
+        .iter()
+        .find(|token| body.contains(*token))
+    {
+        return Some(format!("{rel}::{} uses {token:?}", definition.name));
+    }
+    for macro_name in macro_invocations(body) {
+        if graph.tainted_macros.contains(macro_name) {
+            return Some(format!(
+                "{rel}::{} invokes macro {macro_name:?} whose body uses the Cooperative result flow",
+                definition.name
+            ));
+        }
+    }
+    for call in function_calls(body) {
+        let Some(call_name) = call.path.last() else {
+            continue;
+        };
+        if vmce_shared_capability_allowed(call_name) {
+            continue;
+        }
+        if call.method {
+            // The receiver's type is not resolved by this source-level scan, so
+            // a method body is walked only when its name names exactly one
+            // definition outside the owned files; common std/trait method names
+            // must not collide with unrelated bodies.
+            if let Some(instances) = graph
+                .method_definitions
+                .get(call_name.as_str())
+                .filter(|instances| instances.len() == 1)
+            {
+                let (method_file, method_definition) = &instances[0];
+                if let Some(violation) =
+                    vmce_walk_body(graph, method_file, method_definition, visited)
+                {
+                    return Some(violation);
+                }
+            }
+            if call.path.len() >= 2
+                && let Some((method_file, callee)) =
+                    resolve_type_method(graph, &call.path[call.path.len() - 2], call_name)
+                && let Some(callee_definition) = graph.definition(method_file, &callee)
+                && let Some(violation) =
+                    vmce_walk_body(graph, method_file, callee_definition, visited)
+            {
+                return Some(violation);
+            }
+            continue;
+        }
+        if call.path.len() == 1
+            && let Some(local_definition) = graph.definition(rel, call_name)
+        {
+            if let Some(violation) = vmce_walk_body(graph, rel, local_definition, visited) {
+                return Some(violation);
+            }
+            continue;
+        }
+        if let Some((callee_file, callee)) = graph
+            .aliases_for(rel)
+            .and_then(|aliases| resolve_call(graph.files, aliases, rel, &call.path))
+            && let Some(callee_definition) = graph.definition(callee_file, &callee)
+        {
+            if let Some(violation) =
+                vmce_walk_body(graph, callee_file, callee_definition, visited)
+            {
+                return Some(violation);
+            }
+            continue;
+        }
+        if call.path.len() >= 2
+            && let Some((method_file, callee)) =
+                resolve_type_method(graph, &call.path[call.path.len() - 2], call_name)
+            && let Some(callee_definition) = graph.definition(method_file, &callee)
+        {
+            if let Some(violation) =
+                vmce_walk_body(graph, method_file, callee_definition, visited)
+            {
+                return Some(violation);
+            }
+            continue;
+        }
+    }
+    None
+}
+
+/// Resolve one shared helper by name and walk its body.
+fn vmce_reachable_violation(
+    graph: &VmceCallGraph<'_>,
+    rel: &str,
+    name: &str,
+    visited: &mut BTreeSet<(String, usize)>,
+) -> Option<String> {
+    if vmce_shared_capability_allowed(name) {
+        return None;
+    }
+    let definition = graph.definition(rel, name)?;
+    vmce_walk_body(graph, rel, definition, visited)
+}
+
+
+/// Direct and indirect dependency violations for VMCE-owned production code,
+/// tests and diagnostics. A `.method()` call is walked through every method
+/// definition of that name outside the owned files (not just ones with an
+/// inline token), `Type::helper(...)` is walked through its `impl`, macro
+/// invocations are checked against tainted `macro_rules!` bodies, and aliased
+/// imports resolve through their module path. The walk has no depth cap: a
+/// definition-site visited set terminates recursion, so a deeper wrapper
+/// cannot evade the scan.
+fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
+    let scopes = vmce_owned_scopes(files);
+    let mut violations = vmce_owned_reference_violations(&scopes);
+    let graph = VmceCallGraph::new(files);
+    for scope in &scopes {
+        for call in function_calls(&scope.code) {
+            let Some(call_name) = call.path.last() else {
+                continue;
+            };
+            if vmce_shared_capability_allowed(call_name) {
+                continue;
+            }
+            if call.method {
+                // Walk only a uniquely named method definition (see the walker
+                // comment): distinctive wrapper chains are followed, common
+                // std/trait names cannot collide.
+                if let Some(instances) = graph
+                    .method_definitions
+                    .get(call_name.as_str())
+                    .filter(|instances| instances.len() == 1)
+                {
+                    let (file, definition) = &instances[0];
+                    let mut visited = BTreeSet::new();
+                    if let Some(chain) =
+                        vmce_walk_body(&graph, file, definition, &mut visited)
+                    {
+                        violations.push(format!(
+                            "{}: method wrapper {call_name:?} reaches {chain}",
+                            scope.label
+                        ));
+                    }
+                }
+                continue;
+            }
+            // A whole owned file's own functions are internal calls; the file
+            // scan above already read their bodies.
+            if scope.whole_file
+                && call.path.len() == 1
+                && graph.definition(&scope.file, call_name).is_some()
+            {
+                continue;
+            }
+            if let Some((file, callee)) = graph
+                .aliases_for(&scope.file)
+                .and_then(|aliases| resolve_call(files, aliases, &scope.file, &call.path))
+            {
+                if !vmce_owned_result_file(file)
+                    && let Some(chain) =
+                        vmce_reachable_violation(&graph, file, &callee, &mut BTreeSet::new())
+                {
+                    violations.push(format!(
+                        "{}: indirect Cooperative result dependency through {chain}",
+                        scope.label
+                    ));
+                }
+                continue;
+            }
+            if call.path.len() >= 2
+                && let Some((file, callee)) =
+                    resolve_type_method(&graph, &call.path[call.path.len() - 2], call_name)
+            {
+                if !vmce_owned_result_file(file)
+                    && let Some(chain) =
+                        vmce_reachable_violation(&graph, file, &callee, &mut BTreeSet::new())
+                {
+                    violations.push(format!(
+                        "{}: associated-function dependency through {chain}",
+                        scope.label
+                    ));
+                }
+                continue;
+            }
+        }
+        for macro_name in macro_invocations(&scope.code) {
+            if graph.tainted_macros.contains(macro_name) {
+                violations.push(format!(
+                    "{}: invokes macro {macro_name:?} whose body uses the Cooperative result flow",
+                    scope.label
+                ));
+            }
+        }
+    }
+    violations
+}
+
+/// The VMCE result flow must not call a stock Cooperative result owner. This
+/// scans VMCE-owned production files whole (there is no marked region to move a
+/// call out of), the VMCE session tests whole, the VMCE result diagnostic and
+/// its score-capture fixture file whole, and VMCE test functions in shared test
+/// files, then walks the source-level call graph so a wrapper helper, method,
+/// associated function or aliased import outside those scopes cannot hide the
+/// dependency.
+#[test]
+fn vmce_owned_code_does_not_depend_on_the_cooperative_result_flow() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let scopes = vmce_owned_scopes(files);
+    let labels: Vec<&str> = scopes.iter().map(|scope| scope.label.as_str()).collect();
+    let require_scope = |predicate: &dyn Fn(&str) -> bool, what: &str| {
+        assert!(
+            labels.iter().copied().any(predicate),
+            "dependency scan is missing {what}; owned scopes: {labels:#?}"
+        );
+    };
+    require_scope(
+        &|label| label == "file:app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+        "the whole VMCE result diagnostic file",
+    );
+    require_scope(
+        &|label| label == "file:app/match_runtime/session/vmce_result/tests.rs",
+        "the whole VMCE session test file",
+    );
+    require_scope(
+        &|label| label.starts_with("test-function:app/lan_service.rs::vmce_"),
+        "VMCE test functions in the shared LAN service tests",
+    );
+    require_scope(
+        &|label| label.starts_with("test-function:net/global_tests.rs::vmce_"),
+        "VMCE test functions in the shared net tests",
+    );
+    require_scope(
+        &|label| label == "file:app/diagnostics/shell_capture/score/vmce_fixture.rs",
+        "the whole VMCE score-capture fixture file",
+    );
+    require_scope(
+        &|label| label == "file:net/lan_messages/vmce.rs",
+        "the whole VMCE wire module",
+    );
+    require_scope(
+        &|label| {
+            label
+                == "function:app/loading/pump.rs::fail_vmce_loading_peer_timeout"
+        },
+        "this phase's VMCE loading fault owner in the shared pump",
+    );
+    assert!(
+        !labels.iter().any(|label| label.starts_with("region:")),
+        "the dependency guard owns no marked regions; VMCE code is scanned whole: {labels:#?}"
+    );
+    assert!(
+        !labels
+            .iter()
+            .any(|label| *label == "file:app/diagnostics/shell_capture/score.rs"),
+        "the shared score capture keeps only its stock Cooperative diagnostics"
+    );
+    let violations = vmce_owned_dependency_violations(files);
     assert!(
         violations.is_empty(),
-        "VMCE result code calls a Cooperative result owner: {violations:#?}"
+        "VMCE-owned code depends on the Cooperative result flow: {violations:#?}\n\
+         VMCE owns its result pages, round and actions in app::vmce_result; shared \
+         capabilities must be added to VMCE_SHARED_CAPABILITY_ALLOWLIST with \
+         their responsibility and callers."
+    );
+    println!(
+        "VMCE dependency scan: {} owned scopes, {} shared capabilities, {} forbidden tokens",
+        scopes.len(),
+        VMCE_SHARED_CAPABILITY_ALLOWLIST.len(),
+        VMCE_FORBIDDEN_COOPERATIVE_TOKENS.len()
     );
 }
 
 #[test]
-fn vmce_dependency_guard_detects_a_planted_cooperative_reference() {
+fn vmce_dependency_guard_catches_a_planted_cooperative_result_reference() {
     for token in VMCE_FORBIDDEN_COOPERATIVE_TOKENS {
-        let sample = format!("fn planted() {{ let _ = \"{token}\"; }}");
+        let source = format!("fn planted() {{ {token} }}\n");
+        let files = vec![fixture_source_file("app/vmce_result/victory.rs", &source)];
         assert!(
-            !vmce_forbidden_references(&sample).is_empty(),
+            !vmce_owned_dependency_violations(&files).is_empty(),
             "the guard missed forbidden token {token:?}"
         );
     }
-    // A source alias still contains the forbidden module path, so the
-    // dependency is visible even when the call uses a short alias.
-    let aliased = "use crate::app::cooperative_round as round;";
-    assert_eq!(
-        vmce_forbidden_references(aliased)
-            .into_iter()
-            .map(|(_, token)| token)
-            .collect::<Vec<_>>(),
-        vec!["cooperative_round"]
-    );
-    let allowed = "simulation.cooperative_score_rows();\n\
-                   runtime.cooperative_difficulty();\n\
-                   launch.cooperative_admits(country);";
+    // Comment and string mentions are prose, not a dependency.
+    let clean = "// cooperative_round\nfn clean() { let _ = \"coop_score\"; }\n";
+    let files = vec![fixture_source_file("app/vmce_result/victory.rs", clean)];
     assert!(
-        vmce_forbidden_references(allowed).is_empty(),
-        "shared roster/score/difficulty helpers are not a Cooperative result flow"
+        vmce_owned_dependency_violations(&files).is_empty(),
+        "comments and literals may name the Cooperative flow"
     );
+    // VMCE diagnostics also reject the stock result-page slot token.
+    for token in VMCE_FORBIDDEN_DIAGNOSTIC_TOKENS {
+        let source = format!("fn planted() {{ state.frontend.{token}_page.is_some() }}\n");
+        let files = vec![fixture_source_file(
+            "app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+            &source,
+        )];
+        assert!(
+            !vmce_owned_dependency_violations(&files).is_empty(),
+            "a VMCE diagnostic used the stock result-page token {token:?}"
+        );
+    }
+}
+
+#[test]
+fn vmce_dependency_guard_scans_owned_files_whole_not_through_marked_regions() {
+    // No VMCE code is owned through a marked region: the whole diagnostic and
+    // the whole score-capture fixture file are owned, so a token after the old
+    // end-marker location (or anywhere else) is caught.
+    for (rel, source) in [
+        (
+            "app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+            "// VMCE-RESULT-END\nfn later() { crate::app::cooperative_round::open_result(); }\n",
+        ),
+        (
+            "app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+            "fn earlier() { crate::app::cooperative_round::open_result(); }\n// VMCE-RESULT-BEGIN\n",
+        ),
+        (
+            "app/diagnostics/shell_capture/score/vmce_fixture.rs",
+            "// VMCE-FIXTURE-END\nfn later() { crate::ui::coop_score_shell::CoopScoreAction::Quit; }\n",
+        ),
+    ] {
+        let files = vec![fixture_source_file(rel, source)];
+        assert!(
+            !vmce_owned_dependency_violations(&files).is_empty(),
+            "a token escaped the whole-file scan of {rel}: {source}"
+        );
+    }
+}
+
+#[test]
+fn vmce_dependency_guard_catches_an_associated_function_wrapper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave(state: &mut AppState) { App::continue_vmce(state); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_impl.rs",
+            "impl App {\n\
+                 pub(crate) fn continue_vmce(state: &mut AppState) {\n\
+                     crate::app::cooperative_round::open_result();\n\
+                 }\n\
+             }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("continue_vmce")),
+        "the call graph missed an associated-function wrapper: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_catches_a_method_wrapper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave(state: &mut AppState) { state.continue_vmce(); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_impl.rs",
+            "impl App {\n\
+                 pub(crate) fn continue_vmce(&mut self) {\n\
+                     crate::ui::coop_score_shell::CoopScoreAction::Continue;\n\
+                 }\n\
+             }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("continue_vmce")),
+        "the call graph missed a method wrapper: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_follows_a_method_wrapper_chain_without_a_depth_cap() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave(state: &mut AppState) { state.continue_vmce(); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_impl.rs",
+            "impl App {\n\
+                 pub(crate) fn continue_vmce(&mut self) { self.hidden_continue(); }\n\
+                 pub(crate) fn hidden_continue(&mut self) { hidden_step(); }\n\
+             }\n\
+             fn hidden_step() { crate::app::cooperative_round::open_result(); }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        !violations.is_empty(),
+        "the call graph followed only the first method body and missed the wrapper chain: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_catches_a_macro_wrapper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "fn leave() { hidden_wrap!(); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_macro.rs",
+            "macro_rules! hidden_wrap {\n\
+                 () => { crate::app::cooperative_round::open_result() };\n\
+             }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        !violations.is_empty(),
+        "the guard missed a macro wrapper: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_scans_this_phases_production_functions_in_shared_files() {
+    let files = vec![fixture_source_file(
+        "app/loading/pump.rs",
+        "pub(crate) fn shared_stock_step() {}\n\
+         #[cfg(feature = \"vmce\")]\n\
+         fn vmce_loading_helper() { crate::app::cooperative_round::open_result(); }\n",
+    )];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("vmce_loading_helper")),
+        "the guard did not own this phase's vmce-named production function in a shared file: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_catches_a_helper_wrapper() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "use crate::app::hidden_wrapper::hidden_continue;\n\
+             fn leave(state: &mut AppState) { hidden_continue(state); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_wrapper.rs",
+            "fn hidden_continue(state: &mut AppState) { crate::app::cooperative_round::open_result(); }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("hidden_continue")),
+        "the call-graph check missed a wrapper helper outside the owned files: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_follows_an_aliased_helper_import() {
+    let files = vec![
+        fixture_source_file(
+            "app/vmce_result/defeat.rs",
+            "use crate::app::hidden_wrapper::hidden_continue as advance;\n\
+             fn leave(state: &mut AppState) { advance(state); }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_wrapper.rs",
+            "fn hidden_continue(state: &mut AppState) { crate::app::cooperative_round::open_result(); }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("hidden_continue")),
+        "the call-graph check missed an aliased import of a wrapper: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_scans_vmce_test_functions_in_shared_test_files() {
+    let shared_production = fixture_source_file(
+        "app/lan_service.rs",
+        "pub(crate) fn shared() {}\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+             #[test]\n\
+             fn vmce_round_departure_waits() { crate::app::cooperative_round::open_result(); }\n\
+             #[test]\n\
+             fn stock_round_departure_waits() { crate::app::cooperative_round::open_result(); }\n\
+         }\n",
+    );
+    let shared_test_file = fixture_source_file(
+        "net/global_tests.rs",
+        "fn vmce_retry_messages_survive() { crate::app::cooperative_round::open_result(); }\n",
+    );
+    let files = vec![shared_production, shared_test_file];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations.iter().any(|violation| violation
+            .contains("test-function:app/lan_service.rs::vmce_round_departure_waits")),
+        "a VMCE test function in a shared test module escaped the scan: {violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| violation
+            .contains("test-function:net/global_tests.rs::vmce_retry_messages_survive")),
+        "a VMCE test function in a shared test file escaped the scan: {violations:#?}"
+    );
+    // A stock Cooperative test keeps its own diagnostic and is not owned.
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("stock_round_departure_waits")),
+        "a stock Cooperative test is not VMCE-owned"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_allows_documented_shared_capabilities() {
+    let files = vec![
+        fixture_source_file(
+            "app/lan_service/vmce_round.rs",
+            "fn pump(state: &mut AppState) {\n\
+                 super::drain_match_requests(state);\n\
+                 let rows = sim.cooperative_score_rows();\n\
+                 let difficulty = runtime.cooperative_difficulty();\n\
+             }\n",
+        ),
+        fixture_source_file(
+            "app/lan_service.rs",
+            "pub(super) fn drain_match_requests(state: &mut AppState) {\n\
+                 crate::app::lan_service::cooperative::send(state);\n\
+             }\n",
+        ),
+    ];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations.is_empty(),
+        "the documented shared capabilities were treated as result-flow dependencies: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_rejects_an_unlisted_cooperative_identifier() {
+    let files = vec![fixture_source_file(
+        "app/vmce_result/victory.rs",
+        "fn page() { sim.cooperative_unlisted_rows(); }\n",
+    )];
+    let violations = vmce_owned_dependency_violations(&files);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("cooperative_unlisted_rows")),
+        "an unlisted cooperative_* identifier escaped the allowlist: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_dependency_guard_keeps_diagnostics_off_the_stock_result_page() {
+    // The defect this split fixes: an outcome diagnostic waited for the stock
+    // Cooperative result-page slot, which VMCE never opens. A diagnostic scope
+    // rejects the slot even though production result owners may clear it for
+    // page exclusivity.
+    let diagnostic = vec![fixture_source_file(
+        "app/diagnostics/shell_capture/movies/lan/live/vmce_result.rs",
+        "fn wait(state: &AppState) -> bool { state.frontend.coop_score_page.is_some() }\n",
+    )];
+    assert!(
+        !vmce_owned_dependency_violations(&diagnostic).is_empty(),
+        "a VMCE diagnostic may not wait on the stock Cooperative result page"
+    );
+    let production = vec![fixture_source_file(
+        "app/vmce_result/defeat.rs",
+        "fn install(state: &mut AppState) { state.frontend.coop_score_page = None; }\n",
+    )];
+    assert!(
+        vmce_owned_dependency_violations(&production).is_empty(),
+        "clearing the shared result-page slots is production page exclusivity, not the Cooperative flow"
+    );
+}
+
+#[test]
+fn vmce_shared_capability_allowlist_is_documented_and_real() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let mut seen = BTreeSet::new();
+    for &(identifier, responsibility, callers) in VMCE_SHARED_CAPABILITY_ALLOWLIST {
+        assert!(
+            !identifier.is_empty()
+                && identifier
+                    .bytes()
+                    .all(|byte| is_identifier_byte(byte) || byte == b':' || byte == b'*'),
+            "allowlist identifier {identifier:?} is not an identifier"
+        );
+        assert!(
+            seen.insert(identifier),
+            "duplicate shared capability {identifier:?}"
+        );
+        assert!(
+            !responsibility.trim().is_empty(),
+            "shared capability {identifier:?} has no documented responsibility"
+        );
+        assert!(
+            !callers.trim().is_empty(),
+            "shared capability {identifier:?} has no documented callers"
+        );
+        if !vmce_allowed_qualified_reference(identifier) {
+            assert!(
+                VMCE_FORBIDDEN_COOPERATIVE_TOKENS
+                    .iter()
+                    .all(|token| !identifier.contains(token)),
+                "shared capability {identifier:?} is a Cooperative result owner name"
+            );
+        }
+        let exists = if vmce_allowed_qualified_reference(identifier) {
+            files.iter().any(|file| file.blanked.contains(identifier))
+        } else {
+            files
+                .iter()
+                .any(|file| count_identifier(&file.blanked, identifier) > 0)
+        };
+        assert!(
+            exists,
+            "shared capability {identifier:?} names no source identifier; update the allowlist"
+        );
+    }
+}
+
+/// One source file for the dependency-guard fixtures: the same projection the
+/// real scan uses, without touching the checkout.
+fn fixture_source_file(rel: &str, source: &str) -> SourceFile {
+    let blanked = blank_comments_and_literals(source);
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let is_test_file = name == "tests.rs" || name.ends_with("_tests.rs");
+    let production = (!is_test_file).then(|| strip_test_items(source, &blanked));
+    SourceFile {
+        path: PathBuf::from(rel),
+        rel: rel.to_owned(),
+        source: source.to_owned(),
+        blanked,
+        production,
+    }
 }

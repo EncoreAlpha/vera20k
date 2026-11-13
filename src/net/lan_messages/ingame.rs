@@ -212,6 +212,9 @@ pub enum LoadingFailureReason {
     ConfigMismatch = 1,
     IdentityMismatch = 2,
     LoadFailed = 3,
+    /// A VMCE retry/next-stage load waited past its native peer wait: a peer
+    /// never reported its loading progress. Both peers leave for the lobby.
+    PeerTimeout = 4,
 }
 
 #[cfg(feature = "vmce")]
@@ -226,6 +229,7 @@ impl LoadingFailureReason {
             1 => Self::ConfigMismatch,
             2 => Self::IdentityMismatch,
             3 => Self::LoadFailed,
+            4 => Self::PeerTimeout,
             _ => return None,
         })
     }

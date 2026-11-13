@@ -252,7 +252,7 @@ impl App {
     pub(crate) fn vmce_campaign_end(state: &mut AppState) {
         state.frontend.campaign_score_page = None;
         state.frontend.campaign_score_art = None;
-        crate::app::lan_service::cooperative::release_transport(state);
+        crate::app::lan_service::release_transport(state);
         Self::close_finished_scenario(state);
         // End the LAN visit as well as the scenario: otherwise the credits
         // return path sees a network context and reopens the campaign room.

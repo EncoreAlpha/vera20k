@@ -173,7 +173,7 @@ fn vmce_result_agreement_tolerates_a_lost_proposal_and_duplicate_delivery() {
 }
 
 #[test]
-fn vmce_retry_ack_loss_keeps_the_host_waiting_until_the_ack_arrives() {
+fn vmce_retry_commit_proof_then_start_gates_the_reload() {
     let (mut host, _) = frozen_vera(0);
     let (mut guest, _) = frozen_vera(1);
     host.enter_vmce_round_ending(None, true, VmceRoundEnding::Retry, 2)
@@ -202,18 +202,36 @@ fn vmce_retry_ack_loss_keeps_the_host_waiting_until_the_ack_arrives() {
     host.vmce_result_event(VmceResultEvent::RetryAck { source: 1 })
         .unwrap();
     assert!(host.vmce_result_retry_acks_complete());
+    // The commit is application proof only: the guest still holds the page and
+    // answers the host; it does not reload.
     assert_eq!(
         guest
             .vmce_result_event(VmceResultEvent::RetryCommit)
+            .unwrap(),
+        VmceRoundStep::None
+    );
+    assert!(guest.vmce_result_retry_commit_received());
+    assert!(!guest.vmce_result_retry_go_pending());
+    assert!(!host.vmce_result_retry_commit_acks_complete());
+    host.vmce_result_event(VmceResultEvent::RetryCommitAck { source: 1 })
+        .unwrap();
+    assert!(host.vmce_result_retry_commit_acks_complete());
+    host.vmce_result_event(VmceResultEvent::RetryCommitAck { source: 1 })
+        .unwrap();
+    assert!(host.vmce_result_retry_commit_acks_complete());
+    // Only the host's start reloads the guest, exactly once.
+    assert_eq!(
+        guest
+            .vmce_result_event(VmceResultEvent::RetryStart)
             .unwrap(),
         VmceRoundStep::Retry
     );
     assert_eq!(
         guest
-            .vmce_result_event(VmceResultEvent::RetryCommit)
+            .vmce_result_event(VmceResultEvent::RetryStart)
             .unwrap(),
         VmceRoundStep::None,
-        "a repeated commit cannot reload twice"
+        "a repeated start cannot reload twice"
     );
 }
 
@@ -235,6 +253,13 @@ fn vmce_go_produces_the_step_named_by_the_terminal_ending() {
             assert_eq!(
                 guest
                     .vmce_result_event(VmceResultEvent::RetryCommit)
+                    .unwrap(),
+                VmceRoundStep::None,
+                "the commit is application proof, not the reload"
+            );
+            assert_eq!(
+                guest
+                    .vmce_result_event(VmceResultEvent::RetryStart)
                     .unwrap(),
                 expected
             );

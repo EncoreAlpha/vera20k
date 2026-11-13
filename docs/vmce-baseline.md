@@ -237,15 +237,20 @@ Remaining, not fixed in this stage: no local retry-ACK deadline or dedicated res
 
 ## Phase 2 review fixes (feature/vmce)
 
-The retry handoff now has two bounded phases instead of one open wait: the host
-queues the nonce-scoped retry Go, waits for every guest RetryAck, then queues a
-RetryCommit on the same reliable setup FIFO and only reloads after that commit
-has drained; a guest that sees Go queues its ACK and stays on the result page
-until RetryCommit arrives. ACK loss, commit loss, a full reliable queue, a
+**Superseded by the acceptance fixes below.** The bounded two-phase retry
+handoff described in this section waited for the reliable setup FIFO's transport
+drain before the host froze; the acceptance-fix section below replaces that
+proof with an application-level commit acknowledgement and closes the
+result-page/loading-stage fault path. The text below stays as the r6 record:
+the host queues the nonce-scoped retry Go, waits for every guest RetryAck, then
+queues a RetryCommit on the same reliable setup FIFO and only reloads after that
+commit has drained; a guest that sees Go queues its ACK and stays on the result
+page until RetryCommit arrives. ACK loss, commit loss, a full reliable queue, a
 transport failure, or an absent peer all end in a local visible
 `VERA:VmceRoundSendFailed` return to the LAN lobby on both peers (600-bucket
 deadlines); neither side reloads while the other waits. The new control and its
-kind are VMCE-owned (`VmceRoundControl::RetryCommit`).
+kind are VMCE-owned (`VmceRoundControl::RetryCommit`); the current protocol is
+in the acceptance-fix section below.
 
 The native BC6 Escape behavior is restored on the VMCE defeat page: Escape does
 not leave the room; only the explicit Leave Room control does. The LAN capture
@@ -257,9 +262,10 @@ Cooperative dependency cleanup: the shared continuation timing is owned as
 `net::lockstep::continuation_timing` (the native Cooperative timing values are
 transport timing, not a Cooperative result decision); VMCE result messages have
 their own `SIGNAL_LEN` and no longer import Cooperative options or payload
-types. Remaining generic VERA helpers (`cooperative_score_rows`,
-`cooperative_difficulty`, `cooperative_admits/default_country`) are shared
-simulation/roster data, not the stock Cooperative result flow.
+types. Remaining shared helpers whose names still begin with `cooperative_`
+are simulation score rows and campaign difficulty (and the generic
+`continuation_timing`); the roster-admission allowlist entries were removed
+once no VMCE-owned caller used them.
 
 The architecture guard now scans VMCE production files, VMCE session tests and
 marked VMCE diagnostic regions, forbids the old timing name, bare and aliased
@@ -293,3 +299,94 @@ helpers whose names still begin with `cooperative_` are simulation score rows,
 campaign difficulty and roster admission, not the Cooperative result flow. The retry capture still drives the page action directly for the
 Retry click (only Escape goes through the input handler), and there is no
 old-BC6-versus-new-page pixel baseline comparison.
+
+## Phase 2 acceptance fixes (feature/vmce, 2026-11-13)
+
+The r6 two-phase retry handoff still treated the reliable setup FIFO's transport
+drain as proof that a guest had applied RetryCommit. A delivered commit whose
+transport ACK was lost timed the host out, and a peer that never received the
+commit could leave the other peer loading alone. This revision replaces that
+proof and closes the result-page/loading-stage fault path:
+
+- **Retry handoff is three-phase and VMCE-owned:** host Go -> guest RetryAck
+  (existing), host RetryCommit -> every guest applies it and answers a new
+  application-level `RetryCommitAck` without reloading, host retransmits the
+  commit every 120 buckets (a lost transport ACK or a lost application ACK is
+  repaired by a new commit record), then host queues `RetryStart` and freezes;
+  guests reload only on RetryStart. A queue drain is never application proof.
+  The overall commit bound (600 buckets) is set once and no resend can extend
+  it; host ACK wait, guest waits and duplicate Go/commit/Start records are
+  bounded and idempotent.
+- **Application liveness:** while a VMCE result round is open each peer sends a
+  VMCE heartbeat every 60 buckets. A healthy but idle human keeps the other side
+  waiting indefinitely; 600 buckets of silence ends the round in bounded time
+  with `VERA:VmcePeerUnresponsive`. During the bounded retry handoff the
+  handoff's own deadline owns the verdict, so an unreliable-heartbeat gap
+  cannot pre-empt it.
+- **Visible bounded failures:** full queue, transport failure, partial commit
+  with two or more guests, unresponsive peer and lost commit/ACK all end through
+  the existing LAN departure owner: peers are notified first, both show a
+  localized reason (`VERA:VmceRoundSendFailed` / `VERA:VmcePeerUnresponsive`),
+  and the room returns to the LAN lobby. No peer reloads while another waits or
+  fails.
+- **Loading stage:** a VMCE LAN start/retry/next-stage load whose peer wait times
+  out no longer installs the mission with the straggler dropped (native stock
+  behavior). It aborts through the existing VMCE loading-failure owner with
+  `VERA:VmceLoadPeerTimeout`; stock Cooperative and native loading keep their
+  original behavior.
+- **Result diagnostics split:** the whole VMCE live result diagnostic
+  (`.../live/vmce_result.rs`, including the `--vera-outcome` injection/arm tail)
+  and the score-capture VMCE fixtures (`.../score/vmce_fixture.rs`) are
+  VMCE-owned files with no marked regions and no Cooperative result calls; the
+  stock Cooperative diagnostics stay in `live/cooperative.rs`/`score.rs`.
+  `--vera-outcome win/lose` now waits for VMCE's own pages (the `0x103` victory
+  campaign-score page with the VMCE board/statistics, and the VMCE defeat page)
+  instead of the old `coop_score_page`, which VMCE never opens, and quits
+  through VMCE Leave actions.
+- **Architecture checks:** whole-file ownership of VMCE production files
+  (including the VMCE wire module and this phase's vmce-named production
+  functions in shared files), the whole VMCE session tests, VMCE test functions
+  in shared test files, and no marked regions. The guard enforces the documented
+  shared-capability allowlist and walks a source-level call graph so free,
+  associated-function, method-wrapper, aliased-import and `macro_rules!`
+  wrapper chains cannot hide a Cooperative result dependency; negative fixtures
+  prove each bypass. Generic shared capabilities (`release_transport`, the
+  renamed generic `DepartureReason::RoundResult`, reliable queue/transport,
+  session/roster accessors, simulation score rows/difficulty and continuation
+  timing) are listed with responsibility and callers.
+- **Unchanged:** Esc on the VMCE defeat page, result-page layout, the existing
+  win/retry/campaign-end flow, and simulation/checksums.
+
+Evidence (local, labelled fast build `vmce-phase3-accept-r8` with
+`vmce,dev-overlays`, executable SHA-256
+`FB2FB8C8FBD2A6C11D60F445D53156611EE6227160E7D475D2FF2C22BADB7C1C`, source
+fingerprint `afc5d3eb0c8b4bb4841232dae23b76aa417b27606424a60ac6f55c41aba9b5de`):
+`2p-win` (LDA-Continue-real stage01), `2p-retry` (LDA-Retry stage01) and
+`2p-final` (LDA-2p-final stage02) all PASS under `.scratch/phase3-accept-r8/`
+with 300 matching checksums per peer and the expected next-stage, retry-reload
+and campaign-end receipts; these runs also exercise the normal
+`--vera-outcome real`/`retry`/`end` paths through the moved VMCE result
+diagnostic and its VMCE page predicates. Stock Cooperative `retry` and
+`advance` real-process runs PASS. Focused tests, both feature configurations:
+architecture guards 41/41, `app::lan_service` 91, `app::lan_service::vmce_round`
+14, `vmce_result` 4, `app::loading::pump` 51 (+2 pre-existing ignored),
+`app::diagnostics` 184 with `vmce,dev-overlays`, core `net::global` 12/13,
+`net::lan_messages` 18, and i18n shipped-language completeness;
+`check -p vera20k --lib --bins` passes with and without `vmce`.
+
+Residual: the injected `--vera-outcome win`/`lose` two-process live captures do
+NOT complete on this machine: both peers reach the mission result page, but the
+injected-outcome tail keeps waiting on render frames without matching the VMCE
+page predicate (the page repaints slowly and the 900-render-frame guard is not
+reached inside the run budget); the same hang happens with the r6 build, so it is
+a pre-existing capture-harness limitation, not a regression. Their page
+detection is covered only by the four unit tests. Also uncovered: cross-machine
+and internet play; the two-process acceptance does not inject OS-level packet
+loss (the in-process tests drop specific datagrams/ACKs through the production
+reliable/UDP channel); a process paused by the OS for more than about 9.6 s is
+declared unresponsive by design; the guard is source-level, so trait/dynamic
+dispatch, function-pointer passing and generated code stay outside it; VMCE
+setup-lobby/intermission diagnostics and remaining Cooperative-module
+dependencies in the stage-3 lobby/setup path are follow-ups; non-retry
+intermission/campaign-end Go delivery keeps the pre-existing reliable-drain
+wait.

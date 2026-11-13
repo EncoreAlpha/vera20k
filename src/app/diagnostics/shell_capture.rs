@@ -671,13 +671,9 @@ impl ShellCaptureCheckpoint {
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_RESULT_CAMPAIGN_END => Ok(Self::VmceResultCampaignEnd),
             #[cfg(feature = "vmce")]
-            CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS => {
-                Ok(Self::VmceResultHostVictoryStats)
-            }
+            CHECKPOINT_VMCE_RESULT_HOST_VICTORY_STATS => Ok(Self::VmceResultHostVictoryStats),
             #[cfg(feature = "vmce")]
-            CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS => {
-                Ok(Self::VmceResultCampaignEndStats)
-            }
+            CHECKPOINT_VMCE_RESULT_CAMPAIGN_END_STATS => Ok(Self::VmceResultCampaignEndStats),
             #[cfg(feature = "vmce")]
             CHECKPOINT_VMCE_DEFEAT_HOST_DISABLED_2P => Ok(Self::VmceDefeatHostDisabled2p),
             #[cfg(feature = "vmce")]
@@ -1439,8 +1435,8 @@ pub(crate) enum VmceOutcome {
     /// Mark every role's primary House defeated and expect the mission to keep
     /// running.
     HouseLoss,
-    /// Do not inject anything: wait for the map's own trigger chain to open the
-    /// cooperative result page, then record the verdict and trigger evidence.
+    /// Do not inject anything: wait for the map's own trigger chain to open
+    /// VMCE's result page, then record the verdict and trigger evidence.
     Real,
     /// Real trigger chain, then Continue must reach the campaign completion.
     End,
@@ -2899,27 +2895,19 @@ impl ShellCaptureSession {
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceDefeatHostDisabled2p => Some(
-                score::CampaignScoreCapture::vmce_defeat(
-                    score::VmceDefeatTarget::HostDisabled2p,
-                ),
+                score::CampaignScoreCapture::vmce_defeat(score::VmceDefeatTarget::HostDisabled2p),
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceDefeatHostDisabled4p => Some(
-                score::CampaignScoreCapture::vmce_defeat(
-                    score::VmceDefeatTarget::HostDisabled4p,
-                ),
+                score::CampaignScoreCapture::vmce_defeat(score::VmceDefeatTarget::HostDisabled4p),
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceDefeatGuestVoted => Some(
-                score::CampaignScoreCapture::vmce_defeat(
-                    score::VmceDefeatTarget::GuestVoted4p,
-                ),
+                score::CampaignScoreCapture::vmce_defeat(score::VmceDefeatTarget::GuestVoted4p),
             ),
             #[cfg(feature = "vmce")]
             ShellCaptureCheckpoint::VmceDefeatHostLit => Some(
-                score::CampaignScoreCapture::vmce_defeat(
-                    score::VmceDefeatTarget::HostLit4p,
-                ),
+                score::CampaignScoreCapture::vmce_defeat(score::VmceDefeatTarget::HostLit4p),
             ),
             _ => None,
         };
@@ -4178,7 +4166,7 @@ mod tests {
 
     #[cfg(feature = "vmce")]
     #[test]
-    fn vera_outcome_real_keeps_the_live_coop_host_target() {
+    fn vera_outcome_real_keeps_the_live_vmce_host_target() {
         let output = new_output_path("vera-outcome-real");
         let mut host = valid_args(&output);
         host[1] = "lan-live-vera-campaign-host".into();
@@ -4196,9 +4184,19 @@ mod tests {
             panic!("capture");
         };
         assert_eq!(
-            request.live_lan.unwrap().vera_outcome,
+            request.live_lan.as_ref().unwrap().vera_outcome,
             Some(VmceOutcome::Real)
         );
+        // The outcome diagnostic reads VMCE's own result pages, so it only
+        // runs on the VMCE live targets, never the stock Cooperative ones.
+        assert_eq!(
+            request.checkpoint(),
+            ShellCaptureCheckpoint::Lan(movies::LanTarget::LiveVmceHost)
+        );
+        let ShellCaptureCheckpoint::Lan(target) = request.checkpoint() else {
+            panic!("VMCE live capture");
+        };
+        assert!(target.is_live_vmce_host() && !target.live_cooperative());
     }
 
     #[test]

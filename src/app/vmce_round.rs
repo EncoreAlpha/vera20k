@@ -28,7 +28,15 @@ pub(crate) fn service_event(state: &mut AppState, event: VmceResultEvent) -> any
 pub(crate) fn run_step(state: &mut AppState, step: VmceRoundStep) {
     match step {
         VmceRoundStep::None | VmceRoundStep::ContinueInRoom => {}
-        VmceRoundStep::Exit(_) => return_to_shell(state),
+        VmceRoundStep::Exit(failed) => {
+            return_to_shell(state);
+            if failed && let Some(failure) = state.match_state.session.vmce_result_failure() {
+                crate::app::lan_service::vmce_round::report_round_failure(
+                    state,
+                    failure.i18n_key(),
+                );
+            }
+        }
         VmceRoundStep::Assign { ending } => {
             if let Err(error) = assign(state, ending) {
                 log::error!("VMCE result assignment failed: {error:#}");
@@ -139,7 +147,7 @@ pub(crate) fn advance_intermission(state: &mut AppState) {
         Err(error) => {
             log::error!("VMCE intermission handoff failed: {error:#}");
             return_to_shell(state);
-            crate::app::lan_service::vmce_round::report_round_failure(state);
+            crate::app::lan_service::vmce_round::report_round_send_failed(state);
         }
     }
 }
@@ -156,8 +164,7 @@ pub(crate) fn retry_last_mission(state: &mut AppState) {
         .session
         .network_setup()
         .map_or(0, |launch| launch.options.game_speed);
-    let (max_ahead, latency_fudge) =
-        crate::net::lockstep::continuation_timing(game_speed, &[]);
+    let (max_ahead, latency_fudge) = crate::net::lockstep::continuation_timing(game_speed, &[]);
     match state
         .match_state
         .session
@@ -183,8 +190,7 @@ fn begin_next_mission(state: &mut AppState) {
         .session
         .network_setup()
         .map_or(0, |launch| launch.options.game_speed);
-    let (max_ahead, latency_fudge) =
-        crate::net::lockstep::continuation_timing(game_speed, &[]);
+    let (max_ahead, latency_fudge) = crate::net::lockstep::continuation_timing(game_speed, &[]);
     state.frontend.campaign_score_art = None;
     match state
         .match_state
@@ -201,7 +207,6 @@ fn begin_next_mission(state: &mut AppState) {
         }
     }
 }
-
 
 /// Main_Game's return after GameExit: the mode's shell.
 pub(crate) fn return_to_shell(state: &mut AppState) {

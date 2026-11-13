@@ -42,7 +42,7 @@ enum DepartureReason {
         game_id: u64,
     },
     #[cfg(feature = "vmce")]
-    CooperativeRound,
+    RoundResult,
     #[cfg(feature = "vmce")]
     VmceLoading {
         reason: u8,
@@ -57,6 +57,11 @@ struct DepartureWait {
     failed: bool,
     #[cfg(feature = "vmce")]
     failure_detail: Option<String>,
+    /// VMCE round/loading exits: the visible i18n key the departure owner
+    /// shows once the bounded exit completes. Keep the owner here so the
+    /// failure reason survives the asynchronous exit.
+    #[cfg(feature = "vmce")]
+    notice: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -709,12 +714,13 @@ impl LanService {
             .global_mut()
             .require_authenticated_acknowledgments();
         self.departure = Some(DepartureWait {
-            reason: DepartureReason::CooperativeRound,
+            reason: DepartureReason::RoundResult,
             deadline: super::match_runtime::session::WallBucketTimer::start(now, 600),
             receipt: true,
             completed: false,
             failed: false,
             failure_detail: None,
+            notice: None,
         });
         true
     }
@@ -755,7 +761,7 @@ impl LanService {
     fn vmce_round_exit_pending(&self) -> bool {
         self.departure
             .as_ref()
-            .is_some_and(|wait| wait.reason == DepartureReason::CooperativeRound)
+            .is_some_and(|wait| wait.reason == DepartureReason::RoundResult)
     }
 
     fn begin_departure(
@@ -810,8 +816,20 @@ impl LanService {
             failed: false,
             #[cfg(feature = "vmce")]
             failure_detail: None,
+            #[cfg(feature = "vmce")]
+            notice: None,
         });
         Ok(())
+    }
+
+    /// Record the visible reason for a bounded VMCE round failure and make the
+    /// exit fail fast instead of waiting for a possibly gone peer.
+    #[cfg(feature = "vmce")]
+    fn mark_vmce_round_failure_notice(&mut self, key: &'static str) {
+        if let Some(wait) = self.departure.as_mut() {
+            wait.notice = Some(key);
+            wait.failed = true;
+        }
     }
 
     fn begin_kicked_exit(
@@ -840,13 +858,20 @@ impl LanService {
         #[cfg(feature = "vmce")]
         let round_exit = matches!(
             wait.reason,
-            DepartureReason::CooperativeRound | DepartureReason::VmceLoading { .. }
+            DepartureReason::RoundResult | DepartureReason::VmceLoading { .. }
         );
         #[cfg(not(feature = "vmce"))]
         let round_exit = false;
+        // A visible VMCE failure exit keeps the reliable notification in the
+        // FIFO but drops the polite post-drain retain window, so the player
+        // reaches the lobby as soon as the peers were told (or the bound hit).
+        #[cfg(feature = "vmce")]
+        let failure_exit = wait.notice.is_some();
+        #[cfg(not(feature = "vmce"))]
+        let failure_exit = false;
         // Peers may have lost our first ACK of their exit record. Keep the
         // old scope alive for its retry window, even after our own sends retire.
-        if round_exit && !expired && !wait.failed && service_ok {
+        if round_exit && !expired && !wait.failed && !failure_exit && service_ok {
             return None;
         }
         let failed = wait.failed
@@ -3877,6 +3902,30 @@ pub(crate) fn install_gameplay(state: &mut AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// End the round result screen's LAN visit: its last records (the stock BC6
+/// Quit `0x24`, a VMCE leave record) go out first, then the match transport
+/// leaves the match scope as [`return_transport`] does. Shared by the stock
+/// Cooperative round exit and VMCE's campaign end; neither owns the transport
+/// or the scope. RESIDUAL: the native global manager keeps retrying that last
+/// record from the shell, while this retires after one service pass.
+pub(crate) fn release_transport(state: &mut AppState) {
+    if state.match_state.session_mode() != SessionMode::Lan {
+        return;
+    }
+    drain_match_requests(state);
+    let now = crate::app::match_runtime::frame_pacer::frame_bucket(
+        crate::app::match_runtime::frame_pacer::wall_clock_ms(),
+    );
+    service_transport(state, now);
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        if let Some(transport) = service.transport.as_mut() {
+            transport.connections_mut().reset();
+            transport.clear_lan_scope();
+        }
+        service.clear_setup();
+    }
+}
+
 /// End private channels on leaving gameplay, retaining the LAN visit's same
 /// socket pair for BB. It is dropped only when that visit itself ends.
 pub(crate) fn return_transport(state: &mut AppState) {
@@ -5226,10 +5275,12 @@ mod tests {
                 .set_lan_scope(scope)
                 .unwrap();
         }
-        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
-            .encode("Host")
+        // VMCE-owned filler bytes: the reliable queue only needs an observable
+        // payload, and a VMCE build must not import the stock BC6 record type.
+        let go = crate::net::lan_messages::vmce::VmceRoundControl::Go
+            .encode("Host", [7; 16])
             .unwrap();
-        assert!(host.send(&go, direct(guest_addr), true));
+        assert!(host.send(go.as_bytes(), direct(guest_addr), true));
         host.vmce_round.defer_campaign_completion(1);
         host.transport.as_mut().unwrap().service(1);
         assert!(
@@ -5273,7 +5324,7 @@ mod tests {
             .unwrap()
             .pop_global_received()
             .unwrap();
-        assert_eq!(received.payload, go);
+        assert_eq!(received.payload, go.as_bytes());
     }
 
     #[cfg(feature = "vmce")]
@@ -5377,10 +5428,12 @@ mod tests {
                 .set_lan_scope(scope)
                 .unwrap();
         }
-        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
-            .encode("Host")
+        // VMCE-owned filler bytes: the reliable queue only needs an observable
+        // payload, and a VMCE build must not import the stock BC6 record type.
+        let go = crate::net::lan_messages::vmce::VmceRoundControl::Go
+            .encode("Host", [7; 16])
             .unwrap();
-        assert!(host.send(&go, direct(guest_addr), true));
+        assert!(host.send(go.as_bytes(), direct(guest_addr), true));
         host.vmce_round.defer_campaign_completion(1);
         host.transport.as_mut().unwrap().service(1);
         assert!(
@@ -5409,10 +5462,12 @@ mod tests {
                 .set_lan_scope(scope)
                 .unwrap();
         }
-        let go = crate::net::lan_messages::cooperative::CooperativeSignal::Go
-            .encode("Host")
+        // VMCE-owned filler bytes: the reliable queue only needs an observable
+        // payload, and a VMCE build must not import the stock BC6 record type.
+        let go = crate::net::lan_messages::vmce::VmceRoundControl::Go
+            .encode("Host", [7; 16])
             .unwrap();
-        assert!(host.send(&go, direct(guest_addr), true));
+        assert!(host.send(go.as_bytes(), direct(guest_addr), true));
         host.vmce_round.defer_campaign_completion(1);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -6222,7 +6277,7 @@ mod tests {
         );
         assert_eq!(
             host.departure_ready(601, true),
-            Some(DepartureReason::CooperativeRound)
+            Some(DepartureReason::RoundResult)
         );
 
         let mut stalled = service();
@@ -6238,7 +6293,7 @@ mod tests {
         assert!(stalled.departure_ready(600, true).is_none());
         assert_eq!(
             stalled.departure_ready(601, true),
-            Some(DepartureReason::CooperativeRound)
+            Some(DepartureReason::RoundResult)
         );
     }
 
@@ -7124,6 +7179,8 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
             .is_some_and(|observation| !observation.service_ok);
     #[cfg(feature = "vmce")]
     let failure_detail = wait.failure_detail.clone();
+    #[cfg(feature = "vmce")]
+    let round_notice = wait.notice;
     service.flush_setup();
     let Some(reason) = service.departure_ready(now, service_ok) else {
         return !canceling;
@@ -7152,16 +7209,19 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
             }
         }
         #[cfg(feature = "vmce")]
-        DepartureReason::CooperativeRound => {
+        DepartureReason::RoundResult => {
             crate::app::vmce_round::finish_return_to_shell(state);
-            if round_failed {
+            // A recorded VMCE handoff failure keeps its own visible reason; a
+            // plain delivery failure keeps the shared round-message reason.
+            let notice = round_notice.unwrap_or("VERA:VmceRoundSendFailed");
+            if round_notice.is_some() || round_failed {
                 if state.frontend.multiplayer_setup.is_some() {
                     crate::app::shell_network_setup::show_blocking_notice(
                         state,
-                        crate::i18n::tr("VERA:VmceRoundSendFailed"),
+                        crate::i18n::tr(notice),
                     );
                 } else {
-                    crate::app::shell_lan::report_error(state, "VERA:VmceRoundSendFailed");
+                    crate::app::shell_lan::report_error(state, notice);
                 }
             }
         }
