@@ -70,6 +70,11 @@ pub enum VmceSignal {
     StageRejected,
     StageAbsent,
     RetryVote,
+    /// This peer accepted the result page's Continue (ready) or left it.
+    Ready,
+    Leave,
+    /// A guest consumed the host's retry Go and is about to reload.
+    RetryAck,
 }
 
 impl VmceSignal {
@@ -78,6 +83,9 @@ impl VmceSignal {
             Self::StageRejected => 0x37,
             Self::StageAbsent => 0x38,
             Self::RetryVote => 0x39,
+            Self::Ready => 0x3f,
+            Self::Leave => 0x40,
+            Self::RetryAck => 0x41,
         }
     }
 
@@ -98,6 +106,9 @@ impl VmceSignal {
             0x37 => Some(Self::StageRejected),
             0x38 => Some(Self::StageAbsent),
             0x39 => Some(Self::RetryVote),
+            0x3f => Some(Self::Ready),
+            0x40 => Some(Self::Leave),
+            0x41 => Some(Self::RetryAck),
             _ => None,
         }
     }

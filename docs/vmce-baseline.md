@@ -185,3 +185,52 @@ manifest-extra 2p-final probe; a preview-capable host lobby was also captured wi
 Cross-machine play, guest-side intermission preview (A44), the full-room LAN listing (A45) and
 long-name statistics (A38) remain uncovered; the synthetic result/defeat fixtures additionally
 need the backlog's B91 workaround.
+## Phase 2 â€?VMCE-owned settlement flow (feature/vmce)
+
+VMCE now owns the result round end-to-end: its own session phase
+(`NetworkPhase::VmceResult` in `app/match_runtime/session/vmce_result.rs`), result
+agreement (propose/confirm with nonce and stage digest), the victory/campaign-end
+projections, a VMCE-owned defeat/retry page (`app/vmce_result/defeat*.rs` and
+`app/frontend/skirmish_shell_render/vmce_defeat.rs`), the LAN result service
+(`app/lan_service/vmce_round.rs`) and the app steps for Next, Retry, CampaignEnd
+and return to shell (`app/vmce_round.rs`). The stock Cooperative round state,
+events, UI model and page are no longer opened for a VMCE match; the stock BC6
+result owner keeps handling ordinary Cooperative results. Shared VERA pieces
+still used: session roster/lobby admission, reliable LAN queue, simulation
+score rows/difficulty and base shell controls.
+
+Protocol: result records carry the nonce, per-slot terminal entries, a
+confirmation flag and a stage digest over the resolved next stage; Ready/Leave
+and retry ACKs are VMCE signals, Go is the nonce-scoped result control. Retry
+uses an explicit guest ACK gate before the host freezes into the reload; no BC6
+Begin/Ack/Options handshake is required. Old VMCE protocol/checksums are not a
+compatibility requirement for this stage.
+
+Architecture: `architecture_guards::vmce_result_owners_do_not_call_the_cooperative_result_flow`
+forbids `cooperative_round::`, `ui::coop_score_shell`, `lan_service::cooperative::`
+and Cooperative result-page types in the VMCE result owners; the existing
+feature-gate budget was re-pinned for the new shared call sites.
+
+Evidence (local, labelled fast build `vmce-phase2-final-r3`, SHA-256
+`C26BD3C9AAEBCA9B757BFC4619124E8A634B2E02F639FAACFFA261A7E256AA78`):
+`2p-win`, `2p-retry` and `2p-final` LAN acceptance all PASS under
+`.scratch/final-accept-r3/`, with 300 checksums per peer for the retry comparison
+and the expected next-stage/campaign-end receipts. `architecture_guards` passes
+with and without `vmce`; `check --workspace --lib --bins --features vmce` and
+`check -p vera20k --lib --bins` pass. Full `vera20k --lib` suites: default
+3988 pass / 8 known environment-retail failures (same set as the pre-phase
+audit), VMCE feature 4093 pass / the same 8 failures; both known sets reproduce
+on the unmodified upstream checkout.
+
+Residual: the generated defeat page reproduces the BC6 backdrop, right panel,
+four-row statistics table and Retry/Leave slots with VMCE-owned layout code, but
+the native BC6 statics animation and the exact per-pixel static placement are
+not ported (no entry slide/animation; whole-pixel differences in table text
+placement). The retry/reconnect path relies on the reliable setup queue's
+retransmission for a lost Go; guest ACK loss is retried by the same queue, and
+the LAN transport has no separate VMCE ACK-resend timer. Cross-machine play and
+internet play are outside this stage.
+
+Critic findings (fixed in the final revision): assignment now requires the full propose/confirm agreement, a stale BC6 Ack no longer commits a result, and the defeat page carries Your Time/Par Time labels, the per-row Lost verdict, name ellipsis and a pointer press frame.
+
+Remaining, not fixed in this stage: no local retry-ACK deadline or dedicated resend timer (reliable setup queue only); a guest whose host never assigns has no result-page timeout without a received intermission epoch; no hover status/STT row on the VMCE defeat page; the native BC6 statics animation and exact static placement are not ported; superseded BC6 helper paths and the old encode_scoped_request stub remain in the LAN adapter; the architecture guard scans five VMCE-owned paths and has no negative fixture (it proves absence of named Cooperative calls, not full isolation); LAN diagnostics call page actions directly and hard-code verdict/can-continue, so hover/press/hit-test and an old-BC6 pixel comparison remain uncovered. Cross-machine and internet play stay out of scope.

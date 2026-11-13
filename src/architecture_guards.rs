@@ -238,7 +238,6 @@ const VMCE_LOADER_VARIANT_DECLARATIONS: &[(&str, &str, usize)] = &[
 /// separately named policy covers them. Values are function-local counts of
 /// `is_vmce` and whole-token `Vmce` references.
 const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
-    ("app/cooperative_round.rs", "mission_ended", 1, 0),
     ("app/input/abort.rs", "vmce_active", 1, 0),
     ("app/input/multiplayer_setup.rs", "layout", 1, 0),
     ("app/lan_service.rs", "reject_setup_compatibility", 1, 0),
@@ -534,7 +533,8 @@ const VMCE_OWNED_FILE_PREFIXES: &[&str] = &[
     "app/vmce_campaign.rs",
     "app/vmce_round.rs",
     "app/lan_service/vmce_",
-    "app/match_runtime/session/cooperative_round/vmce_round.rs",
+    "app/match_runtime/session/vmce_result.rs",
+    "app/frontend/skirmish_shell_render/vmce_defeat.rs",
     "app/shell_network_setup/vmce_",
     "app/diagnostics/",
     "net/lan_messages/vmce.rs",
@@ -550,13 +550,17 @@ const VMCE_OWNED_FILE_PREFIXES: &[&str] = &[
 /// added here deliberately.
 const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/cooperative_round.rs", 12),
-    ("app/frame.rs", 1),
-    ("app/frontend/score_overlay.rs", 14),
+    ("app/frame.rs", 3),
+    ("app/frontend/skirmish_shell_render.rs", 2),
+    ("app/frontend/score_overlay.rs", 6),
     ("app/frontend/skirmish_shell_render/multiplayer_setup.rs", 9),
+    ("app/handler.rs", 4),
+    ("app/in_game.rs", 1),
+    ("app/input/precedence.rs", 2),
     ("app/frontend/state.rs", 1),
     ("app/initialize.rs", 1),
     ("app/input/multiplayer_setup.rs", 4),
-    ("app/lan_service.rs", 70),
+    ("app/lan_service.rs", 75),
     ("app/lan_service/cooperative.rs", 19),
     ("app/lan_service/maps.rs", 4),
     ("app/lan_service/options.rs", 30),
@@ -565,9 +569,9 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/loading/pump.rs", 12),
     ("app/loading/transitions.rs", 1),
     ("app/match_bootstrap.rs", 33),
-    ("app/match_runtime/session.rs", 30),
+    ("app/match_runtime/session.rs", 48),
     ("app/match_runtime/session/cooperative_round.rs", 37),
-    ("app/match_runtime/sim_tick.rs", 1),
+    ("app/match_runtime/sim_tick.rs", 3),
     ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
@@ -605,7 +609,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 507;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 467;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -3714,4 +3718,58 @@ fn test_gated_files(files: &[SourceFile]) -> BTreeSet<String> {
         }
     }
     gated
+}
+
+/// The VMCE settlement flow must not call a stock Cooperative result owner.
+/// It may read shared simulation, roster and difficulty helpers, but not the
+/// Cooperative round state/flow, its result page model or its transport owner.
+#[test]
+fn vmce_result_owners_do_not_call_the_cooperative_result_flow() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let owned = [
+        "app/vmce_result/",
+        "app/vmce_round.rs",
+        "app/lan_service/vmce_round.rs",
+        "app/match_runtime/session/vmce_result.rs",
+        "app/frontend/skirmish_shell_render/vmce_defeat.rs",
+    ];
+    let forbidden = [
+        "cooperative_round::",
+        "ui::coop_score_shell",
+        "lan_service::cooperative::",
+        "CoopScorePage",
+        "CoopScoreModel",
+        "CoopScoreView",
+        "cooperative_round_retry",
+        "cooperative_round_continue",
+        "cooperative_round_slot",
+        "enter_cooperative_round",
+        "freeze_cooperative_round",
+        "quit_cooperative_round",
+    ];
+    let mut violations = Vec::new();
+    for file in files {
+        if !owned.iter().any(|prefix| file.rel.starts_with(prefix)) {
+            continue;
+        }
+        // Test-only fixtures may still compare against stock layout ids.
+        let production = file
+            .source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or(file.source.as_str());
+        for (line_number, line) in production.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            for token in forbidden {
+                if code.contains(token) {
+                    violations.push(format!("{}:{}: {token}", file.rel, line_number + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "VMCE result code calls a Cooperative result owner: {violations:#?}"
+    );
 }

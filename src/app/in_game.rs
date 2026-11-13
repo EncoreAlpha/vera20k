@@ -897,6 +897,12 @@ impl App {
             }
             ScenarioExitDestination::CampaignDefeat => Self::begin_campaign_defeat(state),
             ScenarioExitDestination::CooperativeResult { victory } => {
+                // VMCE owns its settlement page; the stock BC6 result stays
+                // for ordinary Cooperative matches.
+                #[cfg(feature = "vmce")]
+                if crate::app::vmce_result::open_result(state) {
+                    return;
+                }
                 crate::app::cooperative_round::open_result(state, victory)
             }
             ScenarioExitDestination::MainMenu => {

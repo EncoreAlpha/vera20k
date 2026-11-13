@@ -1483,11 +1483,25 @@ impl App {
                 // non-art card.
                 let score_rendered = match screen_page {
                     ScreenPage::CoopScore => {
-                        crate::app::frontend::skirmish_shell_render::render_coop_score(
-                            state,
-                            &mut encoder,
-                            &output.texture,
-                        )?
+                        #[cfg(feature = "vmce")]
+                        let vmce_defeat_rendered =
+                            crate::app::vmce_result::defeat_page_active(state)
+                                && crate::app::frontend::skirmish_shell_render::render_vmce_defeat(
+                                    state,
+                                    &mut encoder,
+                                    &output.texture,
+                                )?;
+                        #[cfg(not(feature = "vmce"))]
+                        let vmce_defeat_rendered = false;
+                        if vmce_defeat_rendered {
+                            true
+                        } else {
+                            crate::app::frontend::skirmish_shell_render::render_coop_score(
+                                state,
+                                &mut encoder,
+                                &output.texture,
+                            )?
+                        }
                     }
                     ScreenPage::CampaignScore => {
                         matches!(

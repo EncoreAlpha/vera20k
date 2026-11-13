@@ -1282,6 +1282,11 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if screen == ScreenPage::CoopScore {
+                    #[cfg(feature = "vmce")]
+                    if crate::app::vmce_result::defeat_page_active(state) {
+                        crate::app::vmce_result::defeat_input::key(state, &event);
+                        return;
+                    }
                     crate::app::input::coop_score::key(state, &event);
                     return;
                 }
@@ -1642,7 +1647,16 @@ impl ApplicationHandler for App {
                     ScreenPage::Campaign => Self::handle_campaign_mouse_move(state),
                     ScreenPage::LoadSavedGame => Self::handle_load_saved_game_mouse_move(state),
                     ScreenPage::Wol => Self::handle_wol_mouse_move(state),
-                    ScreenPage::CoopScore => crate::app::input::coop_score::cursor_moved(state),
+                    ScreenPage::CoopScore => {
+                        #[cfg(feature = "vmce")]
+                        if crate::app::vmce_result::defeat_page_active(state) {
+                            crate::app::vmce_result::defeat_input::cursor_moved(state);
+                        } else {
+                            crate::app::input::coop_score::cursor_moved(state);
+                        }
+                        #[cfg(not(feature = "vmce"))]
+                        crate::app::input::coop_score::cursor_moved(state);
+                    }
                     ScreenPage::Score => Self::handle_score_shell_mouse_move(state),
                     ScreenPage::CampaignScore => Self::handle_campaign_score_mouse_move(state),
                     // While the SHP quit-confirm modal owns the controller, the menu
@@ -1806,7 +1820,12 @@ impl ApplicationHandler for App {
                         }
                     }
                     ScreenPage::CoopScore => {
-                        crate::app::input::coop_score::mouse(state, button, pressed)
+                        #[cfg(feature = "vmce")]
+                        if crate::app::vmce_result::defeat_page_active(state) {
+                            crate::app::vmce_result::defeat_input::mouse(state, button, pressed);
+                            return;
+                        }
+                        crate::app::input::coop_score::mouse(state, button, pressed);
                     }
                     ScreenPage::CampaignScore if left => {
                         if pressed {

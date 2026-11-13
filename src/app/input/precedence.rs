@@ -112,12 +112,17 @@ struct Layers {
     /// The active-game shell art for `in_game_menu` is loaded.
     in_game_shell: bool,
     coop_score: bool,
+    vmce_defeat: bool,
     campaign_score: bool,
     score: bool,
 }
 
 impl Layers {
     fn of(state: &AppState) -> Self {
+        #[cfg(feature = "vmce")]
+        let vmce_defeat = crate::app::vmce_result::defeat_page_active(state);
+        #[cfg(not(feature = "vmce"))]
+        let vmce_defeat = false;
         let frontend = &state.frontend;
         Self {
             house_outcome_wait: App::house_outcome_wait_pending(state),
@@ -150,6 +155,7 @@ impl Layers {
                 state,
             ),
             coop_score: crate::app::input::coop_score::active(state),
+            vmce_defeat,
             campaign_score: App::campaign_score_shell_active(state),
             score: App::score_shell_active(state),
         }
@@ -224,6 +230,7 @@ impl Layers {
             ),
             Screen::MissionResult => first(
                 &[
+                    (self.vmce_defeat, ScreenPage::CoopScore),
                     (self.coop_score, ScreenPage::CoopScore),
                     (self.campaign_score, ScreenPage::CampaignScore),
                     (self.score, ScreenPage::Score),

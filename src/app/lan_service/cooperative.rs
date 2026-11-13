@@ -15,7 +15,6 @@ use crate::app::match_runtime::session::{
 };
 use crate::net::lan_messages::cooperative::{
     CooperativeAiWords, CooperativeHumanWords, CooperativeOptionsRecord, CooperativeSignal,
-    OPTIONS_KIND,
 };
 use crate::skirmish_launch::{
     LaunchCountry, LaunchStartPosition, LaunchTeam, SkirmishAiSlot, SkirmishLaunchSession,
@@ -54,9 +53,6 @@ pub(crate) fn release_transport(state: &mut AppState) {
     );
     service_transport(state, now);
     if let Some(service) = state.match_state.lan_service.as_mut() {
-        #[cfg(feature = "vmce")]
-        super::vmce_round::release_round_transport(service);
-        #[cfg(not(feature = "vmce"))]
         if let Some(transport) = service.transport.as_mut() {
             transport.connections_mut().reset();
             transport.clear_lan_scope();
@@ -66,74 +62,11 @@ pub(crate) fn release_transport(state: &mut AppState) {
 }
 
 /// One service pass while the round is open; false outside it.
-pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
-    #[cfg(feature = "vmce")]
-    if super::vmce_round::pause_round_poll(state) {
-        return false;
-    }
-    #[cfg(feature = "vmce")]
-    {
-        super::vmce_round::flush_round_work(state, service_ok);
-    }
-    #[cfg(feature = "vmce")]
-    if super::vmce_round::campaign_completion_pending(state) {
-        match super::vmce_round::take_campaign_completion(state, service_ok, now) {
-            None => {}
-            Some(Ok(())) => crate::app::App::vmce_campaign_end(state),
-            Some(Err(())) => {
-                log::error!("VMCE campaign completion could not be delivered to every peer");
-                crate::app::cooperative_round::return_to_shell(state);
-                super::vmce_round::report_round_failure(state);
-            }
-        }
-        return true;
-    }
+pub(super) fn poll(state: &mut AppState, now: u32) -> bool {
     if state.match_state.live_network.is_some()
         || state.match_state.session.cooperative_round().is_none()
     {
         return false;
-    }
-    #[cfg(feature = "vmce")]
-    if !service_ok && super::vmce_round::fail_round_delivery(state) {
-        return true;
-    }
-    #[cfg(feature = "vmce")]
-    if let Err(error) = super::vmce_round::service_result_agreement(state) {
-        log::error!("VMCE result agreement failed: {error:#}");
-        let _ = state.match_state.session.quit_cooperative_round();
-        crate::app::cooperative_round::return_to_shell(state);
-        return false;
-    }
-    #[cfg(feature = "vmce")]
-    if !super::vmce_round::assign_intermission_if_ready(state, now) {
-        return false;
-    }
-    // Records that arrived between the mission's end and this round's phase
-    // opening were queued by the transport dispatcher; apply them first in
-    // arrival order so a peer's begin/ready/stage packet is not lost.
-    #[cfg(feature = "vmce")]
-    loop {
-        let Some(incoming) = state
-            .match_state
-            .lan_service
-            .as_mut()
-            .and_then(super::vmce_round::take_pending_round)
-        else {
-            break;
-        };
-        if let Err(error) = receive(state, incoming) {
-            log::debug!("Ignored queued co-op round packet: {error:#}");
-        }
-        super::vmce_round::unlock_agreed_next_stage(state);
-        if super::vmce_round::round_exit_pending(state) {
-            return true;
-        }
-        if super::vmce_round::campaign_completion_pending(state) {
-            return true;
-        }
-        if state.match_state.session.cooperative_round().is_none() {
-            return false;
-        }
     }
     loop {
         let Some(incoming) = state
@@ -147,23 +80,7 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         if let Err(error) = receive(state, incoming) {
             log::debug!("Ignored co-op round packet: {error:#}");
         }
-        #[cfg(feature = "vmce")]
-        super::vmce_round::unlock_agreed_next_stage(state);
-        #[cfg(feature = "vmce")]
-        if super::vmce_round::round_exit_pending(state) {
-            return true;
-        }
-        #[cfg(feature = "vmce")]
-        if super::vmce_round::campaign_completion_pending(state) {
-            return true;
-        }
-        let service_ok = service_transport(state, now);
-        #[cfg(feature = "vmce")]
-        if !service_ok && super::vmce_round::fail_round_delivery(state) {
-            return true;
-        }
-        #[cfg(not(feature = "vmce"))]
-        let _ = service_ok;
+        service_transport(state, now);
         // Go or Quit closed the round: later packets (the next mission's
         // loading) belong to the ordinary service.
         if state.match_state.session.cooperative_round().is_none() {
@@ -171,29 +88,12 @@ pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         }
     }
     drain_match_requests(state);
-    #[cfg(feature = "vmce")]
-    if let Err(error) = super::vmce_round::service_result_agreement(state) {
-        log::error!("VMCE result agreement failed: {error:#}");
-        let _ = state.match_state.session.quit_cooperative_round();
-        crate::app::cooperative_round::return_to_shell(state);
-        return false;
-    }
-    #[cfg(feature = "vmce")]
-    super::vmce_round::unlock_agreed_next_stage(state);
-    #[cfg(feature = "vmce")]
-    if !super::vmce_round::continue_after_result(state) {
-        return false;
-    }
     true
 }
 
 /// The loop's dispatch (`0x0047009F`) for a packet from a round participant.
 fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> {
     anyhow::ensure!(incoming.product_id == 0xaa04, "different LAN product");
-    #[cfg(feature = "vmce")]
-    if super::vmce_round::receive(state, &incoming)? {
-        return Ok(());
-    }
     let source = state
         .match_state
         .session
@@ -239,31 +139,6 @@ fn receive(state: &mut AppState, incoming: GlobalMessage) -> anyhow::Result<()> 
     crate::app::cooperative_round::service_event(state, event)
 }
 
-/// Whether `payload` is one of the co-op round's records: a native BC6
-/// signal (`0x23..0x26`, `0x31`, `0x34`) or the options `0x32`.
-pub(super) fn is_round_record(payload: &[u8]) -> bool {
-    if payload.len() == crate::net::lan_messages::cooperative::SIGNAL_LEN {
-        return CooperativeSignal::decode(payload).is_some_and(|signal| {
-            matches!(
-                signal,
-                CooperativeSignal::Ready
-                    | CooperativeSignal::Left
-                    | CooperativeSignal::Waiting
-                    | CooperativeSignal::Go
-                    | CooperativeSignal::Begin
-                    | CooperativeSignal::Ack
-            )
-        });
-    }
-    if payload.len() == crate::net::lan_messages::LAN_MESSAGE_LEN {
-        let Ok(message) = LanMessage::decode(payload) else {
-            return false;
-        };
-        return message.kind() == LanMessageKind::Unknown(OPTIONS_KIND);
-    }
-    false
-}
-
 /// `0x0C` (`0x004706E3`): only this game's hash posts a line, in the
 /// packet's colour `+0x110`.
 fn chat_event(
@@ -283,10 +158,6 @@ fn chat_event(
 /// A queued round record to every other node.
 pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
     if state.match_state.session_mode() != SessionMode::Lan {
-        return;
-    }
-    #[cfg(feature = "vmce")]
-    if super::vmce_round::send(state, &request) {
         return;
     }
     let name = local_name(state);
@@ -317,7 +188,7 @@ pub(super) fn send(state: &mut AppState, request: NetworkLoadingRequest) {
 /// `0x0046D4A0`: each raw slot's human words, `-1` where no human is bound,
 /// and the AI rows. The round keeps no inactive AI words; those rows go out
 /// as a fresh setup's (country `-1`, which every reader skips).
-pub(super) fn options_record(options: &CooperativeRoundOptions) -> CooperativeOptionsRecord {
+fn options_record(options: &CooperativeRoundOptions) -> CooperativeOptionsRecord {
     let humans = std::array::from_fn(|row| {
         options
             .humans
@@ -368,7 +239,7 @@ pub(super) fn options_record(options: &CooperativeRoundOptions) -> CooperativeOp
 /// The receiver's view of a `0x32` (`0x0046D650` applies it): every bound
 /// human row's words, and every AI row whose country is set. The record
 /// carries no AI count, so the receiver's own stays.
-pub(super) fn round_options(
+fn round_options(
     launch: &SkirmishLaunchSession,
     record: &CooperativeOptionsRecord,
 ) -> anyhow::Result<CooperativeRoundOptions> {
@@ -500,46 +371,5 @@ mod tests {
         // A random country's placeholder is not on the wire.
         received.humans[1].1.country = options.humans[1].1.country;
         assert_eq!(received, options);
-        #[cfg(feature = "vmce")]
-        {
-            let encoded = options_record(&options)
-                .encode_vmce("Host", [7; 16])
-                .unwrap();
-            let (record, nonce) = CooperativeOptionsRecord::decode_vmce(&encoded).unwrap();
-            assert_eq!(nonce, [7; 16]);
-            let mut received = round_options(&launch, &record).unwrap();
-            received.humans[1].1.country = options.humans[1].1.country;
-            assert_eq!(received, options);
-            assert!(CooperativeOptionsRecord::decode(&encoded).is_none());
-        }
-    }
-
-    /// The generic pre-round hold recognizes native BC6 ready/options records;
-    /// setup traffic and chat remain outside it.
-    #[test]
-    fn the_pending_round_hold_recognizes_the_round_records() {
-        assert!(is_round_record(
-            &CooperativeSignal::Ready.encode("Guest").unwrap()
-        ));
-        let options = CooperativeOptionsRecord {
-            difficulty: 1,
-            humans: [CooperativeHumanWords {
-                start: -1,
-                country: -1,
-                color: -1,
-            }; 8],
-            ai: [CooperativeAiWords {
-                country: -1,
-                color: -1,
-                difficulty: 0,
-                start: -2,
-                team: -2,
-            }; 8],
-        };
-        assert!(is_round_record(
-            &options.encode("Host").unwrap().into_bytes()
-        ));
-        // A chat record is not part of the round's establishment.
-        assert!(!is_round_record(&[0x0C, 0, 0, 0]));
     }
 }

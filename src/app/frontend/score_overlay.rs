@@ -136,15 +136,8 @@ pub(crate) fn coop_overlay(
     layout: &CoopScoreLayout,
     view: &CoopScoreView,
 ) -> Option<CoopScoreOverlay> {
-    #[cfg(feature = "vmce")]
-    {
-        return crate::app::vmce_result::paint_defeat::overlay(state, layout, view);
-    }
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (state, layout, view);
-        None
-    }
+    let _ = (state, layout, view);
+    None
 }
 
 /// The single right-panel button projection of the open `0xBC6` page.
@@ -152,15 +145,8 @@ pub(crate) fn coop_buttons(
     state: &AppState,
     view: &CoopScoreView,
 ) -> Option<Vec<CoopOverlayButton>> {
-    #[cfg(feature = "vmce")]
-    {
-        return crate::app::vmce_result::paint_defeat::buttons(state, view);
-    }
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = (state, view);
-        None
-    }
+    let _ = (state, view);
+    None
 }
 
 /// Whether control `id` takes input on the open `0xBC6` page. `None` means the
@@ -181,27 +167,13 @@ pub(crate) fn coop_control_enabled(
 
 /// Whether the open `0xBC6` page is the statistics-only extension (no chat).
 pub(crate) fn coop_is_statistics_only(state: &AppState) -> bool {
-    #[cfg(feature = "vmce")]
-    {
-        return crate::app::vmce_result::defeat_page_active(state);
-    }
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = state;
-        false
-    }
+    let _ = state;
+    false
 }
 
 /// The row count and extra cell ids the open `0xBC6` page lays out. `None`
 /// means the native two-row page.
 pub(crate) fn coop_row_extension(state: &AppState) -> Option<(usize, &'static [[u16; 5]; 2])> {
-    #[cfg(feature = "vmce")]
-    {
-        return crate::app::vmce_result::row_extension(state);
-    }
-    #[cfg(not(feature = "vmce"))]
-    {
-        let _ = state;
-        None
-    }
+    let _ = state;
+    None
 }

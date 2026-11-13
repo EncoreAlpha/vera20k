@@ -2121,5 +2121,9 @@ mod coop_score;
 pub(crate) mod vmce_panel;
 mod multiplayer_setup;
 pub(crate) use coop_score::render_coop_score;
+#[cfg(feature = "vmce")]
+mod vmce_defeat;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_defeat::render_vmce_defeat;
 pub(crate) use keyboard::render_keyboard_shell;
 pub(crate) use multiplayer_setup::render_multiplayer_setup;

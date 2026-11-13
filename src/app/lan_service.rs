@@ -1887,8 +1887,16 @@ pub(crate) fn poll(state: &mut AppState, now_ms: u64) {
         return;
     }
     let service_ok = service_transport(state, now);
-    if mode == Some(SessionMode::Lan) && cooperative::poll(state, now, service_ok) {
-        return;
+    if mode == Some(SessionMode::Lan) {
+        #[cfg(feature = "vmce")]
+        if vmce_round::poll(state, now, service_ok) {
+            return;
+        }
+        #[cfg(not(feature = "vmce"))]
+        let _ = service_ok;
+        if cooperative::poll(state, now) {
+            return;
+        }
     }
     if mode == Some(SessionMode::Wol) {
         // WOL room/configuration events stay with its HTTPS control plane.
@@ -4026,7 +4034,11 @@ fn drain_match_requests(state: &mut AppState) {
             }
             NetworkLoadingRequest::Chat { recipients, text } => {
                 // BC6's chat writes [0x7EEF2C] (0x0046E126).
-                let color = if state.match_state.session.cooperative_round().is_some() {
+                #[cfg(feature = "vmce")]
+                let vmce_result = state.match_state.session.vmce_result_phase().is_some();
+                #[cfg(not(feature = "vmce"))]
+                let vmce_result = false;
+                let color = if vmce_result {
                     crate::ui::wol_chat::PUBLIC_COLOR as i32
                 } else {
                     state
@@ -4067,8 +4079,14 @@ fn drain_match_requests(state: &mut AppState) {
                     send_sources(state, message.as_bytes(), peers);
                 }
             }
-            // BC6's records; an ordinary Battle match never emits them.
-            other => cooperative::send(state, other),
+            // VMCE result records and the stock BC6 records.
+            other => {
+                #[cfg(feature = "vmce")]
+                if vmce_round::active_round(state) && vmce_round::send(state, &other) {
+                    continue;
+                }
+                cooperative::send(state, other);
+            }
         }
     }
 }
@@ -7049,7 +7067,7 @@ fn advance_departure(state: &mut AppState, now: u32, service_ok: bool) -> bool {
         }
         #[cfg(feature = "vmce")]
         DepartureReason::CooperativeRound => {
-            crate::app::cooperative_round::finish_return_to_shell(state);
+            crate::app::vmce_round::finish_return_to_shell(state);
             if round_failed {
                 if state.frontend.multiplayer_setup.is_some() {
                     crate::app::shell_network_setup::show_blocking_notice(

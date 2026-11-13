@@ -13,7 +13,9 @@
 //! state and hands button intents back to them.
 
 pub(crate) mod defeat;
-pub(crate) mod paint_defeat;
+pub(crate) mod defeat_input;
+pub(crate) mod defeat_layout;
+pub(crate) mod flow;
 pub(crate) mod paint_victory;
 pub(crate) mod types;
 pub(crate) mod victory;
@@ -79,7 +81,7 @@ pub(crate) fn open_result(state: &mut AppState) -> bool {
     match settlement {
         None => {
             log::error!("VMCE reached settlement without a shared result");
-            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::vmce_round::return_to_shell(state);
         }
         Some(true) => victory::open_victory(state),
         Some(false) => defeat::open_defeat(state),
@@ -98,11 +100,6 @@ pub(crate) fn defeat_page_active(state: &AppState) -> bool {
         state.frontend.vmce_result_page,
         Some(VmceResultPage::Defeat(_))
     )
-}
-
-/// The BC6 row count and extra cell ids VERA's defeat page needs.
-pub(crate) fn row_extension(state: &AppState) -> Option<(usize, &'static [[u16; 5]; 2])> {
-    defeat_page_active(state).then_some((types::DEFEAT_SCORE_ROWS, &types::VMCE_ROW_CELLS))
 }
 
 /// Drop the VMCE content with the stock result page it decorates. Every
@@ -216,10 +213,10 @@ pub(crate) fn leave_room_pressed(state: &mut AppState) -> bool {
     if !owns_page(state) {
         return false;
     }
-    if let Err(error) = state.match_state.session.quit_cooperative_round() {
+    if let Err(error) = state.match_state.session.quit_vmce_result() {
         log::warn!("VMCE result Leave Room refused: {error:#}");
     }
-    crate::app::cooperative_round::return_to_shell(state);
+    crate::app::vmce_round::return_to_shell(state);
     true
 }
 

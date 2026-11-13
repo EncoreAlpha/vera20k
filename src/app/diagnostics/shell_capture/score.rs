@@ -1249,8 +1249,6 @@ fn install_vmce_result_fixture(state: &mut AppState, target: VmceResultTarget) -
 #[cfg(feature = "vmce")]
 fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -> Result<()> {
     use crate::app::vmce_result::types::{VmceStatistics, VmceStatisticsRow};
-    use crate::ui::coop_score_shell::CoopScoreModel;
-    use crate::ui::score_shell::ScoreRow;
     crate::app::shell_network_setup::install_vmce_lobby_fixture(
         state,
         &crate::app::shell_network_setup::VmceLobbyFixture {
@@ -1338,21 +1336,11 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
     state
         .match_state
         .session
-        .cooperative_round_set_retry_votes_for_diagnostics(target.votes())?;
+        .vmce_result_set_retry_votes_for_diagnostics(target.votes())?;
     const KILLS: [u32; 4] = [12, 7, 4, 2];
     const LOSSES: [u32; 4] = [3, 5, 2, 1];
     const BUILT: [u32; 4] = [40, 31, 18, 9];
     const SCORE: [i32; 4] = [900, 640, 410, 220];
-    let rows = (0..target.rows())
-        .map(|role| ScoreRow {
-            name: roles[role].owner.clone(),
-            rgb: roles[role].color.unwrap_or([255, 255, 0]),
-            kills: KILLS[role],
-            losses: LOSSES[role],
-            built: BUILT[role],
-            score: SCORE[role],
-        })
-        .collect();
     let statistics = VmceStatistics {
         rows: (0..target.rows())
             .map(|role| VmceStatisticsRow {
@@ -1373,20 +1361,9 @@ fn install_vmce_defeat_fixture(state: &mut AppState, target: VmceDefeatTarget) -
         total_time: "00:12:00".into(),
         par_time: "00:15:00".into(),
     };
-    let model = CoopScoreModel {
-        rows,
-        time: "00:12:00".into(),
-        next_mission: String::new(),
-        mode_label: "VMCE".into(),
-        map_label: String::new(),
-        description: String::new(),
-        side: 0,
-        map_index: None,
-        can_continue: true,
-    };
-    // The shared BC6 page and the VMCE content are installed together by the
-    // production defeat-page owner; the fixture only supplies their state.
-    crate::app::vmce_result::defeat::install_defeat_page(state, model, statistics);
+    // The VMCE defeat page owns its content; the fixture only supplies the
+    // statistics projection.
+    crate::app::vmce_result::defeat::install_defeat_page(state, statistics);
     let _ = App::ensure_skirmish_shell_chrome(state);
     Ok(())
 }

@@ -179,13 +179,6 @@ pub(crate) const VMCE_READY_CONTROL: u16 = 0x7001;
 pub(crate) const VMCE_LEAVE_CONTROL: u16 = 0x7002;
 pub(crate) const VMCE_STATS_CONTROL: u16 = 0x7003;
 pub(crate) const VMCE_STATS_BACK_CONTROL: u16 = 0x7004;
-/// The two additional BC6 score rows' cell ids, outside the native range.
-pub(crate) const VMCE_ROW_CELLS: [[u16; 5]; 2] = [
-    [0x7B81, 0x7B83, 0x7B85, 0x7B87, 0x7B89],
-    [0x7B82, 0x7B84, 0x7B86, 0x7B88, 0x7B8A],
-];
-/// BC6's row count on VERA's defeat page: the stock page keeps two.
-pub(crate) const DEFEAT_SCORE_ROWS: usize = 4;
 
 /// Authored 800x600 right-panel slots the VMCE result buttons reuse: the
 /// lobby's topmost action slot (Continue/Ready), the slot below it
@@ -464,27 +457,9 @@ pub(crate) fn statistics_layout(scale: ShellScale) -> VmceStatisticsLayout {
     layout
 }
 
-/// The BC6 statics VERA's statistics-only defeat page hides: no next mission,
-/// description, difficulty prompt or previous-mission/next caption.
-pub(crate) fn defeat_hides_static(id: u16) -> bool {
-    use crate::ui::coop_score_shell::{DESCRIPTION, DIFFICULTY, NEXT_MISSION, PREVIOUS_MISSION};
-    matches!(
-        id,
-        NEXT_MISSION
-            | DESCRIPTION
-            | DIFFICULTY
-            | 0x0798
-            | 0x0799
-            | 0x079A
-            | 0x079B
-            | PREVIOUS_MISSION
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::coop_score_shell::{DESCRIPTION, DIFFICULTY, NEXT_MISSION};
 
     fn scaled_once(rect: RectPx, scale: ShellScale) -> RectPx {
         scale.scale_rect(rect)
@@ -572,19 +547,5 @@ mod tests {
         );
         assert!(voted[0].pressed, "a cast vote keeps the lit frame");
         assert!(!voted[0].enabled, "a cast vote is not clickable");
-    }
-
-    #[test]
-    fn the_defeat_page_hides_only_its_prompts() {
-        for id in [NEXT_MISSION, DESCRIPTION, DIFFICULTY, 0x0798, 0x079B] {
-            assert!(defeat_hides_static(id), "{id:#x}");
-        }
-        for id in [
-            crate::ui::coop_score_shell::TIME,
-            crate::ui::coop_score_shell::CONTINUE,
-            crate::ui::coop_score_shell::ROW_CELLS[0][0],
-        ] {
-            assert!(!defeat_hides_static(id), "{id:#x}");
-        }
     }
 }

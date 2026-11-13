@@ -80,11 +80,11 @@ fn victory_page(state: &AppState) -> Option<&VictoryResultPage> {
 /// The host's all-ready gate: the live round while it exists, else the board's
 /// snapshot (captures have no round).
 fn can_continue(state: &AppState, board: &VmceResultBoard) -> bool {
-    if state.match_state.session.cooperative_round().is_some() {
+    if state.match_state.session.vmce_result_phase().is_some() {
         state
             .match_state
             .session
-            .cooperative_round_continue_enabled()
+            .vmce_result_continue_enabled()
     } else {
         board.can_continue
     }

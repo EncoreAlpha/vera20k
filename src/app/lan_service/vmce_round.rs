@@ -6,11 +6,10 @@
 
 use super::{AppState, LOBBY_RETRY_TIMING, LanService, direct};
 use crate::app::match_runtime::session::{
-    CooperativeRoundEvent, CooperativeRoundOptions, NetworkLoadingRequest, SessionMode,
-    WallBucketTimer,
+    NetworkLoadingRequest, SessionMode, VmceResultEvent, WallBucketTimer,
 };
 use crate::net::global::GlobalMessage;
-use crate::net::lan_messages::cooperative::{CooperativeOptionsRecord, CooperativeSignal};
+
 use crate::net::lan_messages::ingame::{LoadingFailureReason, encode_loading_failure};
 use crate::net::lan_messages::vmce::{VmceRoundControl, VmceSignal, VmceStageRecord};
 use crate::net::lan_messages::{LanMessage, LanMessageKind, SessionScope};
@@ -213,21 +212,19 @@ pub(crate) fn is_round_record(payload: &[u8]) -> bool {
     };
     VmceStageRecord::decode(&message).is_some()
         || VmceRoundControl::decode(&message).is_some()
-        || CooperativeOptionsRecord::decode_vmce(&message).is_some()
         || crate::net::lan_messages::vmce::decode_intermission_epoch(&message).is_some()
         || crate::net::lan_messages::vmce::VmceResultRecord::decode(&message).is_some()
 }
 
 pub(super) fn defer_pending_round_record(state: &mut AppState, incoming: &GlobalMessage) -> bool {
     if state.match_state.session_mode() != SessionMode::Lan
-        || state.match_state.session.cooperative_round().is_some()
+        || state.match_state.session.vmce_result_phase().is_some()
         || !state
             .match_state
             .session
             .network_setup()
             .is_some_and(|launch| launch.mode.class.is_vmce())
-        || !(super::cooperative::is_round_record(&incoming.payload)
-            || is_round_record(&incoming.payload))
+        || !is_round_record(&incoming.payload)
     {
         return false;
     }
@@ -244,11 +241,7 @@ pub(super) fn take_pending_round(service: &mut LanService) -> Option<GlobalMessa
 
 pub(super) fn active_round(state: &AppState) -> bool {
     state.match_state.session_mode() == SessionMode::Lan
-        && state
-            .match_state
-            .session
-            .cooperative_round()
-            .is_some_and(|round| round.vmce_active())
+        && state.match_state.session.vmce_result_phase().is_some()
 }
 
 fn peer_sources(state: &AppState) -> Vec<usize> {
@@ -442,14 +435,9 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             return Ok(false);
         };
         let control = VmceRoundControl::decode(&message);
-        let options = CooperativeOptionsRecord::decode_vmce(&message);
-        if control.is_some() || options.is_some() {
+        if let Some((kind, nonce)) = control {
             let source = connected_source(state, incoming.source)?;
-            let (nonce, from_host) = if let Some((kind, nonce)) = control {
-                (nonce, !matches!(kind, VmceRoundControl::Ack))
-            } else {
-                (options.as_ref().expect("VMCE options").1, true)
-            };
+            let from_host = !matches!(kind, VmceRoundControl::Ack);
             let host = state.match_state.session.host();
             let local = state
                 .match_state
@@ -468,7 +456,7 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
             ) {
                 return Ok(true);
             }
-            if matches!(control, Some((VmceRoundControl::Begin, _))) {
+            if matches!(kind, VmceRoundControl::Begin) {
                 let now = super::super::match_runtime::frame_pacer::frame_bucket(
                     super::super::match_runtime::frame_pacer::wall_clock_ms(),
                 );
@@ -476,27 +464,23 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
                     service.vmce_round.mark_assignment_wait(now);
                 }
             }
-            let event = match control {
-                Some((VmceRoundControl::Begin, _)) => CooperativeRoundEvent::Begin,
-                Some((VmceRoundControl::Ack, _)) => CooperativeRoundEvent::Ack { source },
-                Some((VmceRoundControl::Go, _)) => CooperativeRoundEvent::Go,
-                None => {
-                    let launch = state
-                        .match_state
-                        .session
-                        .network_setup()
-                        .ok_or_else(|| anyhow::anyhow!("no round roster"))?;
-                    CooperativeRoundEvent::Options(super::cooperative::round_options(
-                        launch,
-                        &options.as_ref().expect("VMCE options").0,
-                    )?)
-                }
+            // A guest acknowledges the retry Go before the app freezes the
+            // result phase into the reload; the host waits for every ACK.
+            if matches!(kind, VmceRoundControl::Go)
+                && !host
+                && state.match_state.session.vmce_result_ending()
+                    == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
+                && let Ok(message) = VmceSignal::RetryAck.encode(&super::local_name(state))
+            {
+                let peers = peer_sources(state);
+                let queued = queue_encoded_to_peers(state, &message, &peers);
+            }
+            let event = match kind {
+                VmceRoundControl::Begin => VmceResultEvent::Begin,
+                VmceRoundControl::Ack => VmceResultEvent::Ack { source },
+                VmceRoundControl::Go => VmceResultEvent::Go,
             };
-            crate::app::cooperative_round::service_event(state, event)?;
-            return Ok(true);
-        }
-        if CooperativeOptionsRecord::decode(&message).is_some() {
-            let _ = connected_source(state, incoming.source)?;
+            crate::app::vmce_round::service_event(state, event)?;
             return Ok(true);
         }
         if let Some(epoch) = crate::net::lan_messages::vmce::decode_intermission_epoch(&message) {
@@ -561,8 +545,8 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
                 .vmce_result_received(source, record)
             {
                 log::error!("VMCE players disagree on the result: {error:#}");
-                let _ = state.match_state.session.quit_cooperative_round();
-                crate::app::cooperative_round::return_to_shell(state);
+                let _ = state.match_state.session.quit_vmce_result();
+                crate::app::vmce_round::return_to_shell(state);
                 return Ok(true);
             }
             if state.match_state.session.vmce_result_nonce() == Some(record.nonce)
@@ -574,16 +558,15 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
         }
         if let Some(record) = VmceStageRecord::decode(&message) {
             let source = connected_source(state, incoming.source)?;
-            let event = CooperativeRoundEvent::StageIdentity(
-                crate::app::match_bootstrap::VmceStageIdentity {
+            let event =
+                VmceResultEvent::StageIdentity(crate::app::match_bootstrap::VmceStageIdentity {
                     map_file: record.map_file,
                     source_sha256: record.source_sha256,
                     effective_digest: record.effective_digest,
                     config_sha256: record.config_sha256,
-                },
-            );
+                });
             let _ = source;
-            crate::app::cooperative_round::service_event(state, event)?;
+            crate::app::vmce_round::service_event(state, event)?;
             return Ok(true);
         }
     }
@@ -591,22 +574,14 @@ pub(super) fn receive(state: &mut AppState, incoming: &GlobalMessage) -> anyhow:
         if let Some(signal) = VmceSignal::decode(payload) {
             let source = connected_source(state, incoming.source)?;
             let event = match signal {
-                VmceSignal::StageRejected => CooperativeRoundEvent::StageRejected,
-                VmceSignal::StageAbsent => CooperativeRoundEvent::StageAbsent,
-                VmceSignal::RetryVote => CooperativeRoundEvent::RetryVote { source },
+                VmceSignal::StageRejected => VmceResultEvent::StageRejected,
+                VmceSignal::StageAbsent => VmceResultEvent::StageAbsent,
+                VmceSignal::RetryVote => VmceResultEvent::RetryVote { source },
+                VmceSignal::Ready => VmceResultEvent::PeerReady { source },
+                VmceSignal::Leave => VmceResultEvent::PeerLeft { source },
+                VmceSignal::RetryAck => VmceResultEvent::RetryAck { source },
             };
-            crate::app::cooperative_round::service_event(state, event)?;
-            return Ok(true);
-        }
-        // Native round controls still pass through this owner when VMCE is
-        // active, but the shared BC6 owner handles them.
-        if let Some(signal) = CooperativeSignal::decode(payload)
-            && matches!(
-                signal,
-                CooperativeSignal::Begin | CooperativeSignal::Ack | CooperativeSignal::Go
-            )
-        {
-            let _ = connected_source(state, incoming.source)?;
+            crate::app::vmce_round::service_event(state, event)?;
             return Ok(true);
         }
     }
@@ -898,7 +873,7 @@ pub(super) fn should_assign_intermission(state: &AppState) -> bool {
         && state
             .match_state
             .session
-            .cooperative_round()
+            .vmce_result_phase()
             .is_some_and(|round| {
                 round.vmce_ending()
                     == Some(crate::app::match_runtime::session::VmceRoundEnding::Next)
@@ -915,24 +890,21 @@ pub(super) fn assign_intermission_if_ready(state: &mut AppState, now: u32) -> bo
     }
     match vmce_intermission_transition_ready(state, now) {
         Ok(true) => {
-            let difficulty = state
-                .frontend
-                .multiplayer_shell_runtime
-                .cooperative_difficulty();
-            if let Err(error) = state
-                .match_state
-                .session
-                .cooperative_round_assigned(difficulty)
-            {
+            if let Err(error) = state.match_state.session.vmce_result_assigned() {
                 log::error!("VMCE intermission assignment failed: {error:#}");
-                crate::app::cooperative_round::return_to_shell(state);
+                crate::app::vmce_round::return_to_shell(state);
+                return false;
+            }
+            if let Err(error) = state.match_state.session.vmce_result_queue_go() {
+                log::error!("VMCE intermission Go queue failed: {error:#}");
+                crate::app::vmce_round::return_to_shell(state);
                 return false;
             }
         }
         Ok(false) => {}
         Err(error) => {
             log::error!("VMCE intermission preparation failed: {error:#}");
-            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::vmce_round::return_to_shell(state);
             report_round_failure(state);
             return false;
         }
@@ -944,7 +916,7 @@ pub(super) fn next_stage_accepted(state: &AppState) -> bool {
     state
         .match_state
         .session
-        .cooperative_round()
+        .vmce_result_phase()
         .is_some_and(|round| round.vmce_next_accepted())
 }
 
@@ -1093,16 +1065,16 @@ pub(super) fn service_result_agreement(state: &mut AppState) -> anyhow::Result<(
 /// shared Cooperative poll.
 pub(super) fn continue_after_result(state: &mut AppState) -> bool {
     if let Ok(Some(step)) = state.match_state.session.vmce_result_take_deferred_go() {
-        crate::app::cooperative_round::run_step(state, step);
+        crate::app::vmce_round::run_step(state, step);
     }
     if next_stage_accepted(state) {
         crate::app::vmce_round::advance_intermission(state);
-        return state.match_state.session.cooperative_round().is_some();
+        return state.match_state.session.vmce_result_phase().is_some();
     }
     let awaiting_assignment = state
         .match_state
         .session
-        .cooperative_round()
+        .vmce_result_phase()
         .is_some_and(|round| round.awaiting_assignment());
     if awaiting_assignment {
         let now = super::super::match_runtime::frame_pacer::frame_bucket(
@@ -1115,8 +1087,8 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
             .is_some_and(|service| service.vmce_round.assignment_wait_expired(now));
         if expired {
             log::error!("VMCE round assignment wait timed out");
-            let _ = state.match_state.session.quit_cooperative_round();
-            crate::app::cooperative_round::return_to_shell(state);
+            let _ = state.match_state.session.quit_vmce_result();
+            crate::app::vmce_round::return_to_shell(state);
             report_round_failure(state);
             return false;
         }
@@ -1128,7 +1100,7 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
     let waiting_go = state
         .match_state
         .session
-        .cooperative_round()
+        .vmce_result_phase()
         .is_some_and(|round| {
             round.vmce_ending() == Some(crate::app::match_runtime::session::VmceRoundEnding::Next)
                 && !round.vmce_next_accepted()
@@ -1144,7 +1116,7 @@ pub(super) fn continue_after_result(state: &mut AppState) -> bool {
             .is_some_and(|service| service.vmce_round.intermission_wait_expired(now));
         if expired {
             log::error!("VMCE intermission Go wait timed out");
-            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::vmce_round::return_to_shell(state);
             report_round_failure(state);
             return false;
         }
@@ -1176,27 +1148,8 @@ fn encode_scoped_request(
     name: &str,
     result_nonce: Option<[u8; 16]>,
 ) -> Option<Option<LanMessage>> {
-    use crate::net::lan_messages::vmce::VmceRoundControl;
-
-    match request {
-        NetworkLoadingRequest::CooperativeBegin => {
-            Some(result_nonce.and_then(|nonce| VmceRoundControl::Begin.encode(name, nonce).ok()))
-        }
-        NetworkLoadingRequest::CooperativeAck => {
-            Some(result_nonce.and_then(|nonce| VmceRoundControl::Ack.encode(name, nonce).ok()))
-        }
-        NetworkLoadingRequest::CooperativeGo => {
-            Some(result_nonce.and_then(|nonce| VmceRoundControl::Go.encode(name, nonce).ok()))
-        }
-        NetworkLoadingRequest::CooperativeOptions(options) => {
-            Some(result_nonce.and_then(|nonce| {
-                super::cooperative::options_record(options)
-                    .encode_vmce(name, nonce)
-                    .ok()
-            }))
-        }
-        _ => None,
-    }
+    let _ = (request, name, result_nonce);
+    None
 }
 
 pub(crate) fn mark_assignment_wait(state: &mut AppState) {
@@ -1239,13 +1192,35 @@ pub(super) fn fail_round_delivery(state: &mut AppState) -> bool {
         return false;
     }
     log::error!("VMCE round delivery failed; returning to the lobby");
-    let _ = state.match_state.session.quit_cooperative_round();
-    crate::app::cooperative_round::return_to_shell(state);
+    let _ = state.match_state.session.quit_vmce_result();
+    crate::app::vmce_round::return_to_shell(state);
     report_round_failure(state);
     true
 }
 
-pub(super) fn release_round_transport(service: &mut LanService) {
+/// Take the match transport into the LAN service before the scenario is
+/// retired, keeping its scope for the result page.
+pub(crate) fn hold_round_transport(state: &mut AppState) {
+    if state.match_state.session_mode() != SessionMode::Lan {
+        return;
+    }
+    let Some(live) = state.match_state.live_network.take() else {
+        return;
+    };
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        let mut transport = live.into_transport();
+        transport.connections_mut().reset();
+        service.transport = Some(transport);
+    }
+}
+
+pub(crate) fn release_round_transport(state: &mut AppState) {
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        release_service_transport(service);
+    }
+}
+
+fn release_service_transport(service: &mut LanService) {
     let vmce_exit = service.vmce_round_exit_pending();
     if let Some(transport) = service.transport.as_mut() {
         transport.connections_mut().reset();
@@ -1264,7 +1239,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
         return false;
     }
     let vmce = active_round(state);
-    let vmce_go = matches!(request, NetworkLoadingRequest::CooperativeVmceGo { .. });
+    let vmce_go = matches!(request, NetworkLoadingRequest::VmceResultGo { .. });
     if !vmce && !vmce_go {
         return false;
     }
@@ -1273,12 +1248,11 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
     if vmce
         && matches!(
             request,
-            NetworkLoadingRequest::CooperativeLeave
-                | NetworkLoadingRequest::CooperativeStageRejected
+            NetworkLoadingRequest::VmceResultLeave | NetworkLoadingRequest::VmceResultStageRejected
         )
     {
-        let message = if matches!(request, NetworkLoadingRequest::CooperativeLeave) {
-            CooperativeSignal::Left.encode(&name).ok()
+        let message = if matches!(request, NetworkLoadingRequest::VmceResultLeave) {
+            VmceSignal::Leave.encode(&name).ok()
         } else {
             VmceSignal::StageRejected.encode(&name).ok()
         };
@@ -1291,7 +1265,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
         }
         return true;
     }
-    if let NetworkLoadingRequest::CooperativeVmceGo { nonce } = request {
+    if let NetworkLoadingRequest::VmceResultGo { nonce } = request {
         let message = VmceRoundControl::Go.encode(&name, *nonce).ok();
         let intermission_pending = state
             .match_state
@@ -1327,7 +1301,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
         if !queued && !fail_round_delivery(state) {
             // The retry/campaign-end continuation already froze the round;
             // the shell still needs the local failure instead of a silent wait.
-            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::vmce_round::return_to_shell(state);
             report_round_failure(state);
         }
         return true;
@@ -1346,7 +1320,24 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
     }
     if vmce {
         match request {
-            NetworkLoadingRequest::CooperativeRetryVote => {
+            NetworkLoadingRequest::VmceResultRetryAck => {
+                if let Ok(message) = VmceSignal::RetryAck.encode(&name) {
+                    if !queue_encoded_to_peers(state, &message, &peers) {
+                        fail_round_delivery(state);
+                    }
+                }
+                return true;
+            }
+            NetworkLoadingRequest::VmceResultReady => {
+                if let Ok(message) = VmceSignal::Ready.encode(&name) {
+                    let queued = queue_encoded_to_peers(state, &message, &peers);
+                    if !queued {
+                        fail_round_delivery(state);
+                    }
+                }
+                return true;
+            }
+            NetworkLoadingRequest::VmceResultRetryVote => {
                 if let Ok(message) = VmceSignal::RetryVote.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
@@ -1354,7 +1345,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 }
                 return true;
             }
-            NetworkLoadingRequest::CooperativeStage(stage) => {
+            NetworkLoadingRequest::VmceResultStage(stage) => {
                 let record = VmceStageRecord {
                     map_file: stage.map_file.clone(),
                     source_sha256: stage.source_sha256.clone(),
@@ -1377,7 +1368,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 }
                 return true;
             }
-            NetworkLoadingRequest::CooperativeStageAbsent => {
+            NetworkLoadingRequest::VmceResultStageAbsent => {
                 if let Ok(message) = VmceSignal::StageAbsent.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
@@ -1385,7 +1376,7 @@ pub(super) fn send(state: &mut AppState, request: &NetworkLoadingRequest) -> boo
                 }
                 return true;
             }
-            NetworkLoadingRequest::CooperativeStageRejected => {
+            NetworkLoadingRequest::VmceResultStageRejected => {
                 if let Ok(message) = VmceSignal::StageRejected.encode(&name) {
                     if !queue_encoded_to_peers(state, &message, &peers) {
                         fail_round_delivery(state);
@@ -1527,28 +1518,20 @@ mod tests {
     }
 
     #[test]
-    fn missing_nonce_is_a_failed_scoped_control_not_an_unhandled_request() {
-        assert!(matches!(
-            encode_scoped_request(&NetworkLoadingRequest::CooperativeBegin, "Host", None),
-            Some(None)
-        ));
-        assert!(matches!(
+    fn vmce_result_requests_use_their_own_scoped_form() {
+        // VMCE Ready/Leave/Retry are header signals, and Go is a nonce-scoped
+        // control in `send`; none of them go through the old shared encoder.
+        assert_eq!(
+            encode_scoped_request(&NetworkLoadingRequest::VmceResultReady, "Host", None),
+            None
+        );
+        assert_eq!(
             encode_scoped_request(
-                &NetworkLoadingRequest::CooperativeOptions(CooperativeRoundOptions {
-                    difficulty: 1,
-                    humans: Vec::new(),
-                    ai_player_count: 0,
-                    opponents: Vec::new(),
-                }),
+                &NetworkLoadingRequest::VmceResultGo { nonce: [1; 16] },
                 "Host",
                 None
             ),
-            Some(None)
-        ));
-        assert_eq!(
-            encode_scoped_request(&NetworkLoadingRequest::CooperativeReady, "Host", None),
-            None,
-            "ordinary BC6 Ready remains for the shared sender"
+            None
         );
     }
 
@@ -1556,9 +1539,6 @@ mod tests {
     fn vmce_early_records_are_owned_separately_from_generic_bc6_records() {
         let absent = VmceSignal::StageAbsent.encode("Guest").unwrap();
         assert!(is_round_record(&absent));
-        assert!(!crate::app::lan_service::cooperative::is_round_record(
-            &absent
-        ));
 
         let begin = VmceRoundControl::Begin.encode("Host", [7; 16]).unwrap();
         assert!(is_round_record(begin.as_bytes()));
@@ -1590,4 +1570,124 @@ mod tests {
         assert_eq!(round.take_pending_round().unwrap().sequence, 3);
         assert_eq!(round.pending_round.back().unwrap().sequence, 64);
     }
+}
+
+/// VMCE's result-phase service loop. Stock Cooperative keeps its own poll; a
+/// VMCE result phase never enters it.
+pub(super) fn poll(state: &mut AppState, now: u32, service_ok: bool) -> bool {
+    if state.match_state.session_mode() != SessionMode::Lan {
+        return false;
+    }
+    if pause_round_poll(state) {
+        return false;
+    }
+    flush_round_work(state, service_ok);
+    if campaign_completion_pending(state) {
+        match take_campaign_completion(state, service_ok, now) {
+            None => {}
+            Some(Ok(())) => crate::app::App::vmce_campaign_end(state),
+            Some(Err(())) => {
+                log::error!("VMCE campaign completion could not be delivered to every peer");
+                crate::app::vmce_round::return_to_shell(state);
+                report_round_failure(state);
+            }
+        }
+        return true;
+    }
+    if !active_round(state) {
+        return false;
+    }
+    if !service_ok && fail_round_delivery(state) {
+        return true;
+    }
+    if let Err(error) = service_result_agreement(state) {
+        log::error!("VMCE result agreement failed: {error:#}");
+        let _ = state.match_state.session.quit_vmce_result();
+        crate::app::vmce_round::return_to_shell(state);
+        return true;
+    }
+    if !assign_intermission_if_ready(state, now) {
+        return true;
+    }
+    // Records that arrived between the mission's end and this phase opening.
+    loop {
+        let Some(incoming) = state
+            .match_state
+            .lan_service
+            .as_mut()
+            .and_then(take_pending_round)
+        else {
+            break;
+        };
+        if let Err(error) = receive(state, &incoming) {
+            log::debug!("Ignored queued VMCE result packet: {error:#}");
+        }
+        unlock_agreed_next_stage(state);
+        if round_exit_pending(state) || campaign_completion_pending(state) {
+            super::drain_match_requests(state);
+            return true;
+        }
+        if state.match_state.session.vmce_result_phase().is_none() {
+            return true;
+        }
+    }
+    loop {
+        let Some(incoming) = state
+            .match_state
+            .lan_service
+            .as_mut()
+            .and_then(|service| service.transport.as_mut()?.pop_global_received())
+        else {
+            break;
+        };
+        if let Err(error) = receive(state, &incoming) {
+            log::debug!("Ignored VMCE result packet: {error:#}");
+        }
+        unlock_agreed_next_stage(state);
+        if round_exit_pending(state) || campaign_completion_pending(state) {
+            break;
+        }
+        let service_ok = super::service_transport(state, now);
+        if !service_ok && fail_round_delivery(state) {
+            return true;
+        }
+        if state.match_state.session.vmce_result_phase().is_none() {
+            return true;
+        }
+    }
+    if let Err(error) = service_result_agreement(state) {
+        log::error!("VMCE result agreement failed: {error:#}");
+        let _ = state.match_state.session.quit_vmce_result();
+        crate::app::vmce_round::return_to_shell(state);
+        return true;
+    }
+    unlock_agreed_next_stage(state);
+    super::drain_match_requests(state);
+    if state
+        .match_state
+        .session
+        .vmce_result_phase()
+        .is_some_and(|round| {
+            round.vmce_ending() == Some(crate::app::match_runtime::session::VmceRoundEnding::Retry)
+                && round.outcome_committed()
+        })
+        && state.match_state.session.host()
+    {
+        let observation = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .and_then(|service| service.go_transport_observation(service_ok));
+        // The reliable setup queue retransmits the Go during loading; waiting
+        // for the transport queue to drain would strand the host after the
+        // guest already consumed it and changed scope. The request was drained
+        // above this branch, so the Go is queued before the freeze.
+        let delivered = observation.is_some_and(|observation| observation.service_ok)
+            && state.match_state.session.vmce_result_retry_acks_complete();
+        if delivered {
+            crate::app::vmce_round::retry_last_mission(state);
+            return true;
+        }
+    }
+    continue_after_result(state)
 }

@@ -1,15 +1,114 @@
-//! VMCE-only state and transitions attached to the shared BC6 round.
+//! VMCE's own result phase: the settlement, retry, next-stage and campaign-end
+//! state, its agreement and its wire decisions.
 //!
-//! The native roster, readiness, begin/options and acknowledgement protocol
-//! stays in the parent `cooperative_round` owner. This child owns the VMCE
-//! continuation snapshot and its agreement, retry and page state.
+//! No Cooperative BC6 state, event or UI type is referenced here. Roster,
+//! transport and base UI stay VERA's; the result round itself is VMCE's.
 
-use super::{
-    CooperativeRoundState, CooperativeRoundStep, MatchSession, NetworkLoadingRequest, NetworkPhase,
-    NetworkSession, RoundParts, round_parts,
-};
+use super::{MatchSession, NetworkLoadingRequest, NetworkPhase, NetworkSession};
 use crate::app::match_bootstrap::{PreparedNetworkStartup, VmceNextStage, VmceStageIdentity};
-use crate::skirmish_launch::{LaunchHumanRole, SkirmishLaunchSession};
+use crate::skirmish_launch::{
+    LaunchHumanRole, LaunchStartPosition, SkirmishAiSlot, SkirmishLaunchSession,
+};
+use std::sync::Arc;
+
+/// The VMCE result phase in the session's network visit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VmceResultPhase {
+    /// Per raw slot: this peer accepted the result page's Continue/Retry.
+    ready: [bool; 8],
+    local_ready: bool,
+    /// The host has committed the result and sent the proposal.
+    assigned: bool,
+    /// A guest has received the host's proposal.
+    begin: bool,
+    can_continue: bool,
+    rows: usize,
+    outcome: Option<bool>,
+    vmce: Option<VmceRoundState>,
+}
+
+impl VmceResultPhase {
+    fn all_ready(&self) -> bool {
+        self.ready.iter().all(|ready| *ready)
+    }
+
+    pub(crate) fn vmce_active(&self) -> bool {
+        true
+    }
+
+    pub(crate) fn vmce_ending(&self) -> Option<VmceRoundEnding> {
+        self.vmce.as_ref().map(VmceRoundState::ending)
+    }
+
+    pub(crate) fn page_victory(&self) -> bool {
+        self.vmce.as_ref().is_some_and(VmceRoundState::page_victory)
+    }
+
+    pub(crate) fn vmce_next_accepted(&self) -> bool {
+        self.vmce
+            .as_ref()
+            .is_some_and(|vmce| vmce.accepted(self.outcome))
+    }
+
+    pub(crate) fn awaiting_assignment(&self) -> bool {
+        self.outcome.is_none() && (self.assigned || self.begin)
+    }
+
+    pub(crate) fn can_continue(&self) -> bool {
+        self.can_continue
+    }
+
+    pub(crate) fn outcome_committed(&self) -> bool {
+        self.outcome.is_some()
+    }
+
+    pub(crate) fn local_ready(&self) -> bool {
+        self.local_ready
+    }
+
+    fn vmce_result_agreed(&self) -> bool {
+        self.vmce.as_ref().is_some_and(|vmce| {
+            vmce.result_agreement
+                .as_ref()
+                .is_some_and(|agreement| agreement.confirmation_sent || agreement.proposal_sent)
+        })
+    }
+}
+
+/// The VMCE result phase's fields, split from the visit so a step can queue
+/// requests while it edits the phase.
+struct VmceResultParts<'a> {
+    requests: &'a mut Vec<NetworkLoadingRequest>,
+    connected: &'a mut Vec<usize>,
+    launch: &'a mut SkirmishLaunchSession,
+    round: &'a mut VmceResultPhase,
+}
+
+fn vmce_result_parts(session: &mut MatchSession) -> anyhow::Result<VmceResultParts<'_>> {
+    let NetworkSession {
+        loading_requests,
+        phase,
+        ..
+    } = session
+        .network
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+    let NetworkPhase::VmceResult {
+        connected,
+        launch,
+        round,
+        ..
+    } = phase
+    else {
+        anyhow::bail!("no VMCE result round");
+    };
+    Ok(VmceResultParts {
+        requests: loading_requests,
+        connected,
+        launch,
+        round,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct VmceRoundState {
@@ -19,6 +118,7 @@ pub(super) struct VmceRoundState {
     page_victory: bool,
     ending: VmceRoundEnding,
     retry_votes: [bool; 4],
+    retry_acks: [bool; 4],
     result_agreement: Option<VmceResultAgreement>,
 }
 
@@ -41,12 +141,39 @@ pub(crate) enum VmceRoundEnding {
     Retry,
 }
 
+/// A decoded VMCE result message. VMCE owns this event vocabulary; no BC6
+/// event type is shared with Cooperative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VmceResultEvent {
+    Begin,
+    Ack { source: usize },
+    Go,
+    Options,
+    PeerReady { source: usize },
+    PeerWaiting { source: usize },
+    PeerLeft { source: usize },
+    StageIdentity(VmceStageIdentity),
+    StageAbsent,
+    StageRejected,
+    RetryVote { source: usize },
+    RetryAck { source: usize },
+    KeepAlive,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VmceRoundStep {
-    Assign { ending: VmceRoundEnding },
+    None,
+    /// The host committed the result; load its ending.
+    Assign {
+        ending: VmceRoundEnding,
+    },
     Next,
     Retry,
     CampaignEnd,
+    /// Leave the round and return to the shell.
+    Exit(bool),
+    /// A WOL-style room continues without another loading round.
+    ContinueInRoom,
 }
 
 impl VmceRoundState {
@@ -58,6 +185,7 @@ impl VmceRoundState {
             page_victory: false,
             ending: VmceRoundEnding::Next,
             retry_votes: [false; 4],
+            retry_acks: [false; 4],
             result_agreement: None,
         }
     }
@@ -108,6 +236,12 @@ impl VmceRoundState {
     pub(super) fn note_retry_vote(&mut self, row: usize) {
         if let Some(vote) = self.retry_votes.get_mut(row) {
             *vote = true;
+        }
+    }
+
+    pub(super) fn note_retry_ack(&mut self, row: usize) {
+        if let Some(ack) = self.retry_acks.get_mut(row) {
+            *ack = true;
         }
     }
 
@@ -221,43 +355,75 @@ impl MatchSession {
         can_continue: bool,
         rows: usize,
     ) -> anyhow::Result<()> {
-        let next_map = next.as_ref().map(|stage| stage.map_file.clone());
-        self.enter_cooperative_round(next_map, can_continue, rows)?;
-
         let host = self.host;
-        let NetworkSession {
-            loading_requests,
-            phase,
-            ..
-        } = self
-            .network
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
-        let NetworkPhase::CooperativeRound { launch, round, .. } = phase else {
-            anyhow::bail!("VMCE requires a cooperative round");
+        let (previous, connected) = {
+            let network = self
+                .network
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+            let NetworkPhase::Frozen { startup, connected } = &network.phase else {
+                anyhow::bail!("the VMCE result round follows a frozen match");
+            };
+            (Arc::clone(startup), connected.clone())
         };
-        anyhow::ensure!(round.vmce.is_none(), "VMCE round already initialized");
-
+        let mut launch = previous.launch_session().clone();
+        if let Some(stage) = &next {
+            launch.selected_map_file = Some(stage.map_file.clone());
+        }
+        for human in &mut launch.humans {
+            human.slot.start_position = LaunchStartPosition::Auto;
+        }
+        for ai in &mut launch.opponents {
+            ai.start_position = LaunchStartPosition::Auto;
+        }
+        launch.rebuild_house_roster();
+        let mut ready = [true; 8];
+        for (index, human) in launch.humans.iter().enumerate() {
+            if let Some(row) = human.raw_slot_index
+                && connected.contains(&index)
+            {
+                ready[usize::from(row)] = false;
+            }
+        }
         let vmce = VmceRoundState::new(next);
+        let mut phase = VmceResultPhase {
+            ready,
+            local_ready: false,
+            assigned: false,
+            begin: false,
+            can_continue,
+            rows,
+            outcome: None,
+            vmce: Some(vmce),
+        };
+        let network = self.network.as_mut().expect("network visit remains");
+        let mut requests = Vec::new();
         if host {
             // VMCE's authored host is ready from the start; only its Continue
             // starts a next stage.
-            round.local_ready = true;
+            phase.local_ready = true;
             if let Some(row) = launch
                 .humans
                 .get(launch.local_player_index)
                 .and_then(|human| human.raw_slot_index)
             {
-                round.ready[usize::from(row)] = true;
+                phase.ready[usize::from(row)] = true;
             }
-            loading_requests.push(NetworkLoadingRequest::CooperativeReady);
+            requests.push(NetworkLoadingRequest::VmceResultReady);
         }
-        if let Some(stage) = vmce.stage_identity() {
-            loading_requests.push(NetworkLoadingRequest::CooperativeStage(stage));
+        if let Some(stage) = phase.vmce.as_ref().and_then(|vmce| vmce.stage_identity()) {
+            requests.push(NetworkLoadingRequest::VmceResultStage(stage));
         } else {
-            loading_requests.push(NetworkLoadingRequest::CooperativeStageAbsent);
+            requests.push(NetworkLoadingRequest::VmceResultStageAbsent);
         }
-        round.vmce = Some(vmce);
+        network.phase = NetworkPhase::VmceResult {
+            previous,
+            connected,
+            launch,
+            round: phase,
+        };
+        network.loading_requests.clear();
+        network.loading_requests.extend(requests);
         Ok(())
     }
 
@@ -269,7 +435,7 @@ impl MatchSession {
         rows: usize,
     ) -> anyhow::Result<()> {
         self.enter_vmce_round(next, can_continue, rows)?;
-        let RoundParts { round, .. } = round_parts(self)?;
+        let VmceResultParts { round, .. } = vmce_result_parts(self)?;
         round
             .vmce
             .as_mut()
@@ -280,7 +446,7 @@ impl MatchSession {
 
     pub(crate) fn vmce_round_next_stage_map(&self) -> Option<&str> {
         Some(
-            self.cooperative_round()?
+            self.vmce_result_phase()?
                 .vmce
                 .as_ref()?
                 .next_stage()?
@@ -297,7 +463,7 @@ impl MatchSession {
     pub(crate) fn vmce_agreed_unlock(&self) -> Option<(&str, [u8; 16])> {
         let nonce = self.vmce_result_nonce()?;
         let network = self.network.as_ref()?;
-        let NetworkPhase::CooperativeRound {
+        let NetworkPhase::VmceResult {
             connected,
             launch,
             round,
@@ -326,7 +492,7 @@ impl MatchSession {
             .network
             .as_mut()
             .and_then(|network| match &mut network.phase {
-                NetworkPhase::CooperativeRound { round, .. } => Some(round),
+                NetworkPhase::VmceResult { round, .. } => Some(round),
                 _ => None,
             })
         {
@@ -343,7 +509,7 @@ impl MatchSession {
             .network
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
-        let NetworkPhase::CooperativeRound {
+        let NetworkPhase::VmceResult {
             previous,
             launch,
             connected,
@@ -411,25 +577,39 @@ impl MatchSession {
 }
 
 fn vmce_all_seen(connected: &[usize], launch: &SkirmishLaunchSession, seen: &[bool; 8]) -> bool {
-    !connected.is_empty()
-        && connected.iter().all(|source| {
-            launch
-                .humans
-                .get(*source)
-                .and_then(|human| human.raw_slot_index)
-                .is_some_and(|slot| slot < 4 && seen[usize::from(slot)])
-        })
+    let mut participants = 0;
+    let all = connected.iter().all(|source| {
+        let Some(human) = launch.humans.get(*source) else {
+            return true;
+        };
+        if human.is_observer() {
+            return true;
+        }
+        let Some(slot) = human.raw_slot_index.filter(|slot| *slot < 4) else {
+            return true;
+        };
+        participants += 1;
+        seen[usize::from(slot)]
+    });
+    participants > 0 && all
 }
 
 impl MatchSession {
+    pub(crate) fn vmce_result_phase(&self) -> Option<&VmceResultPhase> {
+        match &self.network.as_ref()?.phase {
+            NetworkPhase::VmceResult { round, .. } => Some(round),
+            _ => None,
+        }
+    }
+
     pub(crate) fn vmce_result_agreement_initialized(&self) -> bool {
-        self.cooperative_round()
+        self.vmce_result_phase()
             .and_then(|round| round.vmce.as_ref())
             .is_some_and(VmceRoundState::result_agreement_initialized)
     }
 
     pub(crate) fn vmce_result_nonce(&self) -> Option<[u8; 16]> {
-        self.cooperative_round()?.vmce.as_ref()?.result_nonce()
+        self.vmce_result_phase()?.vmce.as_ref()?.result_nonce()
     }
 
     pub(crate) fn initialize_vmce_result_agreement(
@@ -438,7 +618,7 @@ impl MatchSession {
         nonce: Option<[u8; 16]>,
     ) -> anyhow::Result<()> {
         let host = self.host;
-        let RoundParts { launch, round, .. } = round_parts(self)?;
+        let VmceResultParts { launch, round, .. } = vmce_result_parts(self)?;
         let vmce = round
             .vmce
             .as_mut()
@@ -479,7 +659,7 @@ impl MatchSession {
     pub(crate) fn vmce_result_next_record(
         &self,
     ) -> Option<crate::net::lan_messages::vmce::VmceResultRecord> {
-        let NetworkPhase::CooperativeRound {
+        let NetworkPhase::VmceResult {
             connected,
             launch,
             round,
@@ -509,7 +689,7 @@ impl MatchSession {
     }
 
     pub(crate) fn vmce_result_record_queued(&mut self, confirmed: bool) -> anyhow::Result<()> {
-        let RoundParts { launch, round, .. } = round_parts(self)?;
+        let VmceResultParts { launch, round, .. } = vmce_result_parts(self)?;
         let row = launch
             .humans
             .get(launch.local_player_index)
@@ -538,12 +718,12 @@ impl MatchSession {
         record: crate::net::lan_messages::vmce::VmceResultRecord,
     ) -> anyhow::Result<()> {
         let host = self.host;
-        let RoundParts {
+        let VmceResultParts {
             connected,
             launch,
             round,
             ..
-        } = round_parts(self)?;
+        } = vmce_result_parts(self)?;
         anyhow::ensure!(
             round.vmce.is_some() && connected.contains(&source),
             "result sender is not an active VMCE participant"
@@ -603,15 +783,13 @@ impl MatchSession {
         Ok(())
     }
 
-    pub(crate) fn vmce_result_take_deferred_go(
-        &mut self,
-    ) -> anyhow::Result<Option<CooperativeRoundStep>> {
-        let RoundParts {
+    pub(crate) fn vmce_result_take_deferred_go(&mut self) -> anyhow::Result<Option<VmceRoundStep>> {
+        let VmceResultParts {
             connected,
             launch,
             round,
             ..
-        } = round_parts(self)?;
+        } = vmce_result_parts(self)?;
         let agreed = result_agreed(connected, launch, round);
         let Some(vmce) = round.vmce.as_mut() else {
             return Ok(None);
@@ -633,7 +811,7 @@ impl MatchSession {
 pub(super) fn result_agreed(
     connected: &[usize],
     launch: &SkirmishLaunchSession,
-    round: &CooperativeRoundState,
+    round: &VmceResultPhase,
 ) -> bool {
     round.vmce.as_ref().is_some_and(|vmce| {
         vmce.result_agreement.as_ref().is_some_and(|agreement| {
@@ -644,14 +822,12 @@ pub(super) fn result_agreed(
     })
 }
 
-pub(super) fn result_step(round: &CooperativeRoundState) -> CooperativeRoundStep {
-    CooperativeRoundStep::VmceRound(
-        round
-            .vmce
-            .as_ref()
-            .expect("VMCE step belongs to a VMCE round")
-            .result_step(),
-    )
+pub(super) fn result_step(round: &VmceResultPhase) -> VmceRoundStep {
+    round
+        .vmce
+        .as_ref()
+        .expect("VMCE step belongs to a VMCE round")
+        .result_step()
 }
 
 fn retry_guests_voted(
@@ -677,12 +853,13 @@ pub(super) fn continue_enabled(
     host: bool,
     connected: &[usize],
     launch: &SkirmishLaunchSession,
-    round: &CooperativeRoundState,
+    round: &VmceResultPhase,
 ) -> bool {
     let Some(vmce) = round.vmce.as_ref() else {
         return false;
     };
-    if round.outcome.is_some() || (host && !result_agreed(connected, launch, round)) {
+    let agreed = result_agreed(connected, launch, round);
+    if round.outcome.is_some() || (host && !agreed) {
         return false;
     }
     if !round.can_continue {
@@ -704,8 +881,8 @@ pub(super) fn continue_round(
     requests: &mut Vec<NetworkLoadingRequest>,
     connected: &[usize],
     launch: &mut SkirmishLaunchSession,
-    round: &mut CooperativeRoundState,
-) -> anyhow::Result<CooperativeRoundStep> {
+    round: &mut VmceResultPhase,
+) -> anyhow::Result<VmceRoundStep> {
     let vmce = round
         .vmce
         .as_ref()
@@ -718,8 +895,8 @@ pub(super) fn continue_round(
     let ending = vmce.ending();
     if !round.can_continue {
         round.outcome = Some(false);
-        requests.push(NetworkLoadingRequest::CooperativeLeave);
-        return Ok(CooperativeRoundStep::Exit(false));
+        requests.push(NetworkLoadingRequest::VmceResultLeave);
+        return Ok(VmceRoundStep::Exit(false));
     }
     if host && round.rows == 1 {
         round.outcome = Some(true);
@@ -727,15 +904,13 @@ pub(super) fn continue_round(
     }
     if ending == VmceRoundEnding::Retry {
         if host {
-            return Ok(CooperativeRoundStep::VmceRound(VmceRoundStep::Assign {
-                ending,
-            }));
+            return Ok((VmceRoundStep::Assign { ending }));
         }
-        return Ok(CooperativeRoundStep::None);
+        return Ok(VmceRoundStep::None);
     }
     if online {
         round.outcome = Some(false);
-        return Ok(CooperativeRoundStep::ContinueInRoom);
+        return Ok(VmceRoundStep::ContinueInRoom);
     }
     if host {
         anyhow::ensure!(
@@ -743,9 +918,7 @@ pub(super) fn continue_round(
             "the host Continue waits for every guest"
         );
         log::debug!("VMCE round: host Continue pressed; starting the next stage");
-        return Ok(CooperativeRoundStep::VmceRound(VmceRoundStep::Assign {
-            ending,
-        }));
+        return Ok((VmceRoundStep::Assign { ending }));
     }
     let local = launch.local_player_index;
     round.local_ready = true;
@@ -757,12 +930,12 @@ pub(super) fn continue_round(
     {
         round.ready[usize::from(row)] = true;
     }
-    requests.push(NetworkLoadingRequest::CooperativeReady);
-    Ok(CooperativeRoundStep::None)
+    requests.push(NetworkLoadingRequest::VmceResultReady);
+    Ok(VmceRoundStep::None)
 }
 
 pub(super) fn retry_state(session: &MatchSession) -> Option<(bool, bool, bool)> {
-    let NetworkPhase::CooperativeRound {
+    let NetworkPhase::VmceResult {
         connected,
         launch,
         round,
@@ -789,14 +962,14 @@ pub(super) fn retry_state(session: &MatchSession) -> Option<(bool, bool, bool)> 
     }
 }
 
-fn retry_vote(session: &mut MatchSession) -> anyhow::Result<CooperativeRoundStep> {
+fn retry_vote(session: &mut MatchSession) -> anyhow::Result<VmceRoundStep> {
     anyhow::ensure!(!session.host(), "the host does not cast a retry vote");
-    let RoundParts {
+    let VmceResultParts {
         requests,
         launch,
         round,
         ..
-    } = round_parts(session)?;
+    } = vmce_result_parts(session)?;
     let vmce = round
         .vmce
         .as_mut()
@@ -806,7 +979,7 @@ fn retry_vote(session: &mut MatchSession) -> anyhow::Result<CooperativeRoundStep
         "not the VMCE retry page"
     );
     if round.outcome.is_some() {
-        return Ok(CooperativeRoundStep::None);
+        return Ok(VmceRoundStep::None);
     }
     let Some(row) = launch
         .humans
@@ -818,25 +991,22 @@ fn retry_vote(session: &mut MatchSession) -> anyhow::Result<CooperativeRoundStep
         anyhow::bail!("the local guest has no raw slot");
     };
     if vmce.retry_voted(row) {
-        return Ok(CooperativeRoundStep::None);
+        return Ok(VmceRoundStep::None);
     }
     vmce.note_retry_vote(row);
-    requests.push(NetworkLoadingRequest::CooperativeRetryVote);
-    Ok(CooperativeRoundStep::None)
+    requests.push(NetworkLoadingRequest::VmceResultRetryVote);
+    Ok(VmceRoundStep::None)
 }
 
-fn retry_start(
-    session: &mut MatchSession,
-    difficulty: i32,
-) -> anyhow::Result<CooperativeRoundStep> {
+fn retry_start(session: &mut MatchSession, difficulty: i32) -> anyhow::Result<VmceRoundStep> {
     anyhow::ensure!(session.host(), "only the host starts the retry");
     {
-        let RoundParts {
+        let VmceResultParts {
             connected,
             launch,
             round,
             ..
-        } = round_parts(session)?;
+        } = vmce_result_parts(session)?;
         let vmce = round
             .vmce
             .as_ref()
@@ -850,14 +1020,16 @@ fn retry_start(
             "the host retry waits for every online guest"
         );
     }
-    session.continue_cooperative_round(difficulty)
+    Ok(VmceRoundStep::Assign {
+        ending: VmceRoundEnding::Retry,
+    })
 }
 
 fn set_retry_votes_for_diagnostics(
     session: &mut MatchSession,
     votes: [bool; 4],
 ) -> anyhow::Result<()> {
-    let RoundParts { round, .. } = round_parts(session)?;
+    let VmceResultParts { round, .. } = vmce_result_parts(session)?;
     let vmce = round
         .vmce
         .as_mut()
@@ -867,86 +1039,448 @@ fn set_retry_votes_for_diagnostics(
 }
 
 impl MatchSession {
+    /// Freeze the result phase into the next network startup. A win reloads the
+    /// resolved next stage; a retry reloads the same frozen stage with the same
+    /// seed and role assignments. VMCE owns both choices.
+    pub(crate) fn freeze_vmce_result(
+        &mut self,
+        max_ahead_frames: i32,
+        latency_fudge: i32,
+        saved: Option<crate::sim::campaign_carry_over::CampaignCarryOver>,
+    ) -> anyhow::Result<crate::app::match_bootstrap::LoadingStartup> {
+        let host = self.host;
+        let (previous, launch, connected, round) = {
+            let network = self
+                .network
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+            let NetworkPhase::VmceResult {
+                previous,
+                connected,
+                launch,
+                round,
+            } = &network.phase
+            else {
+                anyhow::bail!("no VMCE result round to continue");
+            };
+            (
+                Arc::clone(previous),
+                launch.clone(),
+                connected.clone(),
+                round.clone(),
+            )
+        };
+        anyhow::ensure!(
+            round.outcome == Some(true),
+            "the VMCE result round did not continue"
+        );
+        super::admit_network_start_roster(&launch)?;
+        let freeze = prepare_freeze(&previous, &launch, &round)?;
+        let mode = previous.mode();
+        let carry_over = saved
+            .or_else(|| previous.carry_over().copied())
+            .unwrap_or(crate::sim::campaign_carry_over::CampaignCarryOver::CLEARED);
+        let mut prepared = crate::app::match_bootstrap::PreparedNetworkStartup::new(
+            launch,
+            freeze.seed,
+            mode,
+            host,
+            max_ahead_frames,
+            super::WolStartTerms::default(),
+        )
+        .with_carry_over(carry_over);
+        prepared = freeze.apply_startup(prepared);
+        let startup = Arc::new(prepared);
+        let network = self
+            .network
+            .as_mut()
+            .expect("network visit remains while freezing the VMCE result");
+        freeze.apply_network_identity(network);
+        network.max_ahead_frames = Some(max_ahead_frames);
+        network.wol_start = super::WolStartTerms::default();
+        network.phase = NetworkPhase::Frozen {
+            startup: Arc::clone(&startup),
+            connected,
+        };
+        self.latency_fudge = latency_fudge;
+        Ok(crate::app::match_bootstrap::LoadingStartup::Network(
+            startup,
+        ))
+    }
+
+    pub(crate) fn vmce_result_ending(&self) -> Option<VmceRoundEnding> {
+        self.vmce_result_phase()?.vmce_ending()
+    }
+
+    /// Queue the host's Go for the accepted result. The LAN owner changes the
+    /// transport scope for the intermission; the control carries the nonce the
+    /// peers agreed on.
+    pub(crate) fn vmce_result_queue_go(&mut self) -> anyhow::Result<()> {
+        let VmceResultParts {
+            requests, round, ..
+        } = vmce_result_parts(self)?;
+        let nonce = round
+            .vmce
+            .as_ref()
+            .and_then(VmceRoundState::result_nonce)
+            .ok_or_else(|| anyhow::anyhow!("VMCE result has no agreed nonce"))?;
+        requests.push(NetworkLoadingRequest::VmceResultGo { nonce });
+        Ok(())
+    }
+
+    pub(crate) fn vmce_result_continue(
+        &mut self,
+        difficulty: i32,
+    ) -> anyhow::Result<VmceRoundStep> {
+        let host = self.host;
+        let online = self
+            .network
+            .as_ref()
+            .is_some_and(|network| network.return_context == super::NetworkReturnContext::Wol);
+        let VmceResultParts {
+            requests,
+            connected,
+            launch,
+            round,
+        } = vmce_result_parts(self)?;
+        continue_round(host, online, requests, connected, launch, round)
+    }
+
+    /// Every connected guest consumed the host's retry Go.
+    pub(crate) fn vmce_result_retry_acks_complete(&self) -> bool {
+        let Some(NetworkPhase::VmceResult {
+            connected,
+            launch,
+            round,
+            ..
+        }) = self.network.as_ref().map(|network| &network.phase)
+        else {
+            return false;
+        };
+        let Some(vmce) = round.vmce.as_ref() else {
+            return false;
+        };
+        connected.iter().all(|index| {
+            let Some(human) = launch.humans.get(*index) else {
+                return true;
+            };
+            match human.raw_slot_index {
+                Some(0) | None => true,
+                Some(row) => vmce.retry_acks[usize::from(row)],
+            }
+        })
+    }
+
+    pub(crate) fn vmce_result_continue_enabled(&self) -> bool {
+        let NetworkPhase::VmceResult {
+            connected,
+            launch,
+            round,
+            ..
+        } = &self
+            .network
+            .as_ref()
+            .map(|network| &network.phase)
+            .unwrap_or(&NetworkPhase::Lobby)
+        else {
+            return false;
+        };
+        continue_enabled(self.host, connected, launch, round)
+    }
+
+    pub(crate) fn vmce_result_slot_ready(&self, index: usize) -> bool {
+        let Some(NetworkPhase::VmceResult { launch, round, .. }) =
+            self.network.as_ref().map(|network| &network.phase)
+        else {
+            return false;
+        };
+        launch
+            .humans
+            .get(index)
+            .and_then(|human| human.raw_slot_index)
+            .is_some_and(|row| round.ready[usize::from(row)])
+    }
+
+    /// The result was committed locally for this ending.
+    pub(crate) fn vmce_result_committed(&self) -> bool {
+        self.vmce_result_phase()
+            .and_then(|round| round.outcome)
+            .is_some()
+    }
+
+    pub(crate) fn vmce_result_can_continue(&self) -> bool {
+        self.vmce_result_phase()
+            .is_some_and(VmceResultPhase::can_continue)
+    }
+
+    /// The host's readiness rows as `(ready, total, local)`.
+    pub(crate) fn vmce_result_ready_progress(&self) -> Option<(usize, usize, bool)> {
+        let NetworkPhase::VmceResult {
+            connected,
+            launch,
+            round,
+            ..
+        } = self.network.as_ref().map(|network| &network.phase)?
+        else {
+            return None;
+        };
+        let mut ready = 0;
+        let mut total = 0;
+        for (index, human) in launch.humans.iter().enumerate() {
+            if human.is_observer() || !connected.contains(&index) {
+                continue;
+            }
+            let Some(row) = human.raw_slot_index else {
+                continue;
+            };
+            total += 1;
+            ready += usize::from(round.ready[usize::from(row)]);
+        }
+        Some((ready, total, round.local_ready))
+    }
+
+    pub(crate) fn vmce_result_retry_state(&self) -> Option<(bool, bool, bool)> {
+        retry_state(self)
+    }
+
+    pub(crate) fn set_vmce_result_page_victory(&mut self, victory: bool) {
+        if let Some(round) = self
+            .network
+            .as_mut()
+            .and_then(|network| match &mut network.phase {
+                NetworkPhase::VmceResult { round, .. } => Some(round),
+                _ => None,
+            })
+        {
+            if let Some(vmce) = round.vmce.as_mut() {
+                vmce.set_page_victory(victory);
+            }
+        }
+    }
+
     /// Retry-page projection used by the app and capture diagnostics.
-    pub(crate) fn cooperative_round_retry_vote(&mut self) -> anyhow::Result<CooperativeRoundStep> {
+    pub(crate) fn vmce_result_retry_vote(&mut self) -> anyhow::Result<VmceRoundStep> {
         retry_vote(self)
     }
 
     /// Host retry start after the child round confirms all guest votes.
-    pub(crate) fn cooperative_round_retry_start(
+    pub(crate) fn vmce_result_retry_start(
         &mut self,
         difficulty: i32,
-    ) -> anyhow::Result<CooperativeRoundStep> {
+    ) -> anyhow::Result<VmceRoundStep> {
         retry_start(self, difficulty)
     }
 
     /// Set fixture votes for the synthetic defeat-page capture.
-    pub(crate) fn cooperative_round_set_retry_votes_for_diagnostics(
+    pub(crate) fn vmce_result_set_retry_votes_for_diagnostics(
         &mut self,
         votes: [bool; 4],
     ) -> anyhow::Result<()> {
         set_retry_votes_for_diagnostics(self, votes)
+    }
+
+    /// Commit the agreed result on the host side: the next loading step may
+    /// freeze this phase.
+    pub(crate) fn vmce_result_assigned(&mut self) -> anyhow::Result<()> {
+        let network = self
+            .network
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+        let NetworkPhase::VmceResult {
+            connected,
+            launch,
+            round,
+            ..
+        } = &network.phase
+        else {
+            anyhow::bail!("no VMCE result round");
+        };
+        anyhow::ensure!(
+            result_agreed(connected, launch, round),
+            "VMCE result assignment is not agreed"
+        );
+        let NetworkPhase::VmceResult { round, .. } = &mut network.phase else {
+            anyhow::bail!("no VMCE result round");
+        };
+        round.outcome = Some(true);
+        round.assigned = true;
+        Ok(())
+    }
+
+    /// Leave the VMCE result phase without a network round.
+    pub(crate) fn quit_vmce_result(&mut self) -> anyhow::Result<()> {
+        let network = self
+            .network
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no network visit"))?;
+        let NetworkPhase::VmceResult {
+            previous,
+            connected,
+            ..
+        } = &network.phase
+        else {
+            anyhow::bail!("no VMCE result round");
+        };
+        let previous = Arc::clone(previous);
+        let connected = connected.clone();
+        network.phase = NetworkPhase::Frozen {
+            startup: previous,
+            connected,
+        };
+        network.loading_requests.clear();
+        Ok(())
+    }
+
+    /// Apply one decoded VMCE result event and return the app step it produced.
+    pub(crate) fn vmce_result_event(
+        &mut self,
+        event: VmceResultEvent,
+    ) -> anyhow::Result<VmceRoundStep> {
+        let host = self.host;
+        let VmceResultParts {
+            requests,
+            connected,
+            launch,
+            round,
+        } = vmce_result_parts(self)?;
+        let row_of = |source: usize| {
+            launch
+                .humans
+                .get(source)
+                .and_then(|human| human.raw_slot_index)
+                .map(usize::from)
+                .filter(|row| *row < 4)
+        };
+        match event {
+            VmceResultEvent::Begin => {
+                round.begin = true;
+                let should_ack = begin_received(round, host);
+                let _ = should_ack;
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::Ack { .. } => Ok(VmceRoundStep::None),
+            VmceResultEvent::Go => {
+                round.begin = true;
+                round.assigned = true;
+                if host {
+                    return Ok(VmceRoundStep::None);
+                }
+                // The host's Go is the guest's accepted result: Next opens the
+                // agreed intermission, Retry reloads the stage, CampaignEnd
+                // ends the campaign on both peers.
+                round.outcome = Some(true);
+                let ending = round
+                    .vmce
+                    .as_ref()
+                    .map(VmceRoundState::ending)
+                    .ok_or_else(|| anyhow::anyhow!("not a VMCE round"))?;
+                if ending == VmceRoundEnding::Retry {
+                    requests.push(NetworkLoadingRequest::VmceResultRetryAck);
+                }
+                Ok(round
+                    .vmce
+                    .as_ref()
+                    .expect("checked VMCE round")
+                    .result_step())
+            }
+            VmceResultEvent::Options => {
+                let _ = options_received(round, host);
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::PeerReady { source } => {
+                if let Some(row) = row_of(source) {
+                    round.ready[row] = true;
+                    log::debug!("VMCE result: peer source={source} row={row} is ready");
+                }
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::PeerWaiting { source } => {
+                if let Some(row) = row_of(source) {
+                    round.ready[row] = false;
+                }
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::PeerLeft { source } => {
+                Ok(peer_left(round, row_of(source), requests).unwrap_or(VmceRoundStep::None))
+            }
+            VmceResultEvent::StageIdentity(advertised) => {
+                Ok(stage_event(round, requests, Some(&advertised)))
+            }
+            VmceResultEvent::StageAbsent => Ok(stage_event(round, requests, None)),
+            VmceResultEvent::StageRejected => Ok(stage_rejected(round, requests)),
+            VmceResultEvent::RetryVote { source } => {
+                retry_vote_received(round, row_of(source));
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::RetryAck { source } => {
+                if let (Some(row), Some(vmce)) = (row_of(source), round.vmce.as_mut()) {
+                    vmce.note_retry_ack(row);
+                }
+                Ok(VmceRoundStep::None)
+            }
+            VmceResultEvent::KeepAlive => Ok(VmceRoundStep::None),
+        }
     }
 }
 
 pub(super) fn assignment_allowed(
     connected: &[usize],
     launch: &SkirmishLaunchSession,
-    round: &CooperativeRoundState,
+    round: &VmceResultPhase,
 ) -> bool {
     result_agreed(connected, launch, round)
 }
 
 pub(super) fn stage_event(
-    round: &mut CooperativeRoundState,
+    round: &mut VmceResultPhase,
     requests: &mut Vec<NetworkLoadingRequest>,
     advertised: Option<&VmceStageIdentity>,
-) -> CooperativeRoundStep {
+) -> VmceRoundStep {
     let matches = round.vmce.as_ref().is_some_and(|vmce| match advertised {
         Some(stage) => vmce.stage_identity_matches(stage),
         None => !vmce.has_stage(),
     });
     if matches {
-        return CooperativeRoundStep::None;
+        return VmceRoundStep::None;
     }
     log::warn!(
         "VMCE next-stage identity mismatch; returning both peers to the lobby instead of loading"
     );
     round.outcome = Some(false);
-    requests.push(NetworkLoadingRequest::CooperativeStageRejected);
-    CooperativeRoundStep::Exit(false)
+    requests.push(NetworkLoadingRequest::VmceResultStageRejected);
+    VmceRoundStep::Exit(false)
 }
 
 pub(super) fn stage_rejected(
-    round: &mut CooperativeRoundState,
+    round: &mut VmceResultPhase,
     requests: &mut Vec<NetworkLoadingRequest>,
-) -> CooperativeRoundStep {
+) -> VmceRoundStep {
     round.outcome = Some(false);
-    requests.push(NetworkLoadingRequest::CooperativeLeave);
-    CooperativeRoundStep::Exit(false)
+    requests.push(NetworkLoadingRequest::VmceResultLeave);
+    VmceRoundStep::Exit(false)
 }
 
-pub(super) fn retry_vote_received(round: &mut CooperativeRoundState, row: Option<usize>) {
+pub(super) fn retry_vote_received(round: &mut VmceResultPhase, row: Option<usize>) {
     if let (Some(vmce), Some(row)) = (round.vmce.as_mut(), row.filter(|row| *row < 4)) {
         vmce.note_retry_vote(row);
     }
 }
 
 pub(super) fn peer_left(
-    round: &mut CooperativeRoundState,
+    round: &mut VmceResultPhase,
     row: Option<usize>,
     requests: &mut Vec<NetworkLoadingRequest>,
-) -> Option<CooperativeRoundStep> {
+) -> Option<VmceRoundStep> {
     let vmce = round.vmce.as_mut()?;
     if let Some(row) = row.filter(|row| *row < 4) {
         vmce.clear_retry_vote(row);
     }
     round.outcome = Some(false);
-    requests.push(NetworkLoadingRequest::CooperativeLeave);
-    Some(CooperativeRoundStep::Exit(false))
+    requests.push(NetworkLoadingRequest::VmceResultLeave);
+    Some(VmceRoundStep::Exit(false))
 }
 
-pub(super) fn peer_ready(round: &CooperativeRoundState, source: usize, host: bool) {
+pub(super) fn peer_ready(round: &VmceResultPhase, source: usize, host: bool) {
     if round.vmce.is_some() {
         log::debug!(
             "VMCE round: PeerReady source={source}, all_ready={}, host={host}",
@@ -955,21 +1489,21 @@ pub(super) fn peer_ready(round: &CooperativeRoundState, source: usize, host: boo
     }
 }
 
-pub(super) fn begin_received(round: &mut CooperativeRoundState, host: bool) -> bool {
+pub(super) fn begin_received(round: &mut VmceResultPhase, host: bool) -> bool {
     round
         .vmce
         .as_mut()
         .is_some_and(|vmce| vmce.acknowledge_after_begin(host))
 }
 
-pub(super) fn ignore_duplicate_options(round: &CooperativeRoundState) -> bool {
+pub(super) fn ignore_duplicate_options(round: &VmceResultPhase) -> bool {
     round
         .vmce
         .as_ref()
         .is_some_and(VmceRoundState::options_received)
 }
 
-pub(super) fn options_received(round: &mut CooperativeRoundState, host: bool) -> bool {
+pub(super) fn options_received(round: &mut VmceResultPhase, host: bool) -> bool {
     round
         .vmce
         .as_mut()
@@ -980,7 +1514,7 @@ pub(super) fn ack_allowed(
     host: bool,
     connected: &[usize],
     launch: &SkirmishLaunchSession,
-    round: &CooperativeRoundState,
+    round: &VmceResultPhase,
     source: usize,
 ) -> bool {
     let Some(vmce) = round.vmce.as_ref() else {
@@ -994,16 +1528,16 @@ pub(super) fn ack_allowed(
 }
 
 pub(super) fn acknowledge_all(
-    round: &mut CooperativeRoundState,
+    round: &mut VmceResultPhase,
     requests: &mut Vec<NetworkLoadingRequest>,
-) -> CooperativeRoundStep {
+) -> VmceRoundStep {
     round.outcome = Some(true);
     let nonce = round
         .vmce
         .as_ref()
         .and_then(VmceRoundState::result_nonce)
         .expect("an agreed VMCE round has a nonce");
-    requests.push(NetworkLoadingRequest::CooperativeVmceGo { nonce });
+    requests.push(NetworkLoadingRequest::VmceResultGo { nonce });
     result_step(round)
 }
 
@@ -1011,11 +1545,11 @@ pub(super) fn go_received(
     host: bool,
     connected: &[usize],
     launch: &SkirmishLaunchSession,
-    round: &mut CooperativeRoundState,
-) -> Option<CooperativeRoundStep> {
+    round: &mut VmceResultPhase,
+) -> Option<VmceRoundStep> {
     let vmce = round.vmce.as_ref()?;
     if host || !round.begin || !vmce.options_received() || !vmce.ack_queued() {
-        return Some(CooperativeRoundStep::None);
+        return Some(VmceRoundStep::None);
     }
     if !result_agreed(connected, launch, round) {
         if let Some(agreement) = round
@@ -1025,7 +1559,7 @@ pub(super) fn go_received(
         {
             agreement.deferred_go = true;
         }
-        return Some(CooperativeRoundStep::None);
+        return Some(VmceRoundStep::None);
     }
     round.outcome = Some(true);
     Some(result_step(round))
@@ -1092,7 +1626,7 @@ impl FreezeData {
 pub(super) fn prepare_freeze(
     previous: &PreparedNetworkStartup,
     launch: &SkirmishLaunchSession,
-    round: &CooperativeRoundState,
+    round: &VmceResultPhase,
 ) -> anyhow::Result<FreezeData> {
     let vmce = round.vmce.as_ref();
     let retry_nonce = if vmce.is_some_and(|vmce| vmce.ending() == VmceRoundEnding::Retry) {
@@ -1156,3 +1690,7 @@ pub(super) fn prepare_freeze(
         preserved_map_identity,
     })
 }
+
+#[cfg(test)]
+#[path = "vmce_result/tests.rs"]
+mod tests;

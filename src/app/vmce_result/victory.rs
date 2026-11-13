@@ -81,7 +81,7 @@ pub(super) fn open_victory(state: &mut AppState) {
         App::leave_mission_result_screen(state);
         return;
     };
-    let model = crate::app::match_runtime::sim_tick::build_vmce_victory_score_model(state, elapsed);
+    let model = super::flow::build_vmce_victory_score_model(state, elapsed);
     let (next, ending) = match next {
         crate::app::vmce_campaign::VmceResolvedStage::Next(next) => (
             Some(next),
@@ -103,18 +103,18 @@ pub(super) fn continue_pressed(state: &mut AppState) -> bool {
     if !super::owns_page(state) {
         return false;
     }
-    if state.match_state.session.cooperative_round().is_none() {
+    if state.match_state.session.vmce_result_phase().is_none() {
         // A result page always has its round; recover to the lobby rather
         // than leaving the page without a network owner.
         super::close_vmce_result(state);
-        crate::app::lan_service::cooperative::release_transport(state);
+        crate::app::lan_service::vmce_round::release_round_transport(state);
         App::leave_mission_result_screen(state);
         return true;
     }
     if !state
         .match_state
         .session
-        .cooperative_round_continue_enabled()
+        .vmce_result_continue_enabled()
     {
         state.platform.window.request_redraw();
         return true;
@@ -126,9 +126,9 @@ pub(super) fn continue_pressed(state: &mut AppState) -> bool {
     match state
         .match_state
         .session
-        .continue_cooperative_round(difficulty)
+        .vmce_result_continue(difficulty)
     {
-        Ok(step) => crate::app::cooperative_round::run_step(state, step),
+        Ok(step) => crate::app::vmce_round::run_step(state, step),
         Err(error) => log::warn!("VMCE result Continue refused: {error:#}"),
     }
     super::refresh(state);
@@ -141,17 +141,31 @@ pub(super) fn continue_pressed(state: &mut AppState) -> bool {
 /// state for the ending this page gates. Read-only projection of the round and
 /// launch the page already owns; no second result state.
 pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
-    let round = state.match_state.session.cooperative_round()?;
+    let round = state.match_state.session.vmce_result_phase()?;
     if !round.vmce_active() {
+        log::warn!("VMCE board: phase is not active");
         return None;
     }
-    let launch = state.match_state.session.network_setup()?;
-    let roles = crate::app::shell_network_setup::view::vmce_result_roles(state)?;
-    let assignments = state.match_state.session.network_vmce_assignments()?;
+    let Some(launch) = state.match_state.session.network_setup() else {
+        log::warn!("VMCE board: no launch");
+        return None;
+    };
+    let Some(roles) = crate::app::shell_network_setup::view::vmce_result_roles(state) else {
+        log::warn!("VMCE board: no roles");
+        return None;
+    };
+    let Some(assignments) = state.match_state.session.network_vmce_assignments() else {
+        log::warn!("VMCE board: no assignments");
+        return None;
+    };
     let connected = state.match_state.session.network_connected_source_indices();
-    let can_continue = state.match_state.session.cooperative_round_can_continue();
+    let can_continue = state.match_state.session.vmce_result_can_continue();
     let victory = round.page_victory();
-    let sim = &state.match_state.sim_runtime.runtime()?.simulation;
+    let Some(runtime) = state.match_state.sim_runtime.runtime() else {
+        log::warn!("VMCE board: no sim runtime");
+        return None;
+    };
+    let sim = &runtime.simulation;
     let mut rows = Vec::new();
     let mut humans = launch.humans.iter().enumerate().collect::<Vec<_>>();
     humans.sort_by_key(|(_, human)| human.raw_slot_index.unwrap_or(u8::MAX));
@@ -183,7 +197,7 @@ pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
                 state
                     .match_state
                     .session
-                    .cooperative_round_slot_ready(index)
+                    .vmce_result_slot_ready(index)
             }),
             host: human.raw_slot_index == Some(0),
             rgb: info.color,
@@ -195,14 +209,14 @@ pub(crate) fn result_board(state: &AppState) -> Option<VmceResultBoard> {
     let local_ready = state
         .match_state
         .session
-        .cooperative_round_ready_progress()
+        .vmce_result_ready_progress()
         .is_some_and(|(_, _, local)| local);
     (!rows.is_empty()).then_some(VmceResultBoard {
         rows,
         victory,
         local_host: state.match_state.session.host(),
         local_ready,
-        can_continue: state.match_state.session.cooperative_round_can_continue(),
+        can_continue: state.match_state.session.vmce_result_can_continue(),
     })
 }
 
@@ -222,7 +236,7 @@ fn leave_after_stage_error(state: &mut AppState) {
         App::leave_mission_result_screen(state);
         return;
     };
-    crate::app::lan_service::cooperative::hold_transport(state);
+    crate::app::lan_service::vmce_round::hold_round_transport(state);
     App::retire_finished_scenario(state);
     if let Err(error) = state
         .match_state
@@ -230,7 +244,7 @@ fn leave_after_stage_error(state: &mut AppState) {
         .enter_vmce_round(None, false, rows)
     {
         log::error!("Could not open the VMCE round after a stage error: {error:#}");
-        crate::app::cooperative_round::return_to_shell(state);
+        crate::app::vmce_round::return_to_shell(state);
         return;
     }
     let difficulty = state
@@ -240,12 +254,12 @@ fn leave_after_stage_error(state: &mut AppState) {
     match state
         .match_state
         .session
-        .continue_cooperative_round(difficulty)
+        .vmce_result_continue(difficulty)
     {
-        Ok(step) => crate::app::cooperative_round::run_step(state, step),
+        Ok(step) => crate::app::vmce_round::run_step(state, step),
         Err(error) => {
             log::warn!("VMCE result exit after a stage error was refused: {error:#}");
-            crate::app::cooperative_round::return_to_shell(state);
+            crate::app::vmce_round::return_to_shell(state);
         }
     }
 }
@@ -284,7 +298,7 @@ fn open_page(
     state.frontend.score_page = None;
     state.frontend.score_art = None;
     state.frontend.coop_score_page = None;
-    crate::app::lan_service::cooperative::hold_transport(state);
+    crate::app::lan_service::vmce_round::hold_round_transport(state);
     App::retire_finished_scenario(state);
     if let Err(error) =
         state
@@ -293,13 +307,13 @@ fn open_page(
             .enter_vmce_round_ending(next, can_continue, ending, rows)
     {
         log::error!("Could not open the VMCE {what} result: {error:#}");
-        crate::app::cooperative_round::return_to_shell(state);
+        crate::app::vmce_round::return_to_shell(state);
         return;
     }
     state
         .match_state
         .session
-        .set_cooperative_round_page_victory(victory);
+        .set_vmce_result_page_victory(victory);
     if admit_slots {
         // The repaint's country pass 0x0046F6D0 against the next stage.
         let runtime = &state.frontend.multiplayer_shell_runtime;
@@ -320,13 +334,9 @@ fn open_page(
                 None => slot.country_random = true,
             }
         };
-        if let Err(error) = state
-            .match_state
-            .session
-            .admit_cooperative_round_countries(admit)
-        {
-            log::warn!("VMCE {what} round countries: {error:#}");
-        }
+        // VMCE's countries are already the frozen role bindings; the stock
+        // Cooperative admission belongs to the BC6 result page.
+        let _ = &admit;
     }
     let board = result_board(state);
     // The settlement board's flags/host/ready glyphs come from the skirmish

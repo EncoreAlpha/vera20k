@@ -164,10 +164,15 @@ pub(crate) fn drive_local_player_outcome_exit(state: &mut AppState, wall_ms: u64
         .stop_buckets(wall_ms);
     let elapsed_seconds = elapsed_score_ticks / 60;
     // 0x0055D0C5: the router runs the mode's +0xA0 before GameExit.
-    let cooperative = crate::app::cooperative_round::applies(state);
+    #[cfg(feature = "vmce")]
+    let vmce_result = crate::app::vmce_round::applies(state);
+    #[cfg(not(feature = "vmce"))]
+    let vmce_result = false;
+    let cooperative = !vmce_result && crate::app::cooperative_round::applies(state);
     if cooperative {
         crate::app::cooperative_round::mission_ended(state, elapsed_score_ticks);
     }
+    let result_route = vmce_result || cooperative;
     // The match's own verdict presentation (`[EndGameScreens]`): the country's
     // banner picture on the battlefield and its banner music start together,
     // and both answer to the in-game switch. This reads the banner half only;
@@ -200,7 +205,7 @@ pub(crate) fn drive_local_player_outcome_exit(state: &mut AppState, wall_ms: u64
         state.match_state.session_mode(),
         outcome,
         state.match_state.map_basic.skip_score.unwrap_or(false),
-        cooperative,
+        result_route,
         title,
         detail,
         || build_campaign_score_screen_model(state, elapsed_score_ticks),

@@ -2276,6 +2276,7 @@ impl LiveLanCapture {
             // checksum/hash prefix, so arm once that prefix exists rather than
             // on an arbitrary early frame.
             let result_open = state.frontend.coop_score_page.is_some()
+                || crate::app::vmce_result::defeat::page(state).is_some()
                 || state.frontend.campaign_score_page.is_some();
             if self.vera_outcome_phase == VeraOutcomePhase::Prefix
                 && state.frontend.screen == GameScreen::InGame
@@ -2456,16 +2457,11 @@ impl LiveLanCapture {
                         state
                             .match_state
                             .session
-                            .cooperative_round()
+                            .vmce_result_phase()
                             .is_some_and(|round| round.vmce_active())
                     });
-                    if let Some(page) = state.frontend.coop_score_page.as_ref() {
-                        let statistics = state
-                            .frontend
-                            .vmce_result_page
-                            .as_ref()
-                            .and_then(|page| page.statistics())
-                            .context("VMCE defeat page statistics table")?;
+                    if let Some(defeat_page) = crate::app::vmce_result::defeat::page(state) {
+                        let statistics = &defeat_page.statistics;
                         ensure!(
                             statistics.rows.len() == self.expected_players,
                             "VMCE defeat rows do not match admitted players: {} != {}",
@@ -2593,7 +2589,14 @@ impl LiveLanCapture {
                             receipt["vmce_statistics_rows"] = json!(rows_json);
                         }
                         if crate::i18n::selected_language() == "zh-CN" {
-                            let scale = crate::app::input::coop_score::layout(state).page.scale;
+                            let (width, height) =
+                                crate::app::frontend::shell_layout::shell_screen_size(state);
+                            let scale = crate::app::vmce_result::defeat_layout::VmceDefeatLayout::new(
+                                width as i32,
+                                height as i32,
+                                crate::app::frontend::shell_layout::fills_window(state),
+                            )
+                            .scale();
                             let layout = crate::app::vmce_result::types::statistics_layout(scale);
                             for header in layout.headers {
                                 let label = if let Some(key) = header.key.strip_prefix("VERA:") {
@@ -2615,9 +2618,9 @@ impl LiveLanCapture {
                                 "VMCE income header is not localized in zh-CN"
                             );
                         }
-                        let victory = page.victory;
-                        let rows = page.model.rows.len();
-                        let can_continue = page.model.can_continue;
+                        let victory = false;
+                        let rows = statistics.rows.len();
+                        let can_continue = true;
                         ensure!(rows > 0, "VMCE real outcome page has no role rows");
                         ensure!(
                             rows == self.expected_players,
@@ -2636,27 +2639,27 @@ impl LiveLanCapture {
                         let local_ready = state
                             .match_state
                             .session
-                            .cooperative_round()
+                            .vmce_result_phase()
                             .is_some_and(|round| round.local_ready());
                         let slot_ready: Vec<bool> = (0..4)
                             .map(|index| {
                                 state
                                     .match_state
                                     .session
-                                    .cooperative_round_slot_ready(index)
+                                    .vmce_result_slot_ready(index)
                             })
                             .collect();
                         let continue_enabled = state
                             .match_state
                             .session
-                            .cooperative_round_continue_enabled();
+                            .vmce_result_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
                             "dialog": {
                                 "victory": victory,
                                 "rows": rows,
-                                "time": page.model.time,
+                                "time": statistics.total_time,
                                 "can_continue": can_continue,
                                 "render_frame": render_frame,
                             },
@@ -2699,11 +2702,11 @@ impl LiveLanCapture {
                             "VMCE result rows do not match the admitted players"
                         );
                         let can_continue =
-                            state.match_state.session.cooperative_round_can_continue();
+                            state.match_state.session.vmce_result_can_continue();
                         let victory = state
                             .match_state
                             .session
-                            .cooperative_round()
+                            .vmce_result_phase()
                             .is_some_and(|round| round.page_victory());
                         let native_frame = state
                             .match_state
@@ -2718,20 +2721,20 @@ impl LiveLanCapture {
                         let local_ready = state
                             .match_state
                             .session
-                            .cooperative_round()
+                            .vmce_result_phase()
                             .is_some_and(|round| round.local_ready());
                         let slot_ready: Vec<bool> = (0..4)
                             .map(|index| {
                                 state
                                     .match_state
                                     .session
-                                    .cooperative_round_slot_ready(index)
+                                    .vmce_result_slot_ready(index)
                             })
                             .collect();
                         let continue_enabled = state
                             .match_state
                             .session
-                            .cooperative_round_continue_enabled();
+                            .vmce_result_continue_enabled();
                         self.vera_outcome_evidence = Some(json!({
                             "kind": kind,
                             "injected_frame": json!(null),
@@ -2778,6 +2781,8 @@ impl LiveLanCapture {
                     ensure!(
                         state.frontend.screen == GameScreen::InGame
                             && state.frontend.coop_score_page.is_none()
+                    && crate::app::vmce_result::defeat::page(state).is_none()
+                            && crate::app::vmce_result::defeat::page(state).is_none()
                             && state.match_state.scenario_exit.is_none(),
                         "VMCE ended after every player House was marked defeated"
                     );
@@ -2836,7 +2841,7 @@ impl LiveLanCapture {
                             state
                                 .match_state
                                 .session
-                                .cooperative_round()
+                                .vmce_result_phase()
                                 .is_some_and(|round| round.page_victory())
                         });
                     self.request_screenshot(if victory {
@@ -2851,7 +2856,7 @@ impl LiveLanCapture {
                     && state
                         .match_state
                         .session
-                        .cooperative_round()
+                        .vmce_result_phase()
                         .is_some_and(|round| round.vmce_active());
                 if native_victory_page {
                     let board = state
@@ -2893,7 +2898,7 @@ impl LiveLanCapture {
                             row.player
                         );
                         ensure!(
-                            row.ready == Some(session.cooperative_round_slot_ready(index)),
+                            row.ready == Some(session.vmce_result_slot_ready(index)),
                             "VMCE result player {} has stale Ready status",
                             row.player
                         );
@@ -2901,7 +2906,7 @@ impl LiveLanCapture {
                     ensure!(
                         board.local_ready
                             == session
-                                .cooperative_round_ready_progress()
+                                .vmce_result_ready_progress()
                                 .is_some_and(|(_, _, local)| local),
                         "VMCE result local Ready status is stale"
                     );
@@ -2974,7 +2979,11 @@ impl LiveLanCapture {
                         );
                     }
                 }
-                if state.frontend.coop_score_page.is_none() && !native_victory_page {
+                let vmce_defeat_page = crate::app::vmce_result::defeat::page(state).is_some();
+                if state.frontend.coop_score_page.is_none()
+                    && !native_victory_page
+                    && !vmce_defeat_page
+                {
                     self.vera_outcome_phase = VeraOutcomePhase::NextMission;
                     return Ok(());
                 }
@@ -2985,12 +2994,12 @@ impl LiveLanCapture {
                     state
                         .match_state
                         .session
-                        .cooperative_round_continue_enabled()
+                        .vmce_result_continue_enabled()
                 );
                 if !state
                     .match_state
                     .session
-                    .cooperative_round_continue_enabled()
+                    .vmce_result_continue_enabled()
                 {
                     return Ok(());
                 }
@@ -3002,7 +3011,7 @@ impl LiveLanCapture {
                     && !state
                         .match_state
                         .session
-                        .cooperative_round_retry_state()
+                        .vmce_result_retry_state()
                         .is_some_and(|(_, lit, enabled)| lit && enabled)
                 {
                     return Ok(());
@@ -3043,10 +3052,17 @@ impl LiveLanCapture {
                     false
                 };
                 if !native_page_handled {
-                    crate::app::cooperative_round::apply_action(
-                        state,
-                        crate::ui::coop_score_shell::CoopScoreAction::Continue,
-                    );
+                    if vmce_defeat_page {
+                        crate::app::vmce_result::defeat::apply_action(
+                            state,
+                            crate::app::vmce_result::defeat::VmceDefeatAction::Retry,
+                        );
+                    } else {
+                        crate::app::cooperative_round::apply_action(
+                            state,
+                            crate::ui::coop_score_shell::CoopScoreAction::Continue,
+                        );
+                    }
                 }
                 if let Some(evidence) = self.vera_outcome_evidence.as_mut()
                     && let Some(object) = evidence.as_object_mut()
@@ -3293,10 +3309,17 @@ impl LiveLanCapture {
                     .vera_outcome_dialog_frame
                     .context("VERA result dialog frame")?;
                 if render_frame >= opened.saturating_add(4) {
-                    crate::app::cooperative_round::apply_action(
-                        state,
-                        crate::ui::coop_score_shell::CoopScoreAction::Quit,
-                    );
+                    if crate::app::vmce_result::defeat::page(state).is_some() {
+                        crate::app::vmce_result::defeat::apply_action(
+                            state,
+                            crate::app::vmce_result::defeat::VmceDefeatAction::Leave,
+                        );
+                    } else {
+                        crate::app::cooperative_round::apply_action(
+                            state,
+                            crate::ui::coop_score_shell::CoopScoreAction::Quit,
+                        );
+                    }
                     if let Some(evidence) = self.vera_outcome_evidence.as_mut()
                         && let Some(object) = evidence.as_object_mut()
                     {

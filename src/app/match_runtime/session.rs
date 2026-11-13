@@ -37,7 +37,11 @@ pub(crate) use cooperative_round::{
     CooperativeRoundEvent, CooperativeRoundOptions, CooperativeRoundState, CooperativeRoundStep,
 };
 #[cfg(feature = "vmce")]
-pub(crate) use cooperative_round::{VmceRoundEnding, VmceRoundStep};
+mod vmce_result;
+#[cfg(feature = "vmce")]
+pub(crate) use vmce_result::{
+    VmceResultEvent, VmceResultPhase, VmceRoundEnding, VmceRoundStep,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NetworkReturnContext {
@@ -269,6 +273,15 @@ enum NetworkPhase {
         launch: SkirmishLaunchSession,
         round: CooperativeRoundState,
     },
+    /// VMCE's settlement/retry/next/campaign-end result phase; VMCE owns the
+    /// round state and every wire decision.
+    #[cfg(feature = "vmce")]
+    VmceResult {
+        previous: Arc<crate::app::match_bootstrap::PreparedNetworkStartup>,
+        connected: Vec<usize>,
+        launch: SkirmishLaunchSession,
+        round: VmceResultPhase,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,6 +343,31 @@ pub(crate) enum NetworkLoadingRequest {
     /// VERA-only: one guest's retry vote on the BC6 defeat page.
     #[cfg(feature = "vmce")]
     CooperativeRetryVote,
+    /// VMCE result round: this peer accepted Continue (ready) or Retry.
+    #[cfg(feature = "vmce")]
+    VmceResultReady,
+    /// A guest consumed the host's retry Go and is reloading.
+    #[cfg(feature = "vmce")]
+    VmceResultRetryAck,
+    #[cfg(feature = "vmce")]
+    VmceResultRetryVote,
+    /// VMCE result round: leave the room from the result page.
+    #[cfg(feature = "vmce")]
+    VmceResultLeave,
+    /// VMCE result round: this peer resolved a different next stage.
+    #[cfg(feature = "vmce")]
+    VmceResultStageRejected,
+    /// VMCE result round: the host's resolved next-stage identity.
+    #[cfg(feature = "vmce")]
+    VmceResultStage(crate::app::match_bootstrap::VmceStageIdentity),
+    /// VMCE result round: this peer has no next stage (defeat or last mission).
+    #[cfg(feature = "vmce")]
+    VmceResultStageAbsent,
+    /// VMCE result round: the host's Go, retaining its result nonce.
+    #[cfg(feature = "vmce")]
+    VmceResultGo {
+        nonce: [u8; 16],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -748,6 +786,8 @@ impl MatchSession {
             NetworkPhase::Setup { launch, .. } => Some(launch),
             NetworkPhase::Frozen { startup, .. } => Some(startup.launch_session()),
             NetworkPhase::CooperativeRound { launch, .. } => Some(launch),
+            #[cfg(feature = "vmce")]
+            NetworkPhase::VmceResult { launch, .. } => Some(launch),
         }
     }
 
@@ -790,6 +830,10 @@ impl MatchSession {
             | NetworkPhase::CooperativeRound {
                 previous: startup, ..
             } => startup.vmce_houses(),
+            #[cfg(feature = "vmce")]
+            NetworkPhase::VmceResult {
+                previous: startup, ..
+            } => startup.vmce_houses(),
             _ => None,
         }
     }
@@ -808,8 +852,11 @@ impl MatchSession {
     fn editable_network_setup(&mut self) -> anyhow::Result<&mut SkirmishLaunchSession> {
         match self.network.as_mut().map(|network| &mut network.phase) {
             Some(
-                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
+                NetworkPhase::Setup { launch, .. }
+                | NetworkPhase::CooperativeRound { launch, .. },
             ) => Ok(launch),
+            #[cfg(feature = "vmce")]
+            Some(NetworkPhase::VmceResult { launch, .. }) => Ok(launch),
             _ => anyhow::bail!("network setup is not editable"),
         }
     }
@@ -1025,8 +1072,11 @@ impl MatchSession {
         let several = self.network_several_observers();
         let launch = match self.network.as_ref().map(|network| &network.phase) {
             Some(
-                NetworkPhase::Setup { launch, .. } | NetworkPhase::CooperativeRound { launch, .. },
+                NetworkPhase::Setup { launch, .. }
+                | NetworkPhase::CooperativeRound { launch, .. },
             ) => launch,
+            #[cfg(feature = "vmce")]
+            Some(NetworkPhase::VmceResult { launch, .. }) => launch,
             _ => anyhow::bail!("network setup is not editable"),
         };
         anyhow::ensure!(
@@ -2048,6 +2098,8 @@ impl MatchSession {
                     NetworkPhase::Setup { launch, .. }
                     | NetworkPhase::CooperativeRound { launch, .. },
                 ) => launch,
+                #[cfg(feature = "vmce")]
+                Some(NetworkPhase::VmceResult { launch, .. }) => launch,
                 _ => anyhow::bail!("network setup is not editable"),
             };
             anyhow::ensure!(launch.mode.class.is_vmce(), "not a VMCE setup");
@@ -3529,12 +3581,23 @@ impl MatchSession {
 
     /// One in-battle chat packet to `recipients`.
     pub(crate) fn request_chat(&mut self, recipients: Vec<usize>, text: String) {
-        if let Some(network) = self.network.as_mut()
-            && matches!(
-                network.phase,
-                NetworkPhase::Frozen { .. } | NetworkPhase::CooperativeRound { .. }
-            )
-        {
+        let Some(network) = self.network.as_mut() else {
+            return;
+        };
+        let supported = matches!(
+            network.phase,
+            NetworkPhase::Frozen { .. } | NetworkPhase::CooperativeRound { .. }
+        ) || {
+            #[cfg(feature = "vmce")]
+            {
+                matches!(network.phase, NetworkPhase::VmceResult { .. })
+            }
+            #[cfg(not(feature = "vmce"))]
+            {
+                false
+            }
+        };
+        if supported {
             network
                 .loading_requests
                 .push(NetworkLoadingRequest::Chat { recipients, text });
@@ -3667,6 +3730,8 @@ impl MatchSession {
                 NetworkPhase::Frozen { connected, .. }
                 | NetworkPhase::CooperativeRound { connected, .. },
             ) => connected,
+            #[cfg(feature = "vmce")]
+            Some(NetworkPhase::VmceResult { connected, .. }) => connected,
             _ => &[],
         }
     }
