@@ -227,9 +227,9 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 }
             }
             if dialog.host {
-                // 0x7A6E5A: 0x5E2FA0, the mode's +94 (Cooperative's C0)
-                // before the observer row, names and options.
-                super::cooperative::guest_joined(state)?;
+                // 0x7A6E5A: 0x5E2FA0, the mode's +94 before the observer
+                // row, names and options.
+                super::dispatch::guest_joined(state)?;
             }
             if dialog.host {
                 // 0x7A6E7D..9E: observer row, slot names, options, pings,
@@ -258,20 +258,9 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
         }
         NetworkSetupEvent::ParticipantJoined(mut human) => {
             if dialog.host {
-                // 0x5E1945..0x5E1973: the mode's +1C/+28 country check.
-                super::cooperative::admit_join_country(state, &mut human.slot);
+                // 0x5E1945..0x5E1973: the mode's +1C/+28 slot rules.
+                super::dispatch::admit_join_slot(state, &mut human);
                 super::bans::admit_slot(state, &mut human.slot);
-                // A VMCE seat defaults to Random; the join packet's
-                // Player1 default is not a role choice.
-                if state
-                    .match_state
-                    .session
-                    .network_setup()
-                    .is_some_and(|launch| launch.mode.class.is_vmce())
-                    && !human.is_observer()
-                {
-                    human.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
-                }
             }
             state.match_state.session.add_network_participant(human)?;
             // Type3 admission5E0770 and accepted host type6 at5E1B32.
@@ -293,7 +282,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                     .as_mut()
                     .expect("setup owns protocol");
                 protocol.republish_setup();
-                super::cooperative::guest_joined(state)?;
+                super::dispatch::guest_joined(state)?;
             }
         }
         NetworkSetupEvent::ParticipantLeft { index } => {
@@ -304,7 +293,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             if dialog.wol() {
                 // The part sink 0x785740 played PlayerLeft and clears the
                 // acceptances itself (super::wol::user_left).
-                super::cooperative::guest_left(state)?;
+                super::dispatch::guest_left(state)?;
                 state.platform.window.request_redraw();
                 return Ok(());
             }
@@ -328,7 +317,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .and_then(|rules| rules.general.player_left_sound())
                 .map(str::to_owned);
             App::play_shell_ui_sound_by_id(state, sound.as_deref());
-            super::cooperative::guest_left(state)?;
+            super::dispatch::guest_left(state)?;
         }
         NetworkSetupEvent::PlayerChoices {
             index,
@@ -350,14 +339,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .admit_network_team(index, &mut choices);
             // Cooperative's mode +0x1C (0x5C17B0) admits its campaign's
             // countries; the other modes' (0x5D67A0) admit any.
-            let countries = super::cooperative::current(state)
-                .then(|| {
-                    state
-                        .frontend
-                        .multiplayer_shell_runtime
-                        .cooperative_player_countries()
-                })
-                .flatten();
+            let countries = super::dispatch::choice_countries(state);
             let mut change = state.match_state.session.accept_network_peer_choices(
                 index,
                 choices,
@@ -518,14 +500,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .ok_or_else(|| anyhow::anyhow!("no admitted setup"))?
                 .clone();
             // 0x5E5411..0x5E541D: the current mode's +24 on every parse.
-            if super::cooperative::current(state) {
-                state
-                    .frontend
-                    .multiplayer_shell_runtime
-                    .cooperative_parts()
-                    .progress
-                    .request_refresh();
-            }
+            super::dispatch::parse_refresh(state);
             let mode_changed = before.mode.id != launch.mode.id;
             let map_changed = state
                 .match_state
@@ -645,7 +620,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             }
             // 0x5E542B..0x5E5466: a changed mode's +9C/+20, then +7C.
             if mode_changed {
-                super::cooperative::mode_entered(state)?;
+                super::dispatch::mode_entered(state)?;
             }
             // A VMCE LAN guest may only report the map after its whole series
             // produced the host's advertised content digest; the gate holds
@@ -944,7 +919,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             {
                 return Ok(());
             }
-            super::cooperative::campaign_received(state, &text)?;
+            super::dispatch::campaign_received(state, &text)?;
         }
         NetworkSetupEvent::StartStaging(text) => {
             // The 'W' arm is not gated on role or map type; a string short
@@ -1155,14 +1130,7 @@ fn accept_peer_choices(
     observer: bool,
 ) -> anyhow::Result<PeerChoicesChange> {
     super::bans::admit_slot(state, &mut choices);
-    let countries = super::cooperative::current(state)
-        .then(|| {
-            state
-                .frontend
-                .multiplayer_shell_runtime
-                .cooperative_player_countries()
-        })
-        .flatten();
+    let countries = super::dispatch::choice_countries(state);
     state.match_state.session.accept_network_peer_choices(
         index,
         choices,

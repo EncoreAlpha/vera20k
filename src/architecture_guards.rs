@@ -361,7 +361,7 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         1,
         0,
     ),
-    ("app/shell_network_setup/service.rs", "service_event", 2, 0),
+    ("app/shell_network_setup/service.rs", "service_event", 1, 0),
     ("app/shell_network_setup/view.rs", "view", 7, 0),
     ("app/shell_network_setup/wol.rs", "send_first_choices", 1, 0),
     ("app/shell_skirmish.rs", "commit_choose_map_selection", 2, 0),
@@ -574,7 +574,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
-    ("app/shell_network_setup.rs", 20),
+    ("app/shell_network_setup.rs", 21),
     ("app/shell_network_setup/actions.rs", 17),
     ("app/shell_network_setup/actions/start.rs", 2),
     ("app/shell_network_setup/service.rs", 20),
@@ -608,7 +608,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 469;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 470;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -3845,6 +3845,11 @@ fn vmce_shared_owner(rel: &str, identifier: &str) -> bool {
         | "network_connected_source_indices"
         | "network_player_ready"
         | "network_map_status" => rel == "app/match_runtime/session.rs",
+        // The lobby's shared mode-event dispatch owns the native mode choice
+        // and calls each mode's own handler. VMCE code reaches this seam through
+        // the shell host-setup open/return paths and the capture fixture's Use
+        // Map commit; the handlers themselves stay inside their mode modules.
+        "host_opened" | "map_used" => rel == "app/shell_network_setup/dispatch.rs",
         _ => false,
     }
 }
@@ -5479,6 +5484,214 @@ fn vmce_dependency_guard_keeps_diagnostics_off_the_stock_result_page() {
         vmce_owned_dependency_violations(&production).is_empty(),
         "clearing the shared result-page slots is production page exclusivity, not the Cooperative flow"
     );
+}
+
+/// Shared setup files the lobby's mode events used to reach. They must call the
+/// dispatch owner, never a mode module's event handlers.
+const LOBBY_SHARED_EVENT_FILES: &[&str] = &[
+    "app/shell_network_setup/service.rs",
+    "app/shell_network_setup/actions.rs",
+    "app/shell_network_setup/bans.rs",
+];
+
+/// The mode modules' event handlers a shared file must not call directly.
+const LOBBY_MODE_EVENT_HANDLERS: &[&str] = &[
+    "host_opened",
+    "admit_join_country",
+    "admit_join_slot",
+    "parse_refresh",
+    "guest_joined",
+    "guest_left",
+    "mode_entered",
+    "map_used",
+    "campaign_received",
+];
+
+fn lobby_dispatch_violations(files: &[SourceFile]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in files {
+        let production = file.production.as_deref().unwrap_or(&file.blanked);
+        if LOBBY_SHARED_EVENT_FILES.contains(&file.rel.as_str())
+            && production.contains("cooperative::")
+        {
+            violations.push(format!(
+                "{} calls the Cooperative mode owner directly; lobby mode events \
+                 belong to app/shell_network_setup/dispatch.rs",
+                file.rel
+            ));
+        }
+        // VMCE's lobby slots are its own; they may not reach Cooperative's.
+        if file.rel == "app/shell_network_setup/vmce_setup.rs"
+            && production.contains("cooperative::")
+        {
+            violations.push(format!(
+                "{} calls the Cooperative mode owner; VMCE's lobby slots are its own",
+                file.rel
+            ));
+        }
+        // The root adapter may re-export Cooperative's own features (rematch
+        // resume, Choose Map rows) but must route events through dispatch.
+        if file.rel == "app/shell_network_setup.rs" {
+            for handler in LOBBY_MODE_EVENT_HANDLERS {
+                if production.contains(&format!("cooperative::{handler}")) {
+                    violations.push(format!(
+                        "{} dispatches {handler} to the Cooperative owner instead of dispatch",
+                        file.rel
+                    ));
+                }
+            }
+        }
+    }
+    violations
+}
+
+/// Cooperative's lobby event handlers must not decide the event's mode again:
+/// the dispatcher owns that choice. Returns the handler bodies that still test
+/// a mode themselves.
+fn cooperative_handler_mode_tests(production: &str) -> Vec<String> {
+    const HANDLERS: &[&str] = &[
+        "host_opened",
+        "admit_join_country",
+        "parse_refresh",
+        "guest_joined",
+        "guest_left",
+        "mode_entered",
+        "map_used",
+        "campaign_received",
+    ];
+    const MODE_TOKENS: &[&str] = &[
+        "handles_mode",
+        "room_is_cooperative",
+        "mode.class",
+        "is_vmce",
+    ];
+    let impls = impl_blocks(production);
+    let definitions = function_definitions(production, &impls);
+    let mut violations = Vec::new();
+    for definition in definitions {
+        if !HANDLERS.contains(&definition.name.as_str()) {
+            continue;
+        }
+        let body = &production[definition.body_start..=definition.body_end];
+        for token in MODE_TOKENS {
+            if body.contains(token) {
+                violations.push(format!("{} uses {token}", definition.name));
+            }
+        }
+    }
+    violations
+}
+
+/// The lobby's mode events are split at the real dispatch boundary: shared
+/// setup files call `dispatch`, which owns the native mode choice (Choose Map's
+/// selected type for a join/departure, the admitted room's mode otherwise) and
+/// hands the event to Cooperative's or VMCE's own handlers. This is a call-chain
+/// check, not a rename: the Cooperative handlers lost their own mode guards so
+/// the dispatch table is the single author of the decision.
+#[test]
+fn lobby_mode_events_dispatch_before_the_cooperative_owner() {
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let production = |rel: &str| {
+        let file = files
+            .iter()
+            .find(|file| file.rel == rel)
+            .unwrap_or_else(|| panic!("missing scanned file {rel}"));
+        file.production
+            .as_deref()
+            .unwrap_or(&file.blanked)
+            .to_owned()
+    };
+
+    let violations = lobby_dispatch_violations(files);
+    assert!(
+        violations.is_empty(),
+        "a shared lobby file bypasses the mode-event dispatch:\n{violations:#?}"
+    );
+
+    // The dispatcher keeps both native lookups and both mode owners.
+    let dispatch = production("app/shell_network_setup/dispatch.rs");
+    for required in [
+        "uses_peer_mode",
+        "choose_map_modal",
+        "selected_mode_id",
+        "PeerMode::Chooser",
+        "super::cooperative::",
+        "super::vmce_setup::",
+    ] {
+        assert!(
+            dispatch.contains(required),
+            "the lobby dispatcher lost {required}:\n{dispatch}"
+        );
+    }
+
+    // The Cooperative event handlers no longer make the mode decision; each
+    // real call site goes through the dispatcher.
+    let cooperative = production("app/shell_network_setup/cooperative.rs");
+    assert!(!cooperative.contains("peer_mode_cooperative"));
+    assert!(!cooperative.contains("fn current("));
+    let handler_mode_tests = cooperative_handler_mode_tests(&cooperative);
+    assert!(
+        handler_mode_tests.is_empty(),
+        "the Cooperative handlers decide the event's mode again:\n{handler_mode_tests:#?}"
+    );
+    // A planted guard in one handler is caught, so the assertion above is not
+    // satisfied only by the two token checks.
+    let planted =
+        "impl AppState { fn guest_joined(&mut self) { if !handles_mode(mode) { return; } } }";
+    assert!(!cooperative_handler_mode_tests(planted).is_empty());
+    for (rel, call) in [
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::guest_joined",
+        ),
+        ("app/shell_network_setup/service.rs", "dispatch::guest_left"),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::admit_join_slot",
+        ),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::mode_entered",
+        ),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::campaign_received",
+        ),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::parse_refresh",
+        ),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::choice_countries",
+        ),
+        ("app/shell_network_setup/actions.rs", "dispatch::map_used"),
+        ("app/shell_network_setup.rs", "dispatch::host_opened"),
+    ] {
+        assert!(
+            production(rel).contains(call),
+            "{rel} no longer routes the lobby event through {call}"
+        );
+    }
+
+    // Negative fixtures: a shared event sent straight to Cooperative and a
+    // VMCE-owned module reaching it are both caught.
+    let shared = vec![fixture_source_file(
+        "app/shell_network_setup/service.rs",
+        "fn f() { super::cooperative::guest_joined(state); }\n",
+    )];
+    assert!(!lobby_dispatch_violations(&shared).is_empty());
+    let vmce = vec![fixture_source_file(
+        "app/shell_network_setup/vmce_setup.rs",
+        "fn f() { super::cooperative::guest_joined(state); }\n",
+    )];
+    assert!(!lobby_dispatch_violations(&vmce).is_empty());
+    let root = vec![fixture_source_file(
+        "app/shell_network_setup.rs",
+        "fn f() { cooperative::host_opened(state); }\n",
+    )];
+    assert!(!lobby_dispatch_violations(&root).is_empty());
 }
 
 #[test]

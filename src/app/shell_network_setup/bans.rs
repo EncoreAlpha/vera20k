@@ -13,7 +13,7 @@ use crate::skirmish_launch::{LaunchCountry, SkirmishLocalSlot};
 pub(crate) fn banned_countries(state: &AppState, bans: RoomBans) -> Vec<LaunchCountry> {
     let Some(rules) = state
         .rules()
-        .filter(|_| !bans.is_empty() && !super::cooperative::current(state))
+        .filter(|_| !bans.is_empty() && !super::dispatch::room_is_cooperative(state))
     else {
         return Vec::new();
     };

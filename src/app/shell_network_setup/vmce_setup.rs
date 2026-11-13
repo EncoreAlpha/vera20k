@@ -1,6 +1,7 @@
 //! VMCE setup state and its map-authored role metadata projection.
 
 use super::{AppState, NetworkSetupProtocol};
+use crate::skirmish_launch::SkirmishHumanSlot;
 
 /// Add the VMCE-specific map/config projection to the shared stock-map result.
 /// The service computes the generic catalog/admission result once, then
@@ -119,6 +120,69 @@ fn validate_host_vmce_map_config(
 
 fn should_reanswer_map(vmce: bool, host: bool, wol: bool, map_changed: bool) -> bool {
     map_changed || (vmce && !host && !wol)
+}
+
+// ---- VMCE's lobby mode events -------------------------------------------
+//
+// The shared setup owns the room, host, roster, admission, network and
+// reliable queue; these are the VMCE mode object's lobby slots, reached only
+// through `super::dispatch` when the event's mode is VMCE. Native's join
+// (`0x005E2FA0`), departure (`0x005E11DC`), setup-open (BC
+// `0x005ED6FE..0x005ED717`), parse (`0x005E541D`) and Use Map (`0x005E7160`)
+// slots for an ordinary mode
+// do nothing; VMCE keeps its campaign-role rules here so a Cooperative lobby
+// change cannot reach it.
+
+/// Whether a mode class is VMCE. The shared dispatch asks this so a VMCE lobby
+/// event never passes through the Cooperative owner.
+pub(super) fn handles_mode(mode: Option<crate::skirmish_modes::MpModeClass>) -> bool {
+    mode.is_some_and(|mode| mode.is_vmce())
+}
+
+/// The host's join accept: a playing seat starts on Random, because the join
+/// packet's `Player1` default is not a role choice. Observers keep their role.
+pub(super) fn admit_join_slot(human: &mut SkirmishHumanSlot) {
+    if !human.is_observer() {
+        human.role = crate::skirmish_launch::LaunchHumanRole::Player { group: -2 };
+    }
+}
+
+/// BC open opens the room; VMCE's series and map state are committed by the
+/// host's options transaction (`apply_vmce_host_setup_map`) and Use Map.
+pub(super) fn host_opened(_state: &mut AppState) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// The shared join admission rewrites the roster and the host republishes the
+/// options; the VMCE role slots travel inside those options.
+pub(super) fn guest_joined(_state: &mut AppState) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// The shared removal and republish own the roster; the remaining VMCE seats
+/// keep their claims.
+pub(super) fn guest_left(_state: &mut AppState) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// A changed mode's entry accepts the VMCE roles in the shared host-setup
+/// transaction (`0x5E542B..` in `service`), not in this slot.
+pub(super) fn mode_entered(_state: &mut AppState) -> anyhow::Result<()> {
+    Ok(())
+}
+
+/// Every host-options parse refreshes Cooperative's campaign row; VMCE's roles
+/// are accepted with the options themselves.
+pub(super) fn parse_refresh(_state: &mut AppState) {}
+
+/// Use Map's VMCE series/config commit is part of the shared map transaction
+/// (`commit_map_selection`); the mode slot adds nothing.
+pub(super) fn map_used(
+    _state: &mut AppState,
+    _mode_changed: bool,
+    _row: usize,
+) -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// Parsed map-authored Player1..Player4 labels and their House presentation
@@ -447,6 +511,35 @@ mod tests {
         assert!(!should_reanswer_map(true, false, true, false));
         assert!(!should_reanswer_map(false, false, false, false));
         assert!(should_reanswer_map(false, false, false, true));
+    }
+
+    #[test]
+    fn a_joining_playing_seat_defaults_to_random_and_spectators_keep_their_role() {
+        use crate::skirmish_launch::{
+            LaunchCountry, LaunchHumanRole, LaunchStartPosition, LaunchTeam,
+        };
+
+        let join_human = |role| crate::skirmish_launch::SkirmishHumanSlot {
+            raw_slot_index: Some(1),
+            name: "Guest".into(),
+            slot: crate::skirmish_launch::SkirmishLocalSlot {
+                country: LaunchCountry::America,
+                country_random: false,
+                color_index: 1,
+                color_random: false,
+                start_position: LaunchStartPosition::Auto,
+                team: LaunchTeam::None,
+            },
+            role,
+        };
+        // The join packet's Player1 default is not a role choice.
+        let mut player = join_human(LaunchHumanRole::Player { group: 1 });
+        admit_join_slot(&mut player);
+        assert_eq!(player.role, LaunchHumanRole::Player { group: -2 });
+        // An observer's role is not a playing claim.
+        let mut watcher = join_human(LaunchHumanRole::Observer);
+        admit_join_slot(&mut watcher);
+        assert!(watcher.is_observer());
     }
 
     #[test]

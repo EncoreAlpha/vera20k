@@ -80,18 +80,18 @@ impl SlotInputs {
     }
 }
 
-fn is_cooperative(state: &AppState, mode_id: i32) -> bool {
-    crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
-        .is_some_and(|mode| mode.class == MpModeClass::Cooperative)
+/// Whether a mode class is the stock Cooperative mode. The lobby's shared
+/// [`super::dispatch`] asks this instead of naming the mode at shared call
+/// sites.
+pub(super) fn handles_mode(mode: Option<MpModeClass>) -> bool {
+    mode == Some(MpModeClass::Cooperative)
 }
 
-/// The current mode (`[0xA8B23C]`) is Cooperative.
-pub(crate) fn current(state: &AppState) -> bool {
-    state
-        .match_state
-        .session
-        .network_setup()
-        .is_some_and(|launch| launch.mode.class == MpModeClass::Cooperative)
+fn is_cooperative(state: &AppState, mode_id: i32) -> bool {
+    handles_mode(
+        crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
+            .map(|mode| mode.class),
+    )
 }
 
 /// `0x005E26C0`: a setup dialog (BC, BD, C2 or C9) exists. Quick Match's
@@ -154,9 +154,6 @@ fn publish(state: &mut AppState, published: Option<(bool, Option<String>)>) -> a
 /// `+0x24`, then `+0x18` with no chooser (row 0, no swap: `0x005E66D0`
 /// reads a dead list), then `+0x7C`, which only repaints.
 pub(super) fn host_opened(state: &mut AppState) -> anyhow::Result<()> {
-    if !current(state) {
-        return Ok(());
-    }
     let inputs = SlotInputs::read(state);
     let current = inputs.current;
     let host_setup = host_setup_open(state);
@@ -226,7 +223,10 @@ pub(crate) fn resume(state: &mut AppState, resume: CooperativeResume) -> anyhow:
         .map(SkirmishLaunchMode::from_game_mode)
         .ok_or_else(|| anyhow::anyhow!("no Cooperative mode {}", resume.mode_id))?;
     select_scenario(state, resume.scenario, Some(mode))?;
-    anyhow::ensure!(current(state), "the next mission has no loadable map");
+    anyhow::ensure!(
+        super::dispatch::room_is_cooperative(state),
+        "the next mission has no loadable map"
+    );
     let setup = setup_open(state);
     let published = {
         let parts = state.frontend.multiplayer_shell_runtime.cooperative_parts();
@@ -382,9 +382,6 @@ fn scenario_files(state: &AppState) -> Vec<(usize, String)> {
 /// Map's own, `0x005E7371`), then `+0x24`, `+0x18` for the chosen row with
 /// the chooser still on top, `+0x7C` and `+0x60`.
 pub(super) fn map_used(state: &mut AppState, mode_changed: bool, row: usize) -> anyhow::Result<()> {
-    if !current(state) {
-        return Ok(());
-    }
     let inputs = SlotInputs::read(state);
     let current = inputs.current;
     let host_setup = host_setup_open(state);
@@ -430,9 +427,6 @@ pub(super) fn map_used(state: &mut AppState, mode_changed: bool, row: usize) -> 
 /// (`0x005C46E0`) straight to Start_Scenario (`GameExit__Victory`,
 /// `0x00685670`, on LAN and WOL alike), so no join and no tail run there.
 pub(super) fn guest_joined(state: &mut AppState) -> anyhow::Result<()> {
-    if !peer_mode_cooperative(state) {
-        return Ok(());
-    }
     let inputs = SlotInputs::read(state);
     let setup = setup_open(state);
     let published = {
@@ -492,24 +486,6 @@ pub(super) fn guest_joined(state: &mut AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The mode a join or departure calls (`0x005E2FA0`, `0x005E11DC`): Choose
-/// Map's selected game type while it is on top, else the current mode.
-fn peer_mode_cooperative(state: &AppState) -> bool {
-    let mode_id = match state
-        .frontend
-        .skirmish_shell_state
-        .choose_map_modal
-        .as_ref()
-    {
-        Some(modal) => modal.selected_mode_id,
-        None => match state.match_state.session.network_setup() {
-            Some(launch) => launch.mode.id,
-            None => return false,
-        },
-    };
-    is_cooperative(state, mode_id)
-}
-
 /// The host's accepted departure (LAN `0x005E11DC..0x005E1235`) runs that
 /// mode's `+0x90`; only Cooperative's acts. Under Choose Map it drops a
 /// listed saved row; elsewhere a save in use gives way to the reserve's
@@ -519,9 +495,6 @@ fn peer_mode_cooperative(state: &AppState) -> bool {
 /// first map missing from the catalog selects index `count`; here only a
 /// found map is selected and published.
 pub(super) fn guest_left(state: &mut AppState) -> anyhow::Result<()> {
-    if !peer_mode_cooperative(state) {
-        return Ok(());
-    }
     let chooser_on_top = state
         .frontend
         .skirmish_shell_state
@@ -568,9 +541,6 @@ pub(super) fn admit_join_country(
     state: &AppState,
     slot: &mut crate::skirmish_launch::SkirmishLocalSlot,
 ) {
-    if !current(state) {
-        return;
-    }
     let runtime = &state.frontend.multiplayer_shell_runtime;
     let requested = if slot.country_random {
         -2
@@ -587,6 +557,16 @@ pub(super) fn admit_join_country(
         }
         None => slot.country_random = true,
     }
+}
+
+/// A host-options parse's `+24` refresh (`0x005E5411..0x005E541D`).
+pub(super) fn parse_refresh(state: &mut AppState) {
+    state
+        .frontend
+        .multiplayer_shell_runtime
+        .cooperative_parts()
+        .progress
+        .request_refresh();
 }
 
 /// A received `C0` (`0x005E43CE`): every mode object's `+0x58`, which only
@@ -623,9 +603,6 @@ pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Res
 /// (`0x005C1B79..0x005C1BA1`), which the later lookup at `0x007A6E0B`
 /// selects again. The countries refresh only with a setup dialog.
 pub(super) fn mode_entered(state: &mut AppState) -> anyhow::Result<()> {
-    if !current(state) {
-        return Ok(());
-    }
     let inputs = SlotInputs::read(state);
     let current = inputs.current;
     let host_setup = host_setup_open(state);

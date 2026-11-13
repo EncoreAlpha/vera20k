@@ -14,10 +14,14 @@ pub(crate) mod vmce_map;
 pub(crate) mod vmce_map;
 #[cfg(feature = "vmce")]
 pub(super) mod vmce_setup;
+#[cfg(not(feature = "vmce"))]
+#[path = "shell_network_setup/vmce_setup_stub.rs"]
+pub(super) mod vmce_setup;
 pub(crate) use vmce_map::refresh_vmce_entries;
 #[cfg(feature = "vmce")]
 pub(crate) use vmce_setup::{VmceLobbyProjection, VmceLobbyStatus, VmceMapDetails};
 mod cooperative;
+mod dispatch;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,
 };
@@ -871,9 +875,9 @@ impl App {
         // The WOL C2's own +20/+18 calls (0x791293, 0x7912A3) belong to a
         // later chain; LAN BC runs them here.
         if !dialog.wol()
-            && let Err(error) = cooperative::host_opened(state)
+            && let Err(error) = dispatch::host_opened(state)
         {
-            log::error!("Could not open the Cooperative campaign: {error:#}");
+            log::error!("Could not open the setup mode's campaign: {error:#}");
         }
         let agreed_seed = if dialog.wol() {
             wol::resident_seed(state)

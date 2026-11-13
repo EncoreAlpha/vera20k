@@ -1007,7 +1007,7 @@ pub(crate) fn commit_map_selection(
     // Use Map (`0x005E7160`) writes `[0xA8B254]` (0x005E7370), then runs
     // the mode's slots on LAN and WOL alike.
     super::note_scenario(state);
-    super::cooperative::map_used(state, mode_changed, row.unwrap_or(0))?;
+    super::dispatch::map_used(state, mode_changed, row.unwrap_or(0))?;
     queue(state, NetworkSetupRequest::PublishOptions);
     // A VERA room's spectators may move past the new players.
     if state.match_state.session.network_several_observers() {
