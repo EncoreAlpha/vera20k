@@ -94,6 +94,8 @@ and four-player sessions. VMCE has up to four human roles and no observers.
   validate country identity in the shared launch owner and report the conflicting roles. Also
   resolve the ambiguity when an AI and a player share a Country: the first House selected for
   an alliance victory can differ from the player. See [audit A04](zh-CN/vmce-review.md).
+  The user decided same-country multiple owners get no extra fallback; the item stays recorded,
+  not fixed.
 - **B61 — retry a failed series scan:** the same identity retains mismatch/failure after the guest
   fixes a later map. Offer an explicit retry or invalidate the failed result on a user action.
 - **B62 — local unlock failure feedback:** corrupt or unwritable progress is logged only. Preserve
@@ -109,9 +111,12 @@ and four-player sessions. VMCE has up to four human roles and no observers.
 - **B71 — passive primary House results:** passive Houses are filtered from the VMCE settlement
   facts (`app/vmce_result/statistics.rs`), but the result round still uses that display-filtered role
   count as its participant count. Use frozen participants and define whether passive primary roles
-  are supported before admission. The settlement-statistics ownership split does not change this.
+  are supported before admission. The settlement-statistics ownership split does not change this;
+  the user decided not to fix it, so it stays recorded and open.
 - **B72 — changed map and result page:** results re-read the finished map and may lose their VMCE
   board after a disk change. Project the frozen mission identity or fail clearly and reliably.
+  The user decided a deleted/replaced mission map gets no extra fallback; the item stays recorded,
+  not fixed.
 - **B75 — shared-unit deployment and unloading:** self-click actions and some D-key unloads
   require the primary House despite a shared grant. Reuse the grant for input and retain command
   authorization. See [audit A23](zh-CN/vmce-review.md).
@@ -142,7 +147,9 @@ and four-player sessions. VMCE has up to four human roles and no observers.
   (`0x0046EADD`) and the LAN pass returns before the setup keepalives and lease polling, so an
   idle page or a silently stopped peer is never detected and the wait can last forever. Send the
   round keepalive and keep the existing silent-peer check running; see
-  [audit A40](zh-CN/vmce-review.md).
+  [audit A40](zh-CN/vmce-review.md). The user requires that a normal player's wait must not be
+  misjudged as a timeout; that boundary remains pending and is not fixed by the
+  settlement-statistics or lobby-dispatch slices.
 - **B95 — map cinematics in VMCE:** a map's `[Basic]` `Intro`/`Brief`/`Action`/`Win`/`Lose`/
   `PostScore`/`PreMapSelect` movies play on the campaign-start and BC6 continuation paths, but VMCE
   mission start, win/lose result and the next-stage handoff go straight to the result page or

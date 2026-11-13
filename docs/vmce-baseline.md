@@ -450,9 +450,74 @@ statistics rows against its own role House facts, and the 20 simulation hashes
 are equal.
 
 Residual: A19/B71 (passive primary House and the round's participant count) is
-unchanged — the role-count projection still filters passive Houses, so the known
-defect stays open. Three- and four-player real-process settlement statistics were
-not run; multi-role attribution and de-duplication are covered by the VMCE client
-tests only. The terminal statistics source remains latent (VMCE never latches a
-terminal snapshot, as before). Cross-machine, internet and OS-level packet loss
-stay out of this slice.
+unchanged — the role-count projection still filters passive Houses, and the
+user decided not to fix it; shared-owner statistics stay as they are. Three- and
+four-player real-process settlement statistics were not run; multi-role
+attribution and de-duplication are covered by the VMCE client tests only. The
+terminal statistics source remains latent (VMCE never latches a terminal
+snapshot, as before). Cross-machine, internet and OS-level packet loss stay out
+of this slice.
+
+## Phase 3 second slice — LAN lobby mode-event dispatch (feature/vmce, 2026-11-13)
+
+The shared lobby no longer routes VMCE's join/leave and related mode events
+through Cooperative's handlers. `app/shell_network_setup/dispatch.rs` owns the
+native mode choice: a join accept (`0x005E2FA0`) and accepted departure
+(`0x005E11DC`) read Choose Map's selected game type while the chooser is on top,
+else the admitted room's mode; a chooser row that names no game type (VERA's
+Favorites/Online Maps rows) selects no mode and does not fall back to the room.
+Setup open (BC `0x005ED6FE..0x005ED717`), the join's
+`+0x1C`/`+0x28` slot (`0x005E1945`), every options-parse `+24` refresh, mode
+entry (`0x005E541D`), Use Map (`0x005E7160`), a guest's choice-country admission
+and a received Cooperative `C0` text read the admitted room's mode. The dispatch
+hands each event to Cooperative's own slots in `cooperative.rs` or to VMCE's
+slots in `app/shell_network_setup/vmce_setup.rs`; Cooperative's handlers lost
+their own mode guards so the dispatch table is the single author of the
+decision. VMCE's join slot owns the playing-seat Random role default that used
+to sit inline in the shared service. A non-`vmce` build uses
+`vmce_setup_stub.rs`, where no VMCE mode exists and every slot is a no-op.
+
+Unchanged: room/host/roster/admission/network/reliable queue stay shared and in
+VERA's owners; host and guest join, leave, map choice, Ready and Start behavior
+(including the map chooser's selected-mode semantics during a join/leave — own
+rows such as Favorites/Online Maps run no mode slot — async result invalidation,
+launch revalidation and deterministic random roles) is as before; ordinary
+Cooperative events behave as before. This is a dispatch split, not a mode plugin
+framework.
+
+Architecture: `lobby_mode_events_dispatch_before_the_cooperative_owner` asserts
+that shared setup files and the service layer never call the Cooperative mode
+module, the VMCE lobby module never reaches it, the root adapter routes its
+event calls through the dispatcher, and the Cooperative handlers carry no mode
+test of their own (with a planted negative fixture); further negative fixtures
+cover a shared direct call, a VMCE-module call and a root-adapter call. The
+dependency guard's shared-owner table records `dispatch::host_opened`/`map_used`
+as the seam VMCE code reaches through the shell host-setup open/return paths and
+the capture fixture's Use Map commit; the shared-mode reference pin for
+`service_event` dropped from 2 to 1 now that the inline VMCE join check lives in
+VMCE's module.
+
+Evidence (local): focused tests — dispatcher 5 (host join/leave follow the
+chooser's VMCE or Cooperative selection, guest join mode entry follows the room
+mode, host-open/join-slot/refresh/Use Map/choices/C0 follow the room mode, a
+Favorites/Online Maps chooser row selects no mode and does not fall back to the
+room, no-mode and other modes have no owner); VMCE join slot 1 (playing seat
+defaults to Random, observer keeps its role); `app::shell_network_setup` 37 with
+`vmce` and 23 without; `app::lan_service::tests` 29;
+`app::lan_service::vmce_round::tests` 20; `app::vmce_result` 25; stock
+Cooperative session round 7; architecture guards 46 with and without `vmce`;
+`check -p vera20k --lib --bins` passes both configurations. Labelled fast build
+`vmce-lobby-e7cc9d5e5-r3`, executable SHA-256
+`a41789c42090d9459e4c9f8667b6a45eefc4d12e81f806bc1c4f15ac30b0dd5a`:
+`2p-win` LAN acceptance PASS under `.scratch/vmce-lobby-accept-r3/` — host and
+guest created/joined the room, chose the campaign, readied and started, with 300
+matching native checksums, 20 matching simulation hashes, `dialog.rows=2` and
+the expected next-stage receipt.
+
+Residual: a real mid-room leave was not run; leave routing is covered by the
+dispatcher unit tests only. Three- and four-player lobbies were not run;
+cross-machine and internet play stay out of this slice. Per the user's decision:
+B71 is not fixed; shared-owner statistics stay as they are; a deleted/replaced
+map and same-country multiple owners get no extra fallback; a normal player's
+wait must not be misjudged as a timeout, and that boundary remains pending, not
+fixed by this slice.
