@@ -106,9 +106,10 @@ and four-player sessions. VMCE has up to four human roles and no observers.
   admission in four-player rooms.
 - **B70 — shared-House building commands:** authorized shared buildings and walls cannot be
   repaired/sold through all input and network checks; apply the existing House grants end to end.
-- **B71 — passive primary House results:** passive Houses are filtered from score rows, but the
-  result round uses the row count as its participant count. Use frozen participants and define
-  whether passive primary roles are supported before admission.
+- **B71 — passive primary House results:** passive Houses are filtered from the VMCE settlement
+  facts (`app/vmce_result/statistics.rs`), but the result round still uses that display-filtered role
+  count as its participant count. Use frozen participants and define whether passive primary roles
+  are supported before admission. The settlement-statistics ownership split does not change this.
 - **B72 — changed map and result page:** results re-read the finished map and may lose their VMCE
   board after a disk change. Project the frozen mission identity or fail clearly and reliably.
 - **B75 — shared-unit deployment and unloading:** self-click actions and some D-key unloads

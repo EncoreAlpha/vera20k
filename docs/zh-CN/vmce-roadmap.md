@@ -21,9 +21,9 @@ VMCE 留在 VERA 同一仓库中，作为 `vmce` 可选构建能力，继续使�
 
 ## 当前基线
 
-上游 `main` 的 `867ae2467` 已合并到 `feature/vmce`，合并提交为 `89ccbea49`；同步记录在 `da66750ea`，阶段 1 的审查已完成。阶段 2 的结算、失败重试、下一关和最后一关结束已由 VMCE 独立持有；本轮审查修复后的双人胜利、重试、最终关和注入 `win/lose` 诊断通过，双端各 300 个 checksum 一致，详见[基线](../vmce-baseline.md)。阶段 2 等待用户审查，通过后再进入阶段 3。
+上游 `main` 的 `867ae2467` 已合并到 `feature/vmce`，合并提交为 `89ccbea49`；同步记录在 `da66750ea`，阶段 1 的审查已完成。阶段 2 的结算、失败重试、下一关和最后一关结束已由 VMCE 独立持有；审查修复（含 B10）已本地提交（`b2806138e`、`570af8d90`）并等待用户审查。按用户指定，阶段 3 从“结算统计所有权分离”子链开始：VMCE 的胜利、失败和关间统计改由 [vmce_result/statistics.rs](../../src/app/vmce_result/statistics.rs) 按冻结的角色分配与地图角色元数据决定，Cooperative 保留自己的原版结算行选择；双方只共用 [sim/score.rs](../../src/sim/score.rs) 的 `HouseScoreFacts` 这一份 House 统计事实，不再出现第二份权威统计。该子链已完成并等待审查，阶段 3 其余的大厅、建房、选图、角色、准备、开局和任务中接入尚未开始。
 
-结算相关的流程已经分开：[vmce_round.rs](../../src/app/vmce_round.rs)、[session/vmce_result.rs](../../src/app/match_runtime/session/vmce_result.rs) 和 [LAN VMCE 服务](../../src/app/lan_service/vmce_round.rs) 持有 VMCE 自己的阶段状态、result agreement、Retry ACK 和关间交接；失败页由 [vmce_defeat.rs](../../src/app/frontend/skirmish_shell_render/vmce_defeat.rs) 独立绘制。大厅、建房、选图、角色、准备和任务中接入仍有 Cooperative 依赖，属于阶段 3；已有的独立消息、战役数据所有者及 B10/B57 实现不代表整个模式已经独立。
+结算相关的流程已经分开：[vmce_round.rs](../../src/app/vmce_round.rs)、[session/vmce_result.rs](../../src/app/match_runtime/session/vmce_result.rs) 和 [LAN VMCE 服务](../../src/app/lan_service/vmce_round.rs) 持有 VMCE 自己的阶段状态、result agreement、Retry ACK 和关间交接；失败页由 [vmce_defeat.rs](../../src/app/frontend/skirmish_shell_render/vmce_defeat.rs) 独立绘制；结算统计的玩家行由 [vmce_result/statistics.rs](../../src/app/vmce_result/statistics.rs) 独占，原版 Cooperative 的结算行仍由 `sim/score.rs` 的 `cooperative_score_rows` 决定。大厅、建房、选图、角色、准备和任务中接入仍有 Cooperative 依赖，属于阶段 3 余下部分；已有的独立消息、战役数据所有者及 B10/B57 实现不代表整个模式已经独立。
 
 ## 阶段与停点
 
@@ -31,7 +31,7 @@ VMCE 留在 VERA 同一仓库中，作为 `vmce` 可选构建能力，继续使�
 
 1. **上游同步审查（已完成）。** 审查 `89ccbea49` 的冲突解决、VMCE 必要功能与同步后验证记录，确认普通 VERA 和 VMCE 的边界以及未验证项；不再重复做已完成的上游合并。
 2. **独立结算、重试和续关（已完成，审查修复后待审查）。** VMCE 自己拥有结果与关间流程的状态、决策和消息；独立失败结算页的内容、布局与操作，同时使用 VERA 基础控件。覆盖胜利进入下一关、失败重试、最后一关结束和退出；保留现有玩法及可见交互。上一轮已用双人本机多进程验收三个流程，并以自动测试覆盖丢包、ACK 丢失和对端无响应；原版 Cooperative 相关测试同时通过。残留风险见[基线](../vmce-baseline.md)。
-3. **独立其余 LAN 战役流程（当前停点）。** 分可玩的阶段处理建房、选图、角色、准备、开局和任务中接入，逐步移除对 Cooperative 专属代码的调用。每阶段验证并停下审查，不把整个迁移包装成一次不可验收的大改。完成后核对正式代码、测试和诊断的直接及间接依赖，增加有针对性的架构检查并结合只读审查；最终整体验收补充三人、四人流程。
+3. **独立其余 LAN 战役流程（阶段 3；首个子链“结算统计所有权”已完成，其余未开始，当前停点）。** 分可玩的阶段处理建房、选图、角色、准备、开局和任务中接入，逐步移除对 Cooperative 专属代码的调用。2026-11-13 已完成首个子链：VMCE 的结算统计按自己的角色/分配投影，Cooperative 保留自己的原版行选择，双方只共用 VERA 的 House 统计事实；增加了针对真实边界的架构检查并用双人本机多进程验收胜利、重试、最终关，详见[基线](../vmce-baseline.md)。其余流程仍待后续阶段，每阶段验证并停下审查，不把整个迁移包装成一次不可验收的大改。完成后核对正式代码、测试和诊断的直接及间接依赖，增加有针对性的架构检查并结合只读审查；最终整体验收补充三人、四人流程。
 4. **LAN/本地任务中存档和载入。** 在整个 VMCE 独立完成后实现，具体规则见下文；先以双人本机多进程验证存档、退出、由房主载入、重选角色并继续操作。三人、四人及载入后打完任务和续关留待后续验收。
 5. **互联网建房和开局。** LAN 独立与存档完成后，接入现有 VERA 互联网大厅。第一步只供开发与测试，以模拟在线服务的自动测试和双人本机多进程验证建房、加入和开局；不面向玩家开放。互联网结算、重试、续关和存档传输在后续阶段实现并验证，完整战役流程完成后再考虑面向玩家提供。
 

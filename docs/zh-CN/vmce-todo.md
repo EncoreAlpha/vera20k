@@ -11,9 +11,10 @@ lang: zh-CN
 ## 当前路线
 
 1. 上游同步审查：已完成。
-2. 独立结算、重试和续关：审查修复已验证，等待用户审查；双人胜利进下一关、失败重试、最后一关结束以及 `--vera-outcome win/lose` 诊断均通过，详见[基线](../vmce-baseline.md)。
-3. 下一步：分阶段独立大厅、建房、选图、角色、准备、开局和任务中流程；每阶段验证并停下审查。
-4. 整个 VMCE 独立后实现 LAN/本地任务中存档，随后接入互联网建房和开局。
+2. 独立结算、重试和续关：审查修复已验证并本地提交（`b2806138e`、`570af8d90`），等待用户审查；双人胜利进下一关、失败重试、最后一关结束以及 `--vera-outcome win/lose` 诊断均通过，详见[基线](../vmce-baseline.md)。
+3. 阶段 3 首个子链“结算统计所有权分离”：已完成，等待用户审查。VMCE 的结算统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 VERA 的 House 统计事实。
+4. 下一步（阶段 3 其余部分）：分阶段独立大厅、建房、选图、角色、准备、开局和任务中流程；每阶段验证并停下审查。最终整体验收补充三人、四人流程。
+5. 整个 VMCE 独立后实现 LAN/本地任务中存档，随后接入互联网建房和开局。
 
 独立阶段只修阻塞当前流程或验收的问题；审查通过后再处理该阶段相关的已知问题。下方条目保留作为缺陷索引，并非要求先全部清空。
 
@@ -29,9 +30,20 @@ lang: zh-CN
 - 失败页 Esc 行为、结果页布局与现有胜利/重试/最终关流程、模拟和校验和保持不变。
 - 证据：本轮 fast 构建的双人 `2p-win`、`2p-retry`、`2p-final` 及注入 `win/lose` 均通过；两端各有 300 条一致的 checksum。注入地图锁住了玩家输入，未验证移动/停止操作。普通 Cooperative 会话和 LAN 的相关自动测试通过；B10 续修的 fast 构建 `b10-continue-94eea03f6-r3` 的 `2p-win`/`2p-retry`/`2p-final` 也通过（各 300 条一致）。详见[基线](../vmce-baseline.md)。
 
+## 阶段 3 首个子链：结算统计所有权（已完成，待用户审查）
+
+- **所有者：** VMCE 的胜利、失败和关间统计由 [vmce_result/statistics.rs](../../src/app/vmce_result/statistics.rs) 独占：从冻结的 `VmceHouseAssignments`、地图角色元数据和 `raw_slot_index` 生成每名参战者一行，共享 House 不成行，重复 House 只计一次；击杀总数与轮次人数按去重后的角色主 House 计。
+- **共享事实：** [sim/score.rs](../../src/sim/score.rs) 新增 `HouseScoreFacts` 与 `Simulation::house_score_facts(owner)`，只投影一个 House 的既有 `MatchStatistics`/`Economy`/`HouseTracking` 计数，不选择玩家行；`cooperative_score_rows` 只保留 Cooperative 自己的人类 House 行选择，不含 VMCE/模式分支。
+- **共用展示：** `0x103` 战役比分模型移入中性的 [campaign_score_model.rs](../../src/app/campaign_score_model.rs)，离线战役出口与 VMCE 结果页共用；删除 `sim_tick` 中无调用者的重复 VMCE 比分模型和重复构建辅助。
+- **行为保持：** 结果分派、轮次状态、终局计分锁存、Scenario 随机数、失败页实时统计、胜利页布局与交互不变；VMCE 终局快照仍不锁存，`Terminal` 来源继续回退实时事实。
+- **架构检查：** `cooperative_score_rows` 从共享能力允许清单与引用上限删除；新增负向 fixture 拒绝 VMCE 统计调用它；新增语义边界检查断言 Cooperative 行选择不含 VMCE/模式分支、共享事实投影不选择行、VMCE 统计所有者不读取 Cooperative 行选择。guards 45 条两配置通过；`check -p vera20k --lib --bins` 两配置通过。
+- **测试：** 核心 `sim::score` 13（默认）/15（vmce，含 VMCE 分配世界中 Cooperative 行仍按人类 House 选择的行为测试）以及恢复的空授权源 viewpoints 覆盖；VMCE 统计 7（多角色归属、共享 House 不计、重复去重、被动零值、终局优先、观察者不成行，另移入时间头测试）；`app::vmce_result` 25、`app::lan_service::vmce_round::tests` 20、`app::lan_service::tests` 29、普通 Cooperative session 回合 7。
+- **证据：** fast 构建 `vmce-stats-570af8d90-r2`（SHA-256 `4407334D567700848E04B9EF88FE30201B5778F928E212BC50EE793DCD6D555C`）的 `2p-win`、`2p-retry`、`2p-final` 通过：各 300 个 native checksum 与 20 个模拟 hash 两端一致；下一关、同关重载、最终关进入 credits/`campaign-end` 回执符合预期；失败页两端 `vmce_statistics_rows` 完全一致，胜利页两端回执均为 `dialog.victory=true, rows=2`，最终关两端 `campaign-end` 回执一致，且每端诊断按自己的角色 House 事实校验统计行。证据在 `.scratch/vmce-stats-accept-r2/`（未提交）。
+- **残余：** A19/B71 未修复（被动主 House 仍被显示过滤且轮次人数取过滤后投影）；三人、四人真实结算统计与多角色联机流程未跑（多角色/去重归属仅由客户端单元测试覆盖）；跨机器、互联网与真实 OS 级丢包不在本子链范围。
+
 ## 优先核查
 
-暂无新增优先项；大厅/开局独立阶段按路线等待用户审查后再开始。
+暂无新增优先项；阶段 3 余下的大厅/开局独立流程等待用户审查本子链后再开始。
 
 ## 玩家功能
 
@@ -61,6 +73,7 @@ lang: zh-CN
 
 ## 已完成
 
+- **阶段 3 首个子链（VMCE 结算统计所有权）：** VMCE 统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 `HouseScoreFacts`；双人三流程验收通过，残余见上方子链小节。
 - **B5、B106：** 核心层整理和战役数据从大厅分离。
 - **B57：** 确认结果后保存本机关卡解锁；残余见待验证。
 - **B10：** 终端 LAN 交接增加有界等待和失败处理；关间期限到期按 Continue 的无提示退出已修复（`b2806138e`）；残余见待验证。

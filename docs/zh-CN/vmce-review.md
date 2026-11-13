@@ -103,8 +103,9 @@ lang: zh-CN
 ### A19 · B71 被动国家主 House 可能破坏结算人数 — P2
 
 - **问题与影响：** 地图作者把 `MultiplayPassive=true` 的国家用作玩家主 House 时，该角色可能不计入合作结算行。多人胜利页因此可能误以为只有一人并走单人继续路径；结算统计也可能缺失该玩家。
-- **依据：** [角色校验](../../src/app/match_bootstrap.rs#L433)没有拒绝被动国家；[结算行](../../src/sim/score.rs#L103)先取得 VMCE 角色，但随后仍过滤 `multiplay_passive`；[结果页](../../src/app/vmce_result/victory.rs)以这些行的数量作为轮次人数，[单人分支](../../src/app/match_runtime/session/cooperative_round.rs#L931)据此直接继续。零售 `RULESMD.INI` 的 Neutral 和 Special 设置了 `MultiplayPassive=true`。
+- **依据：** [角色校验](../../src/app/match_bootstrap.rs#L433)没有拒绝被动国家；[VMCE 结算统计投影](../../src/app/vmce_result/statistics.rs)从冻结分配取每名玩家的主 House，但 `MultiplayPassive` 的 House 不产生事实行；[轮次人数](../../src/app/vmce_result/victory.rs)仍取该投影的行数，[单人分支](../../src/app/match_runtime/session/cooperative_round.rs#L931)据此直接继续。零售 `RULESMD.INI` 的 Neutral 和 Special 设置了 `MultiplayPassive=true`。
 - **修正：** 轮次参与人数应取冻结的参战者/实际连接状态，不能取可被显示过滤影响的统计行；明确 VMCE 是否允许被动国家作为主角色：若允许，按已分配角色展示统计；若不允许，在开局前给出清晰错误，并说明限制依据。
+- **状态（2026-11-13，阶段 3 结算统计所有权分离后）：** 行数与值现在由 VMCE 自己的角色/统计所有者投影，不再经过 Cooperative 统计接口；但被动 House 仍按原显示语义被过滤，轮次人数仍取过滤后的投影行数，因此 A19/B71 本身未修复，未被本子链接管；按既定范围留待其阻塞当前流程时处理。
 - **验收：** 覆盖单人和双人包含被动主 House 的胜利、失败重试和关间继续；确认玩家行、握手人数与最终结果一致，或在开局前一致拒绝。
 
 ### A20 · B72 任务中替换地图可能让结果页失去 VMCE 控件 — P2
@@ -345,6 +346,7 @@ lang: zh-CN
 - **B102：** 现有 owner 已覆盖准入判定；房主侧原因提示、关间房间握手本身与真实数据变更采集仍为残余，见完成区。
 - **B64/B65/B74/B76/B77/B79/B80/B83/B84：** 伪造来源、丢包、加载失败或原版对照等未完成的验收，继续按完成区各条的验证边界跟踪。
 - **B36：** 其他跨机器、关间加入/离开及真实网络故障验收见[英文台账](../vmce-backlog.md#connected-validation-b36)；本机多进程不能替代跨机器验证。
+- **结算统计所有权（阶段 3 首个子链）：** 双人本机多进程三个流程已核对两端统计行与模拟一致；三人、四人真实结算统计未跑，多角色归属/去重目前由 VMCE 客户端单元测试覆盖。A19/B71 未修复（被动主 House 仍被显示过滤且轮次人数取过滤后行数）；VMCE 终局快照仍不锁存，胜利统计回退实时事实的行为保持不变。
 
 ## 已完成（保留验证边界）
 
@@ -352,6 +354,14 @@ lang: zh-CN
 
 - **B103（已关闭）** 默认窗口改为 1024x768；合并基线已采集 `0x103` 胜利板/统计页与 `0xBC6` 失败页，三目标与 B2 同尺寸基线逐字节一致（2026-11-12）。
 - **B105（已关闭）** 桌面默认模拟线程下，合并基线 LAN 验收 4/4、93/93，实时胜利板与失败统计页非空、两端结果字段与 state hash 一致（2026-11-12）。
+
+### VMCE 结算统计所有权分离（2026-11-13，阶段 3 首个子链，待用户审查）
+
+- **结论：** VMCE 的胜利/失败/关间统计不再调用 `Simulation::cooperative_score_rows`。共享层只保留一份只读 House 事实投影 `sim::score::HouseScoreFacts`（由 `Simulation::house_score_facts(owner)` 生成），它只投影一个 House 的既有 `MatchStatistics`/`Economy`/`HouseTracking` 计数，不选择玩家行；`cooperative_score_rows` 仍由 Cooperative 自己决定原版人类 House 行。VMCE 自己的统计所有者为 [vmce_result/statistics.rs](../../src/app/vmce_result/statistics.rs)：按冻结的 `VmceHouseAssignments`、地图角色元数据和 `raw_slot_index` 生成每名参战者一行，共享 House 不是玩家行，重复 House 只计一次（击杀总数与轮次人数按去重后的角色主 House 计）。`0x103` 战役比分模型的构建移入中性的 [campaign_score_model.rs](../../src/app/campaign_score_model.rs)，由离线战役出口和 VMCE 结果页共用；删除了 `sim_tick` 中无调用者的重复 VMCE 比分模型和两份重复的构建辅助。
+- **行为保持：** 结果分派、轮次状态、终局计分锁存和 Scenario 随机数未改；VMCE 仍与 Cooperative 同属 `shares_cooperative_result`，因此终局快照不会被锁存，胜利统计的 `Terminal` 来源继续回退到实时事实（与旧实现一致）。被动主 House 的显示过滤、共享 House 不单独成行、失败页实时统计、胜利页布局与交互均保持原样。
+- **测试：** 核心 `sim::score` 13 条（默认）和 15 条（vmce，含一条在 VMCE 分配世界中仍按人类 House 选择 Cooperative 行的行为测试）通过；`house_defeat` 恢复空授权源不计入 viewpoints 的覆盖。VMCE 统计所有者 7 条：6 条新增（多角色按 seat 顺序归属各自主 House、共享 House 不成行且不计击杀、重复 House 去重、被动角色行显示零值、终局行优先于实时事实、观察者不成行），另 1 条时间头测试从旧 victory 测试移入；`app::vmce_result` 25、`app::lan_service::vmce_round::tests` 20、`app::lan_service::tests` 29、普通 Cooperative session 回合 7 条通过。架构检查 45 条两配置通过：`cooperative_score_rows` 从共享能力允许清单与引用上限中删除，新增负向 fixture 拒绝 VMCE 统计调用该接口，并新增边界检查断言 Cooperative 行选择不含 VMCE/模式/会话授权入口、共享事实投影不选择行、VMCE 统计所有者不读取 Cooperative 行选择。`check -p vera20k --lib --bins` 与 `--features vmce` 均通过。
+- **验收：** 双人本机多进程 `2p-win`/`2p-retry`/`2p-final` 通过，两端各 300 条 checksum/20 个模拟 hash 一致；失败重试两端回执的 `vmce_statistics_rows` 完全一致，胜利页两端回执均为 `dialog.victory=true, rows=2`，最终关两端 `campaign-end`/credits 回执一致，且每端诊断用自己的角色 House 事实校验统计行；详见[基线](../vmce-baseline.md)。
+- **残余：** A19/B71（被动主 House 的轮次人数）未修复；真实三人、四人结算统计和多角色联机流程仍待阶段整体验收（本子链仅以客户端单元测试覆盖多角色/去重归属）；跨机器、互联网和真实 OS 级丢包不在本子链范围。
 
 ### B102 规则与扩展身份准入（2026-11-13，已关闭）
 
@@ -524,6 +534,7 @@ lang: zh-CN
 - 本机真实三进程：`4p-win --players 3`（`LDA-4p` 四人角色地图）通过；3 个 receipt 的 300 checksums/20 hashes 一致，`dialog.rows=3`、下一关 stage02；大厅截图显示 3 名玩家加 1 个「開放」席位/4 个角色行，结算板 3 行；房主地图预览为空（该系列地图无可解码预览数据）。
 - 本机真实四进程：`4p-win` 通过；4 个 receipt 的 300 checksums 与 20 个 hashes 一致；胜利板四行，四人初始 VMCE 大厅无共享 House 授权显示，与 A34 及 B30–B32 对应；初始大厅截图中 Change Map 处于启用态（关间房间截图未采集），与 A42 的绘制判断对应。
 - 本机真实双进程（末关/完成流程）：`2p-final` 用 `LDA-2p-final`（Entry=末关，`--entry stage02/all01umd.map`）通过；`lan.vera_outcome.kind="end"`、`completed=true`、`screen=MainMenu`、`network_return=None`，两端 300 checksums 与 20 个 hashes 一致，截图含 `vera-result-real-win`、`vera-campaign-credits`、`vera-campaign-end`（`vera-campaign-end` 实际截到返回后的主菜单，不是完成对话框），支持片尾/返回主菜单流程。VMCE 末关完成走 `vmce_campaign_end` 的片尾/主菜单路径，不打开 0xBC7 完成对话框；`build_campaign_end` 属于旧 Cooperative 路径（最多两人），因此不构成 VMCE 完成页问题。
+- 本机真实双进程（阶段 3 结算统计所有权）：fast 构建 `vmce-stats-570af8d90-r2`（SHA-256 `4407334D567700848E04B9EF88FE30201B5778F928E212BC50EE793DCD6D555C`）的 `2p-win`（进入 stage02）、`2p-retry`（同关重载）和 `2p-final`（campaign-end/credits）全部通过，各 300 个 native checksum 与 20 个模拟 hash 两端一致；失败页两端回执的 `vmce_statistics_rows` 相同，胜利/最终关两端 `dialog.rows=2`，每端诊断用自己的角色 House 事实校验统计行。证据在 `.scratch/vmce-stats-accept-r2/`（未提交）。
 - 清单校验采集：用 `ScenarioCount=1` 但同时含 `Scenario2` 和未知 `Foo=stray` 的 `campaign.ini` 跑 `2p-final`，两端 PASS（`end/complete`、300 checksum 一致），证明 `[Campaign]` 的额外键/超量 `ScenarioN` 目前被静默忽略（A43）。
 - 无效战役探测：`Player2=alliance house`（地图 `[Houses]` 为 `Alliance House`）的 2p 系列在发现阶段被过滤（主机日志 `ignoring VMCE stage ... with invalid configuration`），大厅没有原因提示；该行为归入既有的 B14/B16，而不是开局迟到失败。
 - 合成 VMCE 大厅 UI 采集（本机，未提交，输出在 `.scratch/guest-lobby-capture/`）：`vmce-lobby-guest-waiting`、`vmce-lobby-inline-error`、`vmce-lobby-blocking-error` 均产出 800×600 截图。guest 等待页右侧没有 Change Map 按钮（A42 的范围据此改为房主侧）；fixture 强制 `local_map_verified=true` 时下一关预览正常显示（A44 的机制证据）；缺地图的内联橙框与无效战役阻塞框都能正常绘制（弹窗呈现本身不构成问题，静默过滤/归因仍见 B14/B16）。这些是合成 UI，不是原生等价证据。

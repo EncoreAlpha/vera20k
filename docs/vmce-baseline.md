@@ -393,3 +393,66 @@ method wrappers, dynamic dispatch, function pointers and generated code need
 read-only review. VMCE setup/intermission diagnostics and remaining Cooperative
 dependencies in the stage-3 lobby/setup path are follow-ups; non-retry
 intermission/campaign-end Go delivery keeps its existing reliable-drain wait.
+
+## Phase 3 first slice — VMCE settlement statistics ownership (feature/vmce, 2026-11-13)
+
+VMCE's victory, defeat and campaign-end statistics are now decided by VMCE's own
+role table instead of the stock Cooperative score-row selection. `sim/score.rs`
+keeps one shared read-only `HouseScoreFacts` projection
+(`Simulation::house_score_facts(owner)`) over the existing
+`MatchStatistics`/`Economy`/`HouseTracking` counters; it projects one House and
+selects no rows. `cooperative_score_rows` selects only human Houses for the
+stock Cooperative result page and has no VMCE/mode branch. VMCE's owner is
+`app/vmce_result/statistics.rs`: one row per admitted non-observer player from
+the frozen `VmceHouseAssignments`, authored role metadata and `raw_slot_index`,
+with the role House's shared facts; a House granted in addition to a primary
+("shared House") is not a row, and a House named twice is counted once for the
+kill total and the round participant count. The rows are projected once per
+page and reused for the score model, the row count and the page values. The
+`0x103` campaign score model moved to the neutral
+`app/campaign_score_model.rs`, shared by the offline campaign exit and VMCE's
+page; the dead duplicate VMCE model in `app/match_runtime/sim_tick.rs` and its
+duplicate builder helpers were removed. VMCE victory/defeat diagnostics use the
+VMCE projection and the generic Houses order/terminal snapshot, never
+`cooperative_score_rows`.
+
+Unchanged: result dispatch, round state, terminal-score latching, Scenario RNG,
+defeat-page live statistics, and the victory page's layout/interaction. VMCE
+still shares `shares_cooperative_result`, so its terminal snapshot is never
+latched and victory statistics keep falling back to live facts (old behavior).
+
+Architecture: `cooperative_score_rows` was removed from the VMCE
+shared-capability allowlist and reference ceiling; a negative fixture now rejects
+VMCE statistics calling it, and a new semantic guard asserts that (a) the
+Cooperative selection has no VMCE/mode/outcome-viewpoint branch, (b)
+`house_score_facts` names no mode and selects no rows, and (c) VMCE's statistics
+owner reads its own assignment table and shared facts while no file under
+`app/vmce_result/` reads the Cooperative selection.
+
+Evidence (local): focused tests — core `sim::score` 13 (default) / 15 with
+`vmce` (the extra one proves the Cooperative selection stays human-House based
+inside a VMCE grant world), plus the restored empty-grant viewpoint coverage in
+`house_defeat`; new VMCE statistics 7 (6 added: multi-role seat attribution,
+shared House excluded, repeated House de-duplicated, passive row zeros,
+terminal-first values, observers skipped; 1 moved time-header test);
+`app::vmce_result` 25; `app::lan_service::vmce_round::tests` 20;
+`app::lan_service::tests` 29; stock Cooperative session round 7; architecture
+guards 45 with and without `vmce`; `check -p vera20k --lib --bins` passes both
+configurations. Labelled fast build `vmce-stats-570af8d90-r2`, executable
+SHA-256 `4407334D567700848E04B9EF88FE30201B5778F928E212BC50EE793DCD6D555C`:
+`2p-win`, `2p-retry` and `2p-final` LAN acceptance all PASS under
+`.scratch/vmce-stats-accept-r2/` with 300 matching native checksums and 20 matching
+simulation hashes per peer, the expected next-stage/same-stage-retry/campaign-end
+receipts, and victory receipts with `dialog.victory=true, rows=2` on both peers.
+On the retry scenario both receipts' `vmce_statistics_rows` are identical; on the
+victory and campaign-end scenarios each peer's diagnostics validate its
+statistics rows against its own role House facts, and the 20 simulation hashes
+are equal.
+
+Residual: A19/B71 (passive primary House and the round's participant count) is
+unchanged — the role-count projection still filters passive Houses, so the known
+defect stays open. Three- and four-player real-process settlement statistics were
+not run; multi-role attribution and de-duplication are covered by the VMCE client
+tests only. The terminal statistics source remains latent (VMCE never latches a
+terminal snapshot, as before). Cross-machine, internet and OS-level packet loss
+stay out of this slice.
