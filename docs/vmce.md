@@ -25,11 +25,11 @@ Runtime availability for this slice is owned by the validated VMCE campaign reco
 remaining VMCE backend while that full chain is migrated. No new INI key or `RuleSet` switch was
 introduced. See the authoritative [Chinese roadmap section](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控).
 
-Current fork version: `0.3.2`, synced to upstream main `867ae2467` (merge
-commit `89ccbea49`). LAN peers should run the same VMCE build. The fork baseline and what the merge
-changed are in the [VMCE baseline](vmce-baseline.md); the merged baseline has been
-re-captured (screenshot matrix at 800x600/1024x768/1600x900, LAN acceptance 4/4, stock
-Cooperative continuation) and the evidence is recorded there.
+Current fork version: `0.3.3`, synced to upstream main `0f7dc1bbc` (merge
+commit `78b0aef4a`). LAN peers should run the same VMCE build. The fork baseline and what the merge
+changed are in the [VMCE baseline](vmce-baseline.md); the 0.3.3 LAN acceptance has been
+re-run (2p-win/2p-retry/2p-final/4p-win), and the earlier 0.3.2 screenshot matrix and stock
+Cooperative continuation remain recorded there.
 
 ## Status
 
@@ -40,7 +40,7 @@ Cooperative continuation) and the evidence is recorded there.
 | Outcomes | Per-player win/loss from the map's actual diplomacy; an eliminated primary House keeps its authorized control and the mission continues until a map outcome trigger |
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
 | Unlocks | The result and stage identity must be confirmed; the unlock is saved immediately on that agreement, before Continue or the intermission room (B57 closed, `9de82144e`). Loading the next stage is not required |
-| LAN validation | Validated on the merged upstream-`867ae2467` tree (`vmce-upstream-867ae2467-r1`): two-process win/next mission, retry and campaign end, 300 matching checksums each; the earlier merged-0.3.2 93/93 capture matrix remains in the baseline page |
+| LAN validation | Validated on the merged upstream-`0f7dc1bbc` tree (`vmce-upstream-0f7dc1bbc-r1`): two-process win/next mission, retry and campaign end plus four-process win, 300 matching checksums each; the earlier merged-0.3.2 and upstream-867ae2467 matrices remain in the baseline page |
 | Module ownership | B5 (2026-11-12) moved VMCE wire records, the UDP intermission transport and session helpers into VMCE-owned modules. The gate count is not a completion metric: a 2026-11-14 static inventory found 757 `cfg(feature = "vmce")`/`cfg!` occurrences across 73 source files, including tests and diagnostics. The current tree is still compile-gated; the runtime-activation migration has not been implemented |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers. Authored at 800x600, fitted to the 1024x768 default window; both dialogs verified at 800x600, 1024x768 and 1600x900 |
 | i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. The Vietnamese catalog now carries the same keys as English placeholders added by the upstream sync; translation remains open (B101) |

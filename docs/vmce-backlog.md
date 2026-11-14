@@ -3,8 +3,8 @@
 This is the English engineering ledger. The [Chinese consolidated review](zh-CN/vmce-review.md) is
 authoritative for priorities and retains the original 55 audit entries (45 `A` findings plus 10
 B-only residuals), alongside later work; this ledger keeps the same numbering and records unfinished work, locked decisions
-and acceptance boundaries. The current baseline is upstream main `867ae2467`, merge `89ccbea49`, fork
-version `0.3.2`; the interactions the sync exposed are B101–B105 below
+and acceptance boundaries. The current baseline is upstream main `0f7dc1bbc`, merge `78b0aef4a`, fork
+version `0.3.3`; the interactions the 0.3.2 sync exposed are B101–B105 below
 (B103, B105 and B102 are closed; B101 and B104 stay open). Implemented
 paths appear under [Implementation and evidence limits](#implementation-and-evidence-limits); an
 implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md)

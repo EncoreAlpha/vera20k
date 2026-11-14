@@ -7,12 +7,71 @@ feature. The baseline below is not a native-parity certification or a completed 
 
 | Item | Value |
 | --- | --- |
-| Upstream baseline | `867ae2467` (upstream main, 2026-11-13; room Teams/join queue, mods page, Ares in every build behind its switch) |
-| Merge commit | `89ccbea49` (`Merge upstream/main (867ae2467) into feature/vmce`) |
-| Fork version | `0.3.2` (all three workspace manifests and `Cargo.lock`); the fork no longer suffixes the upstream version, so the `vmce` capability identifies a VMCE build |
+| Upstream baseline | `0f7dc1bbc` (upstream main, 2026-11-14; version 0.3.3: Ares behind runtime switches in every build, draw/radar and display tables, LAN name-box bytes and fixed chat colour, random-map extras) |
+| Merge commit | `78b0aef4a` (`Merge upstream/main (0f7dc1bbc) into feature/vmce`) |
+| Fork version | `0.3.3` (all three workspace manifests and `Cargo.lock`); the fork no longer suffixes the upstream version, so the `vmce` capability identifies a VMCE build |
 | Capability | Remaining VMCE backend: `vmce` feature, off by default. Candidate entry-to-start slice: mode ID/parser in every build; visibility and GO permission derive from validated `ScenarioCatalog` entries. Full migration remains open |
 
-## What the 0.3.2 merge changed
+## Latest upstream sync (2026-11-15)
+
+Merged upstream main `0f7dc1bbc` (191 commits after `867ae2467`, version
+0.3.3) as `78b0aef4a`; the per-file conflict resolutions are in that merge
+message. Upstream brought Ares behind runtime switches in every build, the
+draw/radar and display-table work, LAN name-box byte handling and fixed chat
+colour, random-map extras/clipboard, and the INI root/runtime Ares reader.
+
+Fifteen files conflicted; the merge kept both sides' independent additions: the
+ten i18n catalogs carry upstream's `VERA:RandomMap*` keys and the fork's
+`VERA:Vmce*` keys; `lan_service.rs` keeps the fork's C0 setup-proof helper and
+upstream's `chat_packet`/`chat_line`; `skirmish_session.rs` keeps the fork's
+`cooperative_runtime_for_test` helper and adds upstream's `lan_name_opened`
+field. `rules/ini_parser.rs` now follows upstream's runtime `ares_way()`
+selection while retaining the fork's native preserve-empty external-config
+parser and unconditional helper signatures. `sim/economy.rs` and
+`sim/world/world_hash.rs` keep the mission `credits_earned` statistic beside
+upstream's always-compiled, runtime-Ares storage field/hash. The world-command
+tests pass the new `ares=false` argument. The shared-file VMCE gate pin drops
+461 -> 459 (two ini_parser `cfg` seams became the runtime switch); the
+diagnostics total rises 201 -> 206 for the retry role probe already committed
+before this sync. Both changes are recorded deliberately in
+`src/architecture_guards.rs`.
+
+Validation on this tree: `check -p vera20k --lib --bins` passes with and
+without `--features vmce`; architecture guards 52/52 in both configurations.
+Focused tests: core `rules::ini_parser` 95 with vmce / 94 without, `sim::economy`
+8/8, `sim::world::world_hash` 53/53, `sim::score` 15/13,
+`sim::world::world_commands` 23/22; app `app::lan_service` 101 with vmce / 46
+without, `app::frontend::skirmish_session` 81/80, `app::shell_network_setup`
+48/33, `app::match_runtime::session` 61/51, `app::vmce_result` 26,
+`app::diagnostics::shell_capture` 104/88. The i18n shipped-cameo test fails on
+this machine's retail copy both before and after the merge (localized
+Vietnamese cameo frames), so it is not a sync regression. The VMCE acceptance
+tool's own suite passes 34/34; the repository `python -m tools.run_tests` keeps
+the pre-existing cargo-cache symlink, macOS notarization, Windows path
+separator and browser-switch path failures (upstream fixes the old
+`<user-home>` failure).
+
+Acceptance: the vmce-feature fast build `vmce-upstream-0f7dc1bbc-r1`
+(executable SHA-256
+`4EF6CE5F0C193A7880EEDD93AABD4F8CED9067A0817E9557BA5DD3D54A5E1C64`) passed
+the two-process `2p-win` (`LDA-Continue-real`), `2p-retry` (`LDA-Retry`),
+`2p-final` (`LDA-2p-final` stage02) and four-process `4p-win` (`LDA-4p`) runs
+with 300 matching native checksums and 20 matching simulation hashes per peer.
+The win runs reported `rows=2` / `rows=4` and their expected next-stage or
+campaign-end receipts; the retry kept the same stage with its mirrored roles and
+statistics; the final run returned both peers to the main menu. Evidence lives
+in `.scratch/vmce-upstream-0f7dc1bbc-r11/`, `-r12/`, `-r14/` and `-r15/` (not
+committed).
+
+Residuals: this was a large upstream merge (860 files), but the conflict set and
+validation concentrate on the shared lobby/LAN/INI/economy/hash seams. No
+20,000-unit performance comparison or VMCE+Ares combination was run; WOL,
+mixed-version, cross-machine, three-player and real OS-level packet-loss cases
+remain outside this sync. The fast build's checksums are equal between its
+peers, not across older builds. The new `arboard` dependency was fetched once;
+subsequent Cargo runs use the cache.
+
+## What the 0.3.2 merge changed (previous baseline)
 
 Upstream 0.3.2 (465 commits) brought the simulation thread (desktop frames tick
 on a worker by default; the app reads a published presentation frame through
@@ -29,7 +88,7 @@ fork and upstream keys present, no duplicates); the crate version carries the up
 `0.3.2` (the fork no longer suffixes it); and the architecture guards pin upstream's new Ares
 superweapon-presentation reads and its rules-layer Ares switch setter.
 
-## Latest upstream sync (2026-11-13)
+## Previous upstream sync (2026-11-13)
 
 Merged upstream main `867ae2467` (59 commits after 0.3.2) as `89ccbea49`; the
 per-file conflict resolutions are in that merge message. Validation on the

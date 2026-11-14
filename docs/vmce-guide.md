@@ -20,11 +20,12 @@ Ready and Continue. Random roles display the House assigned when the mission sta
 This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
-This guide describes the merged 0.3.2 working tree. Per-player outcomes, the intermission room and
-local unlocks are implemented. The full local validation was repeated on the merged baseline: the
-screenshot matrix (800x600, 1024x768 and 1600x900), the B4 LAN acceptance (`2p-win`, `2p-retry`,
-`4p-win`, `2p-final`; 93/93 checks) and the stock Cooperative continuation all passed, and the
-1024x768 default-window pages matched the pre-sync baseline (B103/B105 closed). The
+This guide describes the merged 0.3.3 working tree. Per-player outcomes, the intermission room and
+local unlocks are implemented. The 0.3.3 LAN acceptance (`2p-win`, `2p-retry`, `2p-final`, `4p-win`)
+passed with 300 matching checksums each; the earlier 0.3.2 baseline had the full screenshot matrix
+(800x600, 1024x768 and 1600x900), the B4 LAN acceptance (93/93 checks) and the stock Cooperative
+continuation, and its 1024x768 default-window pages matched the pre-sync baseline (B103/B105
+closed). The
 [Chinese consolidated review](zh-CN/vmce-review.md) is the authoritative open-defect list, and
 the [backlog](vmce-backlog.md) tracks connected (cross-machine) acceptance, residuals and the
 B101–B105 post-0.3.2 interactions. Prominent open defects include the guest intermission
@@ -87,8 +88,8 @@ No wire format changed. For this slice, the validated VMCE entries in `ScenarioC
 availability; the mode row alone is not a start permit. No new INI key or `RuleSet` switch is
 assumed. The staged contract is in the
 [VMCE roadmap](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控). This fork reports its version as
-`0.3.2`, the upstream version it tracks (merge commit
-`89ccbea49`); LAN peers should run the same VMCE build and the same rules/data. The series
+`0.3.3`, the upstream version it tracks (merge commit
+`78b0aef4a`); LAN peers should run the same VMCE build and the same rules/data. The series
 series digest covers `campaign.ini` and the manifest maps; the LAN rules agreement separately
 covers the selected rules closure and the Ares/extension build identity, and the VMCE setup
 handshake refuses a peer whose build or rules differ before the mission starts (B102 closed). A
@@ -369,10 +370,11 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
 
 ## Automated acceptance
 
-The current baseline is upstream main `867ae2467` (merge `89ccbea49`); see
+The current baseline is upstream main `0f7dc1bbc` (merge `78b0aef4a`); see
 [VMCE fork baseline](vmce-baseline.md) for the validation state. The screenshot matrix, B4 LAN
-acceptance and stock Cooperative continuation were re-run on the merged baseline and passed
-(93/93 checks; B103/B105 closed). `tools/vmce_lan_acceptance.py` runs the real-process captures:
+acceptance and stock Cooperative continuation were re-run on the earlier merged 0.3.2 baseline and
+passed (93/93 checks; B103/B105 closed); the 0.3.3 LAN acceptance passed with 300 matching checksums
+each. `tools/vmce_lan_acceptance.py` runs the real-process captures:
 
 - `--suite dev`: one short `2p-retry` flow probe. It caps each capture at 120 s
   and stops as soon as either peer exits non-zero, so a development probe
@@ -398,7 +400,12 @@ acceptance and stock Cooperative continuation were re-run on the merged baseline
 - Cross-mission money is not carried over. Role reselection, whole-series admission verification
   and local stage unlocks are implemented; real cross-machine guest and failure paths still need
   connected validation.
-- The merged 0.3.2 baseline passed two-, three- and four-process win → next mission captures
+- The merged 0.3.3 baseline passed the real two-process `2p-win`, `2p-retry`
+  and `2p-final` captures and the four-process `4p-win` capture with 300
+  matching checksums each (fast build `vmce-upstream-0f7dc1bbc-r1`); the retry
+  kept its mirrored roles and the same stage, and the final run returned both
+  peers to the main menu.
+- The earlier merged 0.3.2 baseline passed two-, three- and four-process win → next mission captures
   with 300 matching checksums (the same set passed on the pre-sync B4 base, where each peer's
   local unlock file contained only the designated next stage). They exercise the result board,
   Ready/Continue controls, nonce-bound result agreement and whole-series admission; cross-machine
@@ -409,7 +416,7 @@ acceptance and stock Cooperative continuation were re-run on the merged baseline
   (credits and campaign-end screenshots on both peers), and the VMCE `2p-retry` capture passed
   there too (BC6 page, guest votes → host retry → same stage, 300 matching checksums). There are
   no result-page timers anywhere: defeat uses the vote gate and campaign end the all-ready gate
-  (B02 cancelled). Version `0.3.2` is the current fork version; the VMCE `0x103`/`0xBC6`
+  (B02 cancelled). Version `0.3.3` is the current fork version; the VMCE `0x103`/`0xBC6`
   pages are authored at 800x600 and were verified at 1024x768 (and 800x600/1600x900) against the
   pre-sync baseline (B103 closed).
 - The VMCE lobby board is `玩家 | 所属方 | 国家 | 准备 | 颜色`; the settlement page has the
