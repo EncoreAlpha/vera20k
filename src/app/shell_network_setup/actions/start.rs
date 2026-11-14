@@ -382,10 +382,10 @@ pub(crate) fn begin_external_lan_go(state: &mut AppState) -> anyhow::Result<()> 
 /// a stale declared AI count cannot stand in for an actual opponent slot,
 /// and players sharing a House count once.
 fn has_minimum_players(launch: &SkirmishLaunchSession) -> bool {
-    // VMCE's authored campaign supplies its opponents on the map. Its room
-    // needs a player, but must not admit an observer as a campaign role.
+    // A mode that owns its lobby decides what its room needs; the shared
+    // command only keeps the check in its native order.
     if launch.mode.class.is_vmce() {
-        return !launch.humans.is_empty() && launch.humans.iter().all(|human| !human.is_observer());
+        return super::super::vmce_setup::minimum_players_met(launch);
     }
     let houses = (0..launch.humans.len())
         .filter(|&index| !launch.humans[index].is_observer() && launch.house_leader(index) == index)
@@ -431,108 +431,19 @@ fn mode_start(
         .network_setup()
         .expect("validated setup")
         .clone();
-    // A recognized mode id is not a start permit. The validated catalog record
-    // is the runtime availability owner; migration-bridge builds without the
-    // full VMCE admission backend report no record and stop before GO.
-    if mode.class.policy().authored_campaign_map_catalog
-        && !super::super::vmce_map::mode_available(state)
-    {
-        message(
-            state,
-            "VMCE cannot start because this build has no playable VMCE backend for the selected campaign.",
-            &[],
-        );
-        return Ok(false);
-    }
-    #[cfg(feature = "vmce")]
+    // A mode that owns its lobby decides whether its room may start; the
+    // shared command keeps the native ordering, readiness and publishing
+    // around that decision and prints the owner's reason.
     if mode.class.is_vmce() {
-        let Some(file) = launch.selected_map_file.as_deref() else {
-            message(state, "VMCE requires a selected map.", &[]);
-            return Ok(false);
-        };
-        if state.match_state.session_mode() != crate::app::match_runtime::session::SessionMode::Lan
-        {
-            message(
-                state,
-                "VMCE map configuration sync is currently LAN-only.",
-                &[],
-            );
-            return Ok(false);
-        }
-        let Some(config) = state.match_state.session.network_vmce_map_config().cloned() else {
-            message(
-                state,
-                "VMCE host options omit the selected map configuration.",
-                &[],
-            );
-            return Ok(false);
-        };
-        let map = (|| -> anyhow::Result<crate::map::source::LoadedMapIni> {
-            let root = &state
-                .platform
-                .game_config
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
-                .paths
-                .ra2_dir;
-            let assets = state
-                .process_assets
-                .manager()
-                .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
-            crate::map::source::load_network_map_ini(root, file, assets)
-        })();
-        let valid = match map {
-            Ok(map) => match state
-                .match_state
-                .session
-                .network_start_seed()
-                .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted shared seed"))
-                .and_then(|seed| {
-                    let (_, source_sha256) = map
-                        .source
-                        .physical_identity()
-                        .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
-                    crate::app::match_bootstrap::resolve_vmce_houses_with_config(
-                        &map.ini,
-                        file,
-                        source_sha256,
-                        &config,
-                        &launch,
-                        seed,
-                    )
-                }) {
-                Ok(assignments) => {
-                    // The map, role and House configuration is valid, so the
-                    // start proceeds to GO. The accepted start freezes these
-                    // assignments and the loader installs the shared House
-                    // command grants from the same effective map.
-                    log::info!(
-                        "VMCE role roster resolves to {} player Houses",
-                        assignments.participants.len()
-                    );
-                    true
-                }
-                Err(error) => {
-                    log::warn!("VMCE map role configuration is invalid: {error}");
-                    message(
-                        state,
-                        "VMCE cannot start: there may be more players than roles, or selected roles may be missing or duplicated.",
-                        &[],
-                    );
+        return Ok(
+            match super::super::vmce_setup::start_permission(state, &launch) {
+                super::super::vmce_setup::VmceStartPermission::Allowed => true,
+                super::super::vmce_setup::VmceStartPermission::Denied(reason) => {
+                    message(state, reason, &[]);
                     false
                 }
             },
-            Err(error) => {
-                log::warn!("VMCE could not read map role configuration: {error:#}");
-                message(
-                    state,
-                    "VMCE could not read role data from the selected map.",
-                    &[],
-                );
-                false
-            }
-        };
-        return Ok(valid);
+        );
     }
     let roles: Vec<_> = launch
         .humans

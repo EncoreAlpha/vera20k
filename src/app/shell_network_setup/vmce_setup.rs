@@ -135,6 +135,104 @@ fn should_reanswer_map(vmce: bool, host: bool, wol: bool, map_changed: bool) -> 
     map_changed || (vmce && !host && !wol)
 }
 
+/// VMCE's lobby start permission. The shared start command keeps the native
+/// ordering, readiness and publishing; this owner decides whether the selected
+/// authored map, its synchronized config, the accepted shared seed and the
+/// room's role claims allow the start to proceed to GO, and owns the
+/// player-facing reason when they do not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum VmceStartPermission {
+    Allowed,
+    Denied(&'static str),
+}
+
+pub(super) fn start_permission(
+    state: &AppState,
+    launch: &SkirmishLaunchSession,
+) -> VmceStartPermission {
+    // A recognized mode id is not a start permit. The validated catalog record
+    // is the runtime availability owner.
+    if !super::vmce_map::mode_available(state) {
+        return VmceStartPermission::Denied(
+            "VMCE cannot start because this build has no playable VMCE backend for the selected campaign.",
+        );
+    }
+    let Some(file) = launch.selected_map_file.as_deref() else {
+        return VmceStartPermission::Denied("VMCE requires a selected map.");
+    };
+    if state.match_state.session_mode() != crate::app::match_runtime::session::SessionMode::Lan {
+        return VmceStartPermission::Denied("VMCE map configuration sync is currently LAN-only.");
+    }
+    let Some(config) = state.match_state.session.network_vmce_map_config().cloned() else {
+        return VmceStartPermission::Denied(
+            "VMCE host options omit the selected map configuration.",
+        );
+    };
+    let map = (|| -> anyhow::Result<crate::map::source::LoadedMapIni> {
+        let root = &state
+            .platform
+            .game_config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
+            .paths
+            .ra2_dir;
+        let assets = state
+            .process_assets
+            .manager()
+            .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
+        crate::map::source::load_network_map_ini(root, file, assets)
+    })();
+    match map {
+        Ok(map) => match state
+            .match_state
+            .session
+            .network_start_seed()
+            .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted shared seed"))
+            .and_then(|seed| {
+                let (_, source_sha256) = map
+                    .source
+                    .physical_identity()
+                    .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
+                crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+                    &map.ini,
+                    file,
+                    source_sha256,
+                    &config,
+                    launch,
+                    seed,
+                )
+            }) {
+            Ok(assignments) => {
+                // The map, role and House configuration is valid, so the start
+                // proceeds to GO. The accepted start freezes these assignments
+                // and the loader installs the shared House command grants from
+                // the same effective map.
+                log::info!(
+                    "VMCE role roster resolves to {} player Houses",
+                    assignments.participants.len()
+                );
+                VmceStartPermission::Allowed
+            }
+            Err(error) => {
+                log::warn!("VMCE map role configuration is invalid: {error}");
+                VmceStartPermission::Denied(
+                    "VMCE cannot start: there may be more players than roles, or selected roles may be missing or duplicated.",
+                )
+            }
+        },
+        Err(error) => {
+            log::warn!("VMCE could not read map role configuration: {error:#}");
+            VmceStartPermission::Denied("VMCE could not read role data from the selected map.")
+        }
+    }
+}
+
+/// VMCE's authored campaign supplies its opponents on the map. Its room needs
+/// a player, but must not admit an observer as a campaign role.
+pub(super) fn minimum_players_met(launch: &SkirmishLaunchSession) -> bool {
+    !launch.humans.is_empty() && launch.humans.iter().all(|human| !human.is_observer())
+}
+
 /// The VMCE assignments an accepted start freezes.
 ///
 /// This is the one place a VMCE start reads the shared lobby difficulty row:
@@ -673,5 +771,19 @@ mod tests {
             validate_host_vmce_map_config(false, false, false, Some(map_file), &source, None)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn the_vmce_lobby_requires_a_player_and_never_counts_an_observer_as_one() {
+        let profile = crate::test_fixture::json("tools/map_observation.command-bar.example.json");
+        let launch: SkirmishLaunchSession =
+            serde_json::from_value(profile["launch"].clone()).unwrap();
+        assert!(minimum_players_met(&launch));
+        let mut observer = launch.clone();
+        observer.humans[0].set_observer(true);
+        assert!(!minimum_players_met(&observer));
+        let mut empty = launch.clone();
+        empty.humans.clear();
+        assert!(!minimum_players_met(&empty));
     }
 }

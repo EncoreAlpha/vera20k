@@ -578,7 +578,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/shell_main_menu.rs", 4),
     ("app/shell_network_setup.rs", 20),
     ("app/shell_network_setup/actions.rs", 17),
-    ("app/shell_network_setup/actions/start.rs", 2),
+    ("app/shell_network_setup/actions/start.rs", 1),
     ("app/shell_network_setup/service.rs", 20),
     ("app/shell_network_setup/view.rs", 26),
     ("app/shell_skirmish.rs", 2),
@@ -610,7 +610,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 462;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 461;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {
@@ -5466,6 +5466,94 @@ fn vmce_lobby_guard_rejects_an_indirect_cooperative_event_call() {
             .iter()
             .any(|violation| violation.contains("open_lobby_event")),
         "the VMCE lobby scan missed an indirect Cooperative event call: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_start_permission_is_owned_by_the_vmce_lobby_module() {
+    // The shared start command keeps the native ordering and prints the mode
+    // owner's reason; the mode's map/config/seed/role start rule lives in the
+    // VMCE lobby module, and the migration bridge keeps the refusal.
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let file = |rel: &str| {
+        files
+            .iter()
+            .find(|file| file.rel == rel)
+            .unwrap_or_else(|| panic!("missing scanned file {rel}"))
+    };
+    let function = |source: &SourceFile, name: &str| {
+        // Blanked text keeps byte offsets and hides braces/comments inside
+        // literals, so the body boundaries come from it; the raw slice of the
+        // same range then exposes the player-facing strings.
+        let structure = &source.blanked;
+        let definitions = function_definitions(structure, &impl_blocks(structure));
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("missing fn {name} in {}", source.rel));
+        let range = definition.body_start..=definition.body_end;
+        (
+            source.source[range.clone()].to_owned(),
+            structure[range].to_owned(),
+        )
+    };
+
+    let actions = file("app/shell_network_setup/actions/start.rs");
+    let (shared_raw, shared) = function(actions, "mode_start");
+    assert!(
+        shared.contains("vmce_setup::start_permission"),
+        "the shared start command no longer dispatches the VMCE start rule:\n{shared_raw}"
+    );
+    assert!(
+        shared.contains("VmceStartPermission::Allowed") && shared.contains("Denied"),
+        "the shared start command no longer turns the owner's permission into its start result:\n{shared_raw}"
+    );
+    for stray in [
+        "resolve_vmce_houses_with_config",
+        "network_vmce_map_config",
+        "load_network_map_ini",
+        "vmce_map::mode_available",
+    ] {
+        assert!(
+            !shared.contains(stray),
+            "the shared start command still owns the VMCE start rule ({stray}):\n{shared_raw}"
+        );
+    }
+    let (_, minimum) = function(actions, "has_minimum_players");
+    assert!(
+        minimum.contains("vmce_setup::minimum_players_met"),
+        "the shared start command no longer dispatches the VMCE minimum-player rule:\n{minimum}"
+    );
+
+    let setup = file("app/shell_network_setup/vmce_setup.rs");
+    let (permission_raw, permission) = function(setup, "start_permission");
+    for owned in [
+        "resolve_vmce_houses_with_config",
+        "network_vmce_map_config",
+        "load_network_map_ini",
+        "vmce_map::mode_available",
+    ] {
+        assert!(
+            permission.contains(owned),
+            "the VMCE start owner lost its start rule ({owned}):\n{permission_raw}"
+        );
+    }
+    assert!(
+        permission_raw.contains("VMCE requires a selected map."),
+        "the VMCE start owner lost its selected-map reason:\n{permission_raw}"
+    );
+
+    let stub = file("app/shell_network_setup/vmce_setup_stub.rs");
+    let (bridge_permission, _) = function(stub, "start_permission");
+    assert!(
+        bridge_permission.contains("no playable VMCE backend"),
+        "the migration bridge no longer reports its VMCE start refusal:\n{bridge_permission}"
+    );
+    let (_, bridge_minimum) = function(stub, "minimum_players_met");
+    assert!(
+        bridge_minimum.contains("humans.is_empty") && bridge_minimum.contains("is_observer"),
+        "the migration bridge lost the mode's minimum-player rule:\n{bridge_minimum}"
     );
 }
 

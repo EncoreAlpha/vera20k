@@ -24,6 +24,33 @@ pub(crate) fn supports_host_setup(mode: MpModeClass) -> bool {
     !mode.policy().authored_campaign_map_catalog
 }
 
+/// This migration bridge has no playable VMCE backend. The shared start command
+/// still owns the ordering and prints the reason before GO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum VmceStartPermission {
+    /// The complete VMCE lobby constructs this; the migration bridge never
+    /// grants it.
+    #[allow(dead_code)]
+    Allowed,
+    Denied(&'static str),
+}
+
+pub(super) fn start_permission(
+    _state: &mut AppState,
+    _launch: &SkirmishLaunchSession,
+) -> VmceStartPermission {
+    VmceStartPermission::Denied(
+        "VMCE cannot start because this build has no playable VMCE backend for the selected campaign.",
+    )
+}
+
+/// This bridge cannot admit a VMCE room, but the shared command's minimum
+/// check runs before the mode's start rule; keep the mode's own player rule so
+/// the backend refusal stays the reachable reason once a room has players.
+pub(super) fn minimum_players_met(launch: &SkirmishLaunchSession) -> bool {
+    !launch.humans.is_empty() && launch.humans.iter().all(|human| !human.is_observer())
+}
+
 /// This migration bridge recognizes the VMCE mode, but it has no complete
 /// VMCE lobby event owner to hand an event to.
 pub(super) fn handles_mode(_mode: Option<MpModeClass>) -> bool {
