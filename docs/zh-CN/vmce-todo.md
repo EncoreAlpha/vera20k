@@ -14,9 +14,10 @@ lang: zh-CN
 2. 独立结算、重试和续关：审查修复已验证并本地提交（`b2806138e`、`570af8d90`），等待用户审查；双人胜利进下一关、失败重试、最后一关结束以及 `--vera-outcome win/lose` 诊断均通过，详见[基线](../vmce-baseline.md)。
 3. 阶段 3 首个子链“结算统计所有权分离”：已完成，等待用户审查。VMCE 的结算统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 VERA 的 House 统计事实。
 4. 阶段 3 第二个子链“大厅加入、退出及相关模式事件分派”：验收修复已完成，等待用户审查。共享大厅按原生模式选择分派模式事件，VMCE 事件进入自己的大厅槽位，不再调用 Cooperative 专属入口；选图窗口打开时按窗口选中模式处理的语义保持不变；C0 按消息自身的安装身份归属，早到文本暂存到其 HostSetup，旧/非 Cooperative 文本不进入 Cooperative 状态。
-5. 下一步（阶段 3 其余部分）：大厅其余部分（难度所有权、其他 Cooperative 依赖）与任务中流程；每阶段验证并停下审查。最终整体验收补充三人、四人流程。
-6. 按实际依赖推进“取消 VMCE 游戏行为编译期门控”迁移：首条“入口至开始许可”链已有候选实现、聚焦回归和审查修复后的本机双人生产验收。旧版及混合版本仍待验证；参照路线 G0–G5。
-7. 门控迁移完成后实现 LAN/本地任务中存档，再按其决定接入互联网建房和开局。
+5. 阶段 3 第三个大厅子链“共享大厅难度所有权”：已完成，等待用户审查。原生进程行 `[0xA8EB68]` 由共享大厅所有者持有并类型化，LAN 载荷保留原生字段名 `cooperative_difficulty`；VMCE 在开局冻结时取一次，加载 TriggerType 与结算页只读冻结值，不再读实时大厅行；Cooperative 读取同一所有者，行为不变。
+6. 下一步（阶段 3 其余部分）：大厅余下的 Cooperative 依赖与任务中流程；每阶段验证并停下审查。最终整体验收补充三人、四人流程。
+7. 按实际依赖推进“取消 VMCE 游戏行为编译期门控”迁移：首条“入口至开始许可”链已有候选实现、聚焦回归和审查修复后的本机双人生产验收。旧版及混合版本仍待验证；参照路线 G0–G5。
+8. 门控迁移完成后实现 LAN/本地任务中存档，再按其决定接入互联网建房和开局。
 
 独立阶段只修阻塞当前流程或验收的问题；审查通过后再处理该阶段相关的已知问题。下方条目保留作为缺陷索引，并非要求先全部清空。
 
@@ -65,6 +66,16 @@ lang: zh-CN
 - **证据：** fast 构建 `vmce-lobby-c0-c33dc84be-r2`（exe SHA-256 `1038e55c50d426a93664fdb9f251f655b4f246a660f48985dc61fab662ae139d`）的双人本机 `2p-win` 建房、加入、准备、开局通过（各 300 native checksum 与 20 个模拟 hash 一致，下一关回执符合预期）。证据在 `.scratch/vmce-lobby-c0-accept-r2/`（未提交）。
 - **未覆盖：** 本仓库仍没有可构造的完整 `AppState` 夹具，`service_event` → `dispatch` → HostSetup 事务的整条胶水、以及生产 `AppCampaignVisit` 的字段映射（协议待处理箱 ↔ `lan_service.setup_scope()` ↔ 已准入模式）没有在单元测试内执行；测试覆盖同一生产处理器、真实 LAN scope/WOL 载荷事件身份、真实 `accept_network_host_setup` 事务及接收/解码边界，调用点由架构检查钉住。HostSetup 钩子在后续模式进入步骤之前解析待处理文本；若后续步骤失败，会话/scope 回滚但待处理箱下限和已应用战役不回滚（原生 C0 应用本就独立于 HostSetup 成功），为窄窗口后续项。在线大厅（WOL/relay）的 C0 先到顺序与 LAN 中途离房未实机复现；验收跑的是 VMCE 系列，本身不含 Cooperative C0，不能据此宣称 Cooperative 路径已实机验证。真实双进程房间内的中途离房、三人/四人大厅与跨机器、互联网未跑。用户接受残余见下方“用户接受的残余”一节（B59、B71、B72；共享所属方战绩保持现状）；正常玩家等待不得被误判为超时仍在“待验证”中，未修复。
 
+## 阶段 3 第三个子链：共享大厅难度所有权（已完成，等待用户审查）
+
+- **所有者：** 原生进程行 `[0xA8EB68]` 由共享大厅的 [MultiplayerShellRuntime](../../src/app/frontend/skirmish_session.rs) 持有，并类型化为 [LobbyDifficulty](../../src/skirmish_launch.rs)；LAN 选项载荷保留原生字段名 `cooperative_difficulty`，接收边界统一归一到滑杆可写的 0..=2。它是共享大厅输入，不是 Cooperative 模式状态；没有第二份镜像或第二套判定。
+- **VMCE：** 滑杆和收到的选项都写入该所有者；VMCE 开局冻结从共享 `commit_start` 移入 VMCE 自己的 [frozen_start_houses](../../src/app/shell_network_setup/vmce_setup.rs)，把当时的行值写入 `VmceHouseAssignments.difficulty`。加载的 TriggerType 难度与结算页只读这份冻结值，[flow.rs](../../src/app/vmce_result/flow.rs) 不再读实时进程行。
+- **Cooperative：** 回合、BC7 文案与收到的 `OptionsApplied` 经同一所有者读写 `native_row()`；0..=2 的既有值语义不变。
+- **架构检查：** 删除共享能力 allowlist 中的 `cooperative_difficulty`；新增 VMCE 大厅自有文件清单并把这些文件整体纳入既有依赖扫描，既拒绝直接调用 Cooperative 大厅拥有者，也追可解析的间接包装调用（真实源码 + 植入式直接/间接负向 fixture）；新增结算页冻结难度语义测试，以及开局冻结只读共享 `lobby_difficulty()`、只经 VMCE 自有入口冻结的语义检查；共享引用上限删除 `commit_start` 的 VMCE 判定，因为该判定已移入 VMCE 自有函数。
+- **测试：** `app::lan_service::options` vmce 23/默认 13（含 LAN 往返与越界行归一）、`app::shell_network_setup` vmce 47/默认 33、`app::frontend::skirmish_session` vmce 79/默认 78、`app::vmce_result` 26、architecture guards 51 条两配置；`check -p vera20k --lib --bins` 两配置 `Finished`。新增行为测试针对被删除的旧取值路径：越界 LAN 行旧实现原样保存而非归一，结算页旧实现读实时行而非冻结值；旧实现与新的类型化所有者不兼容，未单独回退编译运行。
+- **证据：** vmce feature 的 fast 构建 `vmce-lobby-difficulty-r3`（exe SHA-256 `6A578BAD51B1CF38A723278E965B8EB9805C76F05874B91036DAC199A4B50D63`）的双人本机 `2p-win` 建房、加入、准备、开局与下一关通过：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利页 `rows=2`、下一关 `stage02` 回执一致。证据在 `.scratch/vmce-lobby-difficulty-accept-r2/`（未提交）。默认 feature 的构建没有 `lan-live-vera-campaign-*` 检查点，不能用于本验收。
+- **未覆盖：** 完整 `AppState` 的 `service_event` → HostSetup 胶水仍无夹具；验收系列不修改难度滑杆，不能据此宣称“界面改难度后双方冻结一致”已实机复现；WOL、混合版本与跨机器未跑。WOL 的 `Options::into_options` 与 LAN 解码共用同一归一构造函数，但没有 WOL 侧镜像测试；结果页无冻结值时回退 NORMAL 行是防御性默认，真实结果页必经冻结分配。
+
 ## 首条入口至开始许可迁移（候选，待审查）
 
 - **运行时 owner：** [ScenarioCatalog](../../src/app/scenario_catalog.rs) 中已验证的 VMCE campaign 记录。模式 ID 和序列来源在所有构建中可识别；入口是否可见、是否允许 GO 都读取同一 owner，不新增 INI、RuleSet 或通用框架。
@@ -112,9 +123,11 @@ lang: zh-CN
 - B102 已确认现有规则协议与系列准入覆盖开局/关间/重试；房主侧原因提示、关间房间握手本身与真实数据变更采集仍为残余。
 - B36：跨机器、关间加入/离开和其他真实网络故障未由本机多进程测试证明。
 - 大厅模式事件分派（阶段 3 第二子链）：加入/退出与选图窗口的分派由 dispatch 测试（vmce 配置使用生产谓词表）和双人 `2p-win` 建房/加入/开局覆盖；C0 的所属方与早到/正常/乱序/模式切换/离房边界由 `lobby_campaign` 生产处理器测试及 LAN/WOL 事件身份测试覆盖，但完整 `service_event` → HostSetup 事务仍无 `AppState` 夹具；在线大厅实机顺序未复现。真实双进程房间内的中途离房、三人/四人大厅未跑。用户接受的残余（B59、B71、B72、共享所属方战绩）见上方专节；正常玩家等待超时边界见“优先核查”，未修复。
+- 大厅难度所有权（阶段 3 第三子链）：VMCE 冻结值、加载 TriggerType 与结算页读取由聚焦测试覆盖，LAN 选项发布/接收由生产函数覆盖，架构检查钉住所有者；但完整 `AppState` 的 HostSetup 事务和“界面滑杆 → 冻结”整条胶水仍未在单元测试内执行，WOL 与混合版本的 `cooperative_difficulty` 字段兼容未跑。
 
 ## 已完成
 
+- **阶段 3 第三个子链（共享大厅难度所有权）：** 原生 `[0xA8EB68]` 行由共享大厅类型化持有，VMCE 开局冻结一次并让加载与结算只读冻结值，Cooperative 读取同一所有者；LAN 字段名未改，越界行在接收边界归一。残余见上方子链小节。
 - **阶段 3 第二个子链（大厅加入、退出与模式事件分派，含验收修复）：** 共享大厅经 dispatch 所有者在原生语义下选择模式，VMCE 模式事件进入自己的槽位，不再调用 Cooperative 专属入口；选图窗口模式下按窗口选中模式处理的语义保留。验收修复后 C0 按消息自身的安装身份归属：WOL 用载荷模式，LAN 用 scope/revision 并暂存早到文本；旧房间/旧修订/非 Cooperative 文本不进入 Cooperative 状态，离房清理待处理项。双人建房/加入/准备/开局验收通过，残余见上方子链小节。
 - **阶段 3 首个子链（VMCE 结算统计所有权）：** VMCE 统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 `HouseScoreFacts`；双人三流程验收通过，残余见上方子链小节。
 - **B5、B106：** 核心层整理和战役数据从大厅分离。

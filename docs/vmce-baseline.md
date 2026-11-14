@@ -604,3 +604,54 @@ executable failed with `0xC0000142`; the same executable starts outside the sand
 synthetic lobby capture reports an unclaimed role in both this candidate and the previous saved
 build. Feature-off guest admission, WOL, old released clients,
 mixed LAN builds, cross-machine play, and the wider compile-gate removal remain unverified.
+
+## Phase 3 fourth slice — shared lobby difficulty ownership (feature/vmce, 2026-11-14)
+
+The lobby difficulty row is native process state `[0xA8EB68]`, initialized to zero and written by
+the shared LAN/WOL setup dialog trackbar `0x732` (0..2); Cooperative reads it for its BC6 rounds
+and the `0xBC7` campaign-end label, VMCE uses it for its lobby trigger row, and the LAN options
+payload carries it in its own field named `cooperative_difficulty`. The slice therefore treats it
+as a shared lobby fact, not Cooperative-owned state: `skirmish_launch::LobbyDifficulty` types the
+row, `MultiplayerShellRuntime` is its single owner, the LAN decoder normalizes once at the receive
+boundary, and both the native LAN field name and the WOL JSON field name stay unchanged. VMCE's
+old inline freeze closure moved into `vmce_setup::frozen_start_houses`, which reads the owner once
+at start commit into `VmceHouseAssignments.difficulty`; the loader's TriggerType flags and the
+result page read that frozen copy, and the result page falls back to the NORMAL row only when no
+assignments exist. Cooperative keeps reading the same owner row; its behavior is unchanged.
+
+Guards: the shared-capability allowlist entry and owner mapping for `cooperative_difficulty` are
+removed; the VMCE lobby-owned files join the existing whole-file dependency scan, so they are
+rejected for direct Cooperative lobby-owner calls and for resolvable indirect wrapper calls, with
+planted direct and indirect negative fixtures; a new semantic guard pins the result model to the
+frozen start copy and the live row out of `result_difficulty`; a second pins `frozen_start_houses`
+to the shared `lobby_difficulty()` owner and the shared `commit_start` to that VMCE entry; the
+pinned mode-check inventory drops the `commit_start` caller now that admission decision lives in
+the VMCE-owned helper. All 51 guards pass in both configurations.
+
+Tests: `app::lan_service::options` vmce 23 / default 13 (including a new out-of-range wire-row
+normalization test and session `accept_network_host_setup` apply assertions);
+`app::frontend::skirmish_session` vmce 79 / default 78 (new normalized-row test);
+`app::shell_network_setup` vmce 47 / default 33; `app::vmce_result` 26 (frozen-difficulty result
+test); `app::cooperative_round` compiles in both configurations but has no unit tests;
+`check -p vera20k --lib --bins` passes in both configurations.
+
+Acceptance: the vmce-feature fast build `vmce-lobby-difficulty-r3` (exe SHA-256
+`6A578BAD51B1CF38A723278E965B8EB9805C76F05874B91036DAC199A4B50D63`) passed the two-process
+`2p-win` lobby join, settings, ready, start and next-mission run with the `LDA-Continue-real`
+series: both ends matched 300 native checksums and 20 simulation hashes, the victory page receipt
+reported `rows=2` and `can_continue=true`, and both ends reported the stage02 next mission.
+Evidence lives in `.scratch/vmce-lobby-difficulty-accept-r2/` (not committed). A default-feature
+build lacks the `lan-live-vera-campaign-*` checkpoints and cannot run this acceptance.
+
+Residuals: no constructible full `AppState` fixture, so the slider write → freeze closure →
+`frozen_start_houses` glue is not executed by a unit test (same production function, shared owner,
+LAN decode boundary and result consumer are covered, call sites pinned by guards); the acceptance
+series does not move the difficulty slider, so the runtime slider choice is not proven end to end;
+WOL, older clients, mixed builds and cross-machine play are unverified. Decode-time normalization
+of out-of-range rows is defensive boundary handling, not a claim about native behavior (native only
+accepts the 0..2 trackbar input); negative rows defensively clamp to Easy, while native
+Cooperative5C31A5 maps any other row to Hard, so the two differ only for rows neither the trackbar
+nor a VERA encoder authors. The WOL `Options::into_options` path reuses the same normalization
+constructor but has no WOL-side mirror test. The result page's NORMAL fallback for a missing
+assignment is a defensive default (a real VMCE result page always has the frozen assignments; the
+old live-row read usually returned 0 there, so the difference is unreachable).
