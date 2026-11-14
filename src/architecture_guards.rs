@@ -708,7 +708,9 @@ fn blank_source_ranges(source: &str, ranges: &[(usize, usize)]) -> String {
 /// Capture/diagnostics tooling is compiled into the app but is not a gameplay
 /// owner. It is reported separately and pinned so the cluster stays visible
 /// without being treated as shared-owner coupling.
-const VMCE_DIAGNOSTICS_GATE_TOTAL: usize = 189;
+// The lobby-input capture added eleven gates after the original 189 pin; its
+// guest Ready transition now has one separately gated helper as well.
+const VMCE_DIAGNOSTICS_GATE_TOTAL: usize = 201;
 
 #[test]
 fn vmce_production_gates_stay_within_budgets() {

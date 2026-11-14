@@ -700,7 +700,7 @@ window. The old predicate treated that stale count as team seating inside the VM
 not. VMCE's own interface is identical either way (TEAMS disabled, rows ungrouped); the only
 visible difference is a round trip back to the stock mode, where the old code kept the pre-VMCE
 layout and the new code re-deals rows. That switch path was not exercised in this slice's
-production acceptance. WOL Balance, spectator rooms and clan-room team paths keep their existing
+production acceptance. A later regression test through the production map-selection owner now verifies the preserved layout; a live room round trip remains unverified. WOL Balance, spectator rooms and clan-room team paths keep their existing
 tests but were not separately exercised in production. Three/four-player rooms, cross-machine play
 and the internet path remain outside this slice.
 
@@ -765,7 +765,7 @@ tool now drives those inputs through production code before Accept/Start:
 - `--lan-lobby-inputs` (VMCE live LAN host or guest only) enables the probe. Both peers claim the
   authored primary role equal to their admitted seat row through the setup Team column (the VMCE role
   slot); the host sets the shared lobby difficulty to Hard (row 2) through the production difficulty
-  slider. The guest re-sends production Accept whenever a later material host-options revision clears
+  action handler; pointer hit-testing and dragging are not exercised. The guest re-sends production Accept whenever a later material host-options revision clears
   its Ready row, so the probe follows what a real guest does instead of racing one options revision.
 - `vmce_setup_snapshot`, `vmce_runtime_receipt` and `vmce_lobby_receipt` carry `lobby_difficulty`, the
   frozen start `frozen_difficulty` (from the frozen `VmceHouseAssignments`), `role_claims_enabled` /
@@ -782,7 +782,7 @@ Tests: `app::diagnostics::shell_capture` default 88 / vmce 100; `check -p vera20
 in both configurations; the acceptance tool's own unit suite has 33 passing tests (new comparator and
 command-line probe cases). The repository-level `python -m tools.run_tests` still reports its
 pre-existing environmental/branch failures (cargo-cache symlink tests, macOS notarization, the
-existing `/home/player` literal in `src/app/restart.rs`, the browser-switch path list), none of which
+existing `<user-home>` literal in `src/app/restart.rs`, the browser-switch path list), none of which
 touch the three files changed here.
 
 Acceptance: the vmce-feature fast build `vmce-lobby-inputs-r2` (exe SHA-256

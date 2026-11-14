@@ -16,6 +16,13 @@ lang: zh-CN
 
 验收口径：用户于 2026-11-11 决定暂不要求真实机器人工验收，以理论分析、代码检查和定向自动化测试为准；跨机器、丢包及其他未执行的场景继续列为残余，不代表已经验证。
 
+## 大厅队伍与采集修复（2026-11-14）
+
+- 模式策略分别决定队伍席位和选图时保留既有队伍；共享会话仍是唯一队伍所有者。普通模式经两张 VMCE 地图返回普通模式时，四名玩家的队伍布局由生产选图入口测试保持；测试在修复前失败、修复后通过。真实房间中的模式往返尚未采集。
+- 未启用角色探针时允许随机角色；客人每次重新准备时比较该次准备前后的快照。两项回归测试均在修复前失败、修复后通过。
+- fast 构建的双人 `2p-win` 与未启用角色探针的 `2p-final` 通过，双方各有 300 条一致校验和与 20 条一致模拟哈希。角色和难度探针调用生产动作处理器，不覆盖鼠标命中或滑杆拖动。
+- `2p-retry` 使用失败战役时已到失败结算，但额外的“座位与所属方顺序必须反转”诊断断言在本次随机角色分配下失败，重试流程尚未验收通过。开始许可拒绝分支和混合版本仍未覆盖。
+
 ## 优先核查
 
 - **B102（已关闭）：规则与扩展数据一致性。** 现有联机规则协议与 VMCE 系列准入已在进入任务前拒绝不同构建或数据；证据与残余见[完成区](#b102-规则与扩展身份准入2026-11-13已关闭)。
@@ -416,7 +423,7 @@ lang: zh-CN
 - **架构检查：** `ModePolicy` 保持穷尽构造，每个模式必须显式写 `room_teams`；`mode_policy_maps_each_mode_without_combining_independent_capabilities` 的全量字面量同步更新。本改动没有新增 VMCE 模式检查，因此不涉及共享能力 allowlist 或 VMCE 共享引用上限；architecture guards 51 条两配置通过。
 - **测试：** 核心 `skirmish_modes` 13 条（含逐模式策略字面量）；`app::match_runtime::session` 默认 50 / vmce 60，新增 `room_teams_follow_the_mode_policy` 经真实 `MatchSession::enter_network` + `accept_network_setup` 对 Battle/Cooperative/Vmce 断言分组结果，并覆盖选图切换残留的 `options.teams: Some(2)` 与 `allies_allowed=false`（旧谓词下 Vmce 返回 true，该测试实测失败；修复后通过）；`app::shell_network_setup` vmce 47/默认 33；`check -p vera20k --lib --bins` 两配置通过。
 - **验收：** vmce feature 的 fast 构建 `vmce-team-seating-r1`（exe SHA-256 `D9929F3E95CA2DE47D9C9B5A4DE8CAD07CC5E6E3E76F7CE298363C005EB5D981`）的双人本机 `2p-win` 建房、加入、准备、开局与下一关通过：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利页 `rows=2`/`can_continue=true`，下一关 `stage02` 回执一致；详见[基线](../vmce-baseline.md)，证据在 `.scratch/vmce-team-seating-accept-r1/`（未提交）。
-- **未覆盖：** 本改动不改变玩家可见路径（此前视图的 authored-roles 判断已让 VMCE/Cooperative 不分组），验收证明的是无回归，不能证明“队伍控件由可用变不可用”；WOL 平衡、旁观者房间与 clan 房间的队伍路径只有既有测试，未单独生产复现；三人、四人、跨机器与互联网未跑。另有一个边缘差异：普通模式房主先设置队伍数、再经选图窗口切进 VMCE 时，旧谓词会继续按该队伍数在 VMCE 房间执行队伍席位（`keep_players_on_teams`、自动平衡、保留 `slot.team`、WOL Balance），新策略不会；VMCE 自身界面一致（TEAMS 禁用、行不分组），唯一可见差异是从 VMCE 切回普通模式时，旧实现保留切换前的队伍布局，新实现重新分配。该切换路径未在本轮生产验收中复现，作为残余记录。
+- **未覆盖：** 本改动不改变玩家可见路径（此前视图的 authored-roles 判断已让 VMCE/Cooperative 不分组），验收证明的是无回归，不能证明“队伍控件由可用变不可用”；WOL 平衡、旁观者房间与 clan 房间的队伍路径只有既有测试，未单独生产复现；三人、四人、跨机器与互联网未跑。另有一个边缘差异：普通模式房主先设置队伍数、再经选图窗口切进 VMCE 时，旧谓词会继续按该队伍数在 VMCE 房间执行队伍席位（`keep_players_on_teams`、自动平衡、保留 `slot.team`、WOL Balance），新策略不会；VMCE 自身界面一致（TEAMS 禁用、行不分组），唯一可见差异是从 VMCE 切回普通模式时，旧实现保留切换前的队伍布局，新实现重新分配。该往返回归现已通过生产选图入口的自动测试修复；真实房间往返尚未采集。
 
 ### 开始许可归 VMCE（2026-11-14，阶段 3 第五个子链，待用户审查）
 
@@ -429,9 +436,9 @@ lang: zh-CN
 
 ### 大厅验收工具：席位角色与难度探针（2026-11-14，阶段 3 第七子链，待用户审查）
 
-- **结论：** 双人本机 VMCE 验收原先只接受房主下发的 Random 角色和默认大厅难度，角色/难度链只有单元与架构检查覆盖。验收工具现在通过生产代码驱动这些输入：VMCE live LAN 的 `--lan-lobby-inputs` 让双方在 setup 的 Team 列（VMCE 角色槽）认领与自身座位行一致的地图作者角色；房主通过生产难度滑条把共享大厅难度设为 Hard（行 2）。guest 若在后续材料性 host-options 修订中丢失 Ready，会重新走生产 Accept，而不是只接受第一版选项。
-- **实现：** [shell_capture.rs](../../src/app/diagnostics/shell_capture.rs) 新增 `--lan-lobby-inputs`（仅 VMCE live LAN host/guest 合法，stock/其他 checkpoint 在开 socket 前拒绝）；[live.rs](../../src/app/diagnostics/shell_capture/movies/lan/live.rs) 驱动角色/难度、在 Ready 转换中钉住大厅行并要求每个座位持有自己行的角色；`vmce_setup_snapshot`、`vmce_runtime_receipt`、`vmce_lobby_receipt` 增加 `lobby_difficulty`、冻结 `frozen_difficulty`、`role_claims_enabled`/`roles_claimed` 与逐座位角色；[vmce_lan_acceptance.py](../../tools/vmce_lan_acceptance.py) 的 `2p-win` 场景请求探针并新增三项比较：每座位角色等于自身行且两端映射一致、两端大厅难度一致且等于请求行、冻结难度与大厅行一致。探针路径对 Accept 使用生产 `SetupAction::Accept`（同一生产处理器，绕开此合成帧序列下未命中的指针点击路径）。
-- **验证：** `app::diagnostics::shell_capture` 默认 88 / vmce 100 通过；`check -p vera20k --lib --bins` 两配置 `Finished`；验收工具单元测试 33 条通过（新增比较器与命令行探针测试）。仓库级 `python -m tools.run_tests` 存在与本改动无关的既有失败/环境错误（cargo cache 符号链接测试、macOS notarization、既有 `src/app/restart.rs` 的 `/home/player` 字面量、既有浏览器切换路径清单），三个本子链文件不属于这些失败范围。vmce feature fast 构建 `vmce-lobby-inputs-r2`（exe SHA-256 `D99162C7438EFE0BD4ADE123C639F281B1AF2772141944A89716FF6634EFA788`）的 `2p-win` 验收 PASS：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利 `rows=2`/`can_continue=true`，下一关 `stage02` 一致；两端收据 `lobby_difficulty=2`、`frozen_difficulty=2`，角色映射 `[('LiveHost', 0, 0), ('LiveGuest', 1, 1)]`。证据在 `.scratch/vmce-lobby-inputs-accept-r9/`（未提交）。
+- **结论：** 双人本机 VMCE 验收原先只接受房主下发的 Random 角色和默认大厅难度，角色/难度链只有单元与架构检查覆盖。验收工具现在通过生产代码驱动这些输入：VMCE live LAN 的 `--lan-lobby-inputs` 让双方在 setup 的 Team 列（VMCE 角色槽）认领与自身座位行一致的地图作者角色；房主调用生产难度滑条动作处理器把共享大厅难度设为 Hard（行 2）。guest 若在后续材料性 host-options 修订中丢失 Ready，会重新走生产 Accept，而不是只接受第一版选项。
+- **实现：** [shell_capture.rs](../../src/app/diagnostics/shell_capture.rs) 新增 `--lan-lobby-inputs`（仅 VMCE live LAN host/guest 合法，stock/其他 checkpoint 在开 socket 前拒绝）；[live.rs](../../src/app/diagnostics/shell_capture/movies/lan/live.rs) 驱动角色/难度、在 Ready 转换中钉住大厅行并要求每个座位持有自己行的角色；`vmce_setup_snapshot`、`vmce_runtime_receipt`、`vmce_lobby_receipt` 增加 `lobby_difficulty`、冻结 `frozen_difficulty`、`role_claims_enabled`/`roles_claimed` 与逐座位角色；[vmce_lan_acceptance.py](../../tools/vmce_lan_acceptance.py) 的 `2p-win` 场景请求探针并新增三项比较：每座位角色等于自身行且两端映射一致、两端大厅难度一致且等于请求行、冻结难度与大厅行一致。角色、难度和 Accept 均直接调用生产动作处理器，未覆盖指针命中或滑杆拖动。
+- **验证：** `app::diagnostics::shell_capture` 默认 88 / vmce 100 通过；`check -p vera20k --lib --bins` 两配置 `Finished`；验收工具单元测试 33 条通过（新增比较器与命令行探针测试）。仓库级 `python -m tools.run_tests` 存在与本改动无关的既有失败/环境错误（cargo cache 符号链接测试、macOS notarization、既有 `src/app/restart.rs` 的 `<user-home>` 字面量、既有浏览器切换路径清单），三个本子链文件不属于这些失败范围。vmce feature fast 构建 `vmce-lobby-inputs-r2`（exe SHA-256 `D99162C7438EFE0BD4ADE123C639F281B1AF2772141944A89716FF6634EFA788`）的 `2p-win` 验收 PASS：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利 `rows=2`/`can_continue=true`，下一关 `stage02` 一致；两端收据 `lobby_difficulty=2`、`frozen_difficulty=2`，角色映射 `[('LiveHost', 0, 0), ('LiveGuest', 1, 1)]`。证据在 `.scratch/vmce-lobby-inputs-accept-r9/`（未提交）。
 - **未覆盖：** 只有 `2p-win` 请求探针，`2p-retry`/`2p-final`/`4p-win` 与普通 Cooperative 采集保持旧脚本（驱动为 VMCE-only，比较器只在场景请求时运行）；探针只覆盖 host/guest 正常允许路径，未覆盖被拒绝的角色/配置修改、关间房间离房/重选、WOL、旧版/混合构建、跨机器和三人/四人房间。本子链只改诊断与验收工具，未改游戏行为。
 
 ### B102 规则与扩展身份准入（2026-11-13，已关闭）

@@ -1689,7 +1689,11 @@ impl LiveLanCapture {
             if !local_ready || !local_map {
                 return Ok(());
             }
-            self.coop_setup_initial = Some(vmce_setup_snapshot(state, HOST_NAME)?);
+            self.coop_setup_initial = Some(vmce_setup_snapshot(
+                state,
+                HOST_NAME,
+                self.lobby_inputs_enabled(),
+            )?);
             self.event(
                 frame,
                 if all_ready && all_map {
@@ -1762,7 +1766,7 @@ impl LiveLanCapture {
             self.event(frame, "four-process lobby captured; stopping before Start");
             return Ok(());
         }
-        let final_snapshot = vmce_setup_snapshot(state, HOST_NAME)?;
+        let final_snapshot = vmce_setup_snapshot(state, HOST_NAME, self.lobby_inputs_enabled())?;
         ensure_coop_setup_ready_transition(
             self.coop_setup_initial
                 .as_ref()
@@ -1822,14 +1826,10 @@ impl LiveLanCapture {
             if map_status != Some(1) || !accept_enabled {
                 return Ok(());
             }
-            let initial = match self.coop_setup_initial.clone() {
-                Some(initial) => initial,
-                None => {
-                    let initial = vmce_setup_snapshot(state, self.player_name())?;
-                    self.coop_setup_initial = Some(initial.clone());
-                    initial
-                }
-            };
+            // Each Accept belongs to the options revision visible now. A
+            // later host revision may legitimately invalidate an earlier one.
+            let initial =
+                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
             if !self.coop_setup_guest_accepted {
                 #[cfg(feature = "vmce")]
                 if let Some(a03) = self.a03.as_mut() {
@@ -1856,14 +1856,12 @@ impl LiveLanCapture {
                 state.match_state.session.network_player_ready(local)
             };
             ensure!(ready_now, "production Accept did not set guest Ready");
-            let reaccept = self.coop_setup_guest_accepted;
-            self.coop_setup_guest_accepted = true;
             // Record the guest-local Ready transition immediately: a later
             // material host-options revision can clear Ready again, and the
             // production guest then re-accepts below.
-            let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
-            ensure_coop_setup_ready_transition(&initial, &final_snapshot, false)?;
-            self.coop_setup_final = Some(final_snapshot.clone());
+            let final_snapshot =
+                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
+            let reaccept = self.record_vmce_guest_accept(initial, final_snapshot.clone())?;
             self.route.push(json!({
                 "render_frame": frame,
                 "action": if reaccept {
@@ -1888,7 +1886,8 @@ impl LiveLanCapture {
                 .coop_setup_initial
                 .as_ref()
                 .context("initial VMCE guest snapshot")?;
-            let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
+            let final_snapshot =
+                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
             ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
             self.coop_setup_final = Some(final_snapshot.clone());
             self.route.push(json!({
@@ -1900,6 +1899,16 @@ impl LiveLanCapture {
         // The guest stays in setup until the host's accepted Start publishes
         // GO; the shared loading/InGame transition below takes over then.
         Ok(())
+    }
+
+    #[cfg(feature = "vmce")]
+    fn record_vmce_guest_accept(&mut self, initial: Value, accepted: Value) -> Result<bool> {
+        ensure_coop_setup_ready_transition(&initial, &accepted, false)?;
+        let reaccept = self.coop_setup_guest_accepted;
+        self.coop_setup_guest_accepted = true;
+        self.coop_setup_initial = Some(initial);
+        self.coop_setup_final = Some(accepted);
+        Ok(reaccept)
     }
 
     /// Open every free row to a human through the setup's Player combos,
@@ -3229,7 +3238,11 @@ fn vmce_setup_watchdog_snapshot(
 }
 
 #[cfg(feature = "vmce")]
-fn vmce_setup_snapshot(state: &AppState, local_name: &str) -> Result<Value> {
+fn vmce_setup_snapshot(
+    state: &AppState,
+    local_name: &str,
+    require_claimed_roles: bool,
+) -> Result<Value> {
     let session = &state.match_state.session;
     let launch = session.network_setup().context("VMCE setup snapshot")?;
     ensure!(
@@ -3330,6 +3343,7 @@ fn vmce_setup_snapshot(state: &AppState, local_name: &str) -> Result<Value> {
             .lobby_difficulty()
             .native_row(),
         "role_claims_enabled": vmce_role_claims_enabled(state),
+        "role_claims_required": require_claimed_roles,
         "participants": participants,
     }))
 }
@@ -3357,7 +3371,11 @@ fn ensure_coop_setup_ready_transition(
         initial["role_claims_enabled"] == final_state["role_claims_enabled"],
         "VMCE role-claim readiness changed during the Ready transition"
     );
-    let claims_enabled = initial["role_claims_enabled"] == true;
+    ensure!(
+        initial["role_claims_required"] == final_state["role_claims_required"],
+        "VMCE role probe changed during the Ready transition"
+    );
+    let claims_required = initial["role_claims_required"] == true;
     let players = initial["players"]
         .as_u64()
         .context("VMCE participant count")? as usize;
@@ -3383,7 +3401,7 @@ fn ensure_coop_setup_ready_transition(
             "VMCE participant identity or role changed while accepting: {:?}",
             before["name"]
         );
-        if claims_enabled {
+        if claims_required {
             ensure!(
                 before["raw_row"].as_i64() == before["role"].as_i64(),
                 "VMCE role was not claimed for the participant's own row: {:?}",
@@ -3415,6 +3433,64 @@ fn ensure_coop_setup_ready_transition(
         );
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "vmce"))]
+mod vmce_ready_transition_tests {
+    use super::{LanTarget, LiveLanCapture, ensure_coop_setup_ready_transition};
+    use serde_json::json;
+
+    #[test]
+    fn random_roles_are_allowed_when_the_lobby_probe_is_off() {
+        let initial = json!({
+            "host": false, "map_file": "stage.map", "map_source_sha256": "source",
+            "effective_digest": "digest", "config": {"config_sha256": "config"},
+            "lobby_difficulty": 0, "role_claims_enabled": true,
+            "role_claims_required": false, "players": 2, "local_row": 1,
+            "participants": [
+                {"name": "Host", "raw_row": 0, "role": -2, "ready": true, "map_status": 1},
+                {"name": "Guest", "raw_row": 1, "role": -2, "ready": false, "map_status": 1}
+            ]
+        });
+        let mut accepted = initial.clone();
+        accepted["participants"][1]["ready"] = json!(true);
+        assert!(ensure_coop_setup_ready_transition(&initial, &accepted, false).is_ok());
+        let mut probed = initial.clone();
+        probed["role_claims_required"] = json!(true);
+        accepted["role_claims_required"] = json!(true);
+        assert!(ensure_coop_setup_ready_transition(&probed, &accepted, false).is_err());
+    }
+
+    #[test]
+    fn guest_reaccepts_after_a_new_difficulty_revision() {
+        let mut capture = LiveLanCapture::new_config(LanTarget::LiveVmceGuest, None, None);
+        let before = json!({
+            "host": false, "map_file": "stage.map", "map_source_sha256": "source",
+            "effective_digest": "digest", "config": {"config_sha256": "config"},
+            "lobby_difficulty": 0, "role_claims_enabled": true,
+            "role_claims_required": false, "players": 2, "local_row": 1,
+            "participants": [
+                {"name": "Host", "raw_row": 0, "role": -2, "ready": true, "map_status": 1},
+                {"name": "Guest", "raw_row": 1, "role": -2, "ready": false, "map_status": 1}
+            ]
+        });
+        let mut accepted = before.clone();
+        accepted["participants"][1]["ready"] = json!(true);
+        assert!(
+            !capture
+                .record_vmce_guest_accept(before.clone(), accepted)
+                .unwrap()
+        );
+        let mut changed = before;
+        changed["lobby_difficulty"] = json!(2);
+        let mut reaccepted = changed.clone();
+        reaccepted["participants"][1]["ready"] = json!(true);
+        assert!(
+            capture
+                .record_vmce_guest_accept(changed, reaccepted)
+                .unwrap()
+        );
+    }
 }
 
 fn local_owner(state: &AppState) -> Result<String> {

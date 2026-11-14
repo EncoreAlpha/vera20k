@@ -85,7 +85,7 @@ lang: zh-CN
 - **架构检查：** `ModePolicy` 仍是穷尽构造，每个模式必须显式给出新字段；逐模式策略字面量测试含新字段。本改动不新增 VMCE 模式检查，共享能力 allowlist 与引用上限无需改动；architecture guards 51 条两配置通过。
 - **测试：** 核心 `skirmish_modes` 13 条（含逐模式策略全量字面量）；`app::match_runtime::session` 默认 50 / vmce 60，含新增 `room_teams_follow_the_mode_policy`（经真实 `MatchSession::accept_network_setup` 断言 Battle=true、Cooperative=false、Vmce=false；并覆盖模式切换后残留 `options.teams: Some(2)` 时 Vmce 仍不分组且 `network_teams()` 为 `None`、`allies_allowed=false` 时不分组；已实测旧谓词下 Vmce 返回 true 使该测试失败）；`app::shell_network_setup` vmce 47/默认 33；`check -p vera20k --lib --bins` 两配置通过。
 - **证据：** vmce feature 的 fast 构建 `vmce-team-seating-r1`（exe SHA-256 `D9929F3E95CA2DE47D9C9B5A4DE8CAD07CC5E6E3E76F7CE298363C005EB5D981`）的双人本机 `2p-win` 建房、加入、准备、开局与下一关通过：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利页 `rows=2`/`can_continue=true`，下一关 `stage02` 回执一致；证据在 `.scratch/vmce-team-seating-accept-r1/`（未提交）。
-- **未覆盖：** 本改动不改变任何玩家可见路径（此前 setup 视图的 authored-roles 判断已让 VMCE/Cooperative 不分组），验收用于确认没有回归，不能证明“队伍控件在 VMCE 中由可用变不可用”；WOL 平衡、旁观者房间与 clan 房间的队伍路径仍只有既有测试，未单独补现场；三人、四人、跨机器与互联网未跑。另有一个边缘差异：普通模式房主先设置队伍数、再通过选图窗口切进 VMCE 时，旧谓词会把残留的队伍数当作 VMCE 房间的席位（继续 `keep_players_on_teams`、自动平衡、保留 `slot.team`、WOL Balance），新策略不会；VMCE 自身界面两种情况完全相同（TEAMS 禁用、行不分组），唯一可见差异是从 VMCE 再切回普通模式时的队伍布局：旧实现保留切换前的布局，新实现重新分配。该模式切换路径未在本轮生产验收中复现。
+- **未覆盖：** 本改动不改变任何玩家可见路径（此前 setup 视图的 authored-roles 判断已让 VMCE/Cooperative 不分组），验收用于确认没有回归，不能证明“队伍控件在 VMCE 中由可用变不可用”；WOL 平衡、旁观者房间与 clan 房间的队伍路径仍只有既有测试，未单独补现场；三人、四人、跨机器与互联网未跑。另有一个边缘差异：普通模式房主先设置队伍数、再通过选图窗口切进 VMCE 时，旧谓词会把残留的队伍数当作 VMCE 房间的席位（继续 `keep_players_on_teams`、自动平衡、保留 `slot.team`、WOL Balance），新策略不会；VMCE 自身界面两种情况完全相同（TEAMS 禁用、行不分组），唯一可见差异是从 VMCE 再切回普通模式时的队伍布局：旧实现保留切换前的布局，新实现重新分配。该往返回归现已通过生产选图入口自动测试修复；真实房间往返尚未采集。
 
 ## 阶段 3 第五个子链：开始许可归 VMCE（已完成，等待用户审查）
 
@@ -144,13 +144,13 @@ lang: zh-CN
 - B36：跨机器、关间加入/离开和其他真实网络故障未由本机多进程测试证明。
 - 大厅模式事件分派（阶段 3 第二子链）：加入/退出与选图窗口的分派由 dispatch 测试（vmce 配置使用生产谓词表）和双人 `2p-win` 建房/加入/开局覆盖；C0 的所属方与早到/正常/乱序/模式切换/离房边界由 `lobby_campaign` 生产处理器测试及 LAN/WOL 事件身份测试覆盖，但完整 `service_event` → HostSetup 事务仍无 `AppState` 夹具；在线大厅实机顺序未复现。真实双进程房间内的中途离房、三人/四人大厅未跑。用户接受的残余（B59、B71、B72、共享所属方战绩）见上方专节；正常玩家等待超时边界见“优先核查”，未修复。
 - 大厅难度所有权（阶段 3 第三子链）：VMCE 冻结值、加载 TriggerType 与结算页读取由聚焦测试覆盖，LAN 选项发布/接收由生产函数覆盖，架构检查钉住所有者；但完整 `AppState` 的 HostSetup 事务和“界面滑杆 → 冻结”整条胶水仍未在单元测试内执行，WOL 与混合版本的 `cooperative_difficulty` 字段兼容未跑。
-- 房间队伍席位策略所有权（阶段 3 第四子链）：`ModePolicy.room_teams`、`network_team_room` 与 setup 分组由 session 测试和双人验收覆盖；但本改动无玩家可见变化，生产验收证明的是无回归；WOL 平衡、旁观者房间与 clan 房间的队伍路径未单独实机复现，三人、四人未跑。
+- 房间队伍席位策略所有权（阶段 3 第四子链）：`ModePolicy.room_teams`、`network_team_room` 与 setup 分组由 session 测试和双人验收覆盖；但原改动曾导致模式往返时队伍重新分配，该回归现已由生产选图入口测试修复，原生产验收仅证明正常开局无回归；WOL 平衡、旁观者房间与 clan 房间的队伍路径未单独实机复现，三人、四人未跑。
 - 开始许可归 VMCE（阶段 3 第五子链）：`mode_start` 的允许分支由双人验收覆盖，拒绝分支（无后端、未选图、非 LAN、缺地图配置、共享种子/角色解析失败）因需要完整 `AppState` 未在单元或生产测试内逐一执行，由静态架构检查钉住调用与文案归属；迁移桥（feature-off）的拒绝对话未实机触发；WOL、混合版本、跨机器、三人/四人未跑。
-- 大厅验收工具（阶段 3 第七子链）：`2p-win` 现在通过生产 Team 列按座位认领角色、房主通过生产难度滑条设置 Hard，并校验两端角色归属、大厅难度与冻结难度一致，实机通过；`2p-retry`/`2p-final`/`4p-win` 与 Cooperative 采集仍用旧脚本、未启用探针，拒绝/离房/下一关角色重选、WOL、混合版本、跨机器、三人/四人未覆盖。
+- 大厅验收工具（阶段 3 第七子链）：`2p-win` 现在通过生产 Team 列按座位认领角色、房主调用生产难度滑条动作处理器设置 Hard（不覆盖鼠标拖动），并校验两端角色归属、大厅难度与冻结难度一致，实机通过；`2p-retry`/`2p-final`/`4p-win` 与 Cooperative 采集仍用旧脚本、未启用探针，拒绝/离房/下一关角色重选、WOL、混合版本、跨机器、三人/四人未覆盖。
 
 ## 已完成
 
-- **大厅验收工具（席位角色与难度探针，2026-11-14）：** `2p-win` 生产验收通过生产 Team 列让双方各自认领与座位一致的地图角色、通过生产难度滑条设置 Hard，并在材料性 host-options 修订清掉 Ready 后重新 Accept；receipts 与比较器校验两端角色归属、大厅难度和冻结难度。验证与残余见[基线](../vmce-baseline.md)。
+- **大厅验收工具（席位角色与难度探针，2026-11-14）：** `2p-win` 生产验收通过生产 Team 列让双方各自认领与座位一致的地图角色、调用生产难度滑条动作处理器设置 Hard（不覆盖鼠标拖动），并在材料性 host-options 修订清掉 Ready 后重新 Accept；receipts 与比较器校验两端角色归属、大厅难度和冻结难度。验证与残余见[基线](../vmce-baseline.md)。
 - **阶段 3 第五个子链（开始许可归 VMCE）：** VMCE 模式可用性、选图、LAN 配置、共享种子与角色解析的开始许可及最低人数规则移入 VMCE 自有大厅模块，共享开始命令只分派并显示原因；迁移桥继续拒绝，普通模式与 Cooperative 路径不变。残余见上方子链小节。
 - **阶段 3 第四个子链（房间队伍席位策略所有权）：** 房间是否按队伍席位分组改由模式策略 `ModePolicy.room_teams` 决定，共享 `network_team_room` 不再用 Cooperative 判定代替模式规则，setup 视图重复判断删除；Cooperative 与 VMCE 不分组、普通模式保持，残余见上方子链小节。
 - **阶段 3 第三个子链（共享大厅难度所有权）：** 原生 `[0xA8EB68]` 行由共享大厅类型化持有，VMCE 开局冻结一次并让加载与结算只读冻结值，Cooperative 读取同一所有者；LAN 字段名未改，越界行在接收边界归一。残余见上方子链小节。
