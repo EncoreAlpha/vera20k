@@ -1423,6 +1423,10 @@ pub(crate) struct LiveLanConfig {
     /// VMCE only: stop after the real four-process lobby screenshot.
     #[cfg(feature = "vmce")]
     pub lobby_only: bool,
+    /// VMCE only: drive real role claims and one lobby difficulty change
+    /// through the production setup controls before Accept/Start.
+    #[cfg(feature = "vmce")]
+    pub lobby_inputs: bool,
 }
 
 /// A VMCE mission outcome the diagnostic injects once, through the same
@@ -1587,6 +1591,7 @@ where
     let mut lan_map = None;
     let mut lan_setup_crash = None;
     let mut lan_lobby_only = false;
+    let mut lan_lobby_inputs = false;
     #[cfg(feature = "vmce")]
     let mut vera_outcome = None;
     let mut online_account = None;
@@ -1718,6 +1723,10 @@ where
             "--lan-lobby-only" => {
                 ensure!(!lan_lobby_only, "--lan-lobby-only given more than once");
                 lan_lobby_only = true;
+            }
+            "--lan-lobby-inputs" => {
+                ensure!(!lan_lobby_inputs, "--lan-lobby-inputs given more than once");
+                lan_lobby_inputs = true;
             }
             #[cfg(feature = "vmce")]
             "--vera-outcome" => {
@@ -2403,6 +2412,22 @@ where
             !lan_lobby_only,
             "--lan-lobby-only requires the VMCE live host checkpoint"
         );
+        #[cfg(feature = "vmce")]
+        ensure!(
+            !lan_lobby_inputs
+                || matches!(
+                    checkpoint,
+                    ShellCaptureCheckpoint::Lan(
+                        movies::LanTarget::LiveVmceHost | movies::LanTarget::LiveVmceGuest
+                    )
+                ),
+            "--lan-lobby-inputs requires a VMCE live LAN host or guest checkpoint"
+        );
+        #[cfg(not(feature = "vmce"))]
+        ensure!(
+            !lan_lobby_inputs,
+            "--lan-lobby-inputs requires a VMCE live LAN host or guest checkpoint"
+        );
         ensure!(
             lan_setup_crash.is_none()
                 || matches!(
@@ -2450,6 +2475,8 @@ where
             vera_outcome,
             #[cfg(feature = "vmce")]
             lobby_only: lan_lobby_only,
+            #[cfg(feature = "vmce")]
+            lobby_inputs: lan_lobby_inputs,
         })
     } else {
         ensure!(
@@ -2460,7 +2487,8 @@ where
                 && lan_name.is_none()
                 && lan_map.is_none()
                 && lan_setup_crash.is_none()
-                && !lan_lobby_only,
+                && !lan_lobby_only
+                && !lan_lobby_inputs,
             "LAN socket options require a live LAN checkpoint"
         );
         None
@@ -4043,10 +4071,18 @@ mod tests {
                 vera_outcome: None,
                 #[cfg(feature = "vmce")]
                 lobby_only: false,
+                #[cfg(feature = "vmce")]
+                lobby_inputs: false,
             })
         );
         values[1] = "lan-live-guest".into();
         assert!(parse_launch_args(values.clone()).is_ok());
+        // The role/difficulty probe is VMCE-only; a stock LAN live checkpoint
+        // must refuse it before the process opens a socket.
+        let mut probe = values.clone();
+        probe[1] = "lan-live-host".into();
+        probe.extend(args(&["--lan-lobby-inputs"]));
+        assert!(parse_launch_args(probe).is_err());
         values[1] = "lan-battle-host".into();
         assert!(parse_launch_args(values.clone()).is_ok());
         values[1] = "lan-battle-guest".into();

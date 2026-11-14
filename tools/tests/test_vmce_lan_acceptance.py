@@ -76,6 +76,21 @@ def two_receipts() -> list[tuple[str, dict]]:
     return [("host", host), ("guest1", guest)]
 
 
+def lobby_probe_receipts() -> list[tuple[str, dict]]:
+    """Two receipts carrying the claimed seats and lobby/frozen difficulty."""
+    receipts = two_receipts()
+    for _, receipt in receipts:
+        vmce = receipt["lan"]["vmce"]
+        vmce["lobby_difficulty"] = 2
+        vmce["frozen_difficulty"] = 2
+        vmce["roles_claimed"] = True
+        vmce["humans"] = [
+            {"name": "LiveHost", "raw_slot_index": 0, "role": 0},
+            {"name": "LiveGuest", "raw_slot_index": 1, "role": 1},
+        ]
+    return receipts
+
+
 def failed(checks: list[acceptance.Check]) -> list[acceptance.Check]:
     return [check for check in checks if not check.ok]
 
@@ -103,6 +118,44 @@ class ComparatorTests(unittest.TestCase):
         checks = self.evaluate(two_receipts())
         assert_all_pass(self, checks)
         self.assertEqual(failed(checks), [])
+
+    def test_lobby_probe_requires_claimed_seat_roles_and_difficulty(self):
+        checks = self.evaluate(
+            lobby_probe_receipts(),
+            expect_lobby_inputs=True,
+            expect_lobby_difficulty=2,
+        )
+        assert_all_pass(self, checks)
+        names = {check.name for check in checks}
+        self.assertIn("roles", names)
+        self.assertIn("lobby difficulty", names)
+        self.assertIn("frozen difficulty", names)
+
+    def test_lobby_probe_rejects_a_random_seat_role(self):
+        receipts = lobby_probe_receipts()
+        receipts[1][1]["lan"]["vmce"]["humans"][1]["role"] = -2
+        checks = self.evaluate(
+            receipts, expect_lobby_inputs=True, expect_lobby_difficulty=2
+        )
+        self.assertTrue(any(not check.ok and check.name == "roles" for check in checks))
+
+    def test_lobby_probe_rejects_a_frozen_difficulty_mismatch(self):
+        receipts = lobby_probe_receipts()
+        receipts[1][1]["lan"]["vmce"]["frozen_difficulty"] = 1
+        checks = self.evaluate(
+            receipts, expect_lobby_inputs=True, expect_lobby_difficulty=2
+        )
+        self.assertTrue(
+            any(not check.ok and check.name == "frozen difficulty" for check in checks)
+        )
+
+    def test_lobby_probe_rejects_peers_disagreeing_on_roles(self):
+        receipts = lobby_probe_receipts()
+        receipts[1][1]["lan"]["vmce"]["humans"][0]["role"] = 1
+        checks = self.evaluate(
+            receipts, expect_lobby_inputs=True, expect_lobby_difficulty=2
+        )
+        self.assertTrue(any(not check.ok and check.name == "roles" for check in checks))
 
     def test_final_requires_both_peers_to_return_to_the_menu(self):
         receipts = two_receipts()
@@ -674,6 +727,32 @@ class CaptureCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--lan-peer") + 1], "127.0.0.1:32100")
         self.assertNotIn("--lan-map", command)
         self.assertNotIn("--lan-name", command)
+        self.assertNotIn("--lan-lobby-inputs", command)
+
+    def test_lobby_probe_flag_is_written_only_when_requested(self):
+        command = acceptance.build_capture_command(
+            exe=Path("vera20k"),
+            role="guest",
+            players=2,
+            bind="127.0.0.1:32110",
+            peers=("127.0.0.1:32100",),
+            output=Path("out"),
+            map_name=None,
+            lobby_name=None,
+            lobby_inputs=True,
+        )
+        self.assertIn("--lan-lobby-inputs", command)
+        plain = acceptance.build_capture_command(
+            exe=Path("vera20k"),
+            role="guest",
+            players=2,
+            bind="127.0.0.1:32110",
+            peers=("127.0.0.1:32100",),
+            output=Path("out"),
+            map_name=None,
+            lobby_name=None,
+        )
+        self.assertNotIn("--lan-lobby-inputs", plain)
 
 
 class WrapperHelperTests(unittest.TestCase):

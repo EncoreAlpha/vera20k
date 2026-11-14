@@ -157,6 +157,11 @@ class Scenario:
     expect_a03_refusal: bool = False
     expect_screenshots: tuple[str, ...] = ()
     language: str = ""
+    # VMCE lobby probe: each peer claims its own authored role through the
+    # production Team column and the host sets one difficulty row before
+    # Accept/Start; both receipts must agree on the claimed rows and the row.
+    expect_lobby_inputs: bool = False
+    expect_lobby_difficulty: int | None = None
 
 
 SCENARIOS = {
@@ -173,6 +178,8 @@ SCENARIOS = {
         expect_victory=True,
         expect_can_continue=True,
         expect_next_stage=True,
+        expect_lobby_inputs=True,
+        expect_lobby_difficulty=2,
     ),
     # Real two-process defeat/retry: both observe, BC6 opens on both, both
     # press Continue (guests vote, host starts once every online guest voted),
@@ -831,6 +838,90 @@ def _series_sha_check(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> Chec
     return Check("series_sha256", True, f"{path} = {format_value(baseline)}")
 
 
+def _vmce_lobby_inputs_checks(
+    receipts: Sequence[tuple[str, Mapping[str, Any]]],
+    expected_difficulty: int | None,
+) -> list[Check]:
+    """Both peers claimed one authored role per seat and agreed on the row.
+
+    The live capture drives the production role choices and the difficulty
+    slider before Accept/Start; the runtime receipt carries the claimed seats,
+    the lobby row and the frozen start difficulty.
+    """
+    checks: list[Check] = [
+        _equal_check(
+            receipts,
+            "lan.vmce.lobby_difficulty",
+            "lobby difficulty",
+            expected=expected_difficulty,
+            value_type=int,
+        ),
+        _equal_check(
+            receipts,
+            "lan.vmce.frozen_difficulty",
+            "frozen difficulty",
+            expected=expected_difficulty,
+            value_type=int,
+        ),
+    ]
+    baseline: list[tuple[Any, Any, Any]] | None = None
+    for label, receipt in receipts:
+        try:
+            humans = receipt_field(receipt, "lan.vmce.humans")
+        except KeyError:
+            checks.append(Check("roles", False, f"missing lan.vmce.humans in {label}"))
+            return checks
+        if not isinstance(humans, list) or len(humans) < 2:
+            checks.append(
+                Check("roles", False, f"lan.vmce.humans is not a seat list in {label}")
+            )
+            return checks
+        try:
+            rows = sorted(
+                (
+                    (
+                        human["name"],
+                        human["raw_slot_index"],
+                        human["role"],
+                    )
+                    for human in humans
+                ),
+                key=lambda item: item[1],
+            )
+        except (KeyError, TypeError):
+            checks.append(
+                Check("roles", False, f"lan.vmce.humans has no row/role in {label}")
+            )
+            return checks
+        if any(
+            not _is_int(row) or not _is_int(role) or role != row or role < 0
+            for _, row, role in rows
+        ):
+            checks.append(
+                Check(
+                    "roles",
+                    False,
+                    f"a seat did not claim its own authored role in {label}: {rows}",
+                )
+            )
+            return checks
+        if baseline is None:
+            baseline = rows
+        elif rows != baseline:
+            checks.append(
+                Check(
+                    "roles",
+                    False,
+                    f"peers disagree on claimed roles: {label}={rows} first={baseline}",
+                )
+            )
+            return checks
+    checks.append(
+        Check("roles", True, f"each seat claimed its authored role: {baseline}")
+    )
+    return checks
+
+
 def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Check]:
     """Both retry receipts loaded the same stage and ran 300 equal checksums."""
     checks: list[Check] = []
@@ -1032,6 +1123,8 @@ def evaluate_receipts(
     expect_final: bool = False,
     expect_screenshots: Sequence[str] = (),
     allow_missing_simulation_hashes: bool = False,
+    expect_lobby_inputs: bool = False,
+    expect_lobby_difficulty: int | None = None,
 ) -> list[Check]:
     """Compare loaded receipts using the real VMCE capture fields.
 
@@ -1152,6 +1245,10 @@ def evaluate_receipts(
             )
 
     checks.append(_series_sha_check(receipts))
+    if expect_lobby_inputs:
+        checks.extend(
+            _vmce_lobby_inputs_checks(receipts, expect_lobby_difficulty)
+        )
     return checks
 
 
@@ -1233,6 +1330,7 @@ def build_capture_command(
     vera_outcome: str = "real",
     map_required: bool = True,
     language: str = "",
+    lobby_inputs: bool = False,
 ) -> list[str]:
     """Build the real shell-capture command line for one VMCE process."""
     if role not in ("host", "guest"):
@@ -1273,6 +1371,8 @@ def build_capture_command(
         command.extend(("--vera-outcome", vera_outcome))
     if language:
         command.extend(("--language", language))
+    if lobby_inputs:
+        command.append("--lan-lobby-inputs")
     return command
 
 
@@ -1320,6 +1420,7 @@ def _prepare_process(
             scenario.checkpoint_host == CHECKPOINT_HOST or scenario.expect_a03_refusal
         ),
         language=scenario.language,
+        lobby_inputs=scenario.expect_lobby_inputs,
     )
     return ProcessSpec(
         role=role,
@@ -2252,6 +2353,8 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                         expect_retry=scenario.expect_retry,
                         expect_final=scenario.expect_final,
                         expect_screenshots=scenario.expect_screenshots,
+                        expect_lobby_inputs=scenario.expect_lobby_inputs,
+                        expect_lobby_difficulty=scenario.expect_lobby_difficulty,
                     )
                 )
                 for process in launched:

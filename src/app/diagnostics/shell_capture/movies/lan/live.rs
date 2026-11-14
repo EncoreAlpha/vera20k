@@ -729,6 +729,84 @@ impl LiveLanCapture {
             .with_context(|| format!("admitted LAN row {:?}", self.player_name()))
     }
 
+    #[cfg(feature = "vmce")]
+    fn lobby_inputs_enabled(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|config| config.lobby_inputs)
+    }
+
+    /// Drive the host's real role claim and one lobby difficulty change through
+    /// the production setup controls. Returns false while the probe still waits
+    /// for the room to reach the claimed state.
+    #[cfg(feature = "vmce")]
+    fn drive_host_lobby_inputs(&mut self, state: &mut AppState, frame: u32) -> Result<bool> {
+        let launch = state
+            .match_state
+            .session
+            .network_setup()
+            .context("VMCE host lobby inputs")?
+            .clone();
+        let local_index = self.local_setup_row(&launch)?;
+        let row = launch.humans[local_index]
+            .raw_slot_index
+            .context("host lobby row")?;
+        if !vmce_role_claims_enabled(state) {
+            return Ok(false);
+        }
+        if launch.humans[local_index].role.native_value() != i32::from(row) {
+            if claim_vmce_role(state, row)? {
+                self.event(frame, "host claimed its authored role before Start");
+            }
+            return Ok(false);
+        }
+        if state
+            .frontend
+            .multiplayer_shell_runtime
+            .lobby_difficulty()
+            .native_row()
+            != VMCE_LOBBY_DIFFICULTY
+        {
+            if set_vmce_lobby_difficulty(state)? {
+                self.event(frame, "host set the shared lobby difficulty before Start");
+            }
+            return Ok(false);
+        }
+        Ok(launch.humans.iter().all(|human| {
+            human
+                .raw_slot_index
+                .map(i32::from)
+                .is_some_and(|row| row == human.role.native_value())
+        }))
+    }
+
+    /// Drive the guest's own role claim through production, then let the real
+    /// Accept proceed. The lobby difficulty is verified from the receipts after
+    /// Start; waiting for it here could block Accept behind an options revision.
+    #[cfg(feature = "vmce")]
+    fn drive_guest_lobby_inputs(&mut self, state: &mut AppState, frame: u32) -> Result<bool> {
+        let launch = state
+            .match_state
+            .session
+            .network_setup()
+            .context("VMCE guest lobby inputs")?
+            .clone();
+        let local_index = self.local_setup_row(&launch)?;
+        let row = launch.humans[local_index]
+            .raw_slot_index
+            .context("guest lobby row")?;
+        if !vmce_role_claims_enabled(state) {
+            return Ok(false);
+        }
+        if launch.humans[local_index].role.native_value() != i32::from(row)
+            && claim_vmce_role(state, row)?
+        {
+            self.event(frame, "guest claimed its authored role before Accept");
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
     fn required_frames(&self) -> u32 {
         if let Some(frames) = self.frame_budget {
             return frames;
@@ -1585,6 +1663,12 @@ impl LiveLanCapture {
 
     #[cfg(feature = "vmce")]
     fn step_vmce_host_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
+        if self.lobby_inputs_enabled()
+            && state.match_state.session.network_setup().is_some()
+            && !self.drive_host_lobby_inputs(state, frame)?
+        {
+            return Ok(());
+        }
         let session = &state.match_state.session;
         let launch = session.network_setup().context("VMCE host setup")?;
         if launch.humans.len() != self.expected_players {
@@ -1708,86 +1792,111 @@ impl LiveLanCapture {
 
     #[cfg(feature = "vmce")]
     fn step_vmce_guest_setup(&mut self, state: &mut AppState, frame: u32) -> Result<()> {
-        let session = &state.match_state.session;
-        let launch = session.network_setup().context("VMCE guest setup")?;
-        if launch.mode.class != crate::skirmish_modes::MpModeClass::Vmce
-            || launch.selected_map_file.is_none()
+        if self.lobby_inputs_enabled()
+            && state.match_state.session.network_setup().is_some()
+            && !self.drive_guest_lobby_inputs(state, frame)?
         {
             return Ok(());
         }
-        ensure!(!session.host(), "live Coop guest lost the admitted mode");
-        if self.coop_setup_final.is_some() {
-            return Ok(());
-        }
-        let local = self.local_setup_row(launch)?;
-        if !self.coop_setup_guest_accepted {
-            if session.network_map_status(local) != Some(1)
-                || !setup::view(state)
-                    .context("VMCE guest view")?
-                    .accept_enabled
+        ensure!(
+            !state.match_state.session.host(),
+            "live Coop guest lost the admitted mode"
+        );
+        let (map_status, ready, accept_enabled) = {
+            let session = &state.match_state.session;
+            let launch = session.network_setup().context("VMCE guest setup")?;
+            if launch.mode.class != crate::skirmish_modes::MpModeClass::Vmce
+                || launch.selected_map_file.is_none()
             {
                 return Ok(());
             }
-            ensure!(
-                !session.network_player_ready(local),
-                "guest was already Ready before the diagnostic Accept"
-            );
-            self.coop_setup_initial = Some(vmce_setup_snapshot(state, self.player_name())?);
-            #[cfg(feature = "vmce")]
-            if let Some(a03) = self.a03.as_mut() {
-                a03.ready_request_issued(
-                    crate::app::lan_service::vmce_ready_admission_generation(state),
-                )?;
+            let local = self.local_setup_row(launch)?;
+            let map_status = session.network_map_status(local);
+            let ready = session.network_player_ready(local);
+            let accept_enabled = setup::view(state)
+                .map(|view| view.accept_enabled)
+                .unwrap_or(false);
+            (map_status, ready, accept_enabled)
+        };
+        if !ready {
+            if map_status != Some(1) || !accept_enabled {
+                return Ok(());
             }
-            setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
-            let accepted = state
-                .match_state
-                .session
-                .network_setup()
-                .context("accepted Coop guest setup")?;
-            let local = self.local_setup_row(accepted)?;
-            ensure!(
-                state.match_state.session.network_player_ready(local),
-                "production Accept did not set guest Ready"
-            );
+            let initial = match self.coop_setup_initial.clone() {
+                Some(initial) => initial,
+                None => {
+                    let initial = vmce_setup_snapshot(state, self.player_name())?;
+                    self.coop_setup_initial = Some(initial.clone());
+                    initial
+                }
+            };
+            if !self.coop_setup_guest_accepted {
+                #[cfg(feature = "vmce")]
+                if let Some(a03) = self.a03.as_mut() {
+                    a03.ready_request_issued(
+                        crate::app::lan_service::vmce_ready_admission_generation(state),
+                    )?;
+                }
+            }
+            if self.lobby_inputs_enabled() {
+                // The probe drives the same production action the Accept
+                // button reaches; the role/difficulty probe already uses the
+                // setup actions directly so its timing stays deterministic.
+                setup::apply_action(state, SetupAction::Accept);
+            } else {
+                setup_button(state, crate::ui::multiplayer_setup::ACCEPT)?;
+            }
+            let ready_now = {
+                let launch = state
+                    .match_state
+                    .session
+                    .network_setup()
+                    .context("accepted Coop guest setup")?;
+                let local = self.local_setup_row(launch)?;
+                state.match_state.session.network_player_ready(local)
+            };
+            ensure!(ready_now, "production Accept did not set guest Ready");
+            let reaccept = self.coop_setup_guest_accepted;
             self.coop_setup_guest_accepted = true;
-            // Record the guest-local Ready transition immediately: the host
-            // may publish GO before this step runs again, which would skip the
-            // later final snapshot and leave the receipt incomplete.
-            let initial = self
-                .coop_setup_initial
-                .clone()
-                .context("initial VMCE guest snapshot")?;
+            // Record the guest-local Ready transition immediately: a later
+            // material host-options revision can clear Ready again, and the
+            // production guest then re-accepts below.
             let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
             ensure_coop_setup_ready_transition(&initial, &final_snapshot, false)?;
+            self.coop_setup_final = Some(final_snapshot.clone());
+            self.route.push(json!({
+                "render_frame": frame,
+                "action": if reaccept {
+                    "guest re-accepted after a material host-options revision"
+                } else {
+                    "guest local Ready confirmed after real host options and map acceptance"
+                },
+                "state": final_snapshot,
+            }));
+            self.event(
+                frame,
+                if reaccept {
+                    "guest re-accepted the VMCE setup after host options changed"
+                } else {
+                    "guest accepted the host's VMCE map through production setup"
+                },
+            );
+            return Ok(());
+        }
+        if self.coop_setup_final.is_none() {
+            let initial = self
+                .coop_setup_initial
+                .as_ref()
+                .context("initial VMCE guest snapshot")?;
+            let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
+            ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
             self.coop_setup_final = Some(final_snapshot.clone());
             self.route.push(json!({
                 "render_frame": frame,
                 "action": "guest local Ready confirmed after real host options and map acceptance",
                 "state": final_snapshot,
             }));
-            self.event(
-                frame,
-                "guest accepted the host's VMCE map through production setup",
-            );
-            return Ok(());
         }
-
-        let initial = self
-            .coop_setup_initial
-            .as_ref()
-            .context("initial VMCE guest snapshot")?;
-        if session.network_map_status(local) != Some(1) || !session.network_player_ready(local) {
-            return Ok(());
-        }
-        let final_snapshot = vmce_setup_snapshot(state, self.player_name())?;
-        ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
-        self.coop_setup_final = Some(final_snapshot.clone());
-        self.route.push(json!({
-            "render_frame": frame,
-            "action": "guest local Ready confirmed after real host options and map acceptance",
-            "state": final_snapshot,
-        }));
         // The guest stays in setup until the host's accepted Start publishes
         // GO; the shared loading/InGame transition below takes over then.
         Ok(())
@@ -2533,6 +2642,7 @@ impl LiveLanCapture {
                 json!({
                     "name": human.name,
                     "row": row,
+                    "role": human.role.native_value(),
                     "ready": session.network_player_ready(row),
                     "map_status": session.network_map_status(row),
                 })
@@ -2545,6 +2655,17 @@ impl LiveLanCapture {
             "scope": "four independent App processes; real LAN setup room with the configured VMCE map; native lobby captured before Start",
             "process_id": std::process::id(),
             "configured_participant_count": self.expected_players,
+            "lobby_difficulty": state
+                .frontend
+                .multiplayer_shell_runtime
+                .lobby_difficulty()
+                .native_row(),
+            "roles_claimed": launch.humans.iter().all(|human| {
+                human
+                    .raw_slot_index
+                    .map(i32::from)
+                    .is_some_and(|row| row == human.role.native_value())
+            }),
             "participants": participants,
             "map": {
                 "file": launch.selected_map_file,
@@ -2896,6 +3017,91 @@ fn vmce_probe(state: &mut AppState) -> Result<Value> {
     }))
 }
 
+/// The lobby difficulty row a probe sets before Accept/Start (Hard).
+#[cfg(feature = "vmce")]
+const VMCE_LOBBY_DIFFICULTY: i32 = 2;
+
+/// The selected map's authored roles can be claimed seat-by-seat: every
+/// admitted non-observer row has a Team-column choice with its own row as the
+/// role value. False until the setup view exists, so a probe waits instead of
+/// starting with random roles.
+#[cfg(feature = "vmce")]
+fn vmce_role_claims_enabled(state: &AppState) -> bool {
+    let Some(launch) = state.match_state.session.network_setup() else {
+        return false;
+    };
+    let Some(view) = setup::view(state) else {
+        return false;
+    };
+    launch
+        .humans
+        .iter()
+        .filter(|human| !human.is_observer())
+        .all(|human| {
+            let Some(row) = human.raw_slot_index else {
+                return false;
+            };
+            view.combos.iter().any(|combo| {
+                combo.visible
+                    && usize::from(row) == combo.row as usize
+                    && SetupColumn::decode(combo.id)
+                        .is_some_and(|(column, _)| column == SetupColumn::Team)
+                    && combo
+                        .choices
+                        .iter()
+                        .any(|choice| choice.value == i32::from(row))
+            })
+        })
+}
+
+/// Claim this process's own seat as its authored role through the production
+/// Team-column choice (the VMCE role slot).
+#[cfg(feature = "vmce")]
+fn claim_vmce_role(state: &mut AppState, row: u8) -> Result<bool> {
+    let Some(control) = setup_control_at_row(state, SetupColumn::Team, usize::from(row))? else {
+        return Ok(false);
+    };
+    let view = setup::view(state).context("VMCE role view")?;
+    if !view.enabled(control)
+        || !view.combo(control).is_some_and(|combo| {
+            combo
+                .choices
+                .iter()
+                .any(|choice| choice.value == i32::from(row))
+        })
+    {
+        return Ok(false);
+    }
+    setup::apply_action(
+        state,
+        SetupAction::Select {
+            control,
+            value: i32::from(row),
+        },
+    );
+    Ok(true)
+}
+
+/// Set the shared lobby difficulty through the production difficulty slider.
+#[cfg(feature = "vmce")]
+fn set_vmce_lobby_difficulty(state: &mut AppState) -> Result<bool> {
+    let control = crate::ui::multiplayer_setup::DIFFICULTY;
+    if !setup::view(state)
+        .context("VMCE difficulty view")?
+        .enabled(control)
+    {
+        return Ok(false);
+    }
+    setup::apply_action(
+        state,
+        SetupAction::Trackbar {
+            control,
+            value: VMCE_LOBBY_DIFFICULTY,
+        },
+    );
+    Ok(true)
+}
+
 /// The running mission's VMCE identity plus the grants and the probe.
 #[cfg(feature = "vmce")]
 fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value> {
@@ -2918,6 +3124,20 @@ fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value
         "map_file": setup.selected_map_file,
         "local_player_index": setup.local_player_index,
         "host": session.host(),
+        "lobby_difficulty": state
+            .frontend
+            .multiplayer_shell_runtime
+            .lobby_difficulty()
+            .native_row(),
+        "frozen_difficulty": session
+            .network_vmce_assignments()
+            .map(|assignments| assignments.difficulty),
+        "roles_claimed": setup.humans.iter().all(|human| {
+            human
+                .raw_slot_index
+                .map(i32::from)
+                .is_some_and(|row| row == human.role.native_value())
+        }),
         "series_directory": config.and_then(|config| config.series_directory.clone()),
         "series_sha256": config.and_then(|config| config.series_sha256.clone()),
         "config_sha256": config.map(|config| config.config_sha256.clone()),
@@ -2983,6 +3203,15 @@ fn vmce_setup_watchdog_snapshot(
             "config_sha256": config.config_sha256,
         })),
         "participants": participants,
+        "lobby_difficulty": state
+            .frontend
+            .multiplayer_shell_runtime
+            .lobby_difficulty()
+            .native_row(),
+        "role_claims_enabled": vmce_role_claims_enabled(state),
+        "local_ready": launch.map(|launch| session.network_player_ready(launch.local_player_index)),
+        "local_map_status": launch
+            .and_then(|launch| session.network_map_status(launch.local_player_index)),
         "protocol_present": protocol.is_some(),
         "pending_setup_requests": protocol.map(|protocol| protocol.diagnostic_pending_requests()),
         "protocol_accept_eligible": protocol.map(|protocol| protocol.diagnostic_accept_eligible()),
@@ -3095,6 +3324,12 @@ fn vmce_setup_snapshot(state: &AppState, local_name: &str) -> Result<Value> {
         },
         "players": players,
         "local_row": local_row,
+        "lobby_difficulty": state
+            .frontend
+            .multiplayer_shell_runtime
+            .lobby_difficulty()
+            .native_row(),
+        "role_claims_enabled": vmce_role_claims_enabled(state),
         "participants": participants,
     }))
 }
@@ -3114,6 +3349,15 @@ fn ensure_coop_setup_ready_transition(
         initial["config"]["config_sha256"] == final_state["config"]["config_sha256"],
         "VMCE config changed during the Ready transition"
     );
+    ensure!(
+        initial["lobby_difficulty"] == final_state["lobby_difficulty"],
+        "VMCE lobby difficulty changed during the Ready transition"
+    );
+    ensure!(
+        initial["role_claims_enabled"] == final_state["role_claims_enabled"],
+        "VMCE role-claim readiness changed during the Ready transition"
+    );
+    let claims_enabled = initial["role_claims_enabled"] == true;
     let players = initial["players"]
         .as_u64()
         .context("VMCE participant count")? as usize;
@@ -3139,6 +3383,13 @@ fn ensure_coop_setup_ready_transition(
             "VMCE participant identity or role changed while accepting: {:?}",
             before["name"]
         );
+        if claims_enabled {
+            ensure!(
+                before["raw_row"].as_i64() == before["role"].as_i64(),
+                "VMCE role was not claimed for the participant's own row: {:?}",
+                before["name"]
+            );
+        }
     }
     let local_row = initial["local_row"].as_u64().context("VMCE local row")? as usize;
     ensure!(
