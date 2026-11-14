@@ -2317,21 +2317,23 @@ impl MatchSession {
         Ok(launch.options.queue.len() != waited)
     }
 
-    /// Whether this is a VERA room whose mode seats its players on teams:
-    /// allying allowed, outside a clan room, and the mode's policy says its
-    /// room has team seats. Its rows list under team headers.
-    pub(crate) fn network_team_room(&self) -> bool {
+    /// The shared room conditions for team seating and retaining team picks.
+    fn network_team_room_launch(&self) -> Option<&SkirmishLaunchSession> {
         let Some(NetworkPhase::Setup {
             launch,
             several_observers: true,
             ..
         }) = self.network.as_ref().map(|network| &network.phase)
         else {
-            return false;
+            return None;
         };
-        launch.mode.allies_allowed
-            && launch.mode.class.policy().room_teams
-            && !self.network_room().clan
+        (launch.mode.allies_allowed && !self.network_room().clan).then_some(launch)
+    }
+
+    /// Whether this is a VERA room whose mode seats its players on teams.
+    pub(crate) fn network_team_room(&self) -> bool {
+        self.network_team_room_launch()
+            .is_some_and(|launch| launch.mode.class.policy().room_teams)
     }
 
     /// The Teams count of a VERA room that seats players on teams
@@ -2945,8 +2947,13 @@ impl MatchSession {
                 removed.extend(candidate.set_network_row_kind(row, NetworkRowKind::Closed)?);
             }
         }
-        // A VERA room with Teams set keeps its players' teams.
-        let keep_teams = candidate.network_teams().is_some();
+        // A VERA room retains team picks across map selection even when VMCE
+        // hides team seating; returning to an ordinary mode restores the same
+        // teams without a second roster. Native row reset: 5EE510.
+        let keep_teams = candidate.network_team_room_launch().is_some_and(|launch| {
+            launch.options.teams.is_some()
+                && launch.mode.class.policy().retain_room_teams_on_map_change
+        });
         let Some(NetworkSession {
             phase:
                 NetworkPhase::Setup {
@@ -4830,6 +4837,47 @@ mod tests {
             .select_network_map(mode, "EIGHT.MAP".into(), 8)
             .unwrap();
         assert_eq!(teams(&session), [Team(0), Team(0), Team(1)]);
+    }
+
+    #[test]
+    fn a_vera_room_keeps_teams_across_vmce_map_selection() {
+        use crate::skirmish_launch::LaunchTeam::Team;
+        use crate::skirmish_modes::MpModeClass;
+
+        let mut session = vera_room();
+        session.set_network_teams(Some(2)).unwrap();
+        newcomer(&mut session);
+        let mut fourth = session.network_setup().unwrap().humans[1].clone();
+        fourth.name = "Fourth".into();
+        fourth.raw_slot_index = Some(3);
+        session.add_network_participant(fourth).unwrap();
+        for (index, team) in [Team(0), Team(0), Team(1), Team(1)]
+            .into_iter()
+            .enumerate()
+            .skip(1)
+        {
+            let mut slot = session.network_setup().unwrap().humans[index].slot.clone();
+            slot.team = team;
+            session
+                .accept_network_peer_choices(index, slot, false, None)
+                .unwrap();
+        }
+        let before = teams(&session);
+        assert_eq!(before, [Team(0), Team(0), Team(1), Team(1)]);
+        let original_mode = session.network_setup().unwrap().mode.clone();
+        let mut vmce = original_mode.clone();
+        vmce.class = MpModeClass::Vmce;
+        session
+            .select_network_map(vmce.clone(), "VMCE.MAP".into(), 4)
+            .unwrap();
+        assert_eq!(session.network_teams(), None);
+        session
+            .select_network_map(vmce, "VMCE2.MAP".into(), 4)
+            .unwrap();
+        session
+            .select_network_map(original_mode, "BATTLE.MAP".into(), 4)
+            .unwrap();
+        assert_eq!(teams(&session), before);
     }
 
     /// Four seats over two teams seat two a team. A guest cannot pick a

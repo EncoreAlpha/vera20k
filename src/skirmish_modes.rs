@@ -39,6 +39,8 @@ pub struct ModePolicy {
     /// and a clan room never groups. An authored-role campaign has no team
     /// seats; its seats are the map's roles.
     pub room_teams: bool,
+    /// Whether selecting a map retains existing VERA room team assignments.
+    pub retain_room_teams_on_map_change: bool,
     /// Whether this mode uses the campaign's authored map catalog.
     pub authored_campaign_map_catalog: bool,
     /// Whether a modern guest must accept manually before becoming ready.
@@ -75,6 +77,7 @@ impl MpModeClass {
                     trigger_only_outcome: false,
                     cooperative_result: false,
                     room_teams: true,
+                    retain_room_teams_on_map_change: true,
                     authored_campaign_map_catalog: false,
                     modern_guest_manual_accept: false,
                     authored_campaign_roles: false,
@@ -89,6 +92,7 @@ impl MpModeClass {
                 trigger_only_outcome: false,
                 cooperative_result: true,
                 room_teams: false,
+                retain_room_teams_on_map_change: false,
                 authored_campaign_map_catalog: false,
                 modern_guest_manual_accept: false,
                 authored_campaign_roles: false,
@@ -102,6 +106,7 @@ impl MpModeClass {
                 trigger_only_outcome: true,
                 cooperative_result: true,
                 room_teams: false,
+                retain_room_teams_on_map_change: true,
                 authored_campaign_map_catalog: true,
                 modern_guest_manual_accept: true,
                 authored_campaign_roles: true,
@@ -479,6 +484,7 @@ mod tests {
             trigger_only_outcome: false,
             cooperative_result: false,
             room_teams: true,
+            retain_room_teams_on_map_change: true,
             authored_campaign_map_catalog: false,
             modern_guest_manual_accept: false,
             authored_campaign_roles: false,
@@ -502,6 +508,7 @@ mod tests {
             trigger_only_outcome: false,
             cooperative_result: true,
             room_teams: false,
+            retain_room_teams_on_map_change: false,
             authored_campaign_map_catalog: false,
             modern_guest_manual_accept: false,
             authored_campaign_roles: false,
@@ -517,6 +524,7 @@ mod tests {
             trigger_only_outcome: true,
             cooperative_result: true,
             room_teams: false,
+            retain_room_teams_on_map_change: true,
             authored_campaign_map_catalog: true,
             modern_guest_manual_accept: true,
             authored_campaign_roles: true,
