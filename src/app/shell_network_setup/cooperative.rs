@@ -9,9 +9,11 @@
 
 use super::{NetworkSetupProtocol, NetworkSetupRequest};
 use crate::app::AppState;
+use crate::app::frontend::skirmish_session::MultiplayerShellRuntime;
 use crate::app::frontend::skirmish_session::cooperative::{
     CooperativeCampaignText, CooperativeSlotContext, SavedCampaignJoin, SavedCampaignLeave,
 };
+use crate::app::match_runtime::session::MatchSession;
 use crate::skirmish_launch::SkirmishLaunchMode;
 use crate::skirmish_modes::MpModeClass;
 
@@ -37,20 +39,7 @@ struct SlotInputs {
 impl SlotInputs {
     fn read(state: &AppState) -> Self {
         let records = state.frontend.scenario_catalog.records();
-        let launch = state.match_state.session.network_setup();
-        let mut nodes: Vec<String> = Vec::new();
-        if let Some(launch) = launch {
-            // Every machine's node 0 is its local player.
-            nodes.push(launch.local_player().name.clone());
-            nodes.extend(
-                launch
-                    .humans
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| *index != launch.local_player_index)
-                    .map(|(_, human)| human.name.clone()),
-            );
-        }
+        let nodes = slot_nodes(&state.match_state.session);
         Self {
             scenarios: records
                 .iter()
@@ -78,6 +67,26 @@ impl SlotInputs {
             &nodes,
         )
     }
+}
+
+/// Every machine's node 0 is its local player, then the other participants in
+/// roster order: the setup slots' `0xA8DA78` nodes and the names a received
+/// `C0` binds. One projection for both readers.
+pub(super) fn slot_nodes(session: &MatchSession) -> Vec<String> {
+    let Some(launch) = session.network_setup() else {
+        return Vec::new();
+    };
+    let mut nodes = Vec::with_capacity(launch.humans.len());
+    nodes.push(launch.local_player().name.clone());
+    nodes.extend(
+        launch
+            .humans
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != launch.local_player_index)
+            .map(|(_, human)| human.name.clone()),
+    );
+    nodes
 }
 
 /// Whether a mode class is the stock Cooperative mode. The lobby's shared
@@ -113,24 +122,49 @@ fn host_setup_open(state: &AppState) -> bool {
 /// Random. Nothing changes without the campaign's stage. `+0x18`'s
 /// per-node `+0x1C` re-check that follows always passes after it.
 fn refresh_countries(state: &mut AppState) -> anyhow::Result<()> {
-    refresh_rows(state, true)
+    if refresh_countries_for(
+        &mut state.match_state.session,
+        &state.frontend.multiplayer_shell_runtime,
+    )? {
+        state.platform.window.request_redraw();
+    }
+    Ok(())
+}
+
+/// The same `0x005C2500` over the session's network rows, without the shell's
+/// redraw request. Returns whether it changed any row.
+pub(super) fn refresh_countries_for(
+    session: &mut MatchSession,
+    runtime: &MultiplayerShellRuntime,
+) -> anyhow::Result<bool> {
+    refresh_rows_for(session, runtime, true)
 }
 
 /// `0x005C2500` over the rows; `ai_rows` false keeps the AI rows' countries,
 /// as BC open's row loop (`0x005ED762`) restores them from the profile
 /// (`0x004E3F70`) after its refreshes.
 fn refresh_rows(state: &mut AppState, ai_rows: bool) -> anyhow::Result<()> {
-    let runtime = &state.frontend.multiplayer_shell_runtime;
+    if refresh_rows_for(
+        &mut state.match_state.session,
+        &state.frontend.multiplayer_shell_runtime,
+        ai_rows,
+    )? {
+        state.platform.window.request_redraw();
+    }
+    Ok(())
+}
+
+fn refresh_rows_for(
+    session: &mut MatchSession,
+    runtime: &MultiplayerShellRuntime,
+    ai_rows: bool,
+) -> anyhow::Result<bool> {
     if runtime.cooperative_setup_view().player_countries.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     let country = runtime.cooperative_default_country();
-    state
-        .match_state
-        .session
-        .reset_network_countries(country, ai_rows)?;
-    state.platform.window.request_redraw();
-    Ok(())
+    session.reset_network_countries(country, ai_rows)?;
+    Ok(true)
 }
 
 /// `+0x60`'s tail: the refresh it took, then the `C0` text to every guest.
@@ -143,7 +177,9 @@ fn publish(state: &mut AppState, published: Option<(bool, Option<String>)>) -> a
     if refresh {
         refresh_countries(state)?;
     }
-    if let Some(text) = text.filter(|_| state.match_state.session.host()) {
+    if let Some(text) = text
+        .filter(|_| state.match_state.session.host() && super::dispatch::room_is_cooperative(state))
+    {
         super::actions::queue(state, NetworkSetupRequest::PublishCooperativeCampaign(text));
     }
     Ok(())
@@ -574,23 +610,49 @@ pub(super) fn parse_refresh(state: &mut AppState) {
 /// countries while a setup dialog is open. A text missing a field calls no
 /// mode.
 pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Result<()> {
-    let Some(text) = CooperativeCampaignText::parse(text) else {
-        return Ok(());
-    };
-    let inputs = SlotInputs::read(state);
     let setup = setup_open(state);
-    let refresh = {
-        let parts = state.frontend.multiplayer_shell_runtime.cooperative_parts();
-        inputs.with(|_, nodes| {
-            parts
-                .progress
-                .accept_received_campaign(parts.registry, parts.rng, nodes, &text, setup)
-        })
-    };
-    if refresh {
-        refresh_countries(state)?;
+    if apply_received_campaign(
+        &mut state.frontend.multiplayer_shell_runtime,
+        &mut state.match_state.session,
+        setup,
+        text,
+    )? {
+        state.platform.window.request_redraw();
     }
     Ok(())
+}
+
+/// The `C0` application over the two owners it changes: the Cooperative
+/// progress record (`+0x58`/`+0x5C`) and the setup's network country rows.
+/// Returns whether the open setup took a country refresh. The lobby's
+/// message-ownership owner calls this only for a text that belongs to the
+/// Cooperative room; this is the one campaign application path, not a second
+/// state.
+pub(super) fn apply_received_campaign(
+    runtime: &mut MultiplayerShellRuntime,
+    session: &mut MatchSession,
+    setup_open: bool,
+    text: &str,
+) -> anyhow::Result<bool> {
+    let Some(text) = CooperativeCampaignText::parse(text) else {
+        return Ok(false);
+    };
+    let nodes = slot_nodes(session);
+    let nodes: Vec<&str> = nodes.iter().map(String::as_str).collect();
+    let refresh = {
+        let parts = runtime.cooperative_parts();
+        parts.progress.accept_received_campaign(
+            parts.registry,
+            parts.rng,
+            &nodes,
+            &text,
+            setup_open,
+        )
+    };
+    if refresh {
+        refresh_countries_for(session, runtime)?;
+    }
+    Ok(refresh)
 }
 
 /// An options parse that changes the mode (`0x005E541D..0x005E5466`):
@@ -602,17 +664,28 @@ pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Res
 /// (`0x005C1B79..0x005C1BA1`), which the later lookup at `0x007A6E0B`
 /// selects again. The countries refresh only with a setup dialog.
 pub(super) fn mode_entered(state: &mut AppState) -> anyhow::Result<()> {
-    let inputs = SlotInputs::read(state);
-    let current = inputs.current;
+    let scenarios: Vec<String> = state
+        .frontend
+        .scenario_catalog
+        .records()
+        .iter()
+        .map(|record| record.file_name.clone())
+        .collect();
+    let current = state.frontend.multiplayer_shell_runtime.scenario_index();
+    let chooser_on_top = state
+        .frontend
+        .skirmish_shell_state
+        .choose_map_modal
+        .is_some();
     let host_setup = host_setup_open(state);
-    let selected = {
-        let parts = state.frontend.multiplayer_shell_runtime.cooperative_parts();
-        inputs.with(|context, _| {
-            parts
-                .progress
-                .enter_mode(parts.registry, parts.rng, context, current, host_setup)
-        })
-    };
+    let selected = enter_mode_for(
+        &mut state.frontend.multiplayer_shell_runtime,
+        &state.match_state.session,
+        &scenarios,
+        current,
+        chooser_on_top,
+        host_setup,
+    );
     // RESIDUAL: a guest's own SelectScenario is not ported; the host's
     // options name its map.
     if let Some(index) = selected
@@ -624,4 +697,30 @@ pub(super) fn mode_entered(state: &mut AppState) -> anyhow::Result<()> {
         refresh_countries(state)?;
     }
     Ok(())
+}
+
+/// The new mode's `+0x20` over the admitted session and the Cooperative
+/// progress owner. `scenarios`, `current` and `chooser_on_top` are the slots'
+/// `[0xA8B8CC]`, `[0xA8B254]` and `0x6B` inputs; the caller commits the
+/// returned scenario in the mode-specific way.
+pub(super) fn enter_mode_for(
+    runtime: &mut MultiplayerShellRuntime,
+    session: &MatchSession,
+    scenarios: &[String],
+    current: usize,
+    chooser_on_top: bool,
+    host_setup: bool,
+) -> Option<usize> {
+    let nodes = slot_nodes(session);
+    let scenarios: Vec<&str> = scenarios.iter().map(String::as_str).collect();
+    let nodes: Vec<&str> = nodes.iter().map(String::as_str).collect();
+    let context = CooperativeSlotContext {
+        scenarios: &scenarios,
+        nodes: &nodes,
+        chooser_on_top,
+    };
+    let parts = runtime.cooperative_parts();
+    parts
+        .progress
+        .enter_mode(parts.registry, parts.rng, context, current, host_setup)
 }

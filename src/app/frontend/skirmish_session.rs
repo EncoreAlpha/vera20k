@@ -2117,6 +2117,53 @@ fn cooperative_country_roster_from_rules(
         .collect()
 }
 
+/// A Cooperative-capable shell runtime for setup tests: the real owners with
+/// test-selected campaign/progress, no window, GPU or rules load. Production
+/// constructs the same struct in `new_network_setup` after loading the retail
+/// registry; the setup campaign tests need only that owner's state.
+#[cfg(test)]
+pub(crate) fn cooperative_runtime_for_test(
+    cooperative_registry: CooperativeRegistry,
+    cooperative_progress: CooperativeProgressState,
+    scenario_rng: SimRng,
+    profile: SetupProfile,
+) -> MultiplayerShellRuntime {
+    MultiplayerShellRuntime {
+        snapshot: MultiplayerSetupSnapshot::from_global_defaults(
+            skirmish_global_defaults(&SkirmishShellState::default()),
+            profile,
+        ),
+        lan_snapshot: MultiplayerSetupSnapshot::from_global_defaults(
+            skirmish_global_defaults(&SkirmishShellState::default()),
+            SetupProfile::Lan,
+        ),
+        wol_snapshot: MultiplayerSetupSnapshot::from_global_defaults(
+            skirmish_global_defaults(&SkirmishShellState::default()),
+            SetupProfile::Wol,
+        ),
+        local_preferences: LocalMultiplayerPreferences::default(),
+        settings_ini: Vec::new(),
+        lan_observer_mode: 0,
+        taunt_clock: Default::default(),
+        scenario_rng,
+        random_map_options: crate::map::rmg::RmgOptions::default(),
+        #[cfg(feature = "ares")]
+        urban_areas_read: false,
+        ini_path: None,
+        saved_setups: HashMap::new(),
+        last_setup: None,
+        cooperative_registry,
+        cooperative_progress,
+        cooperative_country_roster: controlled_ten_country_roster(),
+        cooperative_difficulty: 0,
+        scenario_index: 0,
+        scenario_start_header: crate::map::preview::ScenarioStartHeader::default(),
+        scenario_start_staging: Default::default(),
+        gameplay_scenario_return_pending: false,
+        lobby_colors: Default::default(),
+    }
+}
+
 /// Controlled ten-country roster used by existing native corpus cases;
 /// production consumes the complete processed Rules registry above.
 #[cfg(test)]
@@ -2242,40 +2289,12 @@ mod tests {
         let cooperative_progress =
             CooperativeProgressState::construct(&cooperative_registry, &mut scenario_rng)
                 .expect("preconstructed Cooperative records");
-        MultiplayerShellRuntime {
-            snapshot: MultiplayerSetupSnapshot::from_global_defaults(
-                defaults(),
-                SetupProfile::Skirmish,
-            ),
-            lan_snapshot: MultiplayerSetupSnapshot::from_global_defaults(
-                defaults(),
-                SetupProfile::Lan,
-            ),
-            wol_snapshot: MultiplayerSetupSnapshot::from_global_defaults(
-                defaults(),
-                SetupProfile::Wol,
-            ),
-            local_preferences: LocalMultiplayerPreferences::default(),
-            settings_ini: Vec::new(),
-            lan_observer_mode: 0,
-            taunt_clock: Default::default(),
-            scenario_rng,
-            random_map_options: crate::map::rmg::RmgOptions::default(),
-            #[cfg(feature = "ares")]
-            urban_areas_read: false,
-            ini_path: None,
-            saved_setups: HashMap::new(),
-            last_setup: None,
+        cooperative_runtime_for_test(
             cooperative_registry,
             cooperative_progress,
-            cooperative_country_roster: controlled_ten_country_roster(),
-            cooperative_difficulty: 0,
-            scenario_index: 0,
-            scenario_start_header: crate::map::preview::ScenarioStartHeader::default(),
-            scenario_start_staging: Default::default(),
-            gameplay_scenario_return_pending: false,
-            lobby_colors: Default::default(),
-        }
+            scenario_rng,
+            SetupProfile::Skirmish,
+        )
     }
 
     #[cfg(feature = "vmce")]

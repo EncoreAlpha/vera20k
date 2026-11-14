@@ -213,9 +213,16 @@ impl Options {
     /// host's rows; then the options themselves.
     pub fn into_setup_events(mut self, local: &str) -> anyhow::Result<Vec<NetworkSetupEvent>> {
         let campaign = self.cooperative_campaign.take();
+        // The options payload's own mode owns its C0; the guest's current
+        // room mode does not. `into_options` below is the same payload, so
+        // this is also the mode its HostSetup carries.
+        let owner = self.launch.mode.class;
         let options = self.into_options(local)?;
         Ok(campaign
-            .map(NetworkSetupEvent::CooperativeCampaign)
+            .map(|text| NetworkSetupEvent::CooperativeCampaign {
+                text,
+                origin: crate::app::shell_network_setup::CampaignOrigin::options(owner),
+            })
             .into_iter()
             .chain([NetworkSetupEvent::HostSetup(options)])
             .collect())

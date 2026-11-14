@@ -5582,37 +5582,161 @@ fn cooperative_handler_mode_tests(production: &str) -> Vec<String> {
     violations
 }
 
-/// The received-C0 forwarder must stay message-owned: it may not read the room
-/// mode or the mode chooser, and it must call Cooperative's own `C0` slot. A
-/// WOL guest can read `C0` before the `HostSetup` that brings Cooperative.
-fn lobby_campaign_forward_violation(dispatch: &str) -> Option<String> {
-    let impls = impl_blocks(dispatch);
-    let Some(definition) = function_definitions(dispatch, &impls)
-        .into_iter()
-        .find(|definition| definition.name == "campaign_received")
-    else {
-        return Some("the dispatcher has no campaign_received forwarder".to_owned());
+/// A received `C0` is owned by the setup identity it names, not by the guest's
+/// current room mode and not by an unconditional forward. The mailbox's
+/// `deliver` must resolve the WOL payload mode or the LAN setup revision, and
+/// `options_applied` must resolve or discard the hold when a HostSetup commits.
+fn lobby_campaign_ownership_violation(campaign: &str) -> Vec<String> {
+    let campaign = blank_comments_and_literals(campaign);
+    let campaign = campaign.as_str();
+    let mut violations = Vec::new();
+    let Some(deliver) = dispatch_function_body(campaign, "deliver") else {
+        return vec!["the campaign inbox has no deliver handler".to_owned()];
     };
-    let body = &dispatch[definition.body_start..=definition.body_end];
-    if !body.contains("super::cooperative::campaign_received") {
-        return Some("campaign_received does not reach Cooperative's C0 slot".to_owned());
-    }
-    for token in [
-        "live_owner",
-        "room_mode_class",
-        "room_is_cooperative",
-        "peer_mode",
-        "handles_mode",
-        "mode.class",
-        "MpModeClass::Cooperative",
+    for required in [
+        "CampaignOrigin::Options",
+        "CampaignOrigin::Lan",
+        "setup_scope",
+        "revision",
+        "hold_campaign",
+        "campaign_may_apply",
+        "cooperative::handles_mode",
     ] {
-        if body.contains(token) {
-            return Some(format!(
-                "campaign_received reads {token}; C0 is owned by its message, not the room mode"
+        if !deliver.contains(required) {
+            violations.push(format!("deliver lost {required}"));
+        }
+    }
+    // The Options arm applies only after asking the payload's mode handler.
+    match (
+        deliver.find("CampaignOrigin::Options"),
+        deliver.find("cooperative::handles_mode"),
+        deliver.find("apply_campaign"),
+    ) {
+        (Some(options), Some(mode), Some(apply)) if options < mode && mode < apply => {}
+        _ => violations.push(
+            "deliver applies a campaign without its message's mode/scope decision".to_owned(),
+        ),
+    }
+    // The LAN arm must compare the held revision and keep the text; a direct
+    // apply on every room mode is the rejected filter.
+    match (
+        deliver.find("CampaignOrigin::Lan"),
+        deliver.find("revision"),
+        deliver.find("hold_campaign"),
+    ) {
+        (Some(lan), Some(revision), Some(hold)) if lan < revision && revision < hold => {}
+        _ => violations
+            .push("deliver does not hold an early LAN campaign for its HostSetup".to_owned()),
+    }
+    let Some(applied) = dispatch_function_body(campaign, "options_applied") else {
+        return vec!["the campaign inbox has no options_applied handler".to_owned()];
+    };
+    for required in [
+        "cooperative::handles_mode",
+        "take_held_campaigns",
+        "hold_campaign",
+        "campaign_may_apply",
+        "observe_campaign_setup",
+        "apply_campaign",
+    ] {
+        if !applied.contains(required) {
+            violations.push(format!("options_applied lost {required}"));
+        }
+    }
+    match (
+        applied.find("cooperative::handles_mode"),
+        applied.find("apply_campaign"),
+    ) {
+        (Some(mode), Some(apply)) if mode < apply => {}
+        _ => violations.push("options_applied applies without the setup's mode owner".to_owned()),
+    }
+    violations
+}
+
+/// Cooperative's `+0x60` publisher may queue a `C0` only in the admitted
+/// Cooperative room. A chooser-selected slot in another room runs without
+/// manufacturing a text for the mode the room has not committed.
+fn cooperative_campaign_publish_violation(cooperative: &str) -> Option<String> {
+    let cooperative = blank_comments_and_literals(cooperative);
+    let publish = dispatch_function_body(&cooperative, "publish")?;
+    if !publish.contains("PublishCooperativeCampaign") {
+        return Some("Cooperative's publish lost its C0 publication".to_owned());
+    }
+    if !publish.contains("room_is_cooperative") {
+        return Some("Cooperative's publish queues C0 without the room mode".to_owned());
+    }
+    None
+}
+
+/// The shared LAN/WOL send queues retire a `C0` whose room is no longer
+/// Cooperative. Only the message side can stop a stale text from being sent
+/// under the next options revision.
+fn lobby_campaign_send_queue_violation(lan: &str, wol: &str) -> Vec<String> {
+    let lan = blank_comments_and_literals(lan);
+    let wol = blank_comments_and_literals(wol);
+    let mut violations = Vec::new();
+    for (file, source, function) in [
+        ("app/lan_service.rs", lan.as_str(), "setup_request"),
+        (
+            "app/shell_wol/live_service.rs",
+            wol.as_str(),
+            "request_setup",
+        ),
+    ] {
+        let Some(body) = dispatch_function_body(source, function) else {
+            violations.push(format!("{file} lost {function}"));
+            continue;
+        };
+        if !body.contains("PublishCooperativeCampaign") || !body.contains("room_is_cooperative") {
+            violations.push(format!(
+                "{file}::{function} sends a Cooperative campaign without the room mode"
             ));
         }
     }
-    None
+    let Some(defer) = dispatch_function_body(&lan, "defer_setup_requests") else {
+        violations.push("app/lan_service.rs lost defer_setup_requests".to_owned());
+        return violations;
+    };
+    if !defer.contains("room_is_cooperative") {
+        violations.push(
+            "app/lan_service.rs::defer_setup_requests keeps a stale campaign in a new room"
+                .to_owned(),
+        );
+    }
+    violations
+}
+
+/// The HostSetup hook and the room-exit cleanup are part of the campaign
+/// lifecycle, not optional call sites: the held text must resolve after the
+/// complete setup revision is accepted and before the mode entry refreshes the
+/// setup, and both exit events must retire the hold.
+fn lobby_campaign_lifecycle_violation(service: &str) -> Vec<String> {
+    let service = blank_comments_and_literals(service);
+    let Some(setup) = dispatch_function_body(&service, "service_event") else {
+        return vec!["app/shell_network_setup/service.rs lost service_event".to_owned()];
+    };
+    let mut violations = Vec::new();
+    for required in [
+        "dispatch::campaign_received",
+        "dispatch::campaign_options_applied",
+        "discard_cooperative_campaigns",
+    ] {
+        if !setup.contains(required) {
+            violations.push(format!("the HostSetup service lost {required}"));
+        }
+    }
+    match (
+        setup.find("accept_network_vmce_map_config"),
+        setup.find("dispatch::campaign_options_applied"),
+        setup.find("dispatch::mode_entered"),
+    ) {
+        (Some(accepted), Some(hook), Some(mode)) if accepted < hook && hook < mode => {}
+        _ => violations.push(
+            "campaign_options_applied must run after the HostSetup acceptance and before mode entry"
+                .to_owned(),
+        ),
+    }
+    violations
 }
 
 /// A function definition's body from the dispatch production projection.
@@ -5641,15 +5765,24 @@ fn extension_predicate_first(body: &str) -> bool {
 /// path reads.
 fn lobby_extension_first_violation(dispatch: &str) -> Option<String> {
     let live_owner = dispatch_function_body(dispatch, "live_owner");
+    let live_owner_for = dispatch_function_body(dispatch, "live_owner_for");
     let event_owner = dispatch_function_body(dispatch, "event_owner");
     let room_is_cooperative = dispatch_function_body(dispatch, "room_is_cooperative");
-    let (Some(live_owner), Some(event_owner), Some(room_is_cooperative)) =
-        (live_owner, event_owner, room_is_cooperative)
+    let (Some(live_owner), Some(live_owner_for), Some(event_owner), Some(room_is_cooperative)) =
+        (live_owner, live_owner_for, event_owner, room_is_cooperative)
     else {
-        return Some("the dispatcher lost live_owner/event_owner/room_is_cooperative".to_owned());
+        return Some(
+            "the dispatcher lost live_owner/live_owner_for/event_owner/room_is_cooperative"
+                .to_owned(),
+        );
     };
-    if !extension_predicate_first(live_owner) {
-        return Some("live_owner asks Cooperative's predicate before the extension's".to_owned());
+    if !live_owner.contains("live_owner_for") {
+        return Some("live_owner bypasses the production predicate table".to_owned());
+    }
+    if !extension_predicate_first(live_owner_for) {
+        return Some(
+            "live_owner_for asks Cooperative's predicate before the extension's".to_owned(),
+        );
     }
     if !extension_predicate_first(room_is_cooperative) {
         return Some(
@@ -5708,45 +5841,93 @@ fn lobby_mode_events_dispatch_before_the_cooperative_owner() {
         );
     }
 
-    // The received C0 stays message-owned and the mode predicates are asked
-    // extension-first: a VMCE event never evaluates Cooperative's predicate.
-    assert_eq!(
-        lobby_campaign_forward_violation(&dispatch),
-        None,
-        "the received C0 must reach Cooperative by its message, not the room mode"
+    // The received C0 is owned by the setup identity its message names. A
+    // host-options text follows its payload's mode; a LAN text is matched to
+    // the applied setup revision and held until the HostSetup that owns it.
+    // Neither an unconditional forward nor the guest's current room mode is
+    // ownership.
+    let campaign = production("app/shell_network_setup/lobby_campaign.rs");
+    let campaign_violations = lobby_campaign_ownership_violation(&campaign);
+    assert!(
+        campaign_violations.is_empty(),
+        "the received C0 no longer resolves its owning setup identity:\n\
+         {campaign_violations:#?}"
+    );
+    let dispatch_campaign = dispatch_function_body(&dispatch, "campaign_received")
+        .expect("the dispatcher has a campaign_received handler");
+    assert!(
+        dispatch_campaign.contains("lobby_campaign::deliver"),
+        "campaign_received does not hand the message to the campaign owner"
+    );
+    assert!(
+        !dispatch_campaign.contains("cooperative::campaign_received"),
+        "campaign_received forwards a C0 before resolving its owner"
+    );
+    let dispatch_options = dispatch_function_body(&dispatch, "campaign_options_applied")
+        .expect("the dispatcher resolves held campaigns when a HostSetup commits");
+    assert!(
+        dispatch_options.contains("lobby_campaign::options_applied"),
+        "the HostSetup hook does not resolve the campaign hold"
+    );
+    let ownership_bypass = "impl S { fn deliver(&mut self) { super::cooperative::campaign_received(state, text); } fn options_applied(&mut self) { super::cooperative::campaign_received(state, text); } }";
+    assert!(
+        !lobby_campaign_ownership_violation(ownership_bypass).is_empty(),
+        "an unconditional C0 forward must be caught"
+    );
+    let room_mode_gated = "impl S { fn deliver(&mut self) { if room_is_cooperative(state) { super::cooperative::campaign_received(state, text); } } fn options_applied(&mut self) { if room_is_cooperative(state) { super::cooperative::campaign_received(state, text); } } }";
+    assert!(
+        !lobby_campaign_ownership_violation(room_mode_gated).is_empty(),
+        "a C0 gated only on the guest's current room mode must be caught"
+    );
+    let missing_hold = "impl S { fn deliver(&mut self) { match origin { CampaignOrigin::Options(mode) => { if cooperative::handles_mode(Some(mode)) { apply_campaign(text); } } CampaignOrigin::Lan(scope) => { if setup_scope() == Some(scope) { apply_campaign(text); } } } } fn options_applied(&mut self) { if cooperative::handles_mode(room_mode()) { apply_campaign(text); } } }";
+    assert!(
+        !lobby_campaign_ownership_violation(missing_hold).is_empty(),
+        "a late C0 that is never held for its revision must be caught"
+    );
+    let wire = production("app/shell_wol/live_service/wire.rs");
+    assert!(
+        wire.contains("CampaignOrigin::options"),
+        "the WOL options decoder no longer attaches its payload's mode to C0"
+    );
+    let lan_source = production("app/lan_service.rs");
+    assert!(
+        lan_source.contains("CampaignOrigin::lan(proof.scope)"),
+        "the LAN C0 receiver no longer attaches the message's setup scope"
+    );
+    let lan_source = production("app/lan_service.rs");
+    let wol_source = production("app/shell_wol/live_service.rs");
+    let send_violations = lobby_campaign_send_queue_violation(&lan_source, &wol_source);
+    assert!(
+        send_violations.is_empty(),
+        "a non-Cooperative room can still send a stale C0:\n{send_violations:#?}"
+    );
+    let service_source = production("app/shell_network_setup/service.rs");
+    let lifecycle_violations = lobby_campaign_lifecycle_violation(&service_source);
+    assert!(
+        lifecycle_violations.is_empty(),
+        "the HostSetup/exit campaign lifecycle moved:\n{lifecycle_violations:#?}"
+    );
+    let hook_before_acceptance = "impl S { fn service_event(&mut self) { dispatch::campaign_options_applied(state); accept_network_vmce_map_config(state); dispatch::campaign_received(state); discard_cooperative_campaigns(state); dispatch::mode_entered(state); } }";
+    assert!(
+        !lobby_campaign_lifecycle_violation(hook_before_acceptance).is_empty(),
+        "a campaign hook before the setup acceptance must be caught"
     );
     assert_eq!(
         lobby_extension_first_violation(&dispatch),
         None,
         "a VMCE event must resolve through the extension owner before Cooperative's"
     );
-    let c0_bypass = "impl S { fn campaign_received(&mut self) { match live_owner(state, SetupModeEvent::GuestJoined) { _ => {} } } }";
-    assert!(
-        lobby_campaign_forward_violation(c0_bypass).is_some(),
-        "a campaign_received that reads the room mode must be caught"
-    );
-    let c0_gated_forward = "impl S { fn campaign_received(&mut self) { super::cooperative::campaign_received(state, text); if super::dispatch::room_is_cooperative(state) {} } }";
-    assert!(
-        lobby_campaign_forward_violation(c0_gated_forward).is_some(),
-        "a forward also gated on the room mode must be caught"
-    );
-    let c0_missing =
-        "impl S { fn campaign(&mut self) { super::cooperative::campaign_received(state, text); } }";
-    assert!(
-        lobby_campaign_forward_violation(c0_missing).is_some(),
-        "a missing forwarder must be caught"
-    );
-    let cooperative_first = "fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner { event_owner(event, peer_mode(state), room_mode_class(state), super::cooperative::handles_mode, super::vmce_setup::handles_mode) }";
+    let cooperative_first = "fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner { live_owner_for(event, peer_mode(state), room_mode_class(state)) } fn live_owner_for(event: SetupModeEvent, peer: PeerMode, room: Option<MpModeClass>) -> EventOwner { event_owner(event, peer, room, super::cooperative::handles_mode, super::vmce_setup::handles_mode) } fn event_owner() -> EventOwner { if extension(mode) { EventOwner::Extension } else if cooperative(mode) { EventOwner::Cooperative } else { EventOwner::Other } } fn room_is_cooperative(state: &AppState) -> bool { let _ = super::vmce_setup::handles_mode; super::cooperative::handles_mode }";
     assert!(
         lobby_extension_first_violation(cooperative_first).is_some(),
         "Cooperative asked first must be caught"
     );
-    let event_owner_cooperative_first = "impl S { fn event_owner(event: SetupModeEvent, mode: Option<MpModeClass>) -> EventOwner { if cooperative(mode) { EventOwner::Cooperative } else if extension(mode) { EventOwner::Extension } else { EventOwner::Other } } fn live_owner(state: &AppState) -> EventOwner { let _ = super::vmce_setup::handles_mode; let _ = super::cooperative::handles_mode; EventOwner::Other } fn room_is_cooperative(state: &AppState) -> bool { let _ = super::vmce_setup::handles_mode; super::cooperative::handles_mode } }";
+    let event_owner_cooperative_first = "impl S { fn event_owner(event: SetupModeEvent, mode: Option<MpModeClass>) -> EventOwner { if cooperative(mode) { EventOwner::Cooperative } else if extension(mode) { EventOwner::Extension } else { EventOwner::Other } } fn live_owner(state: &AppState) -> EventOwner { live_owner_for(event, peer, room) } fn live_owner_for(event: SetupModeEvent, peer: PeerMode, room: Option<MpModeClass>) -> EventOwner { let _ = super::vmce_setup::handles_mode; let _ = super::cooperative::handles_mode; EventOwner::Other } fn room_is_cooperative(state: &AppState) -> bool { let _ = super::vmce_setup::handles_mode; super::cooperative::handles_mode } }";
     assert!(
         lobby_extension_first_violation(event_owner_cooperative_first).is_some(),
         "event_owner checking Cooperative first must be caught"
     );
-    let predicates_missing = "fn live_owner(state: &AppState) -> EventOwner { EventOwner::Other } fn event_owner() -> EventOwner { EventOwner::Other } fn room_is_cooperative() -> bool { false }";
+    let predicates_missing = "fn live_owner(state: &AppState) -> EventOwner { live_owner_for(event, peer, room) } fn live_owner_for() -> EventOwner { EventOwner::Other } fn event_owner() -> EventOwner { EventOwner::Other } fn room_is_cooperative() -> bool { false }";
     assert!(
         lobby_extension_first_violation(predicates_missing).is_some(),
         "a missing extension-first predicate pair must be caught"
@@ -5757,6 +5938,16 @@ fn lobby_mode_events_dispatch_before_the_cooperative_owner() {
     let cooperative = production("app/shell_network_setup/cooperative.rs");
     assert!(!cooperative.contains("peer_mode_cooperative"));
     assert!(!cooperative.contains("fn current("));
+    assert_eq!(
+        cooperative_campaign_publish_violation(&cooperative),
+        None,
+        "Cooperative's C0 publisher must require the admitted Cooperative room"
+    );
+    let unconditional_publish = "impl S { fn publish(&mut self) { super::actions::queue(state, NetworkSetupRequest::PublishCooperativeCampaign(text)); } }";
+    assert!(
+        cooperative_campaign_publish_violation(unconditional_publish).is_some(),
+        "an unconditional Cooperative C0 publication must be caught"
+    );
     let handler_mode_tests = cooperative_handler_mode_tests(&cooperative);
     assert!(
         handler_mode_tests.is_empty(),
@@ -5784,6 +5975,10 @@ fn lobby_mode_events_dispatch_before_the_cooperative_owner() {
         (
             "app/shell_network_setup/service.rs",
             "dispatch::campaign_received",
+        ),
+        (
+            "app/shell_network_setup/service.rs",
+            "dispatch::campaign_options_applied",
         ),
         (
             "app/shell_network_setup/service.rs",

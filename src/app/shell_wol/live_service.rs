@@ -2217,8 +2217,12 @@ fn request_setup(
         }
         // +0x60's C0 rides in the options (`cooperative_campaign`), so its
         // publish is one of them; the loop drops it when its batch already
-        // publishes options or starts.
+        // publishes options or starts. A mode change away from Cooperative
+        // retires a queued text: only the admitted Cooperative room owns one.
         NetworkSetupRequest::PublishCooperativeCampaign(_) => {
+            if !crate::app::shell_network_setup::room_is_cooperative(state) {
+                return Ok(());
+            }
             service.command("options", json!({"options":options(state)?}));
         }
         // RESIDUAL: mode+64's C1 (0x005C2710) is not carried, as on LAN:
@@ -4311,7 +4315,12 @@ mod completion_tests {
 
     #[test]
     fn a_cooperative_campaign_reaches_the_guest_ahead_of_the_options_it_rides_in() {
-        let launch = setup_session().network_setup().unwrap().clone();
+        let mut launch = setup_session().network_setup().unwrap().clone();
+        let cooperative_mode = crate::skirmish_modes::stock_skirmish_modes()
+            .into_iter()
+            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Cooperative)
+            .expect("stock Cooperative mode");
+        launch.mode = crate::skirmish_launch::SkirmishLaunchMode::from_game_mode(&cooperative_mode);
         let mut value = json!({
             "launch": launch,
             "map_metadata": {"display_name": "Map", "player_capacity": 2, "official": true,
@@ -4332,7 +4341,8 @@ mod completion_tests {
             [NetworkSetupEvent::HostSetup(_)]
         ));
         // The native host sends its C0 ahead of the options (+0x94 at the
-        // join accept 0x007A6E5A), so the guest applies it first.
+        // join accept 0x007A6E5A), so the guest applies it first. The
+        // payload's own mode owns it.
         let text = "C0,0,0,0,0,0,0,0,0,0,0,0,1,2,-1,Host,Guest";
         value["cooperative_campaign"] = json!(text);
         let cooperative: wire::Options = serde_json::from_value(value).unwrap();
@@ -4340,7 +4350,12 @@ mod completion_tests {
         assert!(matches!(
             events.as_slice(),
             [
-                NetworkSetupEvent::CooperativeCampaign(campaign),
+                NetworkSetupEvent::CooperativeCampaign {
+                    text: campaign,
+                    origin: crate::app::shell_network_setup::CampaignOrigin::Options(
+                        crate::skirmish_modes::MpModeClass::Cooperative,
+                    ),
+                },
                 NetworkSetupEvent::HostSetup(options),
             ] if campaign == text && options.launch.local_player_index == 1
         ));

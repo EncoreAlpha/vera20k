@@ -12,14 +12,15 @@
 //! event owner. One received message is not a mode-dispatched event at all:
 //! Cooperative's campaign text (`C0`) is named by its own `'C'` arm
 //! (`0x005E43CE`), which dispatches to every mode object's `+0x58` and only
-//! MPCooperative takes. That text is forwarded to Cooperative directly in
-//! [`campaign_received`], even when this peer has not applied the Cooperative
-//! `HostSetup` yet (a WOL guest's host options arrive later), so an early `C0`
-//! is not dropped. VERA's room, host, roster, admission, network and reliable
-//! queue stay in the shared setup; this is a mode-event split, not a plugin
-//! framework.
+//! MPCooperative takes. [`campaign_received`] therefore resolves the text's
+//! own setup identity (the WOL options payload's mode, or the LAN setup scope
+//! it followed) through [`lobby_campaign`], so an early Cooperative text is
+//! kept while a stale or non-Cooperative one never enters Cooperative's
+//! state. VERA's room, host, roster, admission, network and reliable queue stay
+//! in the shared setup; this is a mode-event split, not a plugin framework.
 
 use crate::app::AppState;
+use crate::net::lan_messages::SessionScope;
 use crate::skirmish_launch::SkirmishHumanSlot;
 use crate::skirmish_modes::MpModeClass;
 
@@ -140,21 +141,29 @@ fn mode_class(state: &AppState, mode_id: i32) -> Option<MpModeClass> {
         .map(|mode| mode.class)
 }
 
-/// The owner for one event of the live setup visit.
-fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner {
+/// The owner for one event of the live setup visit, resolved by the production
+/// mode predicates. Split from [`live_owner`] so the chooser/room boundary can
+/// be exercised without a window or GPU; the handlers still receive the
+/// result through the same table.
+fn live_owner_for(event: SetupModeEvent, peer: PeerMode, room: Option<MpModeClass>) -> EventOwner {
     event_owner(
         event,
-        peer_mode(state),
-        room_mode_class(state),
+        peer,
+        room,
         super::vmce_setup::handles_mode,
         super::cooperative::handles_mode,
     )
 }
 
+/// The owner for one event of the live setup visit.
+fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner {
+    live_owner_for(event, peer_mode(state), room_mode_class(state))
+}
+
 /// Whether the admitted room itself is Cooperative (the slots that read
 /// `[0xA8B23C]`, not Choose Map's selection). The extension predicate runs
 /// first, so a VMCE room never evaluates Cooperative's owner predicate.
-pub(super) fn room_is_cooperative(state: &AppState) -> bool {
+pub(crate) fn room_is_cooperative(state: &AppState) -> bool {
     let mode = room_mode_class(state);
     if super::vmce_setup::handles_mode(mode) {
         false
@@ -242,12 +251,78 @@ pub(super) fn choice_countries(
     }
 }
 
-/// A received Cooperative campaign `C0` text: its `'C'` arm (`0x005E43CE`)
-/// names Cooperative's mode object itself, so it reaches Cooperative's slot
-/// even when this guest has not applied the Cooperative `HostSetup` yet (WOL
-/// host options arrive later); no mode the guest currently holds is consulted.
-pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Result<()> {
-    super::cooperative::campaign_received(state, text)
+/// A received Cooperative campaign `C0` text. The text's own setup identity
+/// decides its owner: a WOL payload's mode, or the LAN setup scope it followed.
+/// An early Cooperative text is held for the HostSetup that brings the mode;
+/// a superseded or non-Cooperative text is discarded. The room mode this guest
+/// currently holds is not the owner.
+pub(super) fn campaign_received(
+    state: &mut AppState,
+    text: &str,
+    origin: &super::CampaignOrigin,
+) -> anyhow::Result<()> {
+    super::lobby_campaign::deliver(&mut AppCampaignVisit { state }, origin, text)
+}
+
+/// A HostSetup transaction committed. The applied setup revision now decides
+/// every held campaign text: a Cooperative setup applies those published
+/// before it (in revision order), a non-Cooperative one discards them.
+pub(super) fn campaign_options_applied(state: &mut AppState) -> anyhow::Result<()> {
+    super::lobby_campaign::options_applied(&mut AppCampaignVisit { state })
+}
+
+/// The setup owners the campaign mailbox reaches in production. The trait's
+/// methods are the same setup facts and Cooperative application the tests'
+/// real-owner fixture uses.
+struct AppCampaignVisit<'a> {
+    state: &'a mut AppState,
+}
+
+impl super::lobby_campaign::CampaignVisit for AppCampaignVisit<'_> {
+    fn setup_scope(&self) -> Option<SessionScope> {
+        self.state
+            .match_state
+            .lan_service
+            .as_ref()
+            .and_then(|service| service.setup_scope())
+    }
+
+    fn room_mode(&self) -> Option<MpModeClass> {
+        room_mode_class(self.state)
+    }
+
+    fn hold_campaign(&mut self, scope: SessionScope, text: String) {
+        if let Some(protocol) = self.state.frontend.network_setup_protocol.as_mut() {
+            protocol.hold_cooperative_campaign(scope, text);
+        }
+    }
+
+    fn take_held_campaigns(&mut self) -> Vec<(SessionScope, String)> {
+        self.state
+            .frontend
+            .network_setup_protocol
+            .as_mut()
+            .map(|protocol| protocol.take_held_cooperative_campaigns())
+            .unwrap_or_default()
+    }
+
+    fn campaign_may_apply(&self, scope: SessionScope, current: SessionScope) -> bool {
+        self.state
+            .frontend
+            .network_setup_protocol
+            .as_ref()
+            .is_some_and(|protocol| protocol.campaign_may_apply(scope, current))
+    }
+
+    fn observe_campaign_setup(&mut self, current: Option<SessionScope>) {
+        if let Some(protocol) = self.state.frontend.network_setup_protocol.as_mut() {
+            protocol.observe_campaign_setup(current);
+        }
+    }
+
+    fn apply_campaign(&mut self, text: &str) -> anyhow::Result<()> {
+        super::cooperative::campaign_received(self.state, text)
+    }
 }
 
 #[cfg(test)]
@@ -257,13 +332,23 @@ mod tests {
     use crate::skirmish_modes::MpModeClass::{Battle, Cooperative, Vmce};
 
     fn owner(event: SetupModeEvent, peer: PeerMode, room: Option<MpModeClass>) -> EventOwner {
-        event_owner(
-            event,
-            peer,
-            room,
-            |mode| mode == Some(Vmce),
-            |mode| mode == Some(Cooperative),
-        )
+        #[cfg(feature = "vmce")]
+        {
+            live_owner_for(event, peer, room)
+        }
+        #[cfg(not(feature = "vmce"))]
+        {
+            // A non-vmce build has no extension mode: its production stub
+            // claims none, so this config's fixture keeps the would-be
+            // extension predicate to still check the chooser/room rule.
+            event_owner(
+                event,
+                peer,
+                room,
+                |mode| mode.is_some_and(|mode| mode.is_vmce()),
+                |mode| mode == Some(Cooperative),
+            )
+        }
     }
 
     #[test]

@@ -708,7 +708,15 @@ impl WolCapture {
             // The native host's C0 reaches the guest before its options
             // (`0x007A7F02`), and those carry the map `+0x20` selected.
             let text = qc_campaign_text(PEER, NICKNAME);
-            setup::service_event(state, NetworkSetupEvent::CooperativeCampaign(text.clone()))?;
+            setup::service_event(
+                state,
+                NetworkSetupEvent::CooperativeCampaign {
+                    text: text.clone(),
+                    origin: setup::CampaignOrigin::options(
+                        crate::skirmish_modes::MpModeClass::Cooperative,
+                    ),
+                },
+            )?;
             self.event(frame, json!({"host C0": text}));
             options.launch.selected_map_file = Some(QC_HOST_MAP.to_owned());
             options.map_metadata =

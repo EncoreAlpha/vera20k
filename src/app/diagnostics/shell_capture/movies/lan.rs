@@ -1112,7 +1112,19 @@ impl LanCapture {
             encode_name(self.human(true)?.name.as_bytes()),
             encode_name(self.human(false)?.name.as_bytes())
         );
-        setup::service_event(state, NetworkSetupEvent::CooperativeCampaign(text.clone()))?;
+        let scope = state
+            .match_state
+            .lan_service
+            .as_ref()
+            .and_then(|service| service.setup_scope())
+            .context("BD has no admitted LAN setup scope")?;
+        setup::service_event(
+            state,
+            NetworkSetupEvent::CooperativeCampaign {
+                text: text.clone(),
+                origin: setup::CampaignOrigin::lan(scope),
+            },
+        )?;
         let view = setup::view(state).context("BD")?;
         let expected = App::csf_label(state, "NAME:COOPDESC21", "NAME:COOPDESC21");
         ensure!(

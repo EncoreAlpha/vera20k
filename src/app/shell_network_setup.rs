@@ -25,6 +25,8 @@ mod dispatch;
 pub(crate) use cooperative::{
     CooperativeResume, chooser_rows as cooperative_chooser_rows, resume as resume_cooperative,
 };
+mod lobby_campaign;
+pub(crate) use lobby_campaign::CampaignOrigin;
 pub(crate) mod maps;
 mod service;
 pub(crate) use service::{
@@ -249,6 +251,9 @@ pub(crate) struct NetworkSetupProtocol {
     balance_due: Option<Instant>,
     balance_sent: bool,
     requests: Vec<NetworkSetupRequest>,
+    /// A LAN `C0` whose setup revision has not been applied yet. WOL carries
+    /// its `C0` in the owning options payload, so it never holds one here.
+    campaigns: lobby_campaign::CampaignInbox,
 }
 
 /// A player's place in VERA's room: its team, and whether it watches.
@@ -476,6 +481,7 @@ impl NetworkSetupProtocol {
             balance_roster: None,
             balance_due: None,
             balance_sent: false,
+            campaigns: lobby_campaign::CampaignInbox::default(),
             requests: if wol_host {
                 // C2 0x497: advertisement 78F000, then one ping per user.
                 vec![
@@ -532,6 +538,47 @@ impl NetworkSetupProtocol {
 
     pub(crate) fn take_service_requests(&mut self) -> Vec<NetworkSetupRequest> {
         std::mem::take(&mut self.requests)
+    }
+
+    /// Hold a LAN `C0` until the HostSetup whose mode owns it is applied.
+    fn hold_cooperative_campaign(
+        &mut self,
+        scope: crate::net::lan_messages::SessionScope,
+        text: String,
+    ) {
+        self.campaigns.hold(scope, text);
+    }
+
+    /// The held texts, oldest revision first, for the HostSetup that just
+    /// committed to resolve.
+    fn take_held_cooperative_campaigns(
+        &mut self,
+    ) -> Vec<(crate::net::lan_messages::SessionScope, String)> {
+        self.campaigns.take()
+    }
+
+    /// Drop held texts and queued `C0` publications: the room left Cooperative
+    /// or is closing.
+    pub(crate) fn discard_cooperative_campaigns(&mut self) {
+        self.campaigns.clear();
+        self.requests.retain(|request| {
+            !matches!(request, NetworkSetupRequest::PublishCooperativeCampaign(_))
+        });
+    }
+
+    /// Whether a LAN text's setup revision still belongs to the current
+    /// Cooperative setup (the previous HostSetup revision is the floor).
+    fn campaign_may_apply(
+        &self,
+        scope: crate::net::lan_messages::SessionScope,
+        current: crate::net::lan_messages::SessionScope,
+    ) -> bool {
+        self.campaigns.may_apply(scope, current)
+    }
+
+    /// The HostSetup at `current` committed; it becomes the next floor.
+    fn observe_campaign_setup(&mut self, current: Option<crate::net::lan_messages::SessionScope>) {
+        self.campaigns.observe_setup(current);
     }
 
     /// Read-only diagnostic view of queued requests; unlike `take_service_requests`,
@@ -634,6 +681,13 @@ impl NetworkSetupProtocol {
     fn drop_preview_offer(&mut self) {
         self.preview_offer = None;
     }
+}
+
+/// The admitted room's mode is Cooperative (`[0xA8B23C]`). The mode dispatch,
+/// the Cooperative campaign publisher and the setup queue cleanups read this
+/// one query instead of naming the mode again.
+pub(crate) fn room_is_cooperative(state: &AppState) -> bool {
+    dispatch::room_is_cooperative(state)
 }
 
 /// The admitted setup is a WOL Quick Match game channel's, with no dialog.
@@ -1071,7 +1125,9 @@ fn install_setup(
                     .network_setup()
                     .is_some_and(|launch| launch.mode.class.is_vmce())
             {
-                Some(crate::app::vmce_campaign::resolve_host_vmce_map_config(state, &file)?)
+                Some(crate::app::vmce_campaign::resolve_host_vmce_map_config(
+                    state, &file,
+                )?)
             } else {
                 None
             };

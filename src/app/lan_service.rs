@@ -379,7 +379,7 @@ impl LanService {
         self.queued_setup_count() == 0
     }
 
-    pub(super) fn setup_scope(&self) -> Option<SessionScope> {
+    pub(crate) fn setup_scope(&self) -> Option<SessionScope> {
         self.setup_scope
     }
 
@@ -2050,6 +2050,28 @@ fn accepts_online_application_packet(payload: &[u8], live: bool, loading: bool) 
                 .is_some_and(|kind| kind == LanMessageKind::Departure.raw().to_le_bytes()))
 }
 
+/// A LAN `C0`'s validated setup identity. The proof names the admitted setup
+/// revision it followed; the event keeps that scope so the campaign owner can
+/// hold an early text or discard a superseded one. An old admission's proof or
+/// a build mismatch never becomes an event.
+fn cooperative_campaign_event(
+    current: Option<SessionScope>,
+    proof: &LanSessionProof,
+    text: String,
+) -> Option<super::shell_network_setup::NetworkSetupEvent> {
+    if !current.is_some_and(|scope| scope.epoch == proof.scope.epoch)
+        || proof.version != super::shell_network_setup::agreement::version()
+    {
+        return None;
+    }
+    Some(
+        super::shell_network_setup::NetworkSetupEvent::CooperativeCampaign {
+            text,
+            origin: super::shell_network_setup::CampaignOrigin::lan(proof.scope),
+        },
+    )
+}
+
 fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::Result<()> {
     anyhow::ensure!(incoming.product_id == 0xaa04, "different LAN product");
     if state
@@ -2358,26 +2380,23 @@ fn receive(state: &mut AppState, incoming: GlobalMessage, now: u32) -> anyhow::R
                     super::shell_network_setup::service_event(state, event)?;
                 } else if text.starts_with(b"C0") {
                     // 0x005E43CE: the host's campaign text. Like player
-                    // choices it names the session, not one options revision.
+                    // choices it names the session, not one options revision:
+                    // the proof's scope is the setup revision it followed, so
+                    // the message keeps that identity instead of being owned by
+                    // whatever mode this guest currently holds.
                     ensure_host_source(state, incoming.source)?;
                     let proof = message
                         .session_proof()?
                         .ok_or_else(|| anyhow::anyhow!("co-op campaign has no LAN scope"))?;
-                    if !state
+                    let current = state
                         .match_state
                         .lan_service
                         .as_ref()
-                        .and_then(|service| service.setup_scope())
-                        .is_some_and(|scope| scope.epoch == proof.scope.epoch)
-                        || proof.version != super::shell_network_setup::agreement::version()
-                    {
-                        return Ok(());
-                    }
+                        .and_then(|service| service.setup_scope());
                     let text = crate::util::native_string::widen_bytes(text);
-                    super::shell_network_setup::service_event(
-                        state,
-                        super::shell_network_setup::NetworkSetupEvent::CooperativeCampaign(text),
-                    )?;
+                    if let Some(event) = cooperative_campaign_event(current, &proof, text) {
+                        super::shell_network_setup::service_event(state, event)?;
+                    }
                 } else {
                     options::receive_options(state, incoming.source, &message)?;
                 }
@@ -4280,6 +4299,21 @@ fn remote_sources(state: &AppState) -> Vec<usize> {
         })
 }
 
+/// A committed non-Cooperative room retires a `C0` its previous mode queued
+/// but has not flushed yet. The same guard runs when the queue is drained; this
+/// releases the slot immediately so a later setup publication is not blocked
+/// behind a request that can never send.
+pub(crate) fn discard_queued_cooperative_campaigns(state: &mut AppState) {
+    if let Some(service) = state.match_state.lan_service.as_mut() {
+        service.deferred_setup.retain(|request| {
+            !matches!(
+                request.request,
+                super::shell_network_setup::NetworkSetupRequest::PublishCooperativeCampaign(_)
+            )
+        });
+    }
+}
+
 fn defer_setup_requests(
     state: &mut AppState,
     requests: impl IntoIterator<Item = super::shell_network_setup::NetworkSetupRequest>,
@@ -4296,6 +4330,18 @@ fn defer_setup_requests(
         })
     });
     for request in requests {
+        // A mode change away from Cooperative retires a `C0` still waiting
+        // behind its publication. Sending it under the new revision would let
+        // a non-Cooperative room's text reach the guest as if it belonged to
+        // the new mode; the receive side also refuses it, but the sender must
+        // not manufacture it.
+        if matches!(
+            &request,
+            super::shell_network_setup::NetworkSetupRequest::PublishCooperativeCampaign(_)
+        ) && !super::shell_network_setup::room_is_cooperative(state)
+        {
+            continue;
+        }
         #[cfg(feature = "vmce")]
         let request_id = vmce_setup::next_request_id(state);
         #[cfg(feature = "vmce")]
@@ -4781,9 +4827,12 @@ fn setup_request(
             short_options(state, if *ready { "A1" } else { "A0" })?
         }
         NetworkSetupRequest::MapStatus(status) => short_options(state, &format!("K{status}"))?,
-        // +0x60's C0 (0x0049D680 through 0x005E3720) to every guest.
+        // +0x60's C0 (0x0049D680 through 0x005E3720) to every guest, only in
+        // the admitted Cooperative room.
         NetworkSetupRequest::PublishCooperativeCampaign(text) => {
-            if remote_sources(state).is_empty() {
+            if remote_sources(state).is_empty()
+                || !super::shell_network_setup::room_is_cooperative(state)
+            {
                 return Ok(true);
             }
             short_options(state, text)?
@@ -5240,6 +5289,58 @@ pub(crate) fn loading_test_pair() -> (
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A received `C0` keeps the proof's setup scope as its owner. A different
+    /// admission epoch or build never produces an event, so those texts cannot
+    /// reach Cooperative's state at all.
+    #[test]
+    fn a_received_campaign_keeps_its_setup_scope() {
+        let proof = LanSessionProof {
+            scope: SessionScope {
+                epoch: [7; 16],
+                revision: 3,
+            },
+            join_nonce: [1; 16],
+            admission_nonce: [2; 16],
+            version: super::super::shell_network_setup::agreement::version(),
+            rules_digest: String::new(),
+        };
+        let text = "C0,0,0,0,0,0,0,0,0,0,0,0,0,-1,Host,Guest".to_owned();
+        let event = cooperative_campaign_event(Some(proof.scope), &proof, text.clone())
+            .expect("the admitted scope owns the campaign");
+        match event {
+            super::super::shell_network_setup::NetworkSetupEvent::CooperativeCampaign {
+                text: received,
+                origin,
+            } => {
+                assert_eq!(received, text);
+                assert_eq!(
+                    origin,
+                    super::super::shell_network_setup::CampaignOrigin::lan(proof.scope)
+                );
+            }
+            _ => panic!("the campaign event changed its variant"),
+        }
+        assert!(
+            cooperative_campaign_event(
+                Some(SessionScope {
+                    epoch: [8; 16],
+                    ..proof.scope
+                }),
+                &proof,
+                text.clone(),
+            )
+            .is_none(),
+            "another admission's text does not become an event"
+        );
+        let scope = proof.scope;
+        let mut other_build = proof;
+        other_build.version.push_str("-other");
+        assert!(
+            cooperative_campaign_event(Some(scope), &other_build, text).is_none(),
+            "a build mismatch does not become an event"
+        );
+    }
     use crate::app::match_runtime::session::{MatchSession, NetworkReturnContext};
     use crate::sim::{house_state::HouseState, world::Simulation};
 

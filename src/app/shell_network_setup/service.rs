@@ -57,8 +57,12 @@ pub(crate) enum NetworkSetupEvent {
         reason = "the network transport, outside this change, delivers these packets"
     )]
     CooperativeAssignments(Vec<[[i32; 2]; 8]>),
-    /// The host's `C0` campaign text (packet `0x17` at `+0x2F`).
-    CooperativeCampaign(String),
+    /// A received `C0`: the host's campaign text (LAN packet `0x17` at
+    /// `+0x2F`, or WOL's options field) with the setup identity that owns it.
+    CooperativeCampaign {
+        text: String,
+        origin: CampaignOrigin,
+    },
     HostGo {
         agreed_seed: u32,
         max_ahead_frames: i32,
@@ -615,6 +619,11 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 .match_state
                 .session
                 .accept_network_vmce_map_config(vmce_map_config)?;
+            // A LAN `C0` can overtake the HostSetup whose mode owns it. The
+            // whole setup revision is now accepted, so hand the held text to
+            // Cooperative before the mode entry refreshes the setup; a
+            // non-Cooperative setup discards it instead.
+            super::dispatch::campaign_options_applied(state)?;
             if !dialog.host {
                 tell_moved(state, mode_changed);
             }
@@ -911,18 +920,17 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
         NetworkSetupEvent::PreviewFileReceived { transferred_file } => {
             preview_file_received(state, transferred_file)?;
         }
-        NetworkSetupEvent::CooperativeCampaign(text) => {
+        NetworkSetupEvent::CooperativeCampaign { text, origin } => {
             // The 'C' arm (0x005E43CE) follows the parse's WOL drop of every
-            // option text (0x005E3E73..0x005E3E90), as HostSetup does. A WOL
-            // guest's host options ('L', 0x5E8EA0) arrive later, so C0 can be
-            // read before the HostSetup that brings Cooperative; dispatch
-            // routes it by the message's own mode object, not the room mode.
+            // option text (0x005E3E73..0x005E3E90), as HostSetup does. The
+            // message's own setup identity, not this guest's current mode,
+            // decides whether it is Cooperative's.
             if dialog.wol()
                 && (crate::app::shell_wol::in_match(state) || super::wol::start_pending(state))
             {
                 return Ok(());
             }
-            super::dispatch::campaign_received(state, &text)?;
+            super::dispatch::campaign_received(state, &text, &origin)?;
         }
         NetworkSetupEvent::StartStaging(text) => {
             // The 'W' arm is not gated on role or map type; a string short
@@ -1015,6 +1023,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             }
         }
         NetworkSetupEvent::HostLeft => {
+            // The room closes with its mode: no held `C0` may outlive it.
+            if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                protocol.discard_cooperative_campaigns();
+            }
             // The setup closes: only Cooperative +0x90's last step, the
             // names, matters.
             if state
@@ -1038,6 +1050,9 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             );
         }
         NetworkSetupEvent::Kicked => {
+            if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
+                protocol.discard_cooperative_campaigns();
+            }
             crate::app::shell_lan::report_error(state, "TXT_REQUEST_DENIED");
             App::leave_shell_dialog(
                 state,

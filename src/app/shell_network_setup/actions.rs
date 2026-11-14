@@ -985,6 +985,10 @@ pub(crate) fn commit_map_selection(
         .multiplayer_shell_runtime
         .set_preferred_game_mode(mode_id);
     state.frontend.skirmish_preview_texture = None;
+    // A committed non-Cooperative room has no campaign text to publish. A C0
+    // queued before this commit still carries the old room identity; retire it
+    // before the new options revision can send it.
+    let cooperative = super::room_is_cooperative(state);
     if let Some(protocol) = state.frontend.network_setup_protocol.as_mut() {
         protocol.invalidate_received_preview(map_changed);
         #[cfg(feature = "vmce")]
@@ -995,6 +999,12 @@ pub(crate) fn commit_map_selection(
         if vmce_lan_material_changed {
             protocol.start_requested = false;
         }
+        if !cooperative {
+            protocol.discard_cooperative_campaigns();
+        }
+    }
+    if !cooperative {
+        crate::app::lan_service::discard_queued_cooperative_campaigns(state);
     }
     if super::dialog(state).wol() {
         // VERA's role map changed with a mode change even if the same file
