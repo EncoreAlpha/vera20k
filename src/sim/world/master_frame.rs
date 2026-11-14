@@ -315,8 +315,9 @@ impl Simulation {
             FrameStep::Triggers => {
                 // Ares LogicClass_Update_1000 100680F0 heads Logic55AFB0
                 // (hook 0x55AFB3), before its trigger poll.
-                #[cfg(feature = "ares")]
-                self.ares_make_stuff_up_logic(rules);
+                if rules.ares() {
+                    self.ares_make_stuff_up_logic(rules);
+                }
                 if request.poll_triggers {
                     self.poll_triggers_for_master_frame(rules, overlay_registry, effects);
                 }
@@ -454,6 +455,12 @@ impl Simulation {
                 frame.bridge_state_changed |=
                     self.update_ion_blasts(rules, overlay_registry, effects);
                 self.alpha_shapes.purge_disabled();
+                // Ares' `ObjectClass_Update_AlphaLight` (`0x005F3E70`) places
+                // each surviving glow from its object's live GetCoords ahead
+                // of the Tactical's draw.
+                if rules.ares() {
+                    self.update_alpha_shape_screens(rules);
+                }
             }
             FrameStep::CrateRegen => {
                 // Called between `AlphaShapeClass::PurgeDisabled` and the
@@ -512,8 +519,9 @@ impl Simulation {
                 // visit, so every factory observes the wallet after that
                 // object's repair. The tank-bunker install runs in the
                 // bunker's Repair mission.
-                #[cfg(feature = "ares")]
-                self.ares_refresh_temporal_factories(rules, effects);
+                if rules.ares() {
+                    self.ares_refresh_temporal_factories(rules, effects);
+                }
                 production::step_factories(self);
                 #[cfg(any(test, feature = "test-support"))]
                 self.trace_house_ai_activation_order(
@@ -1119,8 +1127,8 @@ impl Simulation {
         frame_clock: Option<crate::sim::frame_profile::FrameClock>,
     ) -> MasterFrameOutput {
         let tick_ms = inputs.tick_ms;
-        // A MindControl shot changes an existing SHP's house-colour key.
-        // Publish the atlas invalidation before the next draw, even with no spawn.
+        // An owner change outside the object pass (a MindControl shot)
+        // reaches the tick's report too.
         frame.ownership_changed |= std::mem::take(&mut self.ownership_changed_since_output);
         let frame_committed = if let FrameTailResult::Complete(committed) = result {
             committed

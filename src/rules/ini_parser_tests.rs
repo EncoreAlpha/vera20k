@@ -464,12 +464,22 @@ fn external_config_parser_keeps_explicit_empty_values_out_of_reader_view() {
     assert_eq!(a.get_for_test("Value"), Some("1"));
     assert!(!a.is_present("Name"));
     assert!(a.has_explicit_empty_value("Name"));
-    let b = preserving.section("B").expect("empty-only section survives");
+    let b = preserving
+        .section("B")
+        .expect("empty-only section survives");
     assert!(b.has_explicit_empty_value("Only"));
     assert_eq!(b.entry_count(), 0);
 
     let ordinary = IniFile::from_str(text);
-    assert!(ordinary.section("B").is_none(), "native loader drops empty-only sections");
+    assert!(
+        ordinary.section("B").is_none(),
+        "native loader drops empty-only sections"
+    );
     assert!(!ordinary.section("A").unwrap().is_present("Name"));
-    assert!(!ordinary.section("A").unwrap().has_explicit_empty_value("Name"));
+    assert!(
+        !ordinary
+            .section("A")
+            .unwrap()
+            .has_explicit_empty_value("Name")
+    );
 }

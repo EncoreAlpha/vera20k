@@ -89,6 +89,7 @@ pub(crate) mod movie_subtitles;
 mod network_goodbye;
 pub(crate) mod persistence;
 /// The build description's native version metadata (`Phobos.version.h`).
+pub(crate) mod os_clipboard;
 pub(crate) mod phobos_version;
 pub(crate) mod presentation;
 pub(crate) mod process_assets;

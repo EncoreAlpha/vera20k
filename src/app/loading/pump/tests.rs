@@ -470,6 +470,7 @@ fn generated_preview_with_starts(
         start_waypoints: starts.to_vec(),
         stages_run: Vec::new(),
         unfilled_start_slots: 0,
+        fairness: None,
     }
 }
 
@@ -807,6 +808,8 @@ fn loading_preparation_consumes_real_source_and_returns_lease_on_initial_and_adm
         )
         .unwrap();
     }
+    // Still on the feature: this test opens no scope, so its owner reads the
+    // Ares way only in a build with it (`ares_switch::reading_mode`).
     #[cfg(feature = "ares")]
     {
         retail_assets.register_loading_archives().unwrap();
@@ -905,9 +908,9 @@ fn loading_preparation_consumes_real_source_and_returns_lease_on_initial_and_adm
     }
 }
 
-#[cfg(feature = "ares")]
 #[test]
 fn loading_rows_draw_their_own_country_insignia_file() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
     let rules =
         crate::rules::ruleset::RuleSet::from_ini(&crate::rules::ini_parser::IniFile::from_str(
             "[Countries]\n0=Americans\n1=Custom\n[Custom]\nFile.Flag=MyFlag.PCX\n",
@@ -1834,6 +1837,7 @@ fn gsi_04_12_stock_ffa_preview_can_only_supply_loading_fallback_pixels() {
         start_waypoints: vec![(0, 70, 70), (1, 90, 70), (2, 70, 90)],
         stages_run: Vec::new(),
         unfilled_start_slots: 0,
+        fairness: None,
     };
     let _request =
         LoadingRequest::unverified_legacy_skirmish(launch.clone(), unverified_seed(0x4567))

@@ -741,7 +741,6 @@ impl Simulation {
         // map-read continuation. This is independent of Rust stable handles.
         self.native_unique_ids.hash(hasher);
         self.hash_type_tech_levels(hasher);
-        #[cfg(feature = "ares")]
         if let Some(made_up) = self.ares_made_up_rules.as_ref() {
             b"ares-made-up-rules-v1".hash(hasher);
             made_up.hash(hasher);
@@ -785,7 +784,6 @@ impl Simulation {
         // length delimiter distinguishes queue boundaries before the ordered
         // IDs are folded (duplicates are intentionally preserved here).
         self.substrate.pending_delete.hash_state(hasher);
-        #[cfg(feature = "ares")]
         if !self.substrate.ares_temporal_factory_refresh().is_empty() {
             b"ares-temporal-factory-refresh-v1".hash(hasher);
             self.substrate.ares_temporal_factory_refresh().hash(hasher);
@@ -1104,7 +1102,6 @@ impl Simulation {
             projectile.collision().elasticity_bits.hash(hasher);
             projectile.on_bridge().hash(hasher);
             projectile.collision().arcing.hash(hasher);
-            #[cfg(feature = "ares")]
             if projectile.collision().subject_to_solid {
                 b"ares-bullet-subject-to-solid-v1".hash(hasher);
             }
@@ -1117,7 +1114,6 @@ impl Simulation {
                 b"phobos-bullet-firer-house-v1".hash(hasher);
                 house.index().hash(hasher);
             }
-            #[cfg(feature = "ares")]
             if let Some(sw_type) = projectile.ares_nuke_sw() {
                 b"ares-bullet-nuke-sw-v1".hash(hasher);
                 self.interner.resolve(sw_type).hash(hasher);
@@ -1227,7 +1223,6 @@ impl Simulation {
     fn hash_houses(&self, hasher: &mut impl Hasher) {
         for (owner, house) in &self.houses {
             owner.hash(hasher);
-            #[cfg(feature = "ares")]
             if !house.permanent_factory_plans().is_empty() {
                 b"ares-permanent-factory-plans-v1".hash(hasher);
                 house.permanent_factory_plans().hash(hasher);
@@ -1253,8 +1248,7 @@ impl Simulation {
                 b"house-credits-earned-v1".hash(hasher);
                 credits_earned.hash(hasher);
             }
-            // Ares builds' tiberium stores, once any holds tiberium.
-            #[cfg(feature = "ares")]
+            // Ares' tiberium stores, once any holds tiberium.
             house.economy().ares_storage().hash_retained(hasher);
             // House504080/503040 preserves the kill, loss and built totals
             // through native load. The retained-ship chain needs both its
@@ -1607,11 +1601,8 @@ impl Simulation {
     /// Hash per-house superweapon state and active lightning storm.
     fn hash_super_weapons(&self, hasher: &mut impl Hasher) {
         self.unit_deliveries.hash_state(hasher);
-        #[cfg(feature = "ares")]
         self.ares_chrono_warps.hash_state(hasher);
-        #[cfg(feature = "ares")]
         self.ares_firestorm.hash_state(hasher);
-        #[cfg(feature = "ares")]
         self.ares_tunnels.hash_state(hasher);
         for (owner, weapons) in self.super_weapons.iter() {
             owner.hash(hasher);
@@ -1814,7 +1805,12 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
     // All three drive future wallet writes, so a divergence here
     // desyncs credits; every object carries them.
     entity.produce_cash.timer().hash(hasher);
-    entity.produce_cash.hash_ares_upgrade_timers(hasher);
+    // Ares' upgrade timers fold once any was started, so other buildings
+    // hash as earlier schemas did.
+    if entity.ares.cash_upgrade_timers != <[crate::sim::timer::CdTimer; 3]>::default() {
+        b"ares-produce-cash-upgrades-v1".hash(hasher);
+        entity.ares.cash_upgrade_timers.hash(hasher);
+    }
     entity.drain.target().hash(hasher);
     entity.drain.draining_me().hash(hasher);
     // ParasiteClass (Foot+69C) of dogs and drones, the victim's
@@ -1860,7 +1856,6 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         production.hash(hasher);
     }
     // Ares BuildingExt+0x50: only GenerateOnCapture rolls a placed lab again.
-    #[cfg(feature = "ares")]
     if entity.ares_secret_lab_placed() {
         b"ares-secret-lab-placed-v1".hash(hasher);
     }
@@ -1930,6 +1925,10 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         b"naval-tracking-eligibility-v1".hash(hasher);
     }
     entity.tracking_facts.hash_retained_inputs(hasher);
+    if let Some(multiplier) = entity.ares.factory_plant_multiplier {
+        b"ares-plant-multiplier-v1".hash(hasher);
+        multiplier.hash(hasher);
+    }
     if latches != Default::default() {
         b"house-tracking-infantry-latches-v1".hash(hasher);
         latches.hash(hasher);
@@ -2011,6 +2010,10 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         b"unit-firing-counter-v1".hash(hasher);
         entity.unit_firing_counter.hash(hasher);
     }
+    if entity.unit_death_counter.running() {
+        b"unit-death-counter-v1".hash(hasher);
+        entity.unit_death_counter.hash(hasher);
+    }
     if !entity.building.tesla_charge.is_default() {
         b"building-tesla-charge-v1".hash(hasher);
         entity.building.tesla_charge.hash(hasher);
@@ -2050,11 +2053,9 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
     {
         b"building-online-latch-off-v1".hash(hasher);
     }
-    #[cfg(feature = "ares")]
     if entity.building.building_online.ares_toggled_off() {
         b"ares-building-toggled-off-v1".hash(hasher);
     }
-    #[cfg(feature = "ares")]
     if entity.building_art.free_units_done() {
         b"ares-building-free-units-done-v1".hash(hasher);
     }
@@ -2083,12 +2084,10 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         b"ares-super-target-v1".hash(hasher);
         target.hash(hasher);
     }
-    #[cfg(feature = "ares")]
     if let Some(pod) = entity.ares_drop_pod() {
         b"ares-drop-pod-v1".hash(hasher);
         pod.hash(hasher);
     }
-    #[cfg(feature = "ares")]
     if let Some(alt) = entity.ares_alt_occupation() {
         b"ares-alt-occupation-v1".hash(hasher);
         alt.hash(hasher);
@@ -2102,47 +2101,38 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         b"techno-deactivated-v1".hash(hasher);
     }
     entity.hash_emp_state(hasher);
-    #[cfg(feature = "ares")]
-    if let Some(source) = entity.powered_by {
+    if let Some(source) = entity.ares.powered_by {
         b"ares-powered-by-v1".hash(hasher);
         source.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if !entity.radar_jam.is_default() {
+    if !entity.ares.radar_jam.is_default() {
         b"ares-radar-jam-v1".hash(hasher);
-        entity.radar_jam.hash(hasher);
+        entity.ares.radar_jam.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if !entity.sensor_array_counter.is_zero() {
+    if !entity.ares.sensor_array_counter.is_zero() {
         b"ares-sensor-array-counter-v1".hash(hasher);
-        entity.sensor_array_counter.hash(hasher);
+        entity.ares.sensor_array_counter.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if !entity.ares_dock_reload_timers.is_empty() {
+    if !entity.ares.ares_dock_reload_timers.is_empty() {
         b"ares-dock-reload-timers-v1".hash(hasher);
-        entity.ares_dock_reload_timers.hash(hasher);
+        entity.ares.ares_dock_reload_timers.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if !entity.ares_firestorm_wall.is_zero() {
+    if !entity.ares.ares_firestorm_wall.is_zero() {
         b"ares-firestorm-wall-frame-v1".hash(hasher);
-        entity.ares_firestorm_wall.hash(hasher);
+        entity.ares.ares_firestorm_wall.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if entity.sonar_timer != crate::sim::timer::CdTimer::default() {
+    if entity.ares.sonar_timer != crate::sim::timer::CdTimer::default() {
         b"ares-sonar-timer-v1".hash(hasher);
-        entity.sonar_timer.hash(hasher);
+        entity.ares.sonar_timer.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if entity.ares_disable_weapons != crate::sim::timer::CdTimer::default() {
+    if entity.ares.ares_disable_weapons != crate::sim::timer::CdTimer::default() {
         b"ares-disable-weapons-timer-v1".hash(hasher);
-        entity.ares_disable_weapons.hash(hasher);
+        entity.ares.ares_disable_weapons.hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if entity.ares_self_heal_combat != crate::sim::timer::CdTimer::default() {
+    if entity.ares.ares_self_heal_combat != crate::sim::timer::CdTimer::default() {
         b"ares-self-heal-combat-timer-v1".hash(hasher);
-        entity.ares_self_heal_combat.hash(hasher);
+        entity.ares.ares_self_heal_combat.hash(hasher);
     }
-    #[cfg(feature = "ares")]
     entity.hash_attach_effects(hasher);
     #[cfg(feature = "phobos")]
     entity.hash_phobos_attach_effects(hasher);
@@ -2158,12 +2148,10 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         animation.finished().hash(hasher);
     }
     entity.owner().hash(hasher);
-    #[cfg(feature = "ares")]
     if let Some(country) = entity.original_factory_country() {
         b"ares-original-factory-country-v1".hash(hasher);
         country.hash(hasher);
     }
-    #[cfg(feature = "ares")]
     if entity.ares_wave_weapon_slot() != 0 {
         b"ares-wave-weapon-slot-v1".hash(hasher);
         entity.ares_wave_weapon_slot().hash(hasher);
@@ -2184,7 +2172,6 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
     let foundation = entity.type_facts.foundation();
     match foundation {
         crate::rules::foundation::Foundation::Stock(_) => foundation.name().hash(hasher),
-        #[cfg(feature = "ares")]
         _ => foundation.hash(hasher),
     }
     entity.type_facts.building_hidden_occupancy().hash(hasher);
@@ -2209,10 +2196,9 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
     // the MegaMission event's flash read the current player, so lockstep
     // peers hold different values, and no gameplay decision reads it.
     entity.crate_multipliers.crate_armor().bits().hash(hasher);
-    #[cfg(feature = "ares")]
-    if entity.crate_multipliers.armor() != entity.crate_multipliers.crate_armor() {
+    if entity.armor_multiplier() != entity.crate_multipliers.crate_armor() {
         b"attached-armor-v1".hash(hasher);
-        entity.crate_multipliers.armor().bits().hash(hasher);
+        entity.armor_multiplier().bits().hash(hasher);
     }
     // Folded only once a Firepower crate changed it, so the legacy
     // hash stream of every untouched object is preserved.
@@ -2224,10 +2210,9 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
             .bits()
             .hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    if entity.crate_multipliers.firepower() != entity.crate_multipliers.crate_firepower() {
+    if entity.firepower_multiplier() != entity.crate_multipliers.crate_firepower() {
         b"attached-firepower-v1".hash(hasher);
-        entity.crate_multipliers.firepower().bits().hash(hasher);
+        entity.firepower_multiplier().bits().hash(hasher);
     }
     entity.berserk.hash(hasher);
     entity.ai_sell_repair.was_attacked_by_enemy().hash(hasher);
@@ -2376,8 +2361,11 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
     entity.building.building_light.light().hash(hasher);
     entity.low_bridge_tube_state.hash(hasher);
     entity.stealth_ability.granted().hash(hasher);
-    #[cfg(feature = "ares")]
-    entity.stealth_ability.attached().hash(hasher);
+    // The Ares attached cloak, folded only while set, so a stock game's
+    // stream stays as it was.
+    if entity.cloak_attached() {
+        b"ares-attached-stealth-v1".hash(hasher);
+    }
     if let Some(cloak) = entity.cloak.as_ref() {
         1u8.hash(hasher);
         cloak.state().hash(hasher);
@@ -2421,8 +2409,7 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         b"prism-support-count-v1".hash(hasher);
         entity.building.prism_support_count.count().hash(hasher);
     }
-    #[cfg(feature = "ares")]
-    entity.ares_prism.hash_state(hasher);
+    entity.ares.ares_prism.hash_state(hasher);
     // One native weapon owner replaces last-shot/transport copies.
     // The turret index and saved charge duration only drive drawing.
     entity.current_weapon_number().hash(hasher);
@@ -2450,13 +2437,11 @@ fn hash_entity_owed(entity: &GameEntity, frame: u32, owed_visits: u32, hasher: &
         }
         None => false.hash(hasher),
     }
-    #[cfg(feature = "ares")]
-    entity.display_production_to.hash_state(hasher);
+    entity.ares.display_production_to.hash_state(hasher);
     entity.idle_wander.hash_state(hasher);
-    #[cfg(feature = "ares")]
-    entity.ares_raid.hash_state(hasher);
-    #[cfg(feature = "ares")]
+    entity.ares.ares_raid.hash_state(hasher);
     entity
+        .ares
         .ares_initial_payload
         .hash_state(entity.category(), hasher);
     entity.bunker.occupant().hash(hasher);
@@ -3084,9 +3069,9 @@ mod lifecycle_hash_tests {
         assert_ne!(before, sim.state_hash());
     }
 
-    #[cfg(feature = "ares")]
     #[test]
     fn custom_foundation_geometry_changes_state_hash_despite_equal_names() {
+        let _ares = crate::rules::ares_switch::read_ares_way(true);
         let rows = crate::rules::foundation::custom_tests::native_rows();
         let first = crate::rules::foundation::custom_tests::rules(&rows[0])
             .object("CUSTOM_TEST")
