@@ -15,9 +15,21 @@ lang: zh-CN
 3. 阶段 3 首个子链“结算统计所有权分离”：已完成，等待用户审查。VMCE 的结算统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 VERA 的 House 统计事实。
 4. 阶段 3 第二个子链“大厅加入、退出及相关模式事件分派”：验收修复已完成，等待用户审查。共享大厅按原生模式选择分派模式事件，VMCE 事件进入自己的大厅槽位，不再调用 Cooperative 专属入口；选图窗口打开时按窗口选中模式处理的语义保持不变；C0 按消息自身的安装身份归属，早到文本暂存到其 HostSetup，旧/非 Cooperative 文本不进入 Cooperative 状态。
 5. 下一步（阶段 3 其余部分）：大厅其余部分（难度所有权、其他 Cooperative 依赖）与任务中流程；每阶段验证并停下审查。最终整体验收补充三人、四人流程。
-6. 整个 VMCE 独立后实现 LAN/本地任务中存档，随后接入互联网建房和开局。
+6. 按实际依赖推进“取消 VMCE 游戏行为编译期门控”迁移：首条“入口至开始许可”链已有候选实现、聚焦回归和审查修复后的本机双人生产验收。旧版及混合版本仍待验证；参照路线 G0–G5。
+7. 门控迁移完成后实现 LAN/本地任务中存档，再按其决定接入互联网建房和开局。
 
 独立阶段只修阻塞当前流程或验收的问题；审查通过后再处理该阶段相关的已知问题。下方条目保留作为缺陷索引，并非要求先全部清空。
+
+## 编译期门控迁移（首条入口至开始许可链候选，待审查）
+
+权威定义、职责表和未决项见[发展路线](vmce-roadmap.md#取消-vmce-游戏行为的编译期门控)。本区只列执行顺序；不得把勾选项写成已完成，直到对应构建、测试和审查实际运行。
+
+- [x] **G0 清单与决定（本链）：** 已分类注册、可见、客机解析 ID、开始许可和执行门控；运行时来源是现有 `ScenarioCatalog` 的已验证 VMCE 记录。没有新增 INI/RuleSet 假设；WOL 和旧已发布版的完整矩阵仍留在 G4。
+- [ ] **G1 身份先编译（本链候选）：** 模式类、固定 ID、`VmceSeries` 过滤与客机解析已进入所有构建；ID 与自定义模式冲突时保留自定义模式并禁用 VMCE。其余 VMCE 协议/配置类型仍由 feature 负责，留到 G3；旧版本兼容仍待验证。
+- [ ] **G2 可见与许可（本链候选）：** 房主选图与 `mode_start` 从 catalog 可用性派生许可，feature-off 固定 unavailable；本机双人 VMCE 胜利和续关通过，混合构建仍待验收。
+- [ ] **G3 完整 LAN 开始链：** 地图、配置、角色、Ready/MapStatus、开始请求、模式校验、共享种子、加载和首帧模拟不再依赖编译期差异；失败在 GO 前可见。
+- [ ] **G4 兼容与 WOL 决定：** 建立旧编译裁剪版、迁移桥版和最终运行时版的 LAN/WOL 主机/客机矩阵；明确支持或拒绝，不能挂起。
+- [ ] **G5 退场：** 删除 feature、迁移桥和残余游戏行为 `cfg`。迁移过程中即可将对上游有独立价值、可单独验证的最小通用能力拆成小 PR；优先已有上游消费者的能力，单纯改名的 VMCE 代码留在独立分支。
 
 ## 阶段 2 审查修复（已验证，待用户审查）
 
@@ -52,6 +64,13 @@ lang: zh-CN
 - **测试：** [lobby_campaign.rs](../../src/app/shell_network_setup/lobby_campaign.rs) 9 条生产处理器测试（早到 C0 最终状态、WOL 同载荷早到、正常顺序、乱序晚到、VMCE/其他房间不应用、模式再次切换、离房清理、待发队列清理、同一修订重复应用），使用真实 `MatchSession`、`MultiplayerShellRuntime`、`CooperativeProgressState` 和 wire 事件身份，不直接调用 Cooperative 状态对象；LAN 接收的 scope 身份 1 条、WOL 载荷身份 1 条；dispatch 测试在 vmce 配置使用生产谓词表。错误实现回退验证：无条件转发、只按当前房间模式过滤、关闭晚到 revision 下限、重复应用推进下限分别使对应测试失败。`app::shell_network_setup` vmce 47/默认 33、`app::shell_wol::live_service` 55、`app::lan_service` vmce 98/默认 42、`app::frontend::skirmish_session::cooperative::tests` 30、architecture guards 46 条两配置、`check -p vera20k --lib --bins` 两配置通过。
 - **证据：** fast 构建 `vmce-lobby-c0-c33dc84be-r2`（exe SHA-256 `1038e55c50d426a93664fdb9f251f655b4f246a660f48985dc61fab662ae139d`）的双人本机 `2p-win` 建房、加入、准备、开局通过（各 300 native checksum 与 20 个模拟 hash 一致，下一关回执符合预期）。证据在 `.scratch/vmce-lobby-c0-accept-r2/`（未提交）。
 - **未覆盖：** 本仓库仍没有可构造的完整 `AppState` 夹具，`service_event` → `dispatch` → HostSetup 事务的整条胶水、以及生产 `AppCampaignVisit` 的字段映射（协议待处理箱 ↔ `lan_service.setup_scope()` ↔ 已准入模式）没有在单元测试内执行；测试覆盖同一生产处理器、真实 LAN scope/WOL 载荷事件身份、真实 `accept_network_host_setup` 事务及接收/解码边界，调用点由架构检查钉住。HostSetup 钩子在后续模式进入步骤之前解析待处理文本；若后续步骤失败，会话/scope 回滚但待处理箱下限和已应用战役不回滚（原生 C0 应用本就独立于 HostSetup 成功），为窄窗口后续项。在线大厅（WOL/relay）的 C0 先到顺序与 LAN 中途离房未实机复现；验收跑的是 VMCE 系列，本身不含 Cooperative C0，不能据此宣称 Cooperative 路径已实机验证。真实双进程房间内的中途离房、三人/四人大厅与跨机器、互联网未跑。用户接受残余见下方“用户接受的残余”一节（B59、B71、B72；共享所属方战绩保持现状）；正常玩家等待不得被误判为超时仍在“待验证”中，未修复。
+
+## 首条入口至开始许可迁移（候选，待审查）
+
+- **运行时 owner：** [ScenarioCatalog](../../src/app/scenario_catalog.rs) 中已验证的 VMCE campaign 记录。模式 ID 和序列来源在所有构建中可识别；入口是否可见、是否允许 GO 都读取同一 owner，不新增 INI、RuleSet 或通用框架。
+- **行为：** feature-off 构建不显示 VMCE 选图入口，收到 VMCE LAN Options/HostSetup 时在共享 session 变更前拒绝；feature-on 保留原地图、配置、角色和共享 seed 校验。
+- **验证：** feature-off `check -p vera20k --lib --bins`、wasm feature check 和 VMCE gate guard 通过；ID 注册、客机解析/backend 门控、可见性、LAN prevalidation、feature-on 地图角色开始及 30 项原版 Cooperative 直接消费测试通过。
+- **未覆盖：** 旧已发布版、WOL、跨机器和完整旧/新 LAN 矩阵仍属 G4。审查修复后的 feature-on 构建在沙箱外通过本机双人胜利与续关，双方 300 个 checksum 和 20 个模拟 hash 一致；该验证不覆盖 feature-off 客机或 ID 冲突提示，预校验回归也未贯穿完整 `receive_extended`/HostSetup 界面。架构检查未识别所有小写辅助函数，不能仅凭门控计数断言解耦。房主合成界面捕获在修复前候选和旧构建均因未认领角色失败，不能归因于本次修改。
 
 ## 优先核查
 

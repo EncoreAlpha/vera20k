@@ -18,6 +18,7 @@ pub(super) mod vmce_setup;
 #[path = "shell_network_setup/vmce_setup_stub.rs"]
 pub(super) mod vmce_setup;
 pub(crate) use vmce_map::refresh_vmce_entries;
+pub(crate) use vmce_setup::supports_host_setup as vmce_supports_host_setup;
 #[cfg(feature = "vmce")]
 pub(crate) use vmce_setup::{VmceLobbyProjection, VmceLobbyStatus, VmceMapDetails};
 mod cooperative;
@@ -877,8 +878,7 @@ impl App {
         // A restored VMCE mode's saved map is a campaign Entry that the
         // startup catalog scan does not include. Discover those records first,
         // or the restored setup reports "no eligible map" and no room opens.
-        // Discovery is inert without a Vmce settings folder.
-        #[cfg(feature = "vmce")]
+        // The feature-off adapter is inert and reports no runtime availability.
         refresh_vmce_entries(state);
         // VERA's compact online flow opens a mode that offers AI opponents.
         // Native diagnostic visits retain their saved mode selection.
@@ -889,11 +889,24 @@ impl App {
                 .wol
                 .as_ref()
                 .is_some_and(|visit| visit.modern_ui());
+        // A persisted VMCE id from a build whose campaign was removed must not
+        // strand this room on a mode the current catalog cannot supply. The
+        // complete roster remains in FrontendState for peer id resolution.
+        let available_modes: Vec<_> = state
+            .frontend
+            .skirmish_modes
+            .iter()
+            .filter(|mode| {
+                !mode.class.policy().authored_campaign_map_catalog
+                    || vmce_map::mode_available(state)
+            })
+            .cloned()
+            .collect();
         let result = state.frontend.multiplayer_shell_runtime.new_network_setup(
             profile(dialog),
             prefer_computer_mode,
             &state.frontend.scenario_catalog,
-            &state.frontend.skirmish_modes,
+            &available_modes,
             state
                 .frontend
                 .skirmish_shell_state
@@ -925,6 +938,19 @@ impl App {
             log::error!("Could not admit local network setup: {error:#}");
             abandon_host_setup(state, dialog);
             return false;
+        }
+        if vmce_map::mode_available(state)
+            && !state
+                .frontend
+                .skirmish_modes
+                .iter()
+                .any(|mode| mode.class.policy().authored_campaign_map_catalog)
+        {
+            chat_notice(
+                state,
+                "Multiplayer Campaign is unavailable: a mode in MPModesMD.ini uses ID 2147418112. Change that mode's ID.",
+                &[],
+            );
         }
         // The WOL C2's own +20/+18 calls (0x791293, 0x7912A3) belong to a
         // later chain; LAN BC runs them here.

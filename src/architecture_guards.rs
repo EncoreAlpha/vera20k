@@ -335,6 +335,7 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         0,
     ),
     ("app/shell_network_setup.rs", "install_setup", 1, 0),
+    ("app/process_assets.rs", "install_native_ini_hashes", 2, 0),
     (
         "app/shell_network_setup.rs",
         "install_vmce_lobby_fixture",
@@ -562,7 +563,9 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/lan_service.rs", 81),
     ("app/lan_service/cooperative.rs", 19),
     ("app/lan_service/maps.rs", 4),
-    ("app/lan_service/options.rs", 30),
+    // The feature-off bridge also reads and rejects the VMCE identity before
+    // a colliding native mode can accept the host's snapshot.
+    ("app/lan_service/options.rs", 33),
     ("app/loading/fresh_scenario.rs", 9),
     ("app/loading/init.rs", 10),
     ("app/loading/pump.rs", 14),
@@ -574,17 +577,17 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/mod.rs", 3),
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
-    ("app/shell_network_setup.rs", 21),
+    ("app/shell_network_setup.rs", 20),
     ("app/shell_network_setup/actions.rs", 17),
     ("app/shell_network_setup/actions/start.rs", 2),
     ("app/shell_network_setup/service.rs", 20),
     ("app/shell_network_setup/view.rs", 26),
-    ("app/shell_skirmish.rs", 6),
+    ("app/shell_skirmish.rs", 2),
     ("app/shell_wol/live_service/wire.rs", 1),
     ("app/shell_wol/quick_match.rs", 1),
     ("app/shell_wol/test_service.rs", 1),
     ("map/mod.rs", 2),
-    ("map/skirmish_scenarios.rs", 3),
+    ("map/skirmish_scenarios.rs", 0),
     ("net/lan_messages.rs", 1),
     ("net/lan_messages/cooperative.rs", 0),
     ("net/lan_messages/ingame.rs", 8),
@@ -599,7 +602,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("sim/snapshot.rs", 1),
     ("sim/world/house_defeat.rs", 3),
     ("skirmish_launch.rs", 5),
-    ("skirmish_modes.rs", 3),
+    ("skirmish_modes.rs", 0),
     ("ui/multiplayer_setup.rs", 9),
 ];
 
@@ -608,7 +611,7 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 470;
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 462;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {

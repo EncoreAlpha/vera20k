@@ -1,20 +1,21 @@
 # 多人战役（VMCE）
 
-VMCE 是 VERA20K 的可选 LAN 战役扩展：最多 4 名玩家推进一套外部战役目录
+VMCE 是 VERA20K 的 LAN 战役扩展：最多 4 名玩家推进一套外部战役目录
 （`Maps/VMCE/<系列>/`），支持逐玩家胜负、关间重选角色的战役房间、本机持久化的关卡解锁，
 并使用原生战役结算页与确定性的共享任务。它不加载原版 Cooperative 战役模式，也不读写
 `Coopsave.ini`。VMCE 不设观察者席位。
 
-## 构建
+## 构建与启用
 
-VMCE 是编译期能力，用 `vmce` Cargo feature 选择（Ares 现在改为由游戏数据启用，VMCE 仍是构建能力）：
+当前 `feature/vmce` 工作树仍用 `vmce` Cargo feature 选择尚未迁移的 VMCE reader 与游戏后端：
 
 ```sh
 python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 ```
 
-不带 `--features vmce` 时，不注册 `Multiplayer Campaign` 模式行，不扫描
-`Maps/VMCE/`，VMCE 专属的会话/LAN 字段也会被裁掉。
+首条候选切片已在所有构建中编译：`Multiplayer Campaign` 模式 ID、`VmceSeries` 地图来源过滤和客机选项解析不再依赖 feature。feature-off 模式行保持隐藏、不扫描 `Maps/VMCE/`，并在共享会话变更前拒绝 VMCE LAN HostSetup；feature-on 保留现有 setup、地图/配置/角色、seed、加载和游戏行为。联网格式未改变。
+
+本切片的运行时可用性由 `ScenarioCatalog` 中已验证的 VMCE campaign 记录拥有；模式行存在本身不是开始许可。完整后端尚未迁移的部分仍由 feature 选择。本轮没有新增 INI 键或 `RuleSet` 开关。阶段和验收以[发展路线](vmce-roadmap.md#取消-vmce-游戏行为的编译期门控)为准。
 
 当前 fork 版本：`0.3.2`，已同步上游 main `867ae2467`（合并提交 `89ccbea49`）。LAN 双方应运行同一 VMCE 构建和同一套规则/数据；VMCE 准入会在进入任务前拒绝构建/规则不一致的对端（B102 已关闭）；同步后的基线已复验（双人胜利/重试/最终关 LAN 验收、300 checksum 一致），证据见 [VMCE 基线](../vmce-baseline.md)。
 
@@ -26,10 +27,11 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 | 战役流程 | `NextScenario`、`EndOfGame`、外部系列目录；所选地图的 `campaign.ini` 关卡严格校验，LAN 准入校验清单中每张地图的字节 |
 | 逐玩家胜负 | 按任务实际生效的结盟判定胜方/败方；主所属方被消灭的玩家保留原有授权的控制，任务继续等待地图胜负触发器 |
 | 关间房间 | 全员返回指定下一关的战役房间，重新选择角色并准备；强制加入/离开与角色数不足的拦截 |
-| 关卡解锁 | 结果和下一关身份确认后，仍需经过继续流程才写入本机解锁；仅确认后退出可能丢失解锁（B57），不要求加载下一关 |
+| 关卡解锁 | 结果和下一关身份确认后立即写入本机解锁，不要求加载下一关（B57 已关闭） |
 | LAN 验证 | 已在合并后的 0.3.2 基线（`b5-sync-70d569b86-r1`）上通过：双人、三人、四人胜利与下一关、双人失败重试，93/93 检查、300 个 checksum 一致；同一套场景也在合并前的 B4 基线上通过，本机解锁文件在合并前基线核对 |
+| 模块所有权 | B5 已将 VMCE 线记录、UDP 关间传输与会话辅助逻辑移入 VMCE 模块。2026-11-14 静态清单仍找到 73 个 `src/` 文件中的 757 处 VMCE `cfg`/`cfg!`（含测试和诊断）；这是迁移清单，不是完成度。当前树仍按编译期门控运行 |
 | 结果页 | `0x103` 胜利板 + 统计页；原生 BC6 失败统计页；结果页无计时器；按 800x600 创作，适配 1024x768 默认窗口；两个对话框已在 800x600、1024x768、1600x900 验证 |
-| i18n | 10 种旧语言各有 32 条 VMCE 键：en/zh-CN 真值，其余英文占位；上游新增的越南语无 VMCE 键（B101） |
+| i18n | 10 种旧语言各有 32 条 VMCE 键：en/zh-CN 真值，其余英文占位；越南语已有同组英文占位，翻译仍开放（B101） |
 
 ## 已知未修项
 
@@ -52,7 +54,7 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 - [VMCE 玩家与地图作者指南](vmce-guide.md) — 战役目录、`campaign.ini`、LAN 流程、
   结果页、测试与故障排查。
 - [VMCE 待办](vmce-todo.md) — 下一步工作、待验证事项和完成记录。
-- [VMCE 发展路线](vmce-roadmap.md) — 已确定的独立边界、存档和互联网阶段。
+- [VMCE 发展路线](vmce-roadmap.md) — 独立边界、取消游戏行为编译期门控的分阶段计划、存档和互联网阶段。
 - [VMCE 审查详情](vmce-review.md) — 逐项证据、验收边界和历史记录。
 - [VMCE backlog](../vmce-backlog.md) — 英文工程台账。
 - [VMCE 基线](../vmce-baseline.md) — 上游同步、版本与真实采集基线（英文）。

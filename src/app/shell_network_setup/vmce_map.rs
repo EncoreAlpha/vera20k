@@ -9,6 +9,13 @@ use crate::app::AppState;
 /// Refresh validated campaign Entry maps in the shared scenario catalog.
 /// Each direct child of `settings/Maps/VMCE` is one series campaign; its
 /// `campaign.ini` and all manifest-relative maps live in that child.
+/// Whether this host may expose VMCE. A validated campaign entry is the
+/// existing runtime data owner; the feature gate only decides whether this
+/// migration bridge has the reader that can produce it.
+pub(crate) fn mode_available(state: &AppState) -> bool {
+    state.frontend.scenario_catalog.has_vmce_entries()
+}
+
 pub(crate) fn refresh_vmce_entries(state: &mut AppState) {
     {
         let mut records = state.frontend.scenario_catalog.records_mut();

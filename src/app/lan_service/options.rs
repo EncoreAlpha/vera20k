@@ -131,6 +131,8 @@ pub(super) fn publish_options(
         vmce_series_content,
         #[cfg(feature = "vmce")]
         vmce_series,
+        #[cfg(not(feature = "vmce"))]
+        vmce_series_marker: None,
         #[cfg(feature = "vmce")]
         vmce_intermission: session.vmce_intermission_map().map(str::to_owned),
         teams: session
@@ -193,6 +195,11 @@ struct ExtendedOptions {
     #[cfg(feature = "vmce")]
     #[serde(default)]
     vmce_series: Option<VmceSeriesIdentity>,
+    /// Keep the host's VMCE identity even when this build cannot play VMCE.
+    /// A colliding local mode id must not turn its snapshot into stock play.
+    #[cfg(not(feature = "vmce"))]
+    #[serde(default, rename = "vmce_series", skip_serializing)]
+    vmce_series_marker: Option<serde_json::Value>,
     /// One SHA-256 over the whole series directory: `campaign.ini` bytes,
     /// manifest order, and every manifest map's logical name, byte length and
     /// raw bytes. A guest may not report its map admission without it, so a
@@ -501,12 +508,21 @@ fn prevalidate_received_options(
     modes: &[crate::skirmish_modes::SkirmishGameMode],
     options: &ExtendedOptions,
 ) -> Result<()> {
+    #[cfg(not(feature = "vmce"))]
+    ensure!(
+        options.vmce_series_marker.is_none(),
+        "this build cannot admit a VMCE LAN host setup"
+    );
     ensure!(
         options.source_sha256.is_empty()
             || crate::map::source::valid_source_sha256(&options.source_sha256),
         "invalid map source identity"
     );
     let (mut parsed, _, _) = parse_options(session, modes, &options.text)?;
+    ensure!(
+        crate::app::shell_network_setup::vmce_supports_host_setup(parsed.launch.mode.class),
+        "this build cannot admit a VMCE LAN host setup"
+    );
     #[cfg(feature = "vmce")]
     super::vmce_setup::validate_options_series_and_roles(
         session,
@@ -1299,6 +1315,67 @@ mod tests {
         session
     }
 
+    #[test]
+    fn guest_options_resolve_vmce_identity_in_every_build() {
+        let modes = crate::skirmish_modes::stock_skirmish_modes();
+        let vmce = modes
+            .iter()
+            .find(|mode| mode.class == crate::skirmish_modes::MpModeClass::Vmce)
+            .expect("VMCE identity is registered independently of runtime availability");
+
+        let mut host = fixture(true);
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode = SkirmishLaunchMode::from_game_mode(vmce);
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        let text = projected_options(&host, 2, 0).unwrap().encode();
+
+        let guest = fixture(false);
+        let (parsed, _, _) = parse_options(&guest, &modes, &text).unwrap();
+        assert_eq!(
+            parsed.launch.mode.class,
+            crate::skirmish_modes::MpModeClass::Vmce
+        );
+        assert_eq!(parsed.launch.mode.id, vmce.id);
+        assert_eq!(
+            crate::app::shell_network_setup::vmce_supports_host_setup(parsed.launch.mode.class),
+            cfg!(feature = "vmce"),
+            "identity recognition must not grant an incomplete VMCE backend"
+        );
+    }
+
+    #[cfg(not(feature = "vmce"))]
+    #[test]
+    fn guest_rejects_vmce_options_even_if_the_mode_id_collides() {
+        let mut modes = crate::skirmish_modes::stock_skirmish_modes();
+        let reserved = modes.iter().find(|mode| mode.class.is_vmce()).unwrap().id;
+        modes.retain(|mode| !mode.class.is_vmce());
+        let mut custom = modes[0].clone();
+        custom.id = reserved;
+        modes.push(custom.clone());
+        let mut host = fixture(true);
+        let mut launch = host.network_setup().unwrap().clone();
+        launch.mode = SkirmishLaunchMode::from_game_mode(&custom);
+        host.accept_network_setup(launch, true, Some(7), false)
+            .unwrap();
+        let text = projected_options(&host, 2, 0).unwrap().encode();
+        let snapshot: ExtendedOptions = serde_json::from_value(serde_json::json!({
+            "text": text,
+            "selected_map_file": "test.map",
+            "agreement": {"version": "test", "rules_digest": "a"},
+            "source_sha256": "",
+            "effective_digest": "",
+            "random_map": null,
+            "admissions": [],
+            "vmce_series": {"directory": "example", "sha256": "a"}
+        }))
+        .unwrap();
+        let guest = fixture(false);
+        let before = guest.clone();
+        assert!(prevalidate_received_options(&guest, &modes, &snapshot).is_err());
+        assert_eq!(guest, before);
+    }
+
     #[cfg(feature = "vmce")]
     fn fixed_extended_options_wire_fixture() -> ExtendedOptions {
         use crate::app::shell_network_setup::agreement::MultiplayerAgreement;
@@ -1367,7 +1444,9 @@ mod tests {
         let bytes = serde_json::to_vec(&fixed_extended_options_wire_fixture()).unwrap();
         assert_eq!(
             bytes.as_slice(),
-            crate::test_fixture::bytes("src/app/lan_service/fixtures/extended_options_wire_b3.json"),
+            crate::test_fixture::bytes(
+                "src/app/lan_service/fixtures/extended_options_wire_b3.json"
+            ),
             "the production ExtendedOptions serializer preserves the B3 wire bytes"
         );
         let fragments = crate::net::lan_messages::extended_setup::encode(

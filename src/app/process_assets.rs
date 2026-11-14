@@ -466,8 +466,15 @@ impl ProcessAssets {
         // 0x00679D90 walks the ids 1..=count (0x005D5ED0) and finds each
         // mode by id (0x005D5F30); 0x005D67B0 gives an empty INI for a
         // missing file. Retail ids are 1..9 without a gap.
-        let mode_inis: Vec<IniFile> = (1..=modes.len() as i32)
-            .filter_map(|id| crate::skirmish_modes::mode_by_id(modes, id))
+        // The synthetic VMCE row is not a native MultiplayerGameMode and must
+        // not increase 0x00679D90's count or change sparse-roster hashes.
+        let native_count = modes.iter().filter(|mode| !mode.class.is_vmce()).count();
+        let mode_inis: Vec<IniFile> = (1..=native_count as i32)
+            .filter_map(|id| {
+                modes
+                    .iter()
+                    .find(|mode| mode.id == id && !mode.class.is_vmce())
+            })
             .map(|mode| {
                 select_mode_ini(assets, Some(&mode.override_file))
                     .ok()
@@ -825,6 +832,35 @@ mod tests {
         ticked.install_native_ini_hashes(&assets, &[]);
         ticked.set_terrain_deformation(true);
         assert_ne!(stock.rules, ticked.native_ini_hashes().unwrap().rules);
+    }
+
+    #[test]
+    fn native_ini_hashes_preserve_sparse_roster_mode_count() {
+        use crate::map::source::test_support::TestDirectory;
+        let dir = TestDirectory::new("sparse-mode-native-hash");
+        dir.write("rulesmd.ini", b"[General]\nBuildSpeed=.7\n");
+        dir.write("artmd.ini", b"[Test]\nVoxel=no\n");
+        dir.write("aimd.ini", b"[Test]\nValue=1\n");
+        dir.write("mode1.ini", b"[General]\nBuildSpeed=.8\n");
+        dir.write("mode3.ini", b"[General]\nBuildSpeed=.9\n");
+        let assets = AssetManager::from_loose_root_for_test(dir.path());
+        let roster = crate::rules::ini_parser::IniFile::from_str(
+            "[Battle]\n1=One, Tip, mode1.ini, standard, true\n3=Three, Tip, mode3.ini, standard, true\n",
+        );
+        let native = crate::skirmish_modes::parse_mpmodes_ini(&roster);
+        let with_vmce = crate::skirmish_modes::skirmish_modes_from_selected_ini(
+            &assets,
+            &roster,
+            "test roster",
+        )
+        .unwrap();
+        let hashes = |modes: &[crate::skirmish_modes::SkirmishGameMode]| {
+            let mut process = ProcessAssets::new(MediaArchiveMode::STOCK_DIGITAL, false);
+            process.initialize_sources_if_needed(&assets).unwrap();
+            process.install_native_ini_hashes(&assets, modes);
+            process.native_ini_hashes().unwrap()
+        };
+        assert_eq!(hashes(&native), hashes(&with_vmce));
     }
 
     #[test]

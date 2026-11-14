@@ -5,4 +5,9 @@
 
 use crate::app::AppState;
 
+/// This migration bridge has no VMCE campaign reader or playable backend.
+pub(crate) fn mode_available(_state: &AppState) -> bool {
+    false
+}
+
 pub(crate) fn refresh_vmce_entries(_state: &mut AppState) {}

@@ -20,6 +20,21 @@ lang: zh-CN
 
 - **B102（已关闭）：规则与扩展数据一致性。** 现有联机规则协议与 VMCE 系列准入已在进入任务前拒绝不同构建或数据；证据与残余见[完成区](#b102-规则与扩展身份准入2026-11-13已关闭)。
 
+## 编译期门控迁移审查（首条入口至开始许可链候选，其余未迁移）
+
+本组不新增 A/B 缺陷编号。2026-11-14 的首条入口至开始许可链已有候选实现与聚焦回归；下面区分已迁移行为、仍由 feature 承担的后续路径和尚未完成的生产验证。权威阶段见[发展路线](vmce-roadmap.md#取消-vmce-游戏行为的编译期门控)。
+
+| 编号 | 结论 | 依据与影响 |
+|---|---|---|
+| M01 | 首条链已移除注册、来源过滤、解析和许可门控，后续 VMCE 行为仍由 Cargo feature 承担。 | [根 feature](../../Cargo.toml#L62) 仍转发 core；当前 `cfg` 数量只表示 G3 之后的迁移余额，不能当作完成度或行为验证。 |
+| M02 | 已迁移候选：模式身份与展示、可开始性分离。 | [模式注册](../../src/skirmish_modes.rs#L406) 使用固定 ID；自定义模式占用时不注册 VMCE，保留自定义模式并在有战役数据时提示房主。feature-off 行保持隐藏。 |
+| M03 | 已迁移候选：新版识别 VMCE ID；冲突时不得把带 VMCE 身份的 Options 当普通模式。 | [LAN options](../../src/app/lan_service/options.rs) 的 feature-off 预校验保留并拒绝 VMCE series 标记；接受会话前的拒绝有定向测试。旧版本与实际混合房间仍待 G4 验证。 |
+| M04 | 已迁移候选：GO 前许可先要求运行时 catalog 有 VMCE 入口，再进入 feature-on 原地图/配置/角色/seed 校验。 | [VMCE `mode_start`](../../src/app/shell_network_setup/actions/start.rs#L434) 在 feature-off 的 GO 前 fail closed；feature-on 原校验保留。Ready/MapStatus/加载/首帧、WOL 和真实跨进程矩阵仍属 G3/G4。 |
+| M05 | 本链运行时来源已定。 | [ScenarioCatalog](../../src/app/scenario_catalog.rs) 中已验证的 VMCE campaign 条目拥有可用性；feature-off 迁移桥无 reader，固定 unavailable。未新增 INI 或 `RuleSet`。 |
+| M06 | 上游候选尚未成立。 | `ModePolicy` 已有共享消费者，但当前仍含 `Vmce` 变体及 VMCE 专用字段；原样上游化只会输出私有设计。应拆出对上游有独立价值、可单独验证的最小能力，优先选择已有非 VMCE 生产消费者的部分。 |
+
+结论：首条入口至开始许可链已有候选实现；feature-on 的本机双人胜利和续关通过生产验收。feature-off 实机拒绝、WOL 和旧/新版本矩阵尚未完成；不能把当前候选写成整体门控迁移完成或上游通用能力成立。
+
 ## P1 — 优先修复
 
 原 P1 的十项实现已完成；未覆盖的故障和验证见下方待验证区。

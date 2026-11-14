@@ -403,7 +403,6 @@ pub fn skirmish_modes_from_selected_ini(
             archive: source.to_owned(),
         })
     } else {
-        #[cfg(feature = "vmce")]
         insert_vmce_mode(&mut modes);
         Ok(modes)
     }
@@ -425,23 +424,23 @@ pub fn stock_skirmish_modes() -> Vec<SkirmishGameMode> {
             "[MultiplayerDialogSettings]\n{settings}"
         )))
     });
-    #[cfg(feature = "vmce")]
     insert_vmce_mode(&mut modes);
     modes
 }
 
-#[cfg(feature = "vmce")]
 const VMCE_MODE_ID: i32 = 0x7FFF_0000;
 
-#[cfg(feature = "vmce")]
 fn insert_vmce_mode(modes: &mut Vec<SkirmishGameMode>) {
-    let mut id = VMCE_MODE_ID;
-    while mode_by_id(modes, id).is_some() {
-        id -= 1;
+    // A peer or saved setup identifies this mode by number. Moving it when a
+    // mod occupies the reserved id would give different peers different modes.
+    // Keep the mod's roster usable and omit VMCE until the conflict is removed.
+    if mode_by_id(modes, VMCE_MODE_ID).is_some() {
+        log::warn!("VMCE is unavailable: a multiplayer mode uses reserved id {VMCE_MODE_ID}");
+        return;
     }
     modes.push(SkirmishGameMode {
         class: MpModeClass::Vmce,
-        id,
+        id: VMCE_MODE_ID,
         ui_name_key: "Multiplayer Campaign".to_owned(),
         tooltip_key: "Multiplayer Campaign".to_owned(),
         override_file: String::new(),
@@ -608,9 +607,33 @@ mod tests {
 
     #[cfg(not(feature = "vmce"))]
     #[test]
-    fn vmce_mode_is_absent_without_the_feature() {
+    fn vmce_identity_is_registered_without_enabling_the_mode() {
         let modes = stock_skirmish_modes();
+        let vmce = modes
+            .iter()
+            .find(|mode| mode.class == MpModeClass::Vmce)
+            .expect("LAN peers must resolve the VMCE id in every build");
+        assert_eq!(vmce.ui_name_key, "Multiplayer Campaign");
+        assert!(!vmce.class.lists_in_skirmish());
+        let original = modes
+            .iter()
+            .find(|mode| mode.class == MpModeClass::Cooperative)
+            .expect("the retail Cooperative row remains registered");
+        assert_eq!(original.id, 3);
+    }
+
+    #[test]
+    fn vmce_does_not_claim_a_different_id_when_its_reserved_id_is_taken() {
+        let mut modes = stock_skirmish_modes();
+        modes.retain(|mode| mode.class != MpModeClass::Vmce);
+        let mut custom = modes[0].clone();
+        custom.id = VMCE_MODE_ID;
+        modes.push(custom.clone());
+
+        insert_vmce_mode(&mut modes);
+
         assert!(modes.iter().all(|mode| mode.class != MpModeClass::Vmce));
+        assert_eq!(mode_by_id(&modes, VMCE_MODE_ID), Some(&custom));
     }
 
     #[cfg(feature = "vmce")]

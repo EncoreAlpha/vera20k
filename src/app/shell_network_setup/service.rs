@@ -497,6 +497,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                 fail_go_handoff(state);
                 return Err(error);
             }
+            // VMCE keeps its mode identity in every build. A migration-bridge
+            // peer without the full setup backend refuses before this shared
+            // transaction can apply an ordinary-looking setup.
+            super::vmce_setup::ensure_host_setup_supported(state, &launch)?;
             let before = state
                 .match_state
                 .session

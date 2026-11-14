@@ -1,21 +1,29 @@
 # Multiplayer Campaign (VMCE)
 
-VMCE is VERA20K's optional LAN campaign expansion: up to four human players progress
+VMCE is VERA20K's LAN campaign expansion: up to four human players progress
 through an authored external campaign (`Maps/VMCE/<series>/`), with per-player mission
 outcomes, an intermission room for role reselection, locally persisted stage unlocks and
 native campaign result pages on deterministic shared missions. VMCE has no observer seats.
 It does not load the stock Cooperative campaign modes and does not read `Coopsave.ini`.
 
-## Build
+## Build and activation
 
-VMCE is a compile-time capability, like Ares or Phobos:
+The current `feature/vmce` tree still uses the `vmce` Cargo feature for the remaining VMCE reader and gameplay backend:
 
 ```sh
 python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 ```
 
-Without `--features vmce`, the `Multiplayer Campaign` mode row is absent, `Maps/VMCE/`
-is not scanned, and VMCE-only session/LAN fields are compiled out.
+The candidate first slice is now compiled in every build: the `Multiplayer Campaign` mode ID,
+the `VmceSeries` map-source filter, and guest option parsing exist without the feature. A
+feature-off row stays hidden, does not scan `Maps/VMCE/`, and rejects a VMCE LAN host setup
+before changing the shared session. A feature-on build keeps the existing setup, map/config/role,
+seed, loading and gameplay behavior. No wire format changed.
+
+Runtime availability for this slice is owned by the validated VMCE campaign records already in
+`ScenarioCatalog`; the mode row alone is not a start permit. The feature still selects the
+remaining VMCE backend while that full chain is migrated. No new INI key or `RuleSet` switch was
+introduced. See the authoritative [Chinese roadmap section](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控).
 
 Current fork version: `0.3.2`, synced to upstream main `867ae2467` (merge
 commit `89ccbea49`). LAN peers should run the same VMCE build. The fork baseline and what the merge
@@ -33,7 +41,7 @@ Cooperative continuation) and the evidence is recorded there.
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |
 | Unlocks | The result and stage identity must be confirmed; the unlock is saved immediately on that agreement, before Continue or the intermission room (B57 closed, `9de82144e`). Loading the next stage is not required |
 | LAN validation | Validated on the merged upstream-`867ae2467` tree (`vmce-upstream-867ae2467-r1`): two-process win/next mission, retry and campaign end, 300 matching checksums each; the earlier merged-0.3.2 93/93 capture matrix remains in the baseline page |
-| Module ownership | B5 (2026-11-12): VMCE wire records, the UDP intermission transport and session helpers live in VMCE-owned modules; the shared gate metric is a change record only (503 shared-owner gates, was 556; 193 diagnostics tooling gates pinned separately). Current-HEAD validation: `b5-core-1a5e02431-r1` passed `2p-win`/`2p-retry` (see the backlog) |
+| Module ownership | B5 (2026-11-12) moved VMCE wire records, the UDP intermission transport and session helpers into VMCE-owned modules. The gate count is not a completion metric: a 2026-11-14 static inventory found 757 `cfg(feature = "vmce")`/`cfg!` occurrences across 73 source files, including tests and diagnostics. The current tree is still compile-gated; the runtime-activation migration has not been implemented |
 | Result UI | `0x103` victory board + statistics page; native BC6 defeat statistics; no result-page timers. Authored at 800x600, fitted to the 1024x768 default window; both dialogs verified at 800x600, 1024x768 and 1600x900 |
 | i18n | The ten older catalogs carry the 32 VMCE keys: English and zh-CN real, the others English placeholders. The Vietnamese catalog now carries the same keys as English placeholders added by the upstream sync; translation remains open (B101) |
 
@@ -66,6 +74,7 @@ packet-loss capture) and implementation residuals.
 - [VMCE player and map-author guide](vmce-guide.md) — campaign directories,
   `campaign.ini`, LAN flow, result pages, testing and troubleshooting.
 - [VMCE backlog](vmce-backlog.md) — engineering task ledger, locked decisions and residuals.
+- [VMCE roadmap](zh-CN/vmce-roadmap.md) — the authoritative staged plan for removing game-behavior compile-time gates while retaining the independent branch.
 - [Chinese consolidated review](zh-CN/vmce-review.md) — merged findings ordered by fix priority.
 - [VMCE baseline](vmce-baseline.md) — upstream sync, version and real-capture baseline.
 - [Chinese hub](zh-CN/vmce.md).

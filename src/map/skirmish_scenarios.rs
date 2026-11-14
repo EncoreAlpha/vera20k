@@ -44,7 +44,6 @@ pub enum SkirmishScenarioSource {
     /// downloads the map into VERA's own Maps folder before using it.
     Online(String),
     /// VERA: an entry map from a validated external VMCE campaign.
-    #[cfg(feature = "vmce")]
     VmceSeries(String),
     Synthetic,
 }
@@ -263,12 +262,10 @@ pub fn is_valid_map(
 }
 
 pub fn record_matches_mode(record: &SkirmishScenarioRecord, mode: &SkirmishGameMode) -> bool {
-    #[cfg(feature = "vmce")]
     if mode.class.policy().authored_campaign_map_catalog {
         return record.kind == SkirmishScenarioKind::ConcreteMap
             && matches!(&record.source, SkirmishScenarioSource::VmceSeries(_));
     }
-    #[cfg(feature = "vmce")]
     if matches!(&record.source, SkirmishScenarioSource::VmceSeries(_)) {
         return false;
     }
@@ -423,7 +420,6 @@ mod tests {
         assert!(filter_records_for_mode(&records, &mode(9), false).is_empty());
     }
 
-    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_lists_only_campaign_entries() {
         let modes = crate::skirmish_modes::stock_skirmish_modes();
@@ -446,7 +442,6 @@ mod tests {
         assert_eq!(filter_records_for_mode(&records, vera, false), vec![2]);
     }
 
-    #[cfg(feature = "vmce")]
     #[test]
     fn vmce_series_entries_are_private_to_the_vmce_filter() {
         let ini = IniFile::from_str("[Basic]\nName=Campaign Entry\n");

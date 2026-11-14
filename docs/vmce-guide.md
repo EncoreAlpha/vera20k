@@ -5,10 +5,11 @@ title: VERA Multiplayer Campaign Expansion
 
 # VERA Multiplayer Campaign Expansion (VMCE)
 
-VMCE is an optional multiplayer campaign capability built into VERA20K. It lets up to four players
+VMCE is a multiplayer campaign capability built into VERA20K. It lets up to four players
 play a cooperative campaign described by an external `campaign.ini`, on top of the original
-*Yuri's Revenge* assets. VMCE is not a runtime INI toggle: it is selected at compile time with
-the Cargo feature `vmce`.
+*Yuri's Revenge* assets. The candidate entry-to-start slice registers and parses the VMCE
+mode identity in every build; the remaining VMCE reader and gameplay backend still use the
+Cargo feature `vmce`, and runtime availability comes from the validated campaign catalog.
 
 VMCE does not support observers. If a room already has observers, they must become
 players or leave before the host selects a VMCE campaign.
@@ -67,10 +68,9 @@ modes keep their original behavior and do not read the VMCE campaign format.
 2. Every player must read the same original assets. VMCE exchanges only campaign and map
    **identity**, never files.
 
-### Build feature
+### Build feature and activation
 
-VMCE is a compile-time capability, not a runtime INI switch, and is not part of the default or
-shipping profile:
+The remaining VMCE backend is still feature-gated and VMCE is not part of the default or shipping profile:
 
 ```bash
 # Developer build with VMCE enabled:
@@ -80,9 +80,13 @@ python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 python -m tools.cargo_run -- build --release --no-default-features --features vmce --bin vera20k
 ```
 
-Without `--features vmce`, the `Multiplayer Campaign` mode row is not registered and VMCE
-campaign directories are not scanned. VMCE-only session state, LAN round/options fields and
-lobby helpers are feature-gated too, so such a build carries none of them. This fork reports its version as
+Without `--features vmce`, the mode identity and guest option parser still exist, but the row is
+hidden, VMCE campaign directories are not scanned, and a VMCE LAN host setup is refused before
+the shared session changes. Feature-on keeps the existing map/config/role/seed and LAN behavior.
+No wire format changed. For this slice, the validated VMCE entries in `ScenarioCatalog` own runtime
+availability; the mode row alone is not a start permit. No new INI key or `RuleSet` switch is
+assumed. The staged contract is in the
+[VMCE roadmap](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控). This fork reports its version as
 `0.3.2`, the upstream version it tracks (merge commit
 `89ccbea49`); LAN peers should run the same VMCE build and the same rules/data. The series
 series digest covers `campaign.ini` and the manifest maps; the LAN rules agreement separately
@@ -440,11 +444,11 @@ acceptance and stock Cooperative continuation were re-run on the merged baseline
   `Main_Tick` running (`0x0055DEE0` -> `0x00647040`; `0x00623120` calls `0x0055D360` in
   network modes), and there is no pause packet or all-player pause. VERA's LAN/VMCE
   simulation keeps running behind the menu; only the local input is held.
-- VMCE is an optional feature; a build without `--features vmce` has no VMCE mode row.
+- The candidate entry-to-start migration removes the registration, catalog-source, guest-parsing and GO-permission gates. The remaining VMCE reader/backend, loading, simulation, results and diagnostics still use the `vmce` feature; overall compile-gate removal is not complete.
 
 ## Troubleshooting
 
-- **No Multiplayer Campaign mode row:** build with `--features vmce`.
+- **No Multiplayer Campaign mode row:** the row is hidden when the validated `ScenarioCatalog` has no VMCE entry, and a feature-off bridge has no VMCE reader. Build with `--features vmce` and install a valid `Maps/VMCE/<series>/` campaign. If the lobby reports an ID conflict, change the custom `MPModesMD.ini` mode using ID `2147418112` to another ID.
 - **Map missing from the lobby:** check for `Maps/VMCE/<series>/campaign.ini`; `Entry` must be
   listed in `Scenario1..ScenarioN`; the map must be a loose `.map`; check log lines beginning
   `ignoring invalid VMCE series`.

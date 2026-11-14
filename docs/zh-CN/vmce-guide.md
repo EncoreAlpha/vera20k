@@ -11,7 +11,7 @@ lang: zh-CN
 > **警告**
 > VERA Multiplayer Campaign Expansion（以下简称 VMCE）目前是 VERA20k 的开发中功能。本文描述的是当前开发分支的行为，接口、地图格式和可用功能都可能随版本变化。不要把开发版行为当作稳定 API 写进长期维护的战役。
 
-VMCE 是 VERA20k 内置的 LAN 多人战役扩展。当前版本实现的是合作战役推进，命名和配置边界为后续其他多人战役规则保留扩展空间。它不是 Phobos、Ares 或 NPatch 的插件，也不加载任何外部 DLL；它复用 VERA20k 已有的原版规则、地图、触发器和资源读取路径，把一张战役地图交给多名玩家共同游玩。
+VMCE 是 VERA20k 内置的 LAN 多人战役扩展。首条“入口至开始许可”候选切片已在所有构建中注册并解析模式身份；剩余 VMCE reader 与游戏后端仍由 Cargo feature 选择，运行时可用性来自已验证的战役 catalog。当前版本实现的是合作战役推进，命名和配置边界为后续其他多人战役规则保留扩展空间。它不是 Phobos、Ares 或 NPatch 的插件，也不加载任何外部 DLL；它复用 VERA20k 已有的原版规则、地图、触发器和资源读取路径，把一张战役地图交给多名玩家共同游玩。
 
 VMCE 不支持观察者。如果房间已有观察者，请先让他们加入玩家席位或离开房间，再由房主选择 VMCE 战役。
 
@@ -58,16 +58,16 @@ VMCE 不改变原版战役和普通遭遇战的判定。原版单人战役仍然
 1. VMCE 不需要 Syringe、Phobos.dll 或 Ares.dll。不要把 VMCE 当成 Phobos 扩展去配置加载器。
 2. 所有参战玩家必须能读取同一套原版资源。VMCE 只交换战役和地图的**身份**，不传输文件。
 
-### 编译开关
+### 构建与启用
 
-VMCE 是可选的编译期能力，不是运行时 INI 开关，也不在默认或发布构建里：
+剩余 VMCE 后端仍按编译期能力裁剪，且不在默认或发布构建里：
 
 ```bash
 python -m tools.cargo_run -- build --profile fast --features vmce --bin vera20k
 python -m tools.cargo_run -- build --release --no-default-features --features vmce --bin vera20k
 ```
 
-不带 `--features vmce` 的构建不会注册 `Multiplayer Campaign` 模式行，也不会扫描 `Maps/VMCE`；VMCE 专属的会话状态、LAN 轮次/选项字段与大厅辅助逻辑同样按开关裁剪，非 VMCE 构建不包含它们。发布工作流使用 `--no-default-features`；要把 VMCE 放进发布包，需要显式加 `--features vmce` 重新构建。
+不带 `--features vmce` 的构建仍能识别 VMCE 模式 ID 和客机选项，但模式行保持隐藏、不扫描 `Maps/VMCE`，并在共享会话变更前拒绝 VMCE LAN HostSetup；feature-on 保留现有地图/配置/角色/seed 与 LAN 行为。联网格式未改变。本切片的运行时可用性由 `ScenarioCatalog` 中已验证的 VMCE 条目拥有，模式行存在本身不是开始许可；没有新增 INI 键或 `RuleSet` 开关。执行顺序与验收见[VMCE 发展路线](vmce-roadmap.md#取消-vmce-游戏行为的编译期门控)。
 
 本 fork 版本为 `0.3.2`（上游版本），已同步上游 main `867ae2467`，合并提交 `89ccbea49`；LAN 双方应运行同一 VMCE 构建和同一套规则/数据；系列摘要覆盖 `campaign.ini` 与清单地图，联机规则协议另行覆盖所选规则闭包与 Ares/扩展构建身份，VMCE 准入会在进入任务前拒绝构建或规则不同的对端（B102 已关闭）。客人侧拒绝有明确提示，房主侧经有界等待后显示通用启动失败。
 
@@ -589,6 +589,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 
 ### 故障排查
 
+- **完全看不到 Multiplayer Campaign 模式行**：`ScenarioCatalog` 没有已验证的 VMCE 入口，或当前是 feature-off 迁移桥（它没有 VMCE reader）。用 `--features vmce` 构建并安装有效的 `Maps/VMCE/<系列>/` 战役后才会出现。若大厅提示模式 ID 冲突，请把 `MPModesMD.ini` 中使用 `2147418112` 的自定义模式改用其他 ID。
 - **地图不出现在 Multiplayer Campaign 列表里**：检查 `campaign.ini` 是否在 `Maps/VMCE/<系列>/` 下，`Entry` 是否在 `Scenario1..N` 中，地图是否真实存在且是松散 `.map`。日志里以 `ignoring invalid VMCE series` 开头的行会给出原因。
 - **客人一直不能 Ready / 地图不可用**：客人缺少同一份 `campaign.ini`、所选地图与房主不一致，或系列中其他地图的字节不同。准入会在后台校验整套系列（每张地图的路径、长度、内容加 `campaign.ini`），校验未完成时也不能准备；系列 CSF 不参与校验。VMCE 不传输文件，请手动复制同一份内容。
 - **提示 `campaign is missing [Scenario:...]`**：`[Scenario:<地图路径>]` 段的写法与 `ScenarioN` 中的路径不一致。段名比较时 `/` 和 `\` 等价且忽略 ASCII 大小写；Linux/macOS 的实际文件加载目前存在反斜杠问题，建议路径统一使用 `/`（B81）。`campaign.ini` 中的非 ASCII 地图文件名也可能无法匹配实际文件（B85）。

@@ -1,15 +1,16 @@
 # VMCE fork baseline
 
-This branch tracks upstream `vera20k` and carries the optional VMCE
-(`--features vmce`) campaign expansion. The baseline below is the state after
-the upstream sync, not a native-parity certification.
+This branch tracks upstream `vera20k` and currently carries the compile-gated VMCE
+(`--features vmce`) campaign expansion. The candidate first entry-to-start migration slice is
+compiled in every build; the remaining VMCE reader, loading and gameplay backend still uses the
+feature. The baseline below is not a native-parity certification or a completed target design.
 
 | Item | Value |
 | --- | --- |
 | Upstream baseline | `867ae2467` (upstream main, 2026-11-13; room Teams/join queue, mods page, Ares in every build behind its switch) |
 | Merge commit | `89ccbea49` (`Merge upstream/main (867ae2467) into feature/vmce`) |
 | Fork version | `0.3.2` (all three workspace manifests and `Cargo.lock`); the fork no longer suffixes the upstream version, so the `vmce` capability identifies a VMCE build |
-| Capability | `vmce` (off by default; shipping builds do not enable it) |
+| Capability | Remaining VMCE backend: `vmce` feature, off by default. Candidate entry-to-start slice: mode ID/parser in every build; visibility and GO permission derive from validated `ScenarioCatalog` entries. Full migration remains open |
 
 ## What the 0.3.2 merge changed
 
@@ -40,9 +41,12 @@ vmce`, architecture guards 26/26 in both configurations, focused VMCE tests
 real two-process `2p-win`, `2p-retry` and `2p-final` acceptance (300 matching
 checksums each; start, result, retry, intermission continue and campaign end).
 The 20,000-unit performance comparison and the VMCE+Ares combination were not
-run. Decided 2026-11-13: keep VMCE as a compile-time `vmce` capability per the
-roadmap; this is an explicit exception to the upstream AGENTS policy that game
-behavior does not sit behind a build feature.
+run. The 2026-11-13 baseline kept VMCE as a compile-time `vmce` capability. That
+implementation decision is superseded by the 2026-11-14 migration target: remove
+game-behavior compile-time gates, keep VMCE on its independent branch and decide
+runtime activation from evidence. The first entry-to-start slice now has a candidate implementation;
+the remainder is still compile-gated. See the
+[roadmap](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控).
 
 Post-audit fixes (`567f5f59c`): the shared building-admission predicate is back
 on `owner_is_human` (VMCE input keeps its local grant predicate), the fork
@@ -580,3 +584,23 @@ unrun. Per the user's decision: B59, B71 and B72 stay user-accepted residuals
 (not fixed, no extra fallback); shared-owner statistics stay as they are; a
 normal player's wait must not be misjudged as a timeout remains a pending
 problem, moved out of the not-to-fix area and not claimed fixed by this slice.
+
+
+## Phase 3 third slice — VMCE entry-to-start admission (candidate, 2026-11-14)
+
+The candidate removes compile-time gates from the stable VMCE mode ID, `VmceSeries` map-source
+filter, and guest options parser. Runtime availability is not inferred from row presence: it is
+the validated VMCE campaign entry set already owned by `ScenarioCatalog`. Host map visibility and
+the GO path both read that owner. A feature-off migration bridge keeps the row hidden and rejects
+VMCE options/host setup before shared session state changes; a feature-on build keeps the existing
+map/config/role/seed and LAN checks. No wire format changed.
+
+Focused validation passed for feature-off production `check`, feature wasm check, the VMCE gate
+budget guard, identity registration, guest parsing/backend refusal, chooser visibility, VMCE LAN
+prevalidation, feature-on start role resolution, and 30 stock Cooperative direct-consumer tests.
+The candidate after critic fixes passed a two-process LAN win and next-mission run outside the
+Windows sandbox, with 300 matching checksums and 20 matching simulation hashes. The sandboxed
+executable failed with `0xC0000142`; the same executable starts outside the sandbox. The host
+synthetic lobby capture reports an unclaimed role in both this candidate and the previous saved
+build. Feature-off guest admission, WOL, old released clients,
+mixed LAN builds, cross-machine play, and the wider compile-gate removal remain unverified.

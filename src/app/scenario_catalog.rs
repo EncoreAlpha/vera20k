@@ -60,6 +60,17 @@ impl ScenarioCatalog {
         &self.records
     }
 
+    /// Runtime VMCE availability is the catalog's already validated campaign
+    /// entry set, not whether the mode id happens to be present in the roster.
+    pub(crate) fn has_vmce_entries(&self) -> bool {
+        self.records.iter().any(|record| {
+            matches!(
+                &record.source,
+                crate::map::skirmish_scenarios::SkirmishScenarioSource::VmceSeries(_)
+            )
+        })
+    }
+
     /// The first row with a file here. Online rows name no local file.
     pub(crate) fn first_local_index(&self) -> Option<usize> {
         self.records.iter().position(|record| !record.is_online())

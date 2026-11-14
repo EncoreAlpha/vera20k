@@ -10,6 +10,13 @@ paths appear under [Implementation and evidence limits](#implementation-and-evid
 implemented path can still have an open defect. The [player and map-author guide](vmce-guide.md)
 describes current behavior. The refactor-only B5 series and the B106 campaign-data owner are recorded in the completed section;
 they change module ownership, not behavior. Planned or follow-up items are not implementation promises.
+The 2026-11-14 direction supersedes the earlier decision to keep VMCE as a compile-time
+exception. The candidate first slice now compiles the stable mode ID, `VmceSeries` source filter and
+guest option parser in every build; a feature-off host keeps the row hidden and refuses VMCE LAN
+HostSetup before the shared session changes. Runtime availability for the visible and start-enabled
+state is owned by validated `ScenarioCatalog` records. The remaining VMCE setup/loading/simulation
+backend and WOL matrix stay open; see the
+[Chinese roadmap](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控).
 
 ## Priority and remaining verification
 
@@ -454,14 +461,16 @@ The series is `da212a8a4`, `86ca439a6`, `e8cfdcb93`, `dff07c1d9`, plus `7a722853
 - **Done:** the VMCE-only LAN records (`0x36`-`0x3E` and the `VmceSignal` kinds `0x37`-`0x39`)
   moved from `src/net/lan_messages/cooperative.rs` to `src/net/lan_messages/vmce.rs`; the shared
   module keeps the native BC6 records. The LAN intermission transport moved from `src/net/udp.rs`
-  to `src/net/udp/vmce.rs`; with the feature off the field, module and state are absent, and the
-  shared owner keeps only clear gated access points. The VMCE campaign session helpers moved from
+  to `src/net/udp/vmce.rs`. The VMCE campaign session helpers moved from
   `src/sim/scenario_session.rs` to `src/sim/scenario_session/vmce.rs`; the fields remain on
   `ScenarioSession` as their only owner, and the three `fold_identity` folds stay at their original
-  positions with the same inputs.
-- **Guard:** a production `#[cfg(feature = "vmce")]` gate-count guard records shared-owner gates
-  (556 -> 503 across 48 shared files; the 193 gates in diagnostics tooling are pinned separately). The number is a change record, not evidence that decoupling is
-  complete; the remaining shared access points and mode-check callers are deliberate.
+  positions with the same inputs. At that baseline, feature-off builds omitted the field, module
+  and state; that is historical current behavior, not the target end state.
+- **Guard:** the old production gate-count guard recorded 556 -> 503 shared-owner gates across 48
+  shared files, with 193 diagnostics gates pinned separately. It remains a historical change
+  record, not evidence of completion. A 2026-11-14 raw static inventory found 757 VMCE `cfg`/`cfg!`
+  occurrences across 73 `src/` files, including tests and diagnostics; the semantic plan is owned by
+  the [roadmap](zh-CN/vmce-roadmap.md#取消-vmce-游戏行为的编译期门控), not this count.
 - **Validation (code at `1a5e02431`, not the `70d569b86` baseline):** focused core tests 159
   default / 195 vmce, app 275 default / 396 vmce (4 ignored), architecture guards 26 in both
   configurations (503 shared + 193 diagnostics pinned), production `check -p vera20k --lib --bins`

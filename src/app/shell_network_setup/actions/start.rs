@@ -431,6 +431,19 @@ fn mode_start(
         .network_setup()
         .expect("validated setup")
         .clone();
+    // A recognized mode id is not a start permit. The validated catalog record
+    // is the runtime availability owner; migration-bridge builds without the
+    // full VMCE admission backend report no record and stop before GO.
+    if mode.class.policy().authored_campaign_map_catalog
+        && !super::super::vmce_map::mode_available(state)
+    {
+        message(
+            state,
+            "VMCE cannot start because this build has no playable VMCE backend for the selected campaign.",
+            &[],
+        );
+        return Ok(false);
+    }
     #[cfg(feature = "vmce")]
     if mode.class.is_vmce() {
         let Some(file) = launch.selected_map_file.as_deref() else {

@@ -1,7 +1,20 @@
 //! VMCE setup state and its map-authored role metadata projection.
 
 use super::{AppState, NetworkSetupProtocol};
-use crate::skirmish_launch::SkirmishHumanSlot;
+use crate::skirmish_launch::{SkirmishHumanSlot, SkirmishLaunchSession};
+
+/// This build owns the complete VMCE setup parser and series admission path.
+/// Peer compatibility is validated by the existing options transaction below.
+pub(super) fn ensure_host_setup_supported(
+    _state: &mut AppState,
+    _launch: &SkirmishLaunchSession,
+) -> anyhow::Result<()> {
+    Ok(())
+}
+
+pub(crate) fn supports_host_setup(_mode: crate::skirmish_modes::MpModeClass) -> bool {
+    true
+}
 
 /// Add the VMCE-specific map/config projection to the shared stock-map result.
 /// The service computes the generic catalog/admission result once, then

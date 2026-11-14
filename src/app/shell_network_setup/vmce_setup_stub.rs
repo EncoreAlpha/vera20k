@@ -1,14 +1,31 @@
 //! The optional `vmce` build's setup module without VMCE: the lobby dispatch
 //! still names the mode's event owner, and this stub makes every VMCE slot a
-//! no-op so the shared setup compiles and behaves as an ordinary mode. No VMCE
-//! mode is registered in this build.
+//! no-op so the shared setup compiles. The VMCE identity is registered, but
+//! this build cannot admit its setup.
 
 use super::AppState;
-use crate::skirmish_launch::SkirmishHumanSlot;
+use crate::skirmish_launch::{SkirmishHumanSlot, SkirmishLaunchSession};
 use crate::skirmish_modes::MpModeClass;
 
-/// No VMCE mode exists in this build, so the shared lobby dispatch has no VMCE
-/// event owner to hand an event to.
+/// Preserve the host's VMCE identity, but reject it before any shared session
+/// state changes: this build has no complete VMCE setup/admission backend.
+pub(super) fn ensure_host_setup_supported(
+    state: &mut AppState,
+    launch: &SkirmishLaunchSession,
+) -> anyhow::Result<()> {
+    if !supports_host_setup(launch.mode.class) {
+        super::chat_notice(state, "VERA:VmceBlockingVersionMismatch", &[]);
+        anyhow::bail!("VMCE host setup requires the complete VMCE backend");
+    }
+    Ok(())
+}
+
+pub(crate) fn supports_host_setup(mode: MpModeClass) -> bool {
+    !mode.policy().authored_campaign_map_catalog
+}
+
+/// This migration bridge recognizes the VMCE mode, but it has no complete
+/// VMCE lobby event owner to hand an event to.
 pub(super) fn handles_mode(_mode: Option<MpModeClass>) -> bool {
     false
 }
