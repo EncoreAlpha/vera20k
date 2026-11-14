@@ -655,3 +655,51 @@ nor a VERA encoder authors. The WOL `Options::into_options` path reuses the same
 constructor but has no WOL-side mirror test. The result page's NORMAL fallback for a missing
 assignment is a defensive default (a real VMCE result page always has the frozen assignments; the
 old live-row read usually returned 0 there, so the difference is unreachable).
+
+## Phase 3 fifth slice — room team-seating policy ownership (feature/vmce, 2026-11-14)
+
+`MatchSession::network_team_room` decided whether a VERA room groups its players into team seats
+by asking `!launch.mode.class.uses_cooperative_setup()` — a shared room question phrased as a
+Cooperative question — and the setup view repeated the exclusion with
+`!mode_policy.authored_campaign_roles`. The slice moves the decision to the mode's own policy
+owner: `ModePolicy::room_teams` is true for Battle, ManBattle, Siege, Unholy and FreeForAll and
+false for Cooperative and Vmce. `network_team_room` now combines only genuinely shared room facts
+(a Setup phase with several observers, `allies_allowed`, not a clan room) with that policy field,
+and the setup view reads the same owner without the duplicate mode check. Visible behavior within a
+room is unchanged: stock rooms still group rows and expose TEAMS and the team controls; Cooperative
+and VMCE rooms still do not (the mode-switch round trip is recorded under residuals). VMCE's
+`allies_allowed: true` row no longer needs a separate exclusion, and the shared room predicate
+retains no Cooperative question.
+
+Guards: the mode policy stays exhaustively constructed, so every class states its value, and the
+per-mode policy literal test includes the new field. The diff adds no `is_vmce` call, so no
+shared-capability allowlist or mode-check ceiling entry changed. All 51 guards pass in both
+configurations.
+
+Tests: core `skirmish_modes` 13; `app::match_runtime::session` default 50 / vmce 60, including the
+new `room_teams_follow_the_mode_policy`, which drives the real
+`MatchSession::enter_network` + `accept_network_setup` for Battle, Cooperative and Vmce with a
+stale `options.teams: Some(2)` left by a mode switch, asserts `network_team_room` and
+`network_teams()` agree, covers `allies_allowed = false`, and was verified to fail with the old
+predicate (Vmce returned true); `app::shell_network_setup` vmce 47 / default 33; `check -p
+vera20k --lib --bins` passes in both configurations.
+
+Acceptance: the vmce-feature fast build `vmce-team-seating-r1` (exe SHA-256
+`D9929F3E95CA2DE47D9C9B5A4DE8CAD07CC5E6E3E76F7CE298363C005EB5D981`) passed the two-process
+`2p-win` lobby join, settings, ready, start and next-mission run with the `LDA-Continue-real`
+series: both ends matched 300 native checksums and 20 simulation hashes, the victory page receipt
+reported `rows=2` and `can_continue=true`, and both ends reported the stage02 next mission.
+Evidence lives in `.scratch/vmce-team-seating-accept-r1/` (not committed).
+
+Residuals: this slice is a behavior-preserving ownership migration, not a visible fix; the
+acceptance run proves the VMCE lobby/start chain still works rather than that a control changed
+(the earlier view check already suppressed grouping for VMCE and Cooperative). One edge state can
+differ: a stock-mode host who sets a team count and then switches into VMCE through the Choose Map
+window. The old predicate treated that stale count as team seating inside the VMCE room
+(`keep_players_on_teams`, auto-balance, preserved `slot.team`, WOL Balance); the new policy does
+not. VMCE's own interface is identical either way (TEAMS disabled, rows ungrouped); the only
+visible difference is a round trip back to the stock mode, where the old code kept the pre-VMCE
+layout and the new code re-deals rows. That switch path was not exercised in this slice's
+production acceptance. WOL Balance, spectator rooms and clan-room team paths keep their existing
+tests but were not separately exercised in production. Three/four-player rooms, cross-machine play
+and the internet path remain outside this slice.

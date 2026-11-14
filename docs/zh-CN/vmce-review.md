@@ -366,6 +366,7 @@ lang: zh-CN
 - **B36：** 其他跨机器、关间加入/离开及真实网络故障验收见[英文台账](../vmce-backlog.md#connected-validation-b36)；本机多进程不能替代跨机器验证。
 - **结算统计所有权（阶段 3 首个子链）：** 双人本机多进程三个流程已核对两端统计行与模拟一致；三人、四人真实结算统计未跑，多角色归属/去重目前由 VMCE 客户端单元测试覆盖。A19/B71 未修复（被动主 House 仍被显示过滤且轮次人数取过滤后行数）；VMCE 终局快照仍不锁存，胜利统计回退实时事实的行为保持不变。
 - **大厅模式事件分派（阶段 3 第二个子链）：** 加入/退出/选图/模式进入的分派由 dispatch 测试（vmce 配置直接使用生产谓词表）和双人 `2p-win` 建房/加入/开局覆盖；C0 的所属方、早到/正常/乱序/模式切换/离房边界由 `lobby_campaign` 生产处理器测试及 LAN/WOL 事件身份测试覆盖，但完整 `service_event` → HostSetup 事务仍无 `AppState` 夹具。真实进程房间内的中途离房、三人/四人大厅未跑。用户已决定：B71 不修；共享所属方战绩保持现状；地图被删除或替换（A20/B72）及同国多所属方（A04/B59）问题不额外兜底。正常玩家等待不得被误判为超时（A40/B94 的存活/超时边界）仍是待处理事项，已移出“不修”区域，本子链未修复。
+- **房间队伍席位策略所有权（阶段 3 第四个子链）：** `ModePolicy.room_teams`、`network_team_room` 与 setup 分组由 session 行为测试和双人验收覆盖；本改动无玩家可见变化，验收证明的是无回归；WOL 平衡、旁观者房间与 clan 房间的队伍路径未单独实机复现，三人、四人未跑。
 
 ## 已完成（保留验证边界）
 
@@ -405,6 +406,15 @@ lang: zh-CN
 - **验收：** vmce feature 的 fast 构建 `vmce-lobby-difficulty-r3`（exe SHA-256 `6A578BAD51B1CF38A723278E965B8EB9805C76F05874B91036DAC199A4B50D63`）的双人本机 `2p-win` 建房、加入、准备、开局与下一关通过：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利页 `rows=2`/`can_continue=true`，下一关 `stage02` 回执一致；证据在 `.scratch/vmce-lobby-difficulty-accept-r2/`（未提交）。默认 feature 构建不含 `lan-live-vera-campaign-*` 检查点，不能用于该验收。
 - **未覆盖与残余：** 仍无可构造的完整 `AppState` 夹具，因此滑条写入 → `shell_network_setup/actions.rs` 冻结闭包 → `frozen_start_houses` 的整条胶水没有单元测试直接执行，覆盖的是同一生产函数、共享所有者、LAN 解码边界和结果页消费者，调用点由架构检查钉住；验收系列不改动难度滑条，不能证明运行时滑条选择的端到端效果；WOL、旧版本客户端、混合构建和跨机器未验证。越界行归一是边界防御性归一，不是原生行为的断言（原生只接受 0..2 的滑条输入；负值按防御处理归一为 Easy，而原生 Cooperative5C31A5 的 other 映射是 Hard，二者只在滑条与 VERA 编码器都写不出的行上不同）。WOL 的 `Options::into_options` 与 LAN 解码共用同一 `from_native_row` 归一，但没有 WOL 侧镜像测试；结果页无冻结分配时回退 NORMAL 行是防御性默认，真实 VMCE 结果页必经冻结分配（旧实现读实时行时通常得到 0，差异不可达）。
 
+
+### 房间队伍席位策略所有权（2026-11-14，阶段 3 第四个子链，待用户审查）
+
+- **结论：** “本模式的房间是否按队伍席位分组”原本由共享 `MatchSession::network_team_room`（[session.rs](../../src/app/match_runtime/session.rs) `network_team_room`）用 `!launch.mode.class.uses_cooperative_setup()` 判断，即拿 Cooperative 问题回答 VMCE/普通模式的房间策略；setup 视图（[view.rs](../../src/app/shell_network_setup/view.rs) `let grouped = ...`）又用 `!mode_policy.authored_campaign_roles` 复述一次。本子链把决策移入模式自己的策略所有者 [skirmish_modes.rs](../../src/skirmish_modes.rs) 的 `ModePolicy.room_teams`：Battle/ManBattle/Siege/Unholy/FreeForAll 为 true，Cooperative 与 Vmce 为 false。`network_team_room` 现在只合并真正共享的房间事实（Setup 阶段、`several_observers`、`allies_allowed`、非 clan 房间）与该策略字段；VMCE 模式行虽 `allies_allowed: true`，不再需要额外排除。视图里重复的模式判断删除，改为读取同一所有者。
+- **行为保持：** 普通模式仍按队伍分组、TEAMS 与 Team 控件可用；Cooperative 与 VMCE 房间仍不分组、不显示队伍控件；`allies_allowed=false`、clan 房间与 `several_observers=false` 的结果不变。这是所有权收敛，不是界面改版；普通房间内玩家可见行为与改动前一致（选图切进 VMCE 再切回的边缘差异见“未覆盖”）。
+- **架构检查：** `ModePolicy` 保持穷尽构造，每个模式必须显式写 `room_teams`；`mode_policy_maps_each_mode_without_combining_independent_capabilities` 的全量字面量同步更新。本改动没有新增 VMCE 模式检查，因此不涉及共享能力 allowlist 或 VMCE 共享引用上限；architecture guards 51 条两配置通过。
+- **测试：** 核心 `skirmish_modes` 13 条（含逐模式策略字面量）；`app::match_runtime::session` 默认 50 / vmce 60，新增 `room_teams_follow_the_mode_policy` 经真实 `MatchSession::enter_network` + `accept_network_setup` 对 Battle/Cooperative/Vmce 断言分组结果，并覆盖选图切换残留的 `options.teams: Some(2)` 与 `allies_allowed=false`（旧谓词下 Vmce 返回 true，该测试实测失败；修复后通过）；`app::shell_network_setup` vmce 47/默认 33；`check -p vera20k --lib --bins` 两配置通过。
+- **验收：** vmce feature 的 fast 构建 `vmce-team-seating-r1`（exe SHA-256 `D9929F3E95CA2DE47D9C9B5A4DE8CAD07CC5E6E3E76F7CE298363C005EB5D981`）的双人本机 `2p-win` 建房、加入、准备、开局与下一关通过：两端各 300 个 native checksum 与 20 个模拟 hash 一致，胜利页 `rows=2`/`can_continue=true`，下一关 `stage02` 回执一致；详见[基线](../vmce-baseline.md)，证据在 `.scratch/vmce-team-seating-accept-r1/`（未提交）。
+- **未覆盖：** 本改动不改变玩家可见路径（此前视图的 authored-roles 判断已让 VMCE/Cooperative 不分组），验收证明的是无回归，不能证明“队伍控件由可用变不可用”；WOL 平衡、旁观者房间与 clan 房间的队伍路径只有既有测试，未单独生产复现；三人、四人、跨机器与互联网未跑。另有一个边缘差异：普通模式房主先设置队伍数、再经选图窗口切进 VMCE 时，旧谓词会继续按该队伍数在 VMCE 房间执行队伍席位（`keep_players_on_teams`、自动平衡、保留 `slot.team`、WOL Balance），新策略不会；VMCE 自身界面一致（TEAMS 禁用、行不分组），唯一可见差异是从 VMCE 切回普通模式时，旧实现保留切换前的队伍布局，新实现重新分配。该切换路径未在本轮生产验收中复现，作为残余记录。
 
 ### B102 规则与扩展身份准入（2026-11-13，已关闭）
 
