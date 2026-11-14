@@ -584,9 +584,8 @@ pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Res
         inputs.with(|_, nodes| {
             parts
                 .progress
-                .receive_campaign(parts.registry, parts.rng, nodes, &text);
-        });
-        parts.progress.receive_stage(&text, setup)
+                .accept_received_campaign(parts.registry, parts.rng, nodes, &text, setup)
+        })
     };
     if refresh {
         refresh_countries(state)?;

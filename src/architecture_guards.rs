@@ -5582,6 +5582,89 @@ fn cooperative_handler_mode_tests(production: &str) -> Vec<String> {
     violations
 }
 
+/// The received-C0 forwarder must stay message-owned: it may not read the room
+/// mode or the mode chooser, and it must call Cooperative's own `C0` slot. A
+/// WOL guest can read `C0` before the `HostSetup` that brings Cooperative.
+fn lobby_campaign_forward_violation(dispatch: &str) -> Option<String> {
+    let impls = impl_blocks(dispatch);
+    let Some(definition) = function_definitions(dispatch, &impls)
+        .into_iter()
+        .find(|definition| definition.name == "campaign_received")
+    else {
+        return Some("the dispatcher has no campaign_received forwarder".to_owned());
+    };
+    let body = &dispatch[definition.body_start..=definition.body_end];
+    if !body.contains("super::cooperative::campaign_received") {
+        return Some("campaign_received does not reach Cooperative's C0 slot".to_owned());
+    }
+    for token in [
+        "live_owner",
+        "room_mode_class",
+        "room_is_cooperative",
+        "peer_mode",
+        "handles_mode",
+        "mode.class",
+        "MpModeClass::Cooperative",
+    ] {
+        if body.contains(token) {
+            return Some(format!(
+                "campaign_received reads {token}; C0 is owned by its message, not the room mode"
+            ));
+        }
+    }
+    None
+}
+
+/// A function definition's body from the dispatch production projection.
+fn dispatch_function_body<'a>(dispatch: &'a str, name: &str) -> Option<&'a str> {
+    let impls = impl_blocks(dispatch);
+    let definition = function_definitions(dispatch, &impls)
+        .into_iter()
+        .find(|definition| definition.name == name)?;
+    Some(&dispatch[definition.body_start..=definition.body_end])
+}
+
+/// Whether `body` names the extension predicate before Cooperative's.
+fn extension_predicate_first(body: &str) -> bool {
+    match (
+        body.find("super::vmce_setup::handles_mode"),
+        body.find("super::cooperative::handles_mode"),
+    ) {
+        (Some(extension), Some(cooperative)) => extension < cooperative,
+        _ => false,
+    }
+}
+
+/// The mode-owner resolution must ask the extension owner first, so a VMCE
+/// event never evaluates or calls Cooperative's owner predicate. This covers
+/// the dispatcher's event resolution and the shared room query the join ban
+/// path reads.
+fn lobby_extension_first_violation(dispatch: &str) -> Option<String> {
+    let live_owner = dispatch_function_body(dispatch, "live_owner");
+    let event_owner = dispatch_function_body(dispatch, "event_owner");
+    let room_is_cooperative = dispatch_function_body(dispatch, "room_is_cooperative");
+    let (Some(live_owner), Some(event_owner), Some(room_is_cooperative)) =
+        (live_owner, event_owner, room_is_cooperative)
+    else {
+        return Some("the dispatcher lost live_owner/event_owner/room_is_cooperative".to_owned());
+    };
+    if !extension_predicate_first(live_owner) {
+        return Some("live_owner asks Cooperative's predicate before the extension's".to_owned());
+    }
+    if !extension_predicate_first(room_is_cooperative) {
+        return Some(
+            "room_is_cooperative asks Cooperative's predicate before the extension's".to_owned(),
+        );
+    }
+    match (
+        event_owner.find("extension(mode)"),
+        event_owner.find("cooperative(mode)"),
+    ) {
+        (Some(extension), Some(cooperative)) if extension < cooperative => None,
+        _ => Some("event_owner checks Cooperative's predicate before the extension's".to_owned()),
+    }
+}
+
 /// The lobby's mode events are split at the real dispatch boundary: shared
 /// setup files call `dispatch`, which owns the native mode choice (Choose Map's
 /// selected type for a join/departure, the admitted room's mode otherwise) and
@@ -5624,6 +5707,50 @@ fn lobby_mode_events_dispatch_before_the_cooperative_owner() {
             "the lobby dispatcher lost {required}:\n{dispatch}"
         );
     }
+
+    // The received C0 stays message-owned and the mode predicates are asked
+    // extension-first: a VMCE event never evaluates Cooperative's predicate.
+    assert_eq!(
+        lobby_campaign_forward_violation(&dispatch),
+        None,
+        "the received C0 must reach Cooperative by its message, not the room mode"
+    );
+    assert_eq!(
+        lobby_extension_first_violation(&dispatch),
+        None,
+        "a VMCE event must resolve through the extension owner before Cooperative's"
+    );
+    let c0_bypass = "impl S { fn campaign_received(&mut self) { match live_owner(state, SetupModeEvent::GuestJoined) { _ => {} } } }";
+    assert!(
+        lobby_campaign_forward_violation(c0_bypass).is_some(),
+        "a campaign_received that reads the room mode must be caught"
+    );
+    let c0_gated_forward = "impl S { fn campaign_received(&mut self) { super::cooperative::campaign_received(state, text); if super::dispatch::room_is_cooperative(state) {} } }";
+    assert!(
+        lobby_campaign_forward_violation(c0_gated_forward).is_some(),
+        "a forward also gated on the room mode must be caught"
+    );
+    let c0_missing =
+        "impl S { fn campaign(&mut self) { super::cooperative::campaign_received(state, text); } }";
+    assert!(
+        lobby_campaign_forward_violation(c0_missing).is_some(),
+        "a missing forwarder must be caught"
+    );
+    let cooperative_first = "fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner { event_owner(event, peer_mode(state), room_mode_class(state), super::cooperative::handles_mode, super::vmce_setup::handles_mode) }";
+    assert!(
+        lobby_extension_first_violation(cooperative_first).is_some(),
+        "Cooperative asked first must be caught"
+    );
+    let event_owner_cooperative_first = "impl S { fn event_owner(event: SetupModeEvent, mode: Option<MpModeClass>) -> EventOwner { if cooperative(mode) { EventOwner::Cooperative } else if extension(mode) { EventOwner::Extension } else { EventOwner::Other } } fn live_owner(state: &AppState) -> EventOwner { let _ = super::vmce_setup::handles_mode; let _ = super::cooperative::handles_mode; EventOwner::Other } fn room_is_cooperative(state: &AppState) -> bool { let _ = super::vmce_setup::handles_mode; super::cooperative::handles_mode } }";
+    assert!(
+        lobby_extension_first_violation(event_owner_cooperative_first).is_some(),
+        "event_owner checking Cooperative first must be caught"
+    );
+    let predicates_missing = "fn live_owner(state: &AppState) -> EventOwner { EventOwner::Other } fn event_owner() -> EventOwner { EventOwner::Other } fn room_is_cooperative() -> bool { false }";
+    assert!(
+        lobby_extension_first_violation(predicates_missing).is_some(),
+        "a missing extension-first predicate pair must be caught"
+    );
 
     // The Cooperative event handlers no longer make the mode decision; each
     // real call site goes through the dispatcher.

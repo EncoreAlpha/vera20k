@@ -1408,6 +1408,21 @@ impl CooperativeProgressState {
         refresh
     }
 
+    /// A received `C0`: `+0x58`'s campaign then `+0x5C`'s stage and counters,
+    /// as the setup handler (`0x005E43CE`) runs them. Returns whether the open
+    /// setup refreshes.
+    pub(crate) fn accept_received_campaign(
+        &mut self,
+        registry: &CooperativeRegistry,
+        rng: &mut SimRng,
+        nodes: &[&str],
+        text: &CooperativeCampaignText,
+        setup_open: bool,
+    ) -> bool {
+        self.receive_campaign(registry, rng, nodes, text);
+        self.receive_stage(text, setup_open)
+    }
+
     /// The `+0x33C` campaign's stage at the active record's (or 0), as
     /// `0x005C23B0`, `+0x1C` and `+0x28` read it; None without that
     /// campaign or stage.
@@ -2820,5 +2835,149 @@ mod tests {
         assert_eq!(house_type_text(0x1195, &roster), "<Player @ AA>");
         assert_eq!(house_type_text(0x1198, &roster), "<Player @ AD>");
         assert_eq!(house_type_text(0x1199, &roster), "<none>");
+    }
+    /// A guest can read Cooperative's `C0` before the `HostSetup` that brings
+    /// the Cooperative mode (a WOL guest's host options, `'L'` `0x5E8EA0`,
+    /// arrive later). The `'C'` arm stores the campaign in the guest's mode
+    /// record, and the later mode entry must keep it: the setup's countries and
+    /// map then come from the host's campaign, not a fresh campaign 0.
+    ///
+    /// This drives the same owner chain the setup handler runs
+    /// (`accept_received_campaign` then `enter_mode`); the dispatch forwarder
+    /// that carries `C0` there is pinned by the lobby architecture guard,
+    /// because no test builds an `AppState`.
+    #[test]
+    fn cooperative_campaign_read_before_the_host_setup_survives_mode_entry() {
+        let (registry, mut host_rng, campaign_index) = cooperative_campaign_fixture();
+        let mut host = CooperativeProgressRecord::default();
+        host.initialize_for_campaign(&registry, campaign_index, &mut host_rng)
+            .unwrap();
+        host.partner_names = [b"Host".to_vec(), b"Guest".to_vec()];
+        let stage_count = registry.campaign(campaign_index).unwrap().stages.len();
+        host.current_map = if stage_count > 1 { 1 } else { 0 };
+        host.tallies = [[10, 20, 30, 40], [1, 2, 3, 4]];
+        host.time = 4321;
+        let text = host.campaign_text(&registry).unwrap();
+        let parsed = CooperativeCampaignText::parse(&text).unwrap();
+
+        // An ordinary-mode guest has no Cooperative mode record yet.
+        let mut guest = CooperativeProgressState::default();
+        let nodes = ["Guest", "Host"];
+        assert!(
+            guest.accept_received_campaign(&registry, &mut host_rng, &nodes, &parsed, true),
+            "an open setup takes C0's stage"
+        );
+
+        // The host's HostSetup now brings Cooperative; a guest (BD/C9) runs the
+        // mode entry without the host's own setup dialog.
+        let first_map = host.chosen_map(0).unwrap_or_default().to_owned();
+        let scenarios = [first_map.as_str()];
+        let context = CooperativeSlotContext {
+            scenarios: &scenarios,
+            nodes: &nodes,
+            chooser_on_top: false,
+        };
+        assert_eq!(
+            guest.enter_mode(&registry, &mut host_rng, context, 0, false),
+            None
+        );
+
+        let active = guest
+            .active
+            .as_ref()
+            .expect("the early C0 record survives the mode entry");
+        assert_eq!(active.campaign_type, host.campaign_type);
+        assert_eq!(active.current_map, host.current_map);
+        assert_eq!(active.tallies, [host.tallies[1], host.tallies[0]]);
+        assert_eq!(active.time, host.time);
+        assert_eq!(guest.campaign, host.campaign_type);
+        assert_eq!(
+            active.current_chosen_map(),
+            host.current_chosen_map(),
+            "the guest's stage map is the host campaign's map"
+        );
+        let expected_countries = &registry.campaign(campaign_index).unwrap().stages
+            [usize::try_from(host.current_map).unwrap()]
+        .player_countries;
+        assert_eq!(
+            guest.stage_countries(&registry),
+            Some(expected_countries.as_slice()),
+            "the guest's setup countries are the host campaign's stage countries"
+        );
+    }
+
+    /// The ordinary order, host options first and C0 after, reaches the same
+    /// campaign: the mode entry makes the guest's record, then C0 fills it.
+    /// Like the test above this is the owner chain, not the dispatch forward.
+    #[test]
+    fn cooperative_host_setup_then_campaign_read_keeps_the_campaign() {
+        let (registry, mut rng, campaign_index) = cooperative_campaign_fixture();
+        let mut host = CooperativeProgressRecord::default();
+        host.initialize_for_campaign(&registry, campaign_index, &mut rng)
+            .unwrap();
+        host.partner_names = [b"Host".to_vec(), b"Guest".to_vec()];
+        let stage_count = registry.campaign(campaign_index).unwrap().stages.len();
+        host.current_map = if stage_count > 1 { 1 } else { 0 };
+        host.tallies = [[10, 20, 30, 40], [1, 2, 3, 4]];
+        host.time = 4321;
+        let text = host.campaign_text(&registry).unwrap();
+        let parsed = CooperativeCampaignText::parse(&text).unwrap();
+
+        let mut guest = CooperativeProgressState::default();
+        let nodes = ["Guest", "Host"];
+        let first_map = host.chosen_map(0).unwrap_or_default().to_owned();
+        let scenarios = [first_map.as_str()];
+        let context = CooperativeSlotContext {
+            scenarios: &scenarios,
+            nodes: &nodes,
+            chooser_on_top: false,
+        };
+        guest.enter_mode(&registry, &mut rng, context, 0, false);
+        assert!(
+            guest.active.is_some(),
+            "Cooperative's HostSetup makes the guest's record"
+        );
+
+        guest.accept_received_campaign(&registry, &mut rng, &nodes, &parsed, true);
+
+        let active = guest.active.as_ref().expect("record from the mode entry");
+        assert_eq!(active.campaign_type, host.campaign_type);
+        assert_eq!(active.current_map, host.current_map);
+        assert_eq!(active.tallies, [host.tallies[1], host.tallies[0]]);
+        assert_eq!(active.time, host.time);
+        assert_eq!(guest.campaign, host.campaign_type);
+    }
+
+    fn cooperative_campaign_fixture() -> (CooperativeRegistry, SimRng, usize) {
+        let corpus: serde_json::Value = serde_json::from_str(crate::test_fixture::text(
+            "tools/storage_oracle/lan_lobby.json",
+        ))
+        .unwrap();
+        let cooperative = &corpus["cooperative"];
+        let registry = CooperativeRegistry::from_ini(&IniFile::from_str(
+            cooperative["campaign_ini"].as_str().unwrap(),
+        ))
+        .unwrap();
+        let cases = cooperative["cases"].as_array().unwrap();
+        let (case, campaign_index) = cases
+            .iter()
+            .find_map(|case| {
+                let section = case["campaign"].as_str()?;
+                let index = registry
+                    .campaigns
+                    .iter()
+                    .position(|campaign| campaign.section == section)?;
+                (index != 0).then_some((case, index))
+            })
+            .or_else(|| {
+                let case = cases.first()?;
+                let index = registry.campaigns.iter().position(|campaign| {
+                    campaign.section == case["campaign"].as_str().unwrap_or_default()
+                })?;
+                Some((case, index))
+            })
+            .expect("the corpus has a campaign case");
+        let rng = SimRng::from_native_state_hex_for_test(case["rng_before"].as_str().unwrap());
+        (registry, rng, campaign_index)
     }
 }

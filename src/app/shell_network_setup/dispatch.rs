@@ -9,7 +9,13 @@
 //! (`0x005E7160`) call the current mode (`[0xA8B23C]`).
 //!
 //! This module owns that selection and hands each event to the mode's own
-//! event owner. VERA's room, host, roster, admission, network and reliable
+//! event owner. One received message is not a mode-dispatched event at all:
+//! Cooperative's campaign text (`C0`) is named by its own `'C'` arm
+//! (`0x005E43CE`), which dispatches to every mode object's `+0x58` and only
+//! MPCooperative takes. That text is forwarded to Cooperative directly in
+//! [`campaign_received`], even when this peer has not applied the Cooperative
+//! `HostSetup` yet (a WOL guest's host options arrive later), so an early `C0`
+//! is not dropped. VERA's room, host, roster, admission, network and reliable
 //! queue stay in the shared setup; this is a mode-event split, not a plugin
 //! framework.
 
@@ -49,8 +55,6 @@ pub(super) enum SetupModeEvent {
     /// A guest's own choices (or the host checking them): the mode's `+0x1C`
     /// country admission.
     Choices,
-    /// A received Cooperative campaign `C0` text: the mode's `+0x58`/`+0x5C`.
-    CampaignText,
 }
 
 impl SetupModeEvent {
@@ -82,24 +86,25 @@ impl PeerMode {
 
 /// The event's owner from the modes native would read. The two mode predicates
 /// keep this file mode-agnostic: each mode module says whether the event's mode
-/// class belongs to it. Pure so the routing rules stay testable without a live
-/// `AppState`.
+/// class belongs to it. The extension predicate runs first, so a VMCE event
+/// never evaluates (or indirectly calls) Cooperative's owner predicate. Pure so
+/// the routing rules stay testable without a live `AppState`.
 fn event_owner(
     event: SetupModeEvent,
     peer: PeerMode,
     room: Option<MpModeClass>,
-    cooperative: impl Fn(Option<MpModeClass>) -> bool,
     extension: impl Fn(Option<MpModeClass>) -> bool,
+    cooperative: impl Fn(Option<MpModeClass>) -> bool,
 ) -> EventOwner {
     let mode = if event.uses_peer_mode() {
         peer.class()
     } else {
         room
     };
-    if cooperative(mode) {
-        EventOwner::Cooperative
-    } else if extension(mode) {
+    if extension(mode) {
         EventOwner::Extension
+    } else if cooperative(mode) {
+        EventOwner::Cooperative
     } else {
         EventOwner::Other
     }
@@ -141,15 +146,21 @@ fn live_owner(state: &AppState, event: SetupModeEvent) -> EventOwner {
         event,
         peer_mode(state),
         room_mode_class(state),
-        super::cooperative::handles_mode,
         super::vmce_setup::handles_mode,
+        super::cooperative::handles_mode,
     )
 }
 
 /// Whether the admitted room itself is Cooperative (the slots that read
-/// `[0xA8B23C]`, not Choose Map's selection).
+/// `[0xA8B23C]`, not Choose Map's selection). The extension predicate runs
+/// first, so a VMCE room never evaluates Cooperative's owner predicate.
 pub(super) fn room_is_cooperative(state: &AppState) -> bool {
-    super::cooperative::handles_mode(room_mode_class(state))
+    let mode = room_mode_class(state);
+    if super::vmce_setup::handles_mode(mode) {
+        false
+    } else {
+        super::cooperative::handles_mode(mode)
+    }
 }
 
 /// The host's setup open (`BC`'s mode init once the room is admitted).
@@ -231,13 +242,12 @@ pub(super) fn choice_countries(
     }
 }
 
-/// A received Cooperative campaign `C0` text: only Cooperative's mode object
-/// takes it (`0x005E43CE`); other modes' `+0x58` slot does nothing.
+/// A received Cooperative campaign `C0` text: its `'C'` arm (`0x005E43CE`)
+/// names Cooperative's mode object itself, so it reaches Cooperative's slot
+/// even when this guest has not applied the Cooperative `HostSetup` yet (WOL
+/// host options arrive later); no mode the guest currently holds is consulted.
 pub(super) fn campaign_received(state: &mut AppState, text: &str) -> anyhow::Result<()> {
-    match live_owner(state, SetupModeEvent::CampaignText) {
-        EventOwner::Cooperative => super::cooperative::campaign_received(state, text),
-        _ => Ok(()),
-    }
+    super::cooperative::campaign_received(state, text)
 }
 
 #[cfg(test)]
@@ -251,8 +261,8 @@ mod tests {
             event,
             peer,
             room,
-            |mode| mode == Some(Cooperative),
             |mode| mode == Some(Vmce),
+            |mode| mode == Some(Cooperative),
         )
     }
 
@@ -401,7 +411,6 @@ mod tests {
             SetupModeEvent::ParseRefresh,
             SetupModeEvent::MapUsed,
             SetupModeEvent::Choices,
-            SetupModeEvent::CampaignText,
         ] {
             assert_eq!(
                 owner(event, PeerMode::Chooser(Some(Vmce)), Some(Cooperative)),
@@ -426,5 +435,30 @@ mod tests {
             ),
             EventOwner::Other
         );
+    }
+
+    #[test]
+    fn a_vmce_event_never_asks_the_cooperative_owner() {
+        // Every mode-dispatched event with a VMCE mode resolves through the
+        // extension owner before Cooperative's predicate is evaluated.
+        for event in [
+            SetupModeEvent::HostOpened,
+            SetupModeEvent::JoinSlot,
+            SetupModeEvent::ParseRefresh,
+            SetupModeEvent::GuestJoined,
+            SetupModeEvent::GuestLeft,
+            SetupModeEvent::ModeEntered,
+            SetupModeEvent::MapUsed,
+            SetupModeEvent::Choices,
+        ] {
+            let resolved = event_owner(
+                event,
+                PeerMode::Chooser(Some(Vmce)),
+                Some(Vmce),
+                |mode| mode == Some(Vmce),
+                |_| panic!("a VMCE event must not evaluate the Cooperative owner predicate"),
+            );
+            assert_eq!(resolved, EventOwner::Extension, "{event:?}");
+        }
     }
 }

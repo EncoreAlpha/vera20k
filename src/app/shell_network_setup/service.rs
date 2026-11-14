@@ -913,7 +913,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
         }
         NetworkSetupEvent::CooperativeCampaign(text) => {
             // The 'C' arm (0x005E43CE) follows the parse's WOL drop of every
-            // option text (0x005E3E73..0x005E3E90), as HostSetup does.
+            // option text (0x005E3E73..0x005E3E90), as HostSetup does. A WOL
+            // guest's host options ('L', 0x5E8EA0) arrive later, so C0 can be
+            // read before the HostSetup that brings Cooperative; dispatch
+            // routes it by the message's own mode object, not the room mode.
             if dialog.wol()
                 && (crate::app::shell_wol::in_match(state) || super::wol::start_pending(state))
             {
