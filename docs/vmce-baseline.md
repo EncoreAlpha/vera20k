@@ -754,3 +754,49 @@ count (`app/cooperative_round.rs` 12, `app/lan_service/cooperative.rs` 19,
 `app/match_runtime/session/cooperative_round.rs` 37) and the budget guard skips zero-count files, so
 the table sum does not equal `VMCE_PRODUCTION_GATE_TOTAL`; `resolve_vmce_houses` in
 `actions/start.rs` is a test-only `#[cfg(feature = "vmce")]` shared-file gate.
+
+## Phase 3 seventh slice — lobby acceptance probe: claimed seats and difficulty (feature/vmce, 2026-11-14)
+
+The live two-process VMCE acceptance used to accept the host's options as delivered: every participant
+started on Random roles and the lobby difficulty stayed at its process default, so the role and
+difficulty parts of the lobby chain were covered only by unit and architecture checks. The acceptance
+tool now drives those inputs through production code before Accept/Start:
+
+- `--lan-lobby-inputs` (VMCE live LAN host or guest only) enables the probe. Both peers claim the
+  authored primary role equal to their admitted seat row through the setup Team column (the VMCE role
+  slot); the host sets the shared lobby difficulty to Hard (row 2) through the production difficulty
+  slider. The guest re-sends production Accept whenever a later material host-options revision clears
+  its Ready row, so the probe follows what a real guest does instead of racing one options revision.
+- `vmce_setup_snapshot`, `vmce_runtime_receipt` and `vmce_lobby_receipt` carry `lobby_difficulty`, the
+  frozen start `frozen_difficulty` (from the frozen `VmceHouseAssignments`), `role_claims_enabled` /
+  `roles_claimed`, and per-seat roles. The Ready transition also pins the lobby row and, when claims
+  are enabled, requires each seat to own its row's role.
+- The `2p-win` scenario requests the probe; the comparator adds three checks: every seat claimed its
+  own authored role and both receipts agree on the name/row/role mapping; the lobby difficulty is
+  equal across peers and equals the requested row; the frozen start difficulty equals it as well.
+- `setup::apply_action(SetupAction::Accept)` is used for the probe instead of pointer hit-testing: the
+  click path did not reach the production Accept after the setup actions in this synthetic frame
+  sequence, while the action itself is the same production handler the button invokes.
+
+Tests: `app::diagnostics::shell_capture` default 88 / vmce 100; `check -p vera20k --lib --bins` passes
+in both configurations; the acceptance tool's own unit suite has 33 passing tests (new comparator and
+command-line probe cases). The repository-level `python -m tools.run_tests` still reports its
+pre-existing environmental/branch failures (cargo-cache symlink tests, macOS notarization, the
+existing `/home/player` literal in `src/app/restart.rs`, the browser-switch path list), none of which
+touch the three files changed here.
+
+Acceptance: the vmce-feature fast build `vmce-lobby-inputs-r2` (exe SHA-256
+`D99162C7438EFE0BD4ADE123C639F281B1AF2772141944A89716FF6634EFA788`) passed the two-process
+`2p-win` run with the `LDA-Continue-real` series: both ends matched 300 native checksums and 20
+simulation hashes, the victory page reported `rows=2` / `can_continue=true`, the stage02 next mission
+was present on both ends, both receipts reported lobby and frozen difficulty 2, and the role probe
+reported `[('LiveHost', 0, 0), ('LiveGuest', 1, 1)]`. Evidence lives in
+`.scratch/vmce-lobby-inputs-accept-r9/` (not committed).
+
+Residuals: only `2p-win` enables the probe; `2p-retry`, `2p-final`, `4p-win` and the stock Cooperative
+captures keep their previous scripts (the driver is VMCE-only and the comparator checks run only when a
+scenario requests them). The probe proves the normal host/guest allowed path; it does not exercise a
+rejected role/config change, leave/reselect in the intermission room, WOL, old/mixed builds,
+cross-machine play or three/four-player rooms. No game behavior changed: the work is in
+`src/app/diagnostics/shell_capture.rs`, `.../movies/lan/live.rs` and
+`tools/vmce_lan_acceptance.py`.
