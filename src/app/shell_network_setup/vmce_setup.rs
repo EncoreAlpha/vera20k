@@ -135,6 +135,64 @@ fn should_reanswer_map(vmce: bool, host: bool, wol: bool, map_changed: bool) -> 
     map_changed || (vmce && !host && !wol)
 }
 
+/// The VMCE assignments an accepted start freezes.
+///
+/// This is the one place a VMCE start reads the shared lobby difficulty row:
+/// the frozen assignments carry it into the loader's TriggerType flags and the
+/// result page, and every later consumer reads the frozen copy rather than the
+/// process row a later room may have changed.
+pub(super) fn frozen_start_houses(
+    state: &AppState,
+    launch: &SkirmishLaunchSession,
+    agreed_seed: u32,
+) -> anyhow::Result<Option<crate::skirmish_launch::VmceHouseAssignments>> {
+    if !launch.mode.class.is_vmce() {
+        return Ok(None);
+    }
+    let file = launch
+        .selected_map_file
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("VMCE start has no selected map"))?;
+    let root = &state
+        .platform
+        .game_config
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
+        .paths
+        .ra2_dir;
+    let assets = state
+        .process_assets
+        .manager()
+        .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
+    let map = crate::map::source::load_network_map_ini(root, file, assets)?;
+    let config = state
+        .match_state
+        .session
+        .network_vmce_map_config()
+        .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted map config"))?;
+    let (_, source_sha256) = map
+        .source
+        .physical_identity()
+        .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
+    let mut assignments = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
+        &map.ini,
+        file,
+        source_sha256,
+        config,
+        launch,
+        agreed_seed,
+    )?;
+    // The lane-synchronized lobby row is this mission's TriggerType difficulty
+    // (0=Easy, 1=Normal, 2=Hard). Every peer receives the same row through the
+    // LAN options payload, so the frozen assignment identity stays identical.
+    assignments.difficulty = state
+        .frontend
+        .multiplayer_shell_runtime
+        .lobby_difficulty()
+        .native_row();
+    Ok(Some(assignments))
+}
+
 // ---- VMCE's lobby mode events -------------------------------------------
 //
 // The shared setup owns the room, host, roster, admission, network and

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::match_runtime::session::{NetworkMapMetadata, NetworkVacancy};
 use crate::app::shell_network_setup::{HostOptions, NetworkSetupEvent};
 use crate::app::shell_wol::{WolHighScoreRecord, WolLadderRecord};
+use crate::skirmish_launch::LobbyDifficulty;
 use crate::ui::wol_lobby::{WolChannel, WolMember};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -199,7 +200,9 @@ impl Options {
             map_metadata: self.map_metadata.into(),
             vacancies: self.vacancies.map(Into::into),
             observer_row: self.observer_row,
-            cooperative_difficulty: self.cooperative_difficulty,
+            // The online payload keeps the native field name; the shared
+            // lobby owner normalizes its row for every mode's consumer.
+            lobby_difficulty: LobbyDifficulty::from_native_row(self.cooperative_difficulty),
             seed: self.seed,
             #[cfg(feature = "vmce")]
             vmce_map_config: None,

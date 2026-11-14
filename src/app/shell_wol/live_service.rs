@@ -1919,7 +1919,8 @@ fn options(state: &AppState) -> Result<wire::Options> {
         cooperative_difficulty: state
             .frontend
             .multiplayer_shell_runtime
-            .cooperative_difficulty(),
+            .lobby_difficulty()
+            .native_row(),
         cooperative_campaign: cooperative_campaign(state),
         seed: Some(crate::app::shell_network_setup::resident_seed(state)),
     })

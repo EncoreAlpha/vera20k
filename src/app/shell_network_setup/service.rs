@@ -3,7 +3,9 @@
 
 use super::*;
 use crate::app::match_runtime::session::PeerChoicesChange;
-use crate::skirmish_launch::{LaunchTeam, SkirmishLaunchSession, SkirmishLocalSlot};
+use crate::skirmish_launch::{
+    LaunchTeam, LobbyDifficulty, SkirmishLaunchSession, SkirmishLocalSlot,
+};
 use crate::ui::lan_shell::LanChatLine;
 use crate::util::time::Instant;
 
@@ -16,7 +18,9 @@ pub(crate) struct HostOptions {
     pub(crate) map_metadata: crate::app::match_runtime::session::NetworkMapMetadata,
     pub(crate) vacancies: [NetworkVacancy; crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT],
     pub(crate) observer_row: Option<u8>,
-    pub(crate) cooperative_difficulty: i32,
+    /// The native options payload's `cooperative_difficulty` row, normalized to
+    /// the shared lobby rows 0..=2. Shared lobby input, not Cooperative state.
+    pub(crate) lobby_difficulty: LobbyDifficulty,
     pub(crate) seed: Option<u32>,
     #[cfg(feature = "vmce")]
     pub(crate) vmce_map_config: Option<crate::app::match_bootstrap::NetworkVmceMapConfig>,
@@ -473,7 +477,7 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             map_metadata,
             vacancies,
             observer_row,
-            cooperative_difficulty,
+            lobby_difficulty,
             seed,
             #[cfg(feature = "vmce")]
             vmce_map_config,
@@ -700,15 +704,11 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
                         .network_setup()
                         .expect("accepted setup"),
                 )
-                || state
-                    .frontend
-                    .multiplayer_shell_runtime
-                    .cooperative_difficulty()
-                    != cooperative_difficulty;
+                || state.frontend.multiplayer_shell_runtime.lobby_difficulty() != lobby_difficulty;
             state
                 .frontend
                 .multiplayer_shell_runtime
-                .set_cooperative_difficulty(cooperative_difficulty);
+                .set_lobby_difficulty(lobby_difficulty);
             if let Some(seed) = seed {
                 state.match_state.session.set_network_start_seed(seed)?;
             }

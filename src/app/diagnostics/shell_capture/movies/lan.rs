@@ -886,7 +886,7 @@ impl LanCapture {
                             .context("native observer row")? as u8,
                     )
                 },
-                cooperative_difficulty: 0,
+                lobby_difficulty: Default::default(),
                 seed: Some(self.seed()?),
                 #[cfg(feature = "vmce")]
                 vmce_map_config: None,

@@ -349,7 +349,6 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         3,
         0,
     ),
-    ("app/shell_network_setup/actions.rs", "commit_start", 1, 0),
     (
         "app/shell_network_setup/actions/start.rs",
         "has_minimum_players",
@@ -3782,11 +3781,6 @@ fn vmce_diagnostic_tokens() -> Vec<&'static str> {
 /// is a shared boundary; a same-named helper elsewhere is still inspected.
 const VMCE_SHARED_CAPABILITY_ALLOWLIST: &[(&str, &str, &str)] = &[
     (
-        "cooperative_difficulty",
-        "simulation: the difficulty projection a cooperative campaign match runs at",
-        "app/vmce_result/flow.rs",
-    ),
-    (
         "continuation_timing",
         "net/lockstep: shared continuation frame timing table",
         "app/vmce_round.rs, app/cooperative_round.rs",
@@ -3839,7 +3833,6 @@ fn vmce_shared_capability_allowed(identifier: &str) -> bool {
 /// may define the same name and must still be inspected.
 fn vmce_shared_owner(rel: &str, identifier: &str) -> bool {
     match identifier {
-        "cooperative_difficulty" => rel == "app/frontend/skirmish_session.rs",
         "continuation_timing" => rel == "net/lockstep.rs",
         "advance_master_frame" => rel == "sim/world/master_frame.rs",
         "drain_match_requests" => rel == "app/lan_service.rs",
@@ -3907,6 +3900,32 @@ fn vmce_owned_result_file(rel: &str) -> bool {
     })
 }
 
+/// Files that hold VMCE's own lobby mode events, setup state and map/config
+/// admission. Their whole source is owned like the result files: a VMCE lobby
+/// event must not call the stock Cooperative lobby owner. Shared setup files
+/// stay outside this list; their VMCE-named functions are scanned by name
+/// instead, because they also serve every other mode.
+const VMCE_LOBBY_OWNED_FILES: &[&str] = &[
+    "app/shell_network_setup/vmce_setup.rs",
+    "app/shell_network_setup/vmce_setup_stub.rs",
+    "app/shell_network_setup/vmce_map.rs",
+    "app/shell_network_setup/vmce_map_stub.rs",
+    "app/lan_service/vmce_setup.rs",
+    "app/lan_service/vmce_setup/",
+];
+
+fn vmce_owned_lobby_file(rel: &str) -> bool {
+    VMCE_LOBBY_OWNED_FILES.iter().any(|entry| {
+        if entry.ends_with('/') {
+            rel.starts_with(entry)
+        } else if let Some(rest) = rel.strip_prefix(entry) {
+            rest.is_empty() || rest.starts_with(".rs") || rest.starts_with('/')
+        } else {
+            false
+        }
+    })
+}
+
 /// One owned segment the dependency guard reads: a whole VMCE-owned file, one
 /// VMCE-named production function in a shared file, or one VMCE test function
 /// in a shared test file.
@@ -3929,7 +3948,10 @@ fn vmce_owned_scopes(files: &[SourceFile]) -> Vec<VmceOwnedScope> {
         if file.rel == "architecture_guards.rs" {
             continue;
         }
-        if vmce_owned_result_file(&file.rel) {
+        // Whole-file ownership: VMCE result code and this phase's VMCE lobby
+        // code. Their direct and indirect Cooperative reachability is checked
+        // by the same dependency scan.
+        if vmce_owned_result_file(&file.rel) || vmce_owned_lobby_file(&file.rel) {
             scopes.push(VmceOwnedScope {
                 label: format!("file:{}", file.rel),
                 file: file.rel.clone(),
@@ -4870,11 +4892,10 @@ fn vmce_reachable_violation(
 /// is not. `Type::helper(...)`, known macros and aliased imports are followed
 /// when their owner can be resolved. Unresolved receiver types, dynamic
 /// dispatch and generated code still require a read-only architecture review.
-fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
-    let scopes = vmce_owned_scopes(files);
-    let mut violations = vmce_owned_reference_violations(&scopes);
+fn vmce_dependency_violations(files: &[SourceFile], scopes: &[VmceOwnedScope]) -> Vec<String> {
+    let mut violations = vmce_owned_reference_violations(scopes);
     let graph = VmceCallGraph::new(files);
-    for scope in &scopes {
+    for scope in scopes {
         for call in function_calls(&scope.code) {
             let Some(call_name) = call.path.last() else {
                 continue;
@@ -4947,6 +4968,11 @@ fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
         }
     }
     violations
+}
+
+fn vmce_owned_dependency_violations(files: &[SourceFile]) -> Vec<String> {
+    let scopes = vmce_owned_scopes(files);
+    vmce_dependency_violations(files, &scopes)
 }
 
 /// The VMCE result flow must not call a stock Cooperative result owner. This
@@ -5317,7 +5343,7 @@ fn vmce_dependency_guard_allows_documented_shared_capabilities() {
             "fn pump(state: &mut AppState) {\n\
                  super::drain_match_requests(state);\n\
                  let assignments = session.network_vmce_assignments();\n\
-                 let difficulty = runtime.cooperative_difficulty();\n\
+                 let difficulty = runtime.lobby_difficulty();\n\
              }\n",
         ),
         fixture_source_file(
@@ -5349,6 +5375,187 @@ fn vmce_dependency_guard_rejects_the_cooperative_score_selection() {
             .iter()
             .any(|violation| violation.contains("cooperative_score_rows")),
         "the Cooperative score selection escaped the VMCE dependency scan: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_lobby_owned_files_never_call_the_cooperative_lobby_owner() {
+    // VMCE's lobby events, role projection and map/series admission are its
+    // own code. They reach the shared room, roster, admission and transport
+    // through the shared setup API, never through the stock Cooperative mode
+    // owner (whose handlers only stock Cooperative dispatch selects).
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let scopes: Vec<VmceOwnedScope> = vmce_owned_scopes(&files)
+        .into_iter()
+        .filter(|scope| vmce_owned_lobby_file(&scope.file))
+        .collect();
+    for expected in [
+        "app/shell_network_setup/vmce_setup.rs",
+        "app/shell_network_setup/vmce_map.rs",
+        "app/lan_service/vmce_setup.rs",
+    ] {
+        assert!(
+            scopes.iter().any(|scope| scope.file == expected),
+            "the VMCE lobby scan did not read {expected}: {:#?}",
+            scopes.iter().map(|scope| &scope.file).collect::<Vec<_>>()
+        );
+    }
+    let violations = vmce_dependency_violations(&files, &scopes);
+    assert!(
+        violations.is_empty(),
+        "VMCE lobby-owned code reached the Cooperative owner directly or indirectly: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_lobby_guard_rejects_a_cooperative_event_call() {
+    let files = vec![fixture_source_file(
+        "app/shell_network_setup/vmce_setup.rs",
+        "fn vmce_host_opened(state: &mut AppState) {\n\
+             super::cooperative::host_opened(state);\n\
+         }\n",
+    )];
+    let scopes: Vec<_> = files
+        .iter()
+        .filter(|file| vmce_owned_lobby_file(&file.rel))
+        .map(|file| VmceOwnedScope {
+            label: format!("file:{}", file.rel),
+            file: file.rel.clone(),
+            whole_file: true,
+            code: file.blanked.clone(),
+        })
+        .collect();
+    let violations = vmce_owned_reference_violations(&scopes);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("super::cooperative")),
+        "the VMCE lobby scan missed a Cooperative event call: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_lobby_guard_rejects_an_indirect_cooperative_event_call() {
+    // The lobby files may call a shared helper; that helper must not smuggle
+    // the call into the stock Cooperative lobby owner.
+    let files = vec![
+        fixture_source_file(
+            "app/shell_network_setup/vmce_setup.rs",
+            "pub(super) fn vmce_host_opened(state: &mut AppState) {\n\
+                 state.open_lobby_event();\n\
+             }\n",
+        ),
+        fixture_source_file(
+            "app/hidden_impl.rs",
+            "impl AppState {\n\
+                 fn open_lobby_event(&mut self) {\n\
+                     super::cooperative::host_opened(self);\n\
+                 }\n\
+             }\n",
+        ),
+    ];
+    let scopes: Vec<VmceOwnedScope> = vmce_owned_scopes(&files)
+        .into_iter()
+        .filter(|scope| vmce_owned_lobby_file(&scope.file))
+        .collect();
+    assert!(!scopes.is_empty(), "no VMCE lobby fixture scope");
+    let violations = vmce_dependency_violations(&files, &scopes);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("open_lobby_event")),
+        "the VMCE lobby scan missed an indirect Cooperative event call: {violations:#?}"
+    );
+}
+
+#[test]
+fn vmce_start_commit_freezes_the_shared_lobby_difficulty_once() {
+    // The VMCE start commit reads the shared lobby owner exactly once, into the
+    // frozen start assignments; the loader and result page consume that copy.
+    // Moving the read back into the shared commit path or a Cooperative owner
+    // must fail this guard.
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let file = |rel: &str| {
+        files
+            .iter()
+            .find(|file| file.rel == rel)
+            .unwrap_or_else(|| panic!("missing scanned file {rel}"))
+    };
+    let function = |source: &SourceFile, name: &str| {
+        let code = source.production.as_deref().unwrap_or(&source.blanked);
+        let definitions = function_definitions(code, &impl_blocks(code));
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("missing fn {name} in {}", source.rel));
+        code[definition.body_start..=definition.body_end].to_owned()
+    };
+
+    let setup = file("app/shell_network_setup/vmce_setup.rs");
+    let freeze = function(setup, "frozen_start_houses");
+    assert!(
+        freeze.contains("lobby_difficulty()"),
+        "the VMCE start commit no longer reads the shared lobby difficulty owner:\n{freeze}"
+    );
+    assert!(
+        freeze.contains("assignments.difficulty"),
+        "the VMCE start commit no longer freezes the difficulty into its assignments:\n{freeze}"
+    );
+    assert!(
+        !freeze.contains("cooperative_difficulty"),
+        "the VMCE start commit reached the native wire name instead of the typed owner:\n{freeze}"
+    );
+
+    let actions = file("app/shell_network_setup/actions.rs");
+    let commit = function(actions, "commit_start");
+    assert!(
+        commit.contains("frozen_start_houses"),
+        "the shared start commit no longer hands VMCE freezing to its own owner:\n{commit}"
+    );
+}
+
+#[test]
+fn vmce_result_reads_the_frozen_start_difficulty_not_the_live_lobby_row() {
+    // The finished mission's difficulty is its frozen start input, which also
+    // gated the TriggerType flags. The result page must not read the process
+    // lobby row a rebuilt room may have changed for a later mission.
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = source_files(&src_root);
+    let flow = files
+        .iter()
+        .find(|file| file.rel == "app/vmce_result/flow.rs")
+        .expect("missing app/vmce_result/flow.rs");
+    let code = flow.production.as_deref().unwrap_or(&flow.blanked);
+    let impls = impl_blocks(code);
+    let definitions = function_definitions(code, &impls);
+    let body = |name: &str| {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("missing fn {name} in app/vmce_result/flow.rs"));
+        &code[definition.body_start..=definition.body_end]
+    };
+    let model = body("build_vmce_score_model");
+    assert!(
+        model.contains("network_vmce_assignments"),
+        "the result model no longer reads the frozen assignments:\n{model}"
+    );
+    assert!(
+        model.contains("result_difficulty"),
+        "the result model no longer resolves its frozen difficulty:\n{model}"
+    );
+    assert!(
+        !model.contains("lobby_difficulty") && !model.contains("cooperative_difficulty"),
+        "the result model reached the live lobby row:\n{model}"
+    );
+    let helper = body("result_difficulty");
+    assert!(
+        !helper.contains("multiplayer_shell_runtime")
+            && !helper.contains("lobby_difficulty")
+            && !helper.contains("cooperative_difficulty"),
+        "the result difficulty helper reached the live lobby owner:\n{helper}"
     );
 }
 

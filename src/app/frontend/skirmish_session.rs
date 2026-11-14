@@ -18,7 +18,8 @@ use crate::assets::asset_manager::AssetManager;
 use crate::rules::ini_parser::IniFile;
 use crate::sim::rng::SimRng;
 use crate::skirmish_launch::{
-    LaunchCountry, RandomCountryRole, ShellRandomAssignmentState, SkirmishLaunchSession,
+    LaunchCountry, LobbyDifficulty, RandomCountryRole, ShellRandomAssignmentState,
+    SkirmishLaunchSession,
 };
 use crate::skirmish_modes::{SkirmishGameMode, mode_by_id};
 use crate::ui::skirmish_shell::{
@@ -233,8 +234,11 @@ pub(crate) struct MultiplayerShellRuntime {
     cooperative_registry: CooperativeRegistry,
     cooperative_progress: CooperativeProgressState,
     cooperative_country_roster: Vec<CooperativeCountryRosterEntry>,
-    /// Process A8EB68, initialized0; independent of COOPMD AIDifficulty.
-    cooperative_difficulty: i32,
+    /// Native process A8EB68, initialized 0: the shared lobby difficulty row.
+    /// Cooperative's setup/round and VMCE's frozen start read it; neither mode
+    /// owns the process value. The LAN options payload carries it in its
+    /// native `cooperative_difficulty` field.
+    lobby_difficulty: LobbyDifficulty,
     /// `[0xA8B254]`, the multiplayer scenario index (catalog order, BSS 0).
     /// Its writers are the setup dialogs' map changes (Skirmish, BC/BD,
     /// C2/C9, Use Map) and Cooperative's `+0x20`; Quick Match's
@@ -969,7 +973,7 @@ impl MultiplayerShellRuntime {
             cooperative_registry,
             cooperative_progress,
             cooperative_country_roster,
-            cooperative_difficulty: 0,
+            lobby_difficulty: Default::default(),
             scenario_index: 0,
             scenario_start_header: crate::map::preview::ScenarioStartHeader::default(),
             scenario_start_staging: Default::default(),
@@ -1256,7 +1260,7 @@ impl MultiplayerShellRuntime {
                 .cooperative_progress
                 .setup_countries(&self.cooperative_registry),
             description: self.cooperative_progress.description(),
-            difficulty: self.cooperative_difficulty,
+            difficulty: self.lobby_difficulty.native_row(),
         }
     }
 
@@ -1393,7 +1397,7 @@ impl MultiplayerShellRuntime {
             campaign,
             self.scenario_start_header,
             map.player_capacity,
-            self.cooperative_difficulty,
+            self.lobby_difficulty.native_row(),
             &session.opponents,
         )
     }
@@ -1428,8 +1432,20 @@ impl MultiplayerShellRuntime {
         self.cooperative_progress.accept_round_assignments(rounds);
     }
 
-    pub(crate) fn cooperative_difficulty(&self) -> i32 {
-        self.cooperative_difficulty
+    /// Native `[0xA8EB68]`: the shared lobby difficulty row the setup dialog's
+    /// `0x732` trackbar writes. Cooperative's rounds and VMCE's frozen start
+    /// consume it; both read this one owner.
+    pub(crate) fn lobby_difficulty(&self) -> LobbyDifficulty {
+        self.lobby_difficulty
+    }
+
+    /// BC5DEE63/C278FA0A and received options5E4F44 retain this process row.
+    /// Cooperative5C31A5 later maps 0→Easy, 1→Normal, other→Hard; the native
+    /// trackbar cannot author a value outside 0..=2. A network payload can, so
+    /// decode and slider callers construct a normalized `LobbyDifficulty` first;
+    /// this owner never stores an unnormalized row for a consumer to interpret.
+    pub(crate) fn set_lobby_difficulty(&mut self, difficulty: LobbyDifficulty) {
+        self.lobby_difficulty = difficulty;
     }
 
     /// `[0xA8B254]`.
@@ -1439,12 +1455,6 @@ impl MultiplayerShellRuntime {
 
     pub(crate) fn set_scenario_index(&mut self, index: usize) {
         self.scenario_index = index;
-    }
-
-    /// BC5DEE63/C278FA0A and received options5E4F44 retain this process integer.
-    /// Cooperative5C31A5 later maps0→Easy,1→Normal,other→Hard.
-    pub(crate) fn set_cooperative_difficulty(&mut self, difficulty: i32) {
-        self.cooperative_difficulty = difficulty;
     }
 
     /// Apply all snapshot keys to one in-memory buffer and perform one write.
@@ -2155,7 +2165,7 @@ pub(crate) fn cooperative_runtime_for_test(
         cooperative_registry,
         cooperative_progress,
         cooperative_country_roster: controlled_ten_country_roster(),
-        cooperative_difficulty: 0,
+        lobby_difficulty: Default::default(),
         scenario_index: 0,
         scenario_start_header: crate::map::preview::ScenarioStartHeader::default(),
         scenario_start_staging: Default::default(),
@@ -2367,7 +2377,7 @@ mod tests {
             cooperative_registry: CooperativeRegistry::default(),
             cooperative_progress: CooperativeProgressState::default(),
             cooperative_country_roster: controlled_ten_country_roster(),
-            cooperative_difficulty: 0,
+            lobby_difficulty: Default::default(),
             scenario_index: 0,
             scenario_start_header: crate::map::preview::ScenarioStartHeader::default(),
             scenario_start_staging: Default::default(),
@@ -2378,6 +2388,24 @@ mod tests {
 
     fn defaults() -> SkirmishGlobalDefaults {
         skirmish_global_defaults(&SkirmishShellState::default())
+    }
+
+    #[test]
+    fn the_shared_lobby_difficulty_is_one_normalized_process_row() {
+        let mut runtime = runtime(
+            MultiplayerSetupSnapshot::from_global_defaults(defaults(), SetupProfile::Lan),
+            1,
+        );
+        // Native A8EB68 starts at zero, before any setup dialog reads it.
+        assert_eq!(runtime.lobby_difficulty(), LobbyDifficulty::EASY);
+        runtime.set_lobby_difficulty(LobbyDifficulty::HARD);
+        assert_eq!(runtime.lobby_difficulty().native_row(), 2);
+        // External rows stay inside the three rows every consumer indexes.
+        runtime.set_lobby_difficulty(LobbyDifficulty::from_native_row(9));
+        assert_eq!(runtime.lobby_difficulty().native_row(), 2);
+        runtime.set_lobby_difficulty(LobbyDifficulty::from_native_row(-3));
+        assert_eq!(runtime.lobby_difficulty().native_row(), 0);
+        assert_eq!(LobbyDifficulty::from_native_row(1).native_row(), 1);
     }
 
     /// A process Rules holder with no sources installed: `Side` then keeps the

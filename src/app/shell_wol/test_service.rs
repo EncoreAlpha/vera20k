@@ -352,7 +352,7 @@ fn host_options(
             vacancies: [crate::app::match_runtime::session::NetworkVacancy::Open;
                 crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT],
             observer_row: None,
-            cooperative_difficulty: 0,
+            lobby_difficulty: Default::default(),
             seed: Some(HOST_SEED),
             #[cfg(feature = "vmce")]
             vmce_map_config: None,

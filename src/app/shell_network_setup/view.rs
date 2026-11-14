@@ -1071,7 +1071,8 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
                     state
                         .frontend
                         .multiplayer_shell_runtime
-                        .cooperative_difficulty()
+                        .lobby_difficulty()
+                        .native_row()
                 },
                 |coop| coop.difficulty,
             ),
@@ -1363,7 +1364,7 @@ fn profile_is_wol(state: &AppState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
+    use crate::rules::{ini_parser::IniFile, ruleset::RuleSet};
 
     #[cfg(feature = "vmce")]
     #[test]

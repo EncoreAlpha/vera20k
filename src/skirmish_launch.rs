@@ -398,6 +398,45 @@ impl AiDifficulty {
     }
 }
 
+/// Native process `[0xA8EB68]`: the multiplayer setup dialog's difficulty row.
+///
+/// The shared setup trackbar (`0x732`) authors the three rows 0..=2
+/// (Easy, Normal, Hard), and the native LAN options payload carries the row in
+/// its `cooperative_difficulty` field. It is shared lobby input: Cooperative
+/// reads it for its rounds, VMCE freezes it into its start assignments, and
+/// neither mode owns the process value. Only the shared lobby owner writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LobbyDifficulty(i32);
+
+impl LobbyDifficulty {
+    pub const EASY: Self = Self(0);
+    pub const NORMAL: Self = Self(1);
+    pub const HARD: Self = Self(2);
+
+    /// Normalize a native or network row into the trackbar's three rows.
+    ///
+    /// The native UI cannot author another value, but a network payload can.
+    /// Every consumer indexes three rows (TriggerType difficulty flags, the
+    /// campaign par time and the BC7 label), so outside data is clamped to the
+    /// nearest authored row instead of reaching those readers. Native
+    /// Cooperative5C31A5 maps any value other than 0/1 to Hard; a negative row,
+    /// which neither the trackbar nor a VERA encoder authors, defensively clamps
+    /// to Easy here rather than following that other-to-Hard mapping.
+    pub const fn from_native_row(row: i32) -> Self {
+        Self(if row < 0 {
+            0
+        } else if row > 2 {
+            2
+        } else {
+            row
+        })
+    }
+
+    pub const fn native_row(self) -> i32 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkirmishLaunchOptions {

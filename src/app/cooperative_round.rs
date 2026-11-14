@@ -29,6 +29,7 @@ use crate::app::frontend::skirmish_session::cooperative::CooperativeMissionRow;
 use crate::app::match_runtime::session::{CooperativeRoundEvent, CooperativeRoundStep};
 use crate::app::shell_network_setup::CooperativeResume;
 use crate::app::{App, AppState, GameScreen};
+use crate::skirmish_launch::LobbyDifficulty;
 use crate::ui::coop_score_shell::{CoopScoreAction, CoopScoreModel, CoopScorePage};
 use crate::ui::lan_shell::LanChatLine;
 
@@ -414,7 +415,7 @@ fn build_campaign_end(
         },
         &resolve_csf(state, "TXT_TIME_FORMAT_HOURS"),
     );
-    let difficulty = match runtime.cooperative_difficulty() {
+    let difficulty = match runtime.lobby_difficulty().native_row() {
         level @ 0..=2 => {
             let level = resolve_csf(
                 state,
@@ -544,7 +545,8 @@ pub(crate) fn view(state: &AppState) -> Option<CoopScoreView> {
         difficulty: state
             .frontend
             .multiplayer_shell_runtime
-            .cooperative_difficulty(),
+            .lobby_difficulty()
+            .native_row(),
     })
 }
 
@@ -581,7 +583,8 @@ fn continue_pressed(state: &mut AppState) -> anyhow::Result<CooperativeRoundStep
     let difficulty = state
         .frontend
         .multiplayer_shell_runtime
-        .cooperative_difficulty();
+        .lobby_difficulty()
+        .native_row();
     state
         .match_state
         .session
@@ -600,7 +603,8 @@ pub(crate) fn service_event(
     let difficulty = state
         .frontend
         .multiplayer_shell_runtime
-        .cooperative_difficulty();
+        .lobby_difficulty()
+        .native_row();
     let step = state
         .match_state
         .session
@@ -627,7 +631,7 @@ fn run_step(state: &mut AppState, step: CooperativeRoundStep) {
         CooperativeRoundStep::OptionsApplied { difficulty, .. } => state
             .frontend
             .multiplayer_shell_runtime
-            .set_cooperative_difficulty(difficulty),
+            .set_lobby_difficulty(LobbyDifficulty::from_native_row(difficulty)),
         CooperativeRoundStep::PeerLeft { source } => {
             // 0x005E2700(-1, GUI:PlayerLeftCoop, name).
             let name = participant_name(state, source);
@@ -722,7 +726,8 @@ fn assign(state: &mut AppState) -> anyhow::Result<()> {
     let difficulty = state
         .frontend
         .multiplayer_shell_runtime
-        .cooperative_difficulty();
+        .lobby_difficulty()
+        .native_row();
     state
         .match_state
         .session
@@ -747,8 +752,7 @@ fn begin_next_mission(state: &mut AppState) {
         .network_setup()
         .map_or(0, |launch| launch.options.game_speed);
     // LAN has no writer of the ping table 0xB7790C: every ping reads 0.
-    let (max_ahead, latency_fudge) =
-        crate::net::lockstep::continuation_timing(game_speed, &[]);
+    let (max_ahead, latency_fudge) = crate::net::lockstep::continuation_timing(game_speed, &[]);
     state.frontend.campaign_score_art = None;
     match state
         .match_state

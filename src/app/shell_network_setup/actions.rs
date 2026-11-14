@@ -4,7 +4,9 @@
 mod start;
 use super::*;
 use crate::app::match_runtime::session::NetworkRowKind;
-use crate::skirmish_launch::{AiDifficulty, LaunchCountry, LaunchStartPosition, LaunchTeam};
+use crate::skirmish_launch::{
+    AiDifficulty, LaunchCountry, LaunchStartPosition, LaunchTeam, LobbyDifficulty,
+};
 use crate::ui::multiplayer_setup::*;
 pub(crate) use start::begin_external_lan_go;
 
@@ -234,10 +236,11 @@ fn trackbar(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()
         .range;
     let value = range.stepped(range.set_up(value));
     if control == DIFFICULTY {
+        // The shared lobby row: the setup trackbar authors 0..=2 natively.
         state
             .frontend
             .multiplayer_shell_runtime
-            .set_cooperative_difficulty(value);
+            .set_lobby_difficulty(LobbyDifficulty::from_native_row(value));
     } else if control == TEAM_COUNT {
         // 1 is Off.
         let teams = u8::try_from(value).ok().filter(|teams| *teams >= 2);
@@ -710,51 +713,7 @@ pub(crate) fn commit_start(state: &mut AppState, agreed_seed: u32) {
                 .session
                 .network_setup()
                 .ok_or_else(|| anyhow::anyhow!("no network setup at start commit"))?;
-            if !launch.mode.class.is_vmce() {
-                return Ok(None);
-            }
-            let file = launch
-                .selected_map_file
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("VMCE start has no selected map"))?;
-            let root = &state
-                .platform
-                .game_config
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("no asset directory"))?
-                .paths
-                .ra2_dir;
-            let assets = state
-                .process_assets
-                .manager()
-                .ok_or_else(|| anyhow::anyhow!("assets missing"))?;
-            let map = crate::map::source::load_network_map_ini(root, file, assets)?;
-            let config = state
-                .match_state
-                .session
-                .network_vmce_map_config()
-                .ok_or_else(|| anyhow::anyhow!("VMCE start has no accepted map config"))?;
-            let (_, source_sha256) = map
-                .source
-                .physical_identity()
-                .ok_or_else(|| anyhow::anyhow!("VMCE map has no physical identity"))?;
-            let mut assignments = crate::app::match_bootstrap::resolve_vmce_houses_with_config(
-                &map.ini,
-                file,
-                source_sha256,
-                config,
-                launch,
-                agreed_seed,
-            )?;
-            // The lane-synchronized lobby row is the team's TriggerType
-            // difficulty for this start (0=Easy, 1=Normal, 2=Hard). Every peer
-            // receives the same row through the LAN options payload, so the
-            // frozen assignment identity stays identical.
-            assignments.difficulty = state
-                .frontend
-                .multiplayer_shell_runtime
-                .cooperative_difficulty();
-            Ok(Some(assignments))
+            super::vmce_setup::frozen_start_houses(state, launch, agreed_seed)
         })();
     #[cfg(feature = "vmce")]
     let vmce_houses = match vmce_houses {

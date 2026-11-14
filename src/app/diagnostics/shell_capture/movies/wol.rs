@@ -5519,7 +5519,7 @@ fn unverified_host_options(state: &AppState) -> Result<NetworkSetupEvent> {
             vacancies: [crate::app::match_runtime::session::NetworkVacancy::Open;
                 crate::skirmish_launch::NETWORK_PLAYER_SLOT_COUNT],
             observer_row: None,
-            cooperative_difficulty: 0,
+            lobby_difficulty: Default::default(),
             seed: state.match_state.session.network_start_seed(),
             #[cfg(feature = "vmce")]
             vmce_map_config: None,

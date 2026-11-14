@@ -22,8 +22,9 @@ use crate::net::lan_messages::setup::{self, LanGameOptions, LanOptionsAi, LanOpt
 use crate::net::lan_messages::{LanMessage, game_name_hash};
 use crate::rules::ini_value::{crt_atoi, strtok};
 use crate::skirmish_launch::{
-    AiDifficulty, LaunchCountry, LaunchStartPosition, LaunchTeam, NETWORK_PLAYER_SLOT_COUNT,
-    SkirmishAiSlot, SkirmishLaunchMode, SkirmishLaunchSession, SkirmishLocalSlot,
+    AiDifficulty, LaunchCountry, LaunchStartPosition, LaunchTeam, LobbyDifficulty,
+    NETWORK_PLAYER_SLOT_COUNT, SkirmishAiSlot, SkirmishLaunchMode, SkirmishLaunchSession,
+    SkirmishLocalSlot,
 };
 use crate::util::native_string::{narrow_utf16_c_string, narrow_widened, widen_bytes};
 
@@ -70,10 +71,7 @@ pub(super) fn publish_options(
             .match_presentation
             .in_game_options
             .game_speed as i32,
-        state
-            .frontend
-            .multiplayer_shell_runtime
-            .cooperative_difficulty(),
+        state.frontend.multiplayer_shell_runtime.lobby_difficulty(),
     )?;
     let text = options.encode();
     let service = state.match_state.lan_service.as_ref().expect("LAN visit");
@@ -898,7 +896,7 @@ fn validate_host_endpoint(
 fn projected_options(
     session: &MatchSession,
     current_speed: i32,
-    cooperative_difficulty: i32,
+    lobby_difficulty: LobbyDifficulty,
 ) -> Result<LanGameOptions<NETWORK_PLAYER_SLOT_COUNT>> {
     let launch = session
         .network_setup()
@@ -944,7 +942,8 @@ fn projected_options(
         mcv_redeploy: options.mcv_redeploy,
         crates: options.crates,
         mode_index: launch.mode.id,
-        cooperative_difficulty,
+        // The native options format keeps its own field name.
+        cooperative_difficulty: lobby_difficulty.native_row(),
         map_description: metadata.display_name.clone(),
         map_player_capacity: metadata.player_capacity,
         official_map: metadata.official,
@@ -999,7 +998,7 @@ fn parse_options(
     let mode = crate::skirmish_modes::mode_by_id(modes, mode_id)
         .ok_or_else(|| anyhow!("unknown LAN game mode {mode_id}"))?;
     launch.mode = SkirmishLaunchMode::from_game_mode(mode);
-    let cooperative_difficulty = crt_atoi(next()?);
+    let lobby_difficulty = LobbyDifficulty::from_native_row(crt_atoi(next()?));
     let description = setup::unpack_map_description(&narrow_widened(next()?));
     let map_metadata = NetworkMapMetadata {
         display_name: String::from_utf16_lossy(&description),
@@ -1112,7 +1111,7 @@ fn parse_options(
             map_metadata,
             vacancies,
             observer_row: session.network_observer_row(),
-            cooperative_difficulty,
+            lobby_difficulty,
             seed: Some(seed),
             #[cfg(feature = "vmce")]
             vmce_map_config: None,
@@ -1328,7 +1327,9 @@ mod tests {
         launch.mode = SkirmishLaunchMode::from_game_mode(vmce);
         host.accept_network_setup(launch, true, Some(7), false)
             .unwrap();
-        let text = projected_options(&host, 2, 0).unwrap().encode();
+        let text = projected_options(&host, 2, LobbyDifficulty::from_native_row(0))
+            .unwrap()
+            .encode();
 
         let guest = fixture(false);
         let (parsed, _, _) = parse_options(&guest, &modes, &text).unwrap();
@@ -1358,7 +1359,9 @@ mod tests {
         launch.mode = SkirmishLaunchMode::from_game_mode(&custom);
         host.accept_network_setup(launch, true, Some(7), false)
             .unwrap();
-        let text = projected_options(&host, 2, 0).unwrap().encode();
+        let text = projected_options(&host, 2, LobbyDifficulty::from_native_row(0))
+            .unwrap()
+            .encode();
         let snapshot: ExtendedOptions = serde_json::from_value(serde_json::json!({
             "text": text,
             "selected_map_file": "test.map",
@@ -1641,7 +1644,9 @@ mod tests {
         guest
             .accept_network_setup(launch, false, None, false)
             .unwrap();
-        let payload = projected_options(&host, 3, 0).unwrap().encode();
+        let payload = projected_options(&host, 3, LobbyDifficulty::from_native_row(0))
+            .unwrap()
+            .encode();
         let parts = crate::net::lan_messages::extended_setup::encode(
             crate::net::lan_messages::extended_setup::SetupKind::Options,
             crate::net::lan_messages::SessionScope {
@@ -1757,7 +1762,7 @@ mod tests {
         host.set_network_vmce_role(0, LaunchHumanRole::Player { group: 0 })
             .unwrap();
         let roles = vmce_role_rows(&host);
-        let projected = projected_options(&host, 3, 0).unwrap();
+        let projected = projected_options(&host, 3, LobbyDifficulty::from_native_row(0)).unwrap();
         let snapshot = ExtendedOptions {
             text: projected.encode(),
             selected_map_file: "test.map".into(),
@@ -1840,7 +1845,9 @@ mod tests {
         host.set_network_vmce_role(1, LaunchHumanRole::Player { group: 1 })
             .unwrap();
         let snapshot = ExtendedOptions {
-            text: projected_options(&host, 3, 0).unwrap().encode(),
+            text: projected_options(&host, 3, LobbyDifficulty::from_native_row(0))
+                .unwrap()
+                .encode(),
             selected_map_file: "test.map".into(),
             agreement: crate::app::shell_network_setup::agreement::MultiplayerAgreement {
                 version: "test".into(),
@@ -1947,7 +1954,7 @@ mod tests {
         choices.start_position = LaunchStartPosition::Position(6);
         choices.team = LaunchTeam::Team(2);
         host.set_network_row_choices(3, choices).unwrap();
-        let wire = projected_options(&host, 2, 1).unwrap();
+        let wire = projected_options(&host, 2, LobbyDifficulty::from_native_row(1)).unwrap();
         let packet =
             LanMessage::options("Host", &wire.encode(), 0, game_name_hash("Host")).unwrap();
         let mut guest = fixture(false);
@@ -1974,6 +1981,11 @@ mod tests {
         assert_eq!(parsed.map_metadata.display_name, "Høyde地");
         assert_eq!(parsed.map_metadata.byte_length, 123456);
         assert_eq!(parsed.seed, Some(0xf1234567));
+        assert_eq!(
+            parsed.lobby_difficulty,
+            LobbyDifficulty::NORMAL,
+            "the guest applies the host's shared lobby difficulty"
+        );
         assert_eq!(parsed.launch.opponents[0].raw_slot_index, 3);
         assert_eq!(parsed.launch.opponents[0].country, LaunchCountry::Yuri);
         assert_eq!(parsed.launch.opponents[0].difficulty, AiDifficulty::Easy);
@@ -2007,9 +2019,47 @@ mod tests {
     }
 
     #[test]
+    fn a_wire_lobby_difficulty_outside_the_authored_rows_is_normalized() {
+        // The stock trackbar writes rows 0..=2. A hand-built or mixed packet
+        // must still leave the guest row inside the three rows every consumer
+        // indexes, so the shared owner normalizes it at the wire boundary.
+        let host = fixture(true);
+        let bytes = projected_options(&host, 2, LobbyDifficulty::NORMAL)
+            .unwrap()
+            .encode();
+        let colon = bytes.iter().position(|byte| *byte == b':').unwrap();
+        let mut fields: Vec<Vec<u8>> = bytes[..colon]
+            .split(|byte| *byte == b',')
+            .map(<[u8]>::to_vec)
+            .collect();
+        assert_eq!(fields[11], b"1".to_vec());
+        fields[11] = b"9".to_vec();
+        let mut text = Vec::new();
+        for (index, field) in fields.iter().enumerate() {
+            if index > 0 {
+                text.push(b',');
+            }
+            text.extend_from_slice(field);
+        }
+        text.push(b':');
+        text.extend_from_slice(&bytes[colon + 1..]);
+        let guest = fixture(false);
+        let (parsed, _, _) = parse_options(
+            &guest,
+            &crate::skirmish_modes::stock_skirmish_modes(),
+            &text,
+        )
+        .unwrap();
+        assert_eq!(parsed.lobby_difficulty, LobbyDifficulty::HARD);
+        assert_eq!(parsed.lobby_difficulty.native_row(), 2);
+    }
+
+    #[test]
     fn options_use_crt_tokens_and_reject_truncated_input_without_mutation() {
         let host = fixture(true);
-        let wire = projected_options(&host, 3, 2).unwrap().encode();
+        let wire = projected_options(&host, 3, LobbyDifficulty::from_native_row(2))
+            .unwrap()
+            .encode();
         let text = widen_bytes(&wire).replacen("9000,", "9000credits,,", 1);
         let guest = fixture(false);
         let before = guest.clone();
@@ -2122,7 +2172,7 @@ mod tests {
         human_choices.start_position = LaunchStartPosition::Position(5);
         human_choices.team = LaunchTeam::Team(2);
         host.set_network_row_choices(0, human_choices).unwrap();
-        let wire = projected_options(&host, 3, 0).unwrap();
+        let wire = projected_options(&host, 3, LobbyDifficulty::from_native_row(0)).unwrap();
         assert_eq!(wire.humans[0].start, 5);
         assert_eq!(wire.ai[0].start, -2);
         assert_eq!(
@@ -2177,7 +2227,9 @@ mod tests {
             .unwrap();
         host.set_network_row_kind(1, NetworkRowKind::Ai(AiDifficulty::Hard))
             .unwrap();
-        let options = projected_options(&host, 3, 0).unwrap().encode();
+        let options = projected_options(&host, 3, LobbyDifficulty::from_native_row(0))
+            .unwrap()
+            .encode();
         let roster = projected_roster(&host).unwrap();
         let mut final_states = Vec::new();
         for roster_first in [false, true] {
@@ -2460,7 +2512,9 @@ mod tests {
         }
         host.accept_network_setup(launch, true, Some(7), false)
             .unwrap();
-        let text = projected_options(&host, 2, 0).unwrap().encode();
+        let text = projected_options(&host, 2, LobbyDifficulty::from_native_row(0))
+            .unwrap()
+            .encode();
         let source_sha256 = "a".repeat(64);
         let identity = VmceSeriesIdentity {
             directory: "campaign-a".into(),

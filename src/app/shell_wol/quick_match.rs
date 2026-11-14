@@ -980,7 +980,7 @@ fn build_host_options(
         map_metadata: map_metadata(&file)?,
         vacancies: [NetworkVacancy::Open; NETWORK_PLAYER_SLOT_COUNT],
         observer_row: None,
-        cooperative_difficulty: 0,
+        lobby_difficulty: Default::default(),
         seed: Some(pairing.seed),
         #[cfg(feature = "vmce")]
         vmce_map_config: None,
