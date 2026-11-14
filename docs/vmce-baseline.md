@@ -521,3 +521,51 @@ B71 is not fixed; shared-owner statistics stay as they are; a deleted/replaced
 map and same-country multiple owners get no extra fallback; a normal player's
 wait must not be misjudged as a timeout, and that boundary remains pending, not
 fixed by this slice.
+
+Follow-up (2026-11-13, acceptance fix on `696dfc8cc`): the dispatch had gated a
+received Cooperative campaign text (`C0`) on the guest's current room mode, so a
+guest that read `C0` before the `HostSetup` bringing Cooperative dropped it. The
+pre-dispatch production path called Cooperative's slot for every `C0`; the fix
+keeps `C0` message-owned: native's `'C'` arm (`0x005E43CE`) dispatches every mode
+object's `+0x58` and only MPCooperative takes it, so dispatch forwards `C0` to
+Cooperative's slot without consulting the room mode. LAN already serialises `C0`
+after the pending options (`drain_setup_requests` keeps `C0` behind an unfinished
+publication); the WOL online lobby's host options (`'L'`, `0x5E8EA0`) can arrive
+later, which is the ordering this covers. The mode predicates are now asked
+extension-first, so a VMCE event never evaluates or calls Cooperative's owner
+predicate; events that are Cooperative's still reach their original handlers.
+`C0`'s application moved into the Cooperative progress owner's
+`accept_received_campaign` (the `receive_campaign` + `receive_stage` chain), with
+no second campaign state. The forwarder is a direct call rather than a
+mode-dispatch branch; the lobby guard pins it, and no test builds an `AppState`,
+so the `service_event` -> dispatch hop has no behaviour-level test yet.
+
+Architecture: the lobby guard additionally rejects a `campaign_received` that
+reads the room mode/chooser or skips Cooperative's `C0` slot, rejects
+`live_owner`/`event_owner`/`room_is_cooperative` paths that ask Cooperative's
+predicate before the extension's, and fails on a missing predicate pair or
+forwarder; all have planted negative fixtures.
+
+Evidence: Cooperative owner-chain characterization 2 (`C0` before the
+Cooperative `HostSetup` keeps the host campaign/stage/tallies/map/countries; the
+ordinary order reaches the same state; these do not exercise the dispatch
+forwarder), dispatcher 6, `app::shell_network_setup` 38 (vmce)/24 (default),
+`app::frontend::skirmish_session::cooperative::tests` 30,
+`app::lan_service::tests` 29, options 21, lan_service cooperative 2,
+`vmce_round` 20, `vmce_result` 25, stock Cooperative round 7, guards 46 both
+configs, `check --lib --bins` both. Labelled fast build
+`vmce-lobbyfix-696dfc8cc-r2`, exe SHA-256
+`1bdcf03bacc55307bee9ca19c5a37806c21161186e31386771d49edd2759a246`; `2p-win` PASS
+under `.scratch/vmce-lobbyfix-accept-r2/` (300 matching checksums, 20 matching
+sim hashes, `dialog.rows=2`, next-stage receipt).
+
+Residual: the online (WOL/relay) `C0`-before-options order was not reproduced on
+a real client, and no live stock-Cooperative LAN join/leave was run; those paths
+are covered by the owner-chain tests and the guard only. The acceptance run uses
+the VMCE series and carries no Cooperative `C0`, so it does not validate this
+fix. A stale LAN `PublishCooperativeCampaign` queued before the room leaves
+Cooperative can still be applied in a later mode (same as before this change;
+no normal UI path was found). Mid-room leave, 3/4-player lobbies, cross-machine
+and internet play remain unrun. The user's accepted residuals (B59, B71, B72,
+unchanged shared-owner statistics, and the
+normal-wait-not-misjudged-as-a-timeout boundary) stay open, not fixed.

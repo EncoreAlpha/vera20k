@@ -40,17 +40,17 @@ lang: zh-CN
 - **架构检查：** `cooperative_score_rows` 从共享能力允许清单与引用上限删除；新增负向 fixture 拒绝 VMCE 统计调用它；新增语义边界检查断言 Cooperative 行选择不含 VMCE/模式分支、共享事实投影不选择行、VMCE 统计所有者不读取 Cooperative 行选择。guards 45 条两配置通过；`check -p vera20k --lib --bins` 两配置通过。
 - **测试：** 核心 `sim::score` 13（默认）/15（vmce，含 VMCE 分配世界中 Cooperative 行仍按人类 House 选择的行为测试）以及恢复的空授权源 viewpoints 覆盖；VMCE 统计 7（多角色归属、共享 House 不计、重复去重、被动零值、终局优先、观察者不成行，另移入时间头测试）；`app::vmce_result` 25、`app::lan_service::vmce_round::tests` 20、`app::lan_service::tests` 29、普通 Cooperative session 回合 7。
 - **证据：** fast 构建 `vmce-stats-570af8d90-r2`（SHA-256 `4407334D567700848E04B9EF88FE30201B5778F928E212BC50EE793DCD6D555C`）的 `2p-win`、`2p-retry`、`2p-final` 通过：各 300 个 native checksum 与 20 个模拟 hash 两端一致；下一关、同关重载、最终关进入 credits/`campaign-end` 回执符合预期；失败页两端 `vmce_statistics_rows` 完全一致，胜利页两端回执均为 `dialog.victory=true, rows=2`，最终关两端 `campaign-end` 回执一致，且每端诊断按自己的角色 House 事实校验统计行。证据在 `.scratch/vmce-stats-accept-r2/`（未提交）。
-- **残余：** A19/B71 未修复（被动主 House 仍被显示过滤且轮次人数取过滤后投影）；三人、四人真实结算统计与多角色联机流程未跑（多角色/去重归属仅由客户端单元测试覆盖）；跨机器、互联网与真实 OS 级丢包不在本子链范围。
+- **残余：** A19/B71 已按用户决定移入“用户接受的残余”，代码未修复；三人、四人真实结算统计与多角色联机流程未跑（多角色/去重归属仅由客户端单元测试覆盖）；跨机器、互联网与真实 OS 级丢包不在本子链范围。
 
 ## 阶段 3 第二个子链：大厅加入、退出与模式事件分派（已完成，待用户审查）
 
-- **实际边界：** 共享大厅不再把 VMCE 的模式事件送进 Cooperative 专属入口。新增 [shell_network_setup/dispatch.rs](../../src/app/shell_network_setup/dispatch.rs) 作为模式事件分派所有者：建房打开、加入槽位、每次选项解析刷新、加入被接受、离房被接受、模式进入、Use Map、宾客选择国家和 C0 战役文本按原生规则选择模式。加入和退出在 Choose Map 打开时使用窗口中选中的游戏类型（窗口中 VERA 自有的 Favorites/Online Maps 行不指向模式时没有槽位，不回退到房间模式），其余事件使用当前房间模式——保留原语义，而不是只判断“当前是否 Cooperative”。
-- **各模式槽位：** Cooperative 的 [cooperative.rs](../../src/app/shell_network_setup/cooperative.rs) 只保留自己的槽位实现，原来的 `peer_mode_cooperative`/`current` 模式判断已移入分派所有者；VMCE 的槽位在 [vmce_setup.rs](../../src/app/shell_network_setup/vmce_setup.rs)，加入时把角色默认设为 Random（原在共享 `service` 中的内联 VMCE 判断已移入 VMCE 所有者）。VERA 继续统一拥有房间、房主、玩家名单、准入、通用网络与可靠队列。
-- **行为保持：** 房主/客人的加入、退出、选图、准备与开局流程不变；选图窗口的异步结果失效、开局复验与随机角色确定性未改；普通 Cooperative 的加入/退出/国家准入/模式进入/Use Map/C0 行为不变。
-- **架构检查：** 新增 `lobby_mode_events_dispatch_before_the_cooperative_owner`：共享 setup 与服务层不得直接调用 Cooperative 模式模块，VMCE 大厅模块不得引用 Cooperative 模块，根适配器的事件调用必须经过 dispatch，并逐函数检查 Cooperative 的槽位实现不再自行判断模式（含植入式负向 fixture）；另有共享层直连、VMCE 模块引用和根适配器直连负向 fixture。guards 46 条两配置通过。
-- **测试：** dispatch 5 条（房主加入/退出按选图窗口选中模式、宾客加入按房间模式、建房/Use Map/选项刷新/选择/C0 按房间模式、Favorites/Online Maps 行不回退到房间模式、无模式/其他模式无所有者）；VMCE 加入槽位 1 条（玩家默认 Random、观察者保留角色）；`app::shell_network_setup` vmce 37/默认 23 条；`app::lan_service::tests` 29、`app::lan_service::vmce_round::tests` 20、`app::vmce_result` 25、普通 Cooperative session 回合 7 条通过；`check -p vera20k --lib --bins` 两配置通过。
-- **证据：** fast 构建 `vmce-lobby-e7cc9d5e5-r3`（SHA-256 `a41789c42090d9459e4c9f8667b6a45eefc4d12e81f806bc1c4f15ac30b0dd5a`）的双人本机 `2p-win` 建房、加入、选战役、准备、开局通过（各 300 native checksum 与 20 个模拟 hash 一致，下一关回执符合预期）。证据在 `.scratch/vmce-lobby-accept-r3/`（未提交）。
-- **用户决定与残余：** B71 不修；共享所属方战绩保持现状；地图被删除或替换及同国多所属方问题不额外兜底；正常玩家等待不得被误判为超时仍是待处理事项，本子链未修复也不宣称修复。退出事件目前由自动测试覆盖，真实双进程房间内的中途离房未跑；三人、四人大厅与跨机器、互联网未跑。
+- **实际边界：** 共享大厅不再把 VMCE 的模式事件送进 Cooperative 专属入口。新增 [shell_network_setup/dispatch.rs](../../src/app/shell_network_setup/dispatch.rs) 作为模式事件分派所有者：建房打开、加入槽位、每次选项解析刷新、加入被接受、离房被接受、模式进入、Use Map 和宾客选择国家按原生规则选择模式；C0 战役文本按消息自身的 `'C'` 臂（`0x005E43CE`）直接进入 Cooperative 槽位，不按当前房间模式判断（在线大厅的 WOL 房主选项 `'L'` 可能晚于 C0 到达）。加入和退出在 Choose Map 打开时使用窗口中选中的游戏类型（窗口中 VERA 自有的 Favorites/Online Maps 行不指向模式时没有槽位，不回退到房间模式），其余事件使用当前房间模式——保留原语义，而不是只判断“当前是否 Cooperative”。
+- **各模式槽位：** Cooperative 的 [cooperative.rs](../../src/app/shell_network_setup/cooperative.rs) 只保留自己的槽位实现，原来的 `peer_mode_cooperative`/`current` 模式判断已移入分派所有者；VMCE 的槽位在 [vmce_setup.rs](../../src/app/shell_network_setup/vmce_setup.rs)，加入时把角色默认设为 Random（原在共享 `service` 中的内联 VMCE 判断已移入 VMCE 所有者）。分派先询问扩展模式、VMCE 事件不评估也不调用 Cooperative 的拥有者谓词；实际属于 Cooperative 的事件仍调用原版处理器。VERA 继续统一拥有房间、房主、玩家名单、准入、通用网络与可靠队列。
+- **行为保持：** 房主/客人的加入、退出、选图、准备与开局流程不变；选图窗口的异步结果失效、开局复验与随机角色确定性未改；普通 Cooperative 的加入/退出/国家准入/模式进入/Use Map/C0 行为不变，C0 先于 HostSetup 时客人仍得到正确战役信息。
+- **架构检查：** 新增 `lobby_mode_events_dispatch_before_the_cooperative_owner`：共享 setup 与服务层不得直接调用 Cooperative 模式模块，VMCE 大厅模块不得引用 Cooperative 模块，根适配器的事件调用必须经过 dispatch，逐函数检查 Cooperative 的槽位实现不再自行判断模式，检查 C0 转发必须调用 Cooperative 的 C0 槽位且不读取房间模式/选图模式，并检查事件分派与共享房间查询都先询问扩展模式再询问 Cooperative（谓词缺失或顺序颠倒都报错）；上述均有植入式负向 fixture，另有共享层直连、VMCE 模块引用和根适配器直连负向 fixture。guards 46 条两配置通过。
+- **测试：** dispatch 6 条（房主加入/退出按选图窗口选中模式、宾客加入按房间模式、建房/Use Map/选项刷新/选择按房间模式、Favorites/Online Maps 行不回退、VMCE 事件不询问 Cooperative 谓词、无模式/其他模式无所有者）；VMCE 加入槽位 1 条；Cooperative 模式记录的所有者链特征测试 2 条（先收 C0 再进 Cooperative 的 HostSetup 仍保留房主的战役、关卡地图和阶段国家；普通顺序结果相同）。C0 的 `service` → `dispatch` 转发不在单元测试内（无 `AppState` 构造夹具），由架构检查钉住；转发行为本身及“先收到 C0”顺序未在自动测试中经过完整 `service_event`。`app::shell_network_setup` vmce 38/默认 24、`app::frontend::skirmish_session::cooperative::tests` 30、`app::lan_service::tests` 29、`app::lan_service::options::tests` 21、`app::lan_service::cooperative::tests` 2、`app::lan_service::vmce_round::tests` 20、`app::vmce_result` 25、普通 Cooperative session 回合 7 条通过；`check -p vera20k --lib --bins` 两配置通过。
+- **证据：** fast 构建 `vmce-lobbyfix-696dfc8cc-r2`（SHA-256 `1bdcf03bacc55307bee9ca19c5a37806c21161186e31386771d49edd2759a246`）的双人本机 `2p-win` 建房、加入、准备、开局通过（各 300 native checksum 与 20 个模拟 hash 一致，下一关回执符合预期）。证据在 `.scratch/vmce-lobbyfix-accept-r2/`（未提交）。
+- **未覆盖：** 在线大厅（WOL/relay）的 C0 先到顺序未实机复现，按原生 `'C'` 臂语义和消息归属修复；该验收跑的是 VMCE 系列，本身不含 Cooperative C0，不能据它宣称 Cooperative 路径已实机验证。真实双进程房间内的中途离房、三人/四人大厅与跨机器、互联网未跑。用户接受残余见下方“用户接受的残余”一节（B59、B71、B72；共享所属方战绩保持现状；正常玩家等待不得被误判为超时仍未修复）。
 
 ## 优先核查
 
@@ -59,11 +59,21 @@ lang: zh-CN
 ## 玩家功能
 
 - **共享控制：** 建筑维修/售卖、部署/卸载和自动维修的授权检查（B70、B75、B104）。
-- **战役配置与角色：** 同国角色冲突、被动国家结果、单角色房间容量，以及全部关卡的提前校验（B59、B71、B68、B05）。
+- **战役配置与角色：** 单角色房间容量、全部关卡的提前校验（B68、B05）。
 - **进度与错误提示：** 进度文件读写失败、下一关解析失败、战役校验修复后重试，以及错误归因（B62、B78、B61、B14/B16）。
 - **关卡身份与路径：** 长路径、跨平台分隔符、同义配置段、非 ASCII 文件名，以及旧轮次关卡/结算记录（B11、B81、B82、B85、B88、B92）。
-- **结算与联机：** 控制消息队列满时的处理、对端静默检测，以及任务中地图文件变化后的结果页（B69、B94、B72）。
+- **结算与联机：** 控制消息队列满时的处理、对端静默检测（B69、B94）。
 - **大厅人数与模式切换：** 随机角色不可见、超员布局和提示、切入战役时遗留 AI、任务简报查找及满员房间显示（B43、B60、B46、B73、B66、B100）。
+
+## 用户接受的残余（不修，不额外兜底）
+
+以下条目已由用户明确决定不修或不额外兜底，**不是待修项，也不代表代码已修复**：
+
+- **B59 同国多所属方（A04）：** 玩家角色同国校验及国家归属歧义不修，不额外兜底。
+- **B71 被动主 House 结算行与轮次人数（A19）：** 不修；VMCE 结算统计仍按原显示语义过滤被动 House。
+- **B72 任务中地图被删除或替换（A20）：** 不额外兜底，不新增结果页恢复路径。
+- **共享所属方战绩：** 保持现状；共享 House 不单独成行，其统计不并入角色行。
+- **正常玩家等待与超时边界（A40/B94）：** 正常玩家等待不得被误判为超时，仍是待处理事项，未修复；结算轮已有应用层心跳，关间房间保活仍为残余。
 
 ## 体验与维护
 
@@ -81,11 +91,11 @@ lang: zh-CN
 - B58 已实现 Ready/Go 请求级复验；真实双进程修改、恢复与旧扫描迟到仍需验证。
 - B102 已确认现有规则协议与系列准入覆盖开局/关间/重试；房主侧原因提示、关间房间握手本身与真实数据变更采集仍为残余。
 - B36：跨机器、关间加入/离开和其他真实网络故障未由本机多进程测试证明。
-- 大厅模式事件分派（阶段 3 第二子链）：加入/退出与选图窗口的分派由 dispatch 单元测试和双人 `2p-win` 建房/加入/开局覆盖；真实双进程房间内的中途离房、三人/四人大厅未跑。B71 不修、共享所属方战绩保持现状、地图被删除或替换与同国多所属方不额外兜底均为用户已决定的范围；正常玩家等待不得被误判为超时仍是待处理事项，未修复。
+- 大厅模式事件分派（阶段 3 第二子链）：加入/退出与选图窗口的分派由 dispatch 单元测试和双人 `2p-win` 建房/加入/开局覆盖；C0 先于 Cooperative HostSetup 的顺序由 Cooperative 模式记录的所有者链特征测试覆盖（不经 dispatch），在线大厅实机顺序未复现。真实双进程房间内的中途离房、三人/四人大厅未跑。用户接受的残余（B59、B71、B72、共享所属方战绩、正常玩家等待超时边界）见上方专节。
 
 ## 已完成
 
-- **阶段 3 第二个子链（大厅加入、退出与模式事件分派）：** 共享大厅经 dispatch 所有者在原生语义下选择模式，VMCE 模式事件进入自己的槽位，不再调用 Cooperative 专属入口；选图窗口模式下按窗口选中模式处理的语义保留。双人建房/加入/选战役/准备/开局验收通过，残余见上方子链小节。
+- **阶段 3 第二个子链（大厅加入、退出与模式事件分派，含验收修复）：** 共享大厅经 dispatch 所有者在原生语义下选择模式，VMCE 模式事件进入自己的槽位，不再调用 Cooperative 专属入口；选图窗口模式下按窗口选中模式处理的语义保留。验收修复后 C0 按消息自身进入 Cooperative 槽位（先于 Cooperative HostSetup 也不丢失），分派先询问扩展模式，VMCE 事件不调用 Cooperative 谓词。双人建房/加入/准备/开局验收通过，残余见上方子链小节。
 - **阶段 3 首个子链（VMCE 结算统计所有权）：** VMCE 统计改由自己的角色/分配投影，Cooperative 保留原版行选择，双方只共用 `HouseScoreFacts`；双人三流程验收通过，残余见上方子链小节。
 - **B5、B106：** 核心层整理和战役数据从大厅分离。
 - **B57：** 确认结果后保存本机关卡解锁；残余见待验证。
