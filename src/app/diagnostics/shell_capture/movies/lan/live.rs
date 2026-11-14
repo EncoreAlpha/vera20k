@@ -736,11 +736,21 @@ impl LiveLanCapture {
             .is_some_and(|config| config.lobby_inputs)
     }
 
+    /// The retry probe claims the mirrored authored roles so the admitted seat
+    /// order differs from the authored House order; the reads-only scenarios
+    /// keep seat-by-seat identity roles.
+    #[cfg(feature = "vmce")]
+    fn probe_roles_reversed(&self) -> bool {
+        matches!(self.vera_outcome, Some(VmceOutcome::Retry))
+    }
+
     /// Drive the host's real role claim and one lobby difficulty change through
     /// the production setup controls. Returns false while the probe still waits
     /// for the room to reach the claimed state.
     #[cfg(feature = "vmce")]
     fn drive_host_lobby_inputs(&mut self, state: &mut AppState, frame: u32) -> Result<bool> {
+        let reversed = self.probe_roles_reversed();
+        let role_count = probe_role_count(state);
         let launch = state
             .match_state
             .session
@@ -751,11 +761,14 @@ impl LiveLanCapture {
         let row = launch.humans[local_index]
             .raw_slot_index
             .context("host lobby row")?;
-        if !vmce_role_claims_enabled(state) {
+        let Some(role) = probe_role_for_seat(row, role_count, reversed) else {
+            return Ok(false);
+        };
+        if !vmce_role_claims_enabled(state, reversed) {
             return Ok(false);
         }
-        if launch.humans[local_index].role.native_value() != i32::from(row) {
-            if claim_vmce_role(state, row)? {
+        if launch.humans[local_index].role.native_value() != role {
+            if claim_vmce_role(state, row, role)? {
                 self.event(frame, "host claimed its authored role before Start");
             }
             return Ok(false);
@@ -773,10 +786,10 @@ impl LiveLanCapture {
             return Ok(false);
         }
         Ok(launch.humans.iter().all(|human| {
-            human
-                .raw_slot_index
-                .map(i32::from)
-                .is_some_and(|row| row == human.role.native_value())
+            human.raw_slot_index.is_some_and(|row| {
+                probe_role_for_seat(row, role_count, reversed)
+                    .is_some_and(|role| role == human.role.native_value())
+            })
         }))
     }
 
@@ -785,6 +798,8 @@ impl LiveLanCapture {
     /// Start; waiting for it here could block Accept behind an options revision.
     #[cfg(feature = "vmce")]
     fn drive_guest_lobby_inputs(&mut self, state: &mut AppState, frame: u32) -> Result<bool> {
+        let reversed = self.probe_roles_reversed();
+        let role_count = probe_role_count(state);
         let launch = state
             .match_state
             .session
@@ -795,11 +810,14 @@ impl LiveLanCapture {
         let row = launch.humans[local_index]
             .raw_slot_index
             .context("guest lobby row")?;
-        if !vmce_role_claims_enabled(state) {
+        let Some(role) = probe_role_for_seat(row, role_count, reversed) else {
+            return Ok(false);
+        };
+        if !vmce_role_claims_enabled(state, reversed) {
             return Ok(false);
         }
-        if launch.humans[local_index].role.native_value() != i32::from(row)
-            && claim_vmce_role(state, row)?
+        if launch.humans[local_index].role.native_value() != role
+            && claim_vmce_role(state, row, role)?
         {
             self.event(frame, "guest claimed its authored role before Accept");
             return Ok(false);
@@ -1693,6 +1711,7 @@ impl LiveLanCapture {
                 state,
                 HOST_NAME,
                 self.lobby_inputs_enabled(),
+                self.probe_roles_reversed(),
             )?);
             self.event(
                 frame,
@@ -1766,7 +1785,12 @@ impl LiveLanCapture {
             self.event(frame, "four-process lobby captured; stopping before Start");
             return Ok(());
         }
-        let final_snapshot = vmce_setup_snapshot(state, HOST_NAME, self.lobby_inputs_enabled())?;
+        let final_snapshot = vmce_setup_snapshot(
+            state,
+            HOST_NAME,
+            self.lobby_inputs_enabled(),
+            self.probe_roles_reversed(),
+        )?;
         ensure_coop_setup_ready_transition(
             self.coop_setup_initial
                 .as_ref()
@@ -1828,8 +1852,12 @@ impl LiveLanCapture {
             }
             // Each Accept belongs to the options revision visible now. A
             // later host revision may legitimately invalidate an earlier one.
-            let initial =
-                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
+            let initial = vmce_setup_snapshot(
+                state,
+                self.player_name(),
+                self.lobby_inputs_enabled(),
+                self.probe_roles_reversed(),
+            )?;
             if !self.coop_setup_guest_accepted {
                 #[cfg(feature = "vmce")]
                 if let Some(a03) = self.a03.as_mut() {
@@ -1859,8 +1887,12 @@ impl LiveLanCapture {
             // Record the guest-local Ready transition immediately: a later
             // material host-options revision can clear Ready again, and the
             // production guest then re-accepts below.
-            let final_snapshot =
-                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
+            let final_snapshot = vmce_setup_snapshot(
+                state,
+                self.player_name(),
+                self.lobby_inputs_enabled(),
+                self.probe_roles_reversed(),
+            )?;
             let reaccept = self.record_vmce_guest_accept(initial, final_snapshot.clone())?;
             self.route.push(json!({
                 "render_frame": frame,
@@ -1886,8 +1918,12 @@ impl LiveLanCapture {
                 .coop_setup_initial
                 .as_ref()
                 .context("initial VMCE guest snapshot")?;
-            let final_snapshot =
-                vmce_setup_snapshot(state, self.player_name(), self.lobby_inputs_enabled())?;
+            let final_snapshot = vmce_setup_snapshot(
+                state,
+                self.player_name(),
+                self.lobby_inputs_enabled(),
+                self.probe_roles_reversed(),
+            )?;
             ensure_coop_setup_ready_transition(initial, &final_snapshot, false)?;
             self.coop_setup_final = Some(final_snapshot.clone());
             self.route.push(json!({
@@ -2669,12 +2705,8 @@ impl LiveLanCapture {
                 .multiplayer_shell_runtime
                 .lobby_difficulty()
                 .native_row(),
-            "roles_claimed": launch.humans.iter().all(|human| {
-                human
-                    .raw_slot_index
-                    .map(i32::from)
-                    .is_some_and(|row| row == human.role.native_value())
-            }),
+            "roles_claimed": launch.humans.iter().all(|human| !human.is_observer())
+                && vmce_roles_claimed(launch),
             "participants": participants,
             "map": {
                 "file": launch.selected_map_file,
@@ -3030,18 +3062,39 @@ fn vmce_probe(state: &mut AppState) -> Result<Value> {
 #[cfg(feature = "vmce")]
 const VMCE_LOBBY_DIFFICULTY: i32 = 2;
 
+/// The authored role a lobby probe claims for `row`: the seat's own row
+/// normally, or the mirrored role for the retry reversal probe. `None` when the
+/// seat is outside the map's authored role count, so a probe never invents a
+/// role the map does not have.
+#[cfg(feature = "vmce")]
+fn probe_role_for_seat(row: u8, role_count: usize, reversed: bool) -> Option<i32> {
+    let row = usize::from(row);
+    if role_count == 0 || row >= role_count {
+        return None;
+    }
+    let role = if reversed { role_count - 1 - row } else { row };
+    i32::try_from(role).ok()
+}
+
+/// The selected map's authored primary-role count the lobby board exposes.
+#[cfg(feature = "vmce")]
+fn probe_role_count(state: &AppState) -> usize {
+    crate::app::shell_network_setup::view::vmce_role_count(state)
+}
+
 /// The selected map's authored roles can be claimed seat-by-seat: every
-/// admitted non-observer row has a Team-column choice with its own row as the
-/// role value. False until the setup view exists, so a probe waits instead of
+/// admitted non-observer row has a Team-column choice with the probe's role for
+/// that seat. False until the setup view exists, so a probe waits instead of
 /// starting with random roles.
 #[cfg(feature = "vmce")]
-fn vmce_role_claims_enabled(state: &AppState) -> bool {
+fn vmce_role_claims_enabled(state: &AppState, reversed: bool) -> bool {
     let Some(launch) = state.match_state.session.network_setup() else {
         return false;
     };
     let Some(view) = setup::view(state) else {
         return false;
     };
+    let role_count = probe_role_count(state);
     launch
         .humans
         .iter()
@@ -3050,34 +3103,31 @@ fn vmce_role_claims_enabled(state: &AppState) -> bool {
             let Some(row) = human.raw_slot_index else {
                 return false;
             };
+            let Some(role) = probe_role_for_seat(row, role_count, reversed) else {
+                return false;
+            };
             view.combos.iter().any(|combo| {
                 combo.visible
                     && usize::from(row) == combo.row as usize
                     && SetupColumn::decode(combo.id)
                         .is_some_and(|(column, _)| column == SetupColumn::Team)
-                    && combo
-                        .choices
-                        .iter()
-                        .any(|choice| choice.value == i32::from(row))
+                    && combo.choices.iter().any(|choice| choice.value == role)
             })
         })
 }
 
-/// Claim this process's own seat as its authored role through the production
-/// Team-column choice (the VMCE role slot).
+/// Claim this process's own seat as the probe's authored role through the
+/// production Team-column choice (the VMCE role slot).
 #[cfg(feature = "vmce")]
-fn claim_vmce_role(state: &mut AppState, row: u8) -> Result<bool> {
+fn claim_vmce_role(state: &mut AppState, row: u8, role: i32) -> Result<bool> {
     let Some(control) = setup_control_at_row(state, SetupColumn::Team, usize::from(row))? else {
         return Ok(false);
     };
     let view = setup::view(state).context("VMCE role view")?;
     if !view.enabled(control)
-        || !view.combo(control).is_some_and(|combo| {
-            combo
-                .choices
-                .iter()
-                .any(|choice| choice.value == i32::from(row))
-        })
+        || !view
+            .combo(control)
+            .is_some_and(|combo| combo.choices.iter().any(|choice| choice.value == role))
     {
         return Ok(false);
     }
@@ -3085,10 +3135,27 @@ fn claim_vmce_role(state: &mut AppState, row: u8) -> Result<bool> {
         state,
         SetupAction::Select {
             control,
-            value: i32::from(row),
+            value: role,
         },
     );
     Ok(true)
+}
+
+/// Every non-observer seat holds a distinct authored role (identity or mirrored
+/// probe mapping); random -2 seats do not count as claimed.
+#[cfg(feature = "vmce")]
+fn vmce_roles_claimed(launch: &crate::skirmish_launch::SkirmishLaunchSession) -> bool {
+    let roles: Vec<i32> = launch
+        .humans
+        .iter()
+        .filter(|human| !human.is_observer())
+        .map(|human| human.role.native_value())
+        .collect();
+    let distinct = roles
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    roles.iter().all(|role| *role >= 0) && distinct.len() == roles.len()
 }
 
 /// Set the shared lobby difficulty through the production difficulty slider.
@@ -3141,12 +3208,8 @@ fn vmce_runtime_receipt(state: &AppState, probe: Option<&Value>) -> Result<Value
         "frozen_difficulty": session
             .network_vmce_assignments()
             .map(|assignments| assignments.difficulty),
-        "roles_claimed": setup.humans.iter().all(|human| {
-            human
-                .raw_slot_index
-                .map(i32::from)
-                .is_some_and(|row| row == human.role.native_value())
-        }),
+        "role_count": probe_role_count(state),
+        "roles_claimed": vmce_roles_claimed(setup),
         "series_directory": config.and_then(|config| config.series_directory.clone()),
         "series_sha256": config.and_then(|config| config.series_sha256.clone()),
         "config_sha256": config.map(|config| config.config_sha256.clone()),
@@ -3217,7 +3280,7 @@ fn vmce_setup_watchdog_snapshot(
             .multiplayer_shell_runtime
             .lobby_difficulty()
             .native_row(),
-        "role_claims_enabled": vmce_role_claims_enabled(state),
+        "role_claims_enabled": vmce_role_claims_enabled(state, capture.probe_roles_reversed()),
         "local_ready": launch.map(|launch| session.network_player_ready(launch.local_player_index)),
         "local_map_status": launch
             .and_then(|launch| session.network_map_status(launch.local_player_index)),
@@ -3242,6 +3305,7 @@ fn vmce_setup_snapshot(
     state: &AppState,
     local_name: &str,
     require_claimed_roles: bool,
+    role_claims_reversed: bool,
 ) -> Result<Value> {
     let session = &state.match_state.session;
     let launch = session.network_setup().context("VMCE setup snapshot")?;
@@ -3342,12 +3406,15 @@ fn vmce_setup_snapshot(
             .multiplayer_shell_runtime
             .lobby_difficulty()
             .native_row(),
-        "role_claims_enabled": vmce_role_claims_enabled(state),
+        "role_claims_enabled": vmce_role_claims_enabled(state, role_claims_reversed),
         "role_claims_required": require_claimed_roles,
+        "role_claims_reversed": role_claims_reversed,
+        "probe_role_count": probe_role_count(state),
         "participants": participants,
     }))
 }
 
+#[cfg(feature = "vmce")]
 fn ensure_coop_setup_ready_transition(
     initial: &Value,
     final_state: &Value,
@@ -3375,7 +3442,15 @@ fn ensure_coop_setup_ready_transition(
         initial["role_claims_required"] == final_state["role_claims_required"],
         "VMCE role probe changed during the Ready transition"
     );
+    ensure!(
+        initial["role_claims_reversed"] == final_state["role_claims_reversed"],
+        "VMCE role-probe direction changed during the Ready transition"
+    );
     let claims_required = initial["role_claims_required"] == true;
+    let claims_reversed = initial["role_claims_reversed"] == true;
+    let probe_role_count = initial["probe_role_count"]
+        .as_u64()
+        .context("VMCE probe role count")? as usize;
     let players = initial["players"]
         .as_u64()
         .context("VMCE participant count")? as usize;
@@ -3402,9 +3477,14 @@ fn ensure_coop_setup_ready_transition(
             before["name"]
         );
         if claims_required {
+            let raw_row = before["raw_row"]
+                .as_u64()
+                .context("VMCE claimed seat row")? as u8;
+            let expected = probe_role_for_seat(raw_row, probe_role_count, claims_reversed)
+                .context("VMCE probe role is outside the authored roles")?;
             ensure!(
-                before["raw_row"].as_i64() == before["role"].as_i64(),
-                "VMCE role was not claimed for the participant's own row: {:?}",
+                before["role"].as_i64() == Some(i64::from(expected)),
+                "VMCE role was not claimed for the participant's seat: {:?}",
                 before["name"]
             );
         }
@@ -3437,7 +3517,9 @@ fn ensure_coop_setup_ready_transition(
 
 #[cfg(all(test, feature = "vmce"))]
 mod vmce_ready_transition_tests {
-    use super::{LanTarget, LiveLanCapture, ensure_coop_setup_ready_transition};
+    use super::{
+        LanTarget, LiveLanCapture, ensure_coop_setup_ready_transition, probe_role_for_seat,
+    };
     use serde_json::json;
 
     #[test]
@@ -3446,7 +3528,8 @@ mod vmce_ready_transition_tests {
             "host": false, "map_file": "stage.map", "map_source_sha256": "source",
             "effective_digest": "digest", "config": {"config_sha256": "config"},
             "lobby_difficulty": 0, "role_claims_enabled": true,
-            "role_claims_required": false, "players": 2, "local_row": 1,
+            "role_claims_required": false, "role_claims_reversed": false,
+            "probe_role_count": 4, "players": 2, "local_row": 1,
             "participants": [
                 {"name": "Host", "raw_row": 0, "role": -2, "ready": true, "map_status": 1},
                 {"name": "Guest", "raw_row": 1, "role": -2, "ready": false, "map_status": 1}
@@ -3462,13 +3545,53 @@ mod vmce_ready_transition_tests {
     }
 
     #[test]
+    fn the_retry_probe_mirrors_the_authored_role_of_each_seat() {
+        // The retry diagnostic needs the admitted seat order to differ from the
+        // authored House order; the probe mirrors roles by seat instead of
+        // relying on a random role draw.
+        assert_eq!(probe_role_for_seat(0, 2, false), Some(0));
+        assert_eq!(probe_role_for_seat(1, 2, false), Some(1));
+        assert_eq!(probe_role_for_seat(0, 2, true), Some(1));
+        assert_eq!(probe_role_for_seat(1, 2, true), Some(0));
+        assert_eq!(probe_role_for_seat(0, 4, true), Some(3));
+        assert_eq!(probe_role_for_seat(3, 4, true), Some(0));
+        // A seat outside the map's authored roles never invents a role.
+        assert_eq!(probe_role_for_seat(2, 2, true), None);
+        assert_eq!(probe_role_for_seat(0, 0, false), None);
+    }
+
+    #[test]
+    fn mirrored_retry_roles_satisfy_the_ready_transition() {
+        let initial = json!({
+            "host": false, "map_file": "stage.map", "map_source_sha256": "source",
+            "effective_digest": "digest", "config": {"config_sha256": "config"},
+            "lobby_difficulty": 2, "role_claims_enabled": true,
+            "role_claims_required": true, "role_claims_reversed": true,
+            "probe_role_count": 2, "players": 2, "local_row": 1,
+            "participants": [
+                {"name": "Host", "raw_row": 0, "role": 1, "ready": true, "map_status": 1},
+                {"name": "Guest", "raw_row": 1, "role": 0, "ready": false, "map_status": 1}
+            ]
+        });
+        let mut accepted = initial.clone();
+        accepted["participants"][1]["ready"] = json!(true);
+        assert!(ensure_coop_setup_ready_transition(&initial, &accepted, false).is_ok());
+        // The identity mapping is not the retry probe's claim and must fail.
+        let mut identity = initial.clone();
+        identity["participants"][0]["role"] = json!(0);
+        identity["participants"][1]["role"] = json!(1);
+        assert!(ensure_coop_setup_ready_transition(&identity, &accepted, false).is_err());
+    }
+
+    #[test]
     fn guest_reaccepts_after_a_new_difficulty_revision() {
         let mut capture = LiveLanCapture::new_config(LanTarget::LiveVmceGuest, None, None);
         let before = json!({
             "host": false, "map_file": "stage.map", "map_source_sha256": "source",
             "effective_digest": "digest", "config": {"config_sha256": "config"},
             "lobby_difficulty": 0, "role_claims_enabled": true,
-            "role_claims_required": false, "players": 2, "local_row": 1,
+            "role_claims_required": false, "role_claims_reversed": false,
+            "probe_role_count": 4, "players": 2, "local_row": 1,
             "participants": [
                 {"name": "Host", "raw_row": 0, "role": -2, "ready": true, "map_status": 1},
                 {"name": "Guest", "raw_row": 1, "role": -2, "ready": false, "map_status": 1}

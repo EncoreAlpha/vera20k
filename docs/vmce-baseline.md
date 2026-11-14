@@ -800,3 +800,55 @@ rejected role/config change, leave/reselect in the intermission room, WOL, old/m
 cross-machine play or three/four-player rooms. No game behavior changed: the work is in
 `src/app/diagnostics/shell_capture.rs`, `.../movies/lan/live.rs` and
 `tools/vmce_lan_acceptance.py`.
+
+## Acceptance repair — deterministic retry role/score-order probe (feature/vmce, 2026-11-14)
+
+The `2p-retry` live capture asserts that VMCE's defeat statistics follow the frozen role/House
+assignment rather than the map's House storage order: the diagnostic requires the admitted seat order
+to differ from the authored House order before it validates each row's House, colour, role facts and
+score values. The scenario previously started every seat on Random, so that precondition depended on
+the seed's draw; a run whose draw kept the identity mapping failed at `retry probe did not reverse the
+actual score and seat order` after both peers had reached the defeat page. This was a test-precondition
+problem, not a game defect: the lobby role, freeze, retry, result and score owners were unchanged.
+
+Fix (acceptance code only): the retry scenario now requests the existing lobby role probe
+(`--lan-lobby-inputs`), and each seat claims the mirrored authored role (`role_count - 1 - row`)
+through the production Team-column `SetupAction::Select`. The host publishes the choice in its normal
+options revision; the guest sends its normal `PlayerChoices` over real LAN. This covers the production
+action handler, not a real mouse click, and it injects no frozen assignment, result, network message or
+per-peer state. `2p-win` keeps the seat-identity mapping; `2p-final`, `4p-win`, `a03-*` and the
+Cooperative captures do not enable the probe and keep random roles. `vmce_setup_snapshot` records
+`role_claims_reversed` and `probe_role_count`, and the Ready transition requires the probe's exact role
+for every seat when claims are required; `vmce_runtime_receipt` also records the authored
+`role_count`. The comparator now requires the scenario's exact mapping (identity or mirrored) with the
+authored role count, so a random draw can no longer pass as a claim.
+
+Tests: the focused `app::diagnostics::shell_capture::movies::lan::live::vmce_ready_transition_tests` (4)
+pass with `vmce`; the acceptance tool's unit suite has 34 passing tests. The new mirror/Ready-transition
+assertions and the new Python comparator case were each run once against the pre-fix identity
+behavior in the working tree (temporarily reverted, not committed): the two Rust tests failed, and the
+identity-only comparator rejected the mirrored receipts; both pass with the fix. `check -p vera20k
+--lib --bins` passes without `vmce` (the Ready-transition helper is VMCE-only and now gated). The
+repository-level `python -m tools.run_tests` still reports the environmental/branch failures noted
+earlier (cargo-cache symlink tests, macOS notarization, the `<user-home>` literal in
+`src/app/restart.rs`, the browser-switch path list and the Windows `<path>` separator); none touch the
+files changed here.
+
+Acceptance (this round): the vmce-feature fast build `vmce-retry-probe-r3` (exe SHA-256
+`B139A9E633F03B119D969AB35B2BF3C3DCCE63F9AECB837B4ACE3E3919E271F4`) passed the real two-process
+`2p-retry` run with the `LDA-Retry` series. Both peers reached the defeat page (`victory=false`,
+`rows=2`, equal `state_hash`), reported the same mirrored seats `[('LiveHost', 0, 1), ('LiveGuest', 1,
+0)]` with `role_count=2` and lobby/frozen difficulty 2, then readied and retried; both reloaded
+`VMCE/LDA-Retry/stage01/all01umd.map` with the same seed, ran 300 equal native checksums and 20 equal
+simulation hashes, and reported identical `vmce_statistics_rows` with non-zero House facts. The same
+build passed `2p-win` (identity probe, `LDA-Continue-real`) and `4p-win` (probe off, four random `-2`
+roles and `role_count=4`, `LDA-4p`). Evidence lives in
+`.scratch/vmce-retry-probe-accept-r8/`, `-r9/` and `-r10/` (not committed).
+
+Residuals: the retry probe covers the allowed production role/difficulty path only; real mouse
+operation, rejected role choices, leaving/reselecting roles in the intermission room, WOL/mixed builds,
+cross-machine play and three-player rooms were not run. The comparator checks the peers' live
+statistics rows and the retry checksum/hash streams; it does not add a separate cross-peer `state_hash`
+assertion, so that equality was verified from the receipts for this round. Historical `2p-retry`
+receipts made before this repair used random roles and may have crossed the same assertion only by
+draw.

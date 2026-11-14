@@ -83,10 +83,22 @@ def lobby_probe_receipts() -> list[tuple[str, dict]]:
         vmce = receipt["lan"]["vmce"]
         vmce["lobby_difficulty"] = 2
         vmce["frozen_difficulty"] = 2
+        vmce["role_count"] = 2
         vmce["roles_claimed"] = True
         vmce["humans"] = [
             {"name": "LiveHost", "raw_slot_index": 0, "role": 0},
             {"name": "LiveGuest", "raw_slot_index": 1, "role": 1},
+        ]
+    return receipts
+
+
+def reversed_lobby_probe_receipts() -> list[tuple[str, dict]]:
+    """The retry probe mirrors each seat's authored role deterministically."""
+    receipts = lobby_probe_receipts()
+    for _, receipt in receipts:
+        receipt["lan"]["vmce"]["humans"] = [
+            {"name": "LiveHost", "raw_slot_index": 0, "role": 1},
+            {"name": "LiveGuest", "raw_slot_index": 1, "role": 0},
         ]
     return receipts
 
@@ -154,6 +166,29 @@ class ComparatorTests(unittest.TestCase):
         receipts[1][1]["lan"]["vmce"]["humans"][0]["role"] = 1
         checks = self.evaluate(
             receipts, expect_lobby_inputs=True, expect_lobby_difficulty=2
+        )
+        self.assertTrue(any(not check.ok and check.name == "roles" for check in checks))
+
+    def test_lobby_probe_requires_the_retry_mirrored_roles(self):
+        # The retry capture claims the mirrored seat role so the admitted seat
+        # order differs from the authored House order. The comparator must
+        # accept that exact mapping only for the retry probe; the identity
+        # mapping (which the retry probe must not use) must still fail.
+        mirrored = reversed_lobby_probe_receipts()
+        checks = self.evaluate(
+            mirrored,
+            expect_lobby_inputs=True,
+            expect_lobby_difficulty=2,
+            expect_lobby_reversed_roles=True,
+        )
+        assert_all_pass(self, checks)
+        self.assertIn("roles", {check.name for check in checks})
+        identity = lobby_probe_receipts()
+        checks = self.evaluate(
+            identity,
+            expect_lobby_inputs=True,
+            expect_lobby_difficulty=2,
+            expect_lobby_reversed_roles=True,
         )
         self.assertTrue(any(not check.ok and check.name == "roles" for check in checks))
 

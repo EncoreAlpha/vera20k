@@ -162,6 +162,10 @@ class Scenario:
     # Accept/Start; both receipts must agree on the claimed rows and the row.
     expect_lobby_inputs: bool = False
     expect_lobby_difficulty: int | None = None
+    # The retry probe claims the mirrored authored role for each seat, so the
+    # admitted seat order differs from the authored House order; the other
+    # probe scenarios keep each seat's own role.
+    expect_lobby_reversed_roles: bool = False
 
 
 SCENARIOS = {
@@ -184,6 +188,9 @@ SCENARIOS = {
     # Real two-process defeat/retry: both observe, BC6 opens on both, both
     # press Continue (guests vote, host starts once every online guest voted),
     # and the retried mission reloads the same stage with 300 equal checksums.
+    # The lobby probe claims mirrored seat roles here so the retry diagnostic's
+    # score/House-order assertion is deterministic instead of depending on a
+    # random role draw.
     "2p-retry": Scenario(
         name="2p-retry",
         players=2,
@@ -193,6 +200,9 @@ SCENARIOS = {
         expect_retry=True,
         expect_screenshots=("vera-result-real-lose", "vera-retry-mission"),
         language="zh-CN",
+        expect_lobby_inputs=True,
+        expect_lobby_difficulty=2,
+        expect_lobby_reversed_roles=True,
     ),
     "2p-final": Scenario(
         name="2p-final",
@@ -841,12 +851,17 @@ def _series_sha_check(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> Chec
 def _vmce_lobby_inputs_checks(
     receipts: Sequence[tuple[str, Mapping[str, Any]]],
     expected_difficulty: int | None,
+    expected_reversed_roles: bool = False,
 ) -> list[Check]:
-    """Both peers claimed one authored role per seat and agreed on the row.
+    """Both peers claimed the probe's authored role for every seat and agreed.
 
-    The live capture drives the production role choices and the difficulty
-    slider before Accept/Start; the runtime receipt carries the claimed seats,
-    the lobby row and the frozen start difficulty.
+    The live capture drives the production Team-column role choices and the
+    difficulty slider before Accept/Start; the runtime receipt carries the
+    claimed seats, the map's authored role count, the lobby row and the frozen
+    start difficulty. A probe claims either each seat's own authored role
+    (identity) or its mirror (retry), so the comparator requires that exact
+    mapping instead of accepting any distinct role list: a probe that fell back
+    to the random role draw must fail here.
     """
     checks: list[Check] = [
         _equal_check(
@@ -865,11 +880,35 @@ def _vmce_lobby_inputs_checks(
         ),
     ]
     baseline: list[tuple[Any, Any, Any]] | None = None
+    baseline_role_count: int | None = None
     for label, receipt in receipts:
         try:
             humans = receipt_field(receipt, "lan.vmce.humans")
-        except KeyError:
-            checks.append(Check("roles", False, f"missing lan.vmce.humans in {label}"))
+            role_count = receipt_field(receipt, "lan.vmce.role_count")
+        except KeyError as exc:
+            checks.append(Check("roles", False, f"missing {exc} in {label}"))
+            return checks
+        if not _is_int(role_count) or not (2 <= role_count <= 4):
+            checks.append(
+                Check(
+                    "roles",
+                    False,
+                    f"lan.vmce.role_count is not an authored role count in "
+                    f"{label}: {format_value(role_count)}",
+                )
+            )
+            return checks
+        if baseline_role_count is None:
+            baseline_role_count = role_count
+        elif role_count != baseline_role_count:
+            checks.append(
+                Check(
+                    "roles",
+                    False,
+                    f"peers disagree on the authored role count: "
+                    f"{label}={role_count} first={baseline_role_count}",
+                )
+            )
             return checks
         if not isinstance(humans, list) or len(humans) < 2:
             checks.append(
@@ -893,18 +932,32 @@ def _vmce_lobby_inputs_checks(
                 Check("roles", False, f"lan.vmce.humans has no row/role in {label}")
             )
             return checks
-        if any(
-            not _is_int(row) or not _is_int(role) or role != row or role < 0
-            for _, row, role in rows
-        ):
-            checks.append(
-                Check(
-                    "roles",
-                    False,
-                    f"a seat did not claim its own authored role in {label}: {rows}",
+        for name, row, role in rows:
+            if not _is_int(row) or not _is_int(role):
+                checks.append(
+                    Check("roles", False, f"lan.vmce.humans has no row/role in {label}")
                 )
-            )
-            return checks
+                return checks
+            if not 0 <= row < role_count:
+                checks.append(
+                    Check(
+                        "roles",
+                        False,
+                        f"seat {name} has no authored row in {label}: {rows}",
+                    )
+                )
+                return checks
+            expected = role_count - 1 - row if expected_reversed_roles else row
+            if role != expected:
+                checks.append(
+                    Check(
+                        "roles",
+                        False,
+                        f"seat {name} claimed role {role}; expected authored role "
+                        f"{expected} of {role_count} in {label}: {rows}",
+                    )
+                )
+                return checks
         if baseline is None:
             baseline = rows
         elif rows != baseline:
@@ -916,9 +969,8 @@ def _vmce_lobby_inputs_checks(
                 )
             )
             return checks
-    checks.append(
-        Check("roles", True, f"each seat claimed its authored role: {baseline}")
-    )
+    mapping = "mirrored" if expected_reversed_roles else "seat-identity"
+    checks.append(Check("roles", True, f"{mapping} authored roles: {baseline}"))
     return checks
 
 
@@ -1125,6 +1177,7 @@ def evaluate_receipts(
     allow_missing_simulation_hashes: bool = False,
     expect_lobby_inputs: bool = False,
     expect_lobby_difficulty: int | None = None,
+    expect_lobby_reversed_roles: bool = False,
 ) -> list[Check]:
     """Compare loaded receipts using the real VMCE capture fields.
 
@@ -1167,6 +1220,14 @@ def evaluate_receipts(
                     Check(f"screenshot {expected_name}", True, "present in every receipt")
                 )
         checks.append(_series_sha_check(receipts))
+        if expect_lobby_inputs:
+            checks.extend(
+                _vmce_lobby_inputs_checks(
+                    receipts,
+                    expect_lobby_difficulty,
+                    expect_lobby_reversed_roles,
+                )
+            )
         return checks
 
     if expect_final:
@@ -1247,7 +1308,11 @@ def evaluate_receipts(
     checks.append(_series_sha_check(receipts))
     if expect_lobby_inputs:
         checks.extend(
-            _vmce_lobby_inputs_checks(receipts, expect_lobby_difficulty)
+            _vmce_lobby_inputs_checks(
+                receipts,
+                expect_lobby_difficulty,
+                expect_lobby_reversed_roles,
+            )
         )
     return checks
 
@@ -2355,6 +2420,9 @@ def run_scenario(context: RunContext, scenario: Scenario, index: int, total: int
                         expect_screenshots=scenario.expect_screenshots,
                         expect_lobby_inputs=scenario.expect_lobby_inputs,
                         expect_lobby_difficulty=scenario.expect_lobby_difficulty,
+                        expect_lobby_reversed_roles=(
+                            scenario.expect_lobby_reversed_roles
+                        ),
                     )
                 )
                 for process in launched:
