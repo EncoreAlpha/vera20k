@@ -703,3 +703,54 @@ layout and the new code re-deals rows. That switch path was not exercised in thi
 production acceptance. WOL Balance, spectator rooms and clan-room team paths keep their existing
 tests but were not separately exercised in production. Three/four-player rooms, cross-machine play
 and the internet path remain outside this slice.
+
+## Phase 3 sixth slice — VMCE-owned start permission (feature/vmce, 2026-11-14)
+
+A VMCE room's start permit (runtime mode availability, selected map, LAN-only config sync, the
+synchronized map config, the accepted shared seed and the map-authored role resolution) and its
+minimum-player rule (at least one non-observer player) were inlined in VERA's shared start command:
+`mode_start` in `src/app/shell_network_setup/actions/start.rs` carried a `#[cfg(feature =
+"vmce")]` branch with the whole VMCE validation, the player-facing denial strings and the map/role
+logs, and `has_minimum_players` carried the mode rule. The slice moves both into the VMCE-owned lobby
+module `src/app/shell_network_setup/vmce_setup.rs` (`VmceStartPermission`, `start_permission`,
+`minimum_players_met`). The shared command keeps one `is_vmce()` dispatch per function, the native
+command ordering, readiness/publishing and the GO freeze, and prints the owner's reason. The
+feature-off migration bridge (`vmce_setup_stub.rs`) mirrors the same symbols and keeps refusing a
+VMCE start with the "no playable VMCE backend" reason, so no feature-off path reaches an incomplete
+backend. Stock and Cooperative start paths are untouched; the removed cfg gate required the pinned
+budget edits (`actions/start.rs` 2 -> 1, `VMCE_PRODUCTION_GATE_TOTAL` 462 -> 461).
+
+Guards: the new `vmce_start_permission_is_owned_by_the_vmce_lobby_module` scans raw function bodies
+and asserts the shared `mode_start` dispatches `vmce_setup::start_permission` while carrying none of
+`resolve_vmce_houses_with_config`, `network_vmce_map_config`, `load_network_map_ini`,
+`vmce_map::mode_available` or the deny text; that `has_minimum_players` dispatches
+`minimum_players_met`; that the VMCE owner holds those rules; and that the migration bridge keeps
+its slots and refusal. All 52 guards pass in both configurations.
+
+Tests: `app::shell_network_setup` vmce 48 / default 33, including the new
+`the_vmce_lobby_requires_a_player_and_never_counts_an_observer_as_one` (through the VMCE owner:
+one player passes, an observer or an empty list does not) and the existing VMCE solo-host minimum
+tests that now dispatch through the production shared command. `check -p vera20k --lib --bins`
+passes in both configurations.
+
+Acceptance: the vmce-feature fast build `vmce-start-permission-r1` (exe SHA-256
+`90D71AFD07CC5CD187C88A93FB8A737F7B105AF32C0FE326FC560837E41DC99B`) passed the two-process
+`2p-win` lobby join, settings, ready, start and next-mission run with the `LDA-Continue-real`
+series: both ends matched 300 native checksums and 20 simulation hashes, the victory page receipt
+reported `rows=2` and `can_continue=true`, and both ends reported the stage02 next mission.
+Evidence lives in `.scratch/vmce-start-permission-accept-r1/` (not committed).
+
+Residuals: this is a behavior-preserving ownership migration; the acceptance run exercises the
+allowed branch, not the denial branches (no backend, no selected map, non-LAN, missing map config,
+missing seed, invalid roles), which need a full `AppState` and are covered only by the static guard
+for dispatch and text ownership. The migration bridge keeps the mode's own minimum-player
+expression rather than a fixed false, so a populated feature-off room would still reach the
+backend-refusal reason; a feature-off VMCE room is itself unreachable today, so that dialog was not
+exercised in the game. WOL, old/mixed builds, cross-machine play, three/four-player rooms and the
+internet path remain outside this slice.
+
+Related pre-existing guard gaps (not fixed here): three pinned gate budgets are stale at a zero
+count (`app/cooperative_round.rs` 12, `app/lan_service/cooperative.rs` 19,
+`app/match_runtime/session/cooperative_round.rs` 37) and the budget guard skips zero-count files, so
+the table sum does not equal `VMCE_PRODUCTION_GATE_TOTAL`; `resolve_vmce_houses` in
+`actions/start.rs` is a test-only `#[cfg(feature = "vmce")]` shared-file gate.
