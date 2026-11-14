@@ -34,6 +34,11 @@ pub struct ModePolicy {
     pub trigger_only_outcome: bool,
     /// Whether mission end follows the Cooperative result route.
     pub cooperative_result: bool,
+    /// Whether VERA's room for this mode seats its players on teams
+    /// (`MatchSession::network_team_room`): allying allowed still gates it,
+    /// and a clan room never groups. An authored-role campaign has no team
+    /// seats; its seats are the map's roles.
+    pub room_teams: bool,
     /// Whether this mode uses the campaign's authored map catalog.
     pub authored_campaign_map_catalog: bool,
     /// Whether a modern guest must accept manually before becoming ready.
@@ -69,6 +74,7 @@ impl MpModeClass {
                     extra_player_cap: None,
                     trigger_only_outcome: false,
                     cooperative_result: false,
+                    room_teams: true,
                     authored_campaign_map_catalog: false,
                     modern_guest_manual_accept: false,
                     authored_campaign_roles: false,
@@ -82,6 +88,7 @@ impl MpModeClass {
                 extra_player_cap: Some(2),
                 trigger_only_outcome: false,
                 cooperative_result: true,
+                room_teams: false,
                 authored_campaign_map_catalog: false,
                 modern_guest_manual_accept: false,
                 authored_campaign_roles: false,
@@ -94,6 +101,7 @@ impl MpModeClass {
                 extra_player_cap: Some(4),
                 trigger_only_outcome: true,
                 cooperative_result: true,
+                room_teams: false,
                 authored_campaign_map_catalog: true,
                 modern_guest_manual_accept: true,
                 authored_campaign_roles: true,
@@ -470,6 +478,7 @@ mod tests {
             extra_player_cap: None,
             trigger_only_outcome: false,
             cooperative_result: false,
+            room_teams: true,
             authored_campaign_map_catalog: false,
             modern_guest_manual_accept: false,
             authored_campaign_roles: false,
@@ -492,6 +501,7 @@ mod tests {
             extra_player_cap: Some(2),
             trigger_only_outcome: false,
             cooperative_result: true,
+            room_teams: false,
             authored_campaign_map_catalog: false,
             modern_guest_manual_accept: false,
             authored_campaign_roles: false,
@@ -506,6 +516,7 @@ mod tests {
             extra_player_cap: Some(4),
             trigger_only_outcome: true,
             cooperative_result: true,
+            room_teams: false,
             authored_campaign_map_catalog: true,
             modern_guest_manual_accept: true,
             authored_campaign_roles: true,

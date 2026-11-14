@@ -2318,8 +2318,8 @@ impl MatchSession {
     }
 
     /// Whether this is a VERA room whose mode seats its players on teams:
-    /// allying allowed, outside Cooperative and a clan room. Its rows list
-    /// under team headers.
+    /// allying allowed, outside a clan room, and the mode's policy says its
+    /// room has team seats. Its rows list under team headers.
     pub(crate) fn network_team_room(&self) -> bool {
         let Some(NetworkPhase::Setup {
             launch,
@@ -2330,7 +2330,7 @@ impl MatchSession {
             return false;
         };
         launch.mode.allies_allowed
-            && !launch.mode.class.uses_cooperative_setup()
+            && launch.mode.class.policy().room_teams
             && !self.network_room().clan
     }
 
@@ -4149,6 +4149,52 @@ mod tests {
         launch.humans.push(guest);
         launch.local_player_index = 1;
         launch
+    }
+
+    #[test]
+    fn room_teams_follow_the_mode_policy() {
+        use crate::skirmish_modes::MpModeClass;
+
+        for (class, expected) in [
+            (MpModeClass::Battle, true),
+            (MpModeClass::Cooperative, false),
+            (MpModeClass::Vmce, false),
+        ] {
+            let mut launch = network_fixture();
+            launch.mode.class = class;
+            launch.mode.allies_allowed = true;
+            // A host can switch into this mode while its room still carries
+            // the previous mode's team count. The mode's own policy decides
+            // whether that count means team seats.
+            launch.options.teams = Some(2);
+            let mut session = MatchSession::default();
+            session.enter_network(super::NetworkReturnContext::Wol);
+            session
+                .accept_network_setup(launch, true, None, true)
+                .unwrap();
+            assert_eq!(
+                session.network_team_room(),
+                expected,
+                "{class:?} room team seating"
+            );
+            assert_eq!(
+                session.network_teams(),
+                expected.then_some(2),
+                "{class:?} room team seats"
+            );
+        }
+
+        let mut launch = network_fixture();
+        launch.mode.class = MpModeClass::Battle;
+        launch.mode.allies_allowed = false;
+        launch.options.teams = Some(2);
+        let mut session = MatchSession::default();
+        session.enter_network(super::NetworkReturnContext::Wol);
+        session
+            .accept_network_setup(launch, true, None, true)
+            .unwrap();
+        assert!(!session.network_team_room());
+        assert_eq!(session.network_teams(), None);
     }
 
     #[test]

@@ -429,8 +429,9 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
     let may_remove = seats.filter(|row| !removed(row)).count() > 2;
     let ai_allowed = !watched && mode.class.lists_in_skirmish();
     // In a mode with teams, VERA's rooms group their rows under headers:
-    // with Teams set, one for each of its teams.
-    let grouped = several && session.network_team_room() && !mode_policy.authored_campaign_roles;
+    // with Teams set, one for each of its teams. The mode's policy owns
+    // whether its room seats players on teams.
+    let grouped = several && session.network_team_room();
     let teams = session.network_teams();
     let team_seats = session.network_team_seats();
     // While the room balances itself, nobody picks a team: the Team lists and
