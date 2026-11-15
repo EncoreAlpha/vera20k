@@ -160,6 +160,7 @@ EndOfGame=yes
 - `PlayerControl=yes` 是旧写法：只有在没有写 `Player1Control` 时它才等价于「授予角色 1」；要让多个角色都控制同一条共享 House，请显式写 `Player1Control`、`Player2Control`……
 - 地图里直接标了 `PlayerControl=yes` 的原版主 House **不会**自动交给 VERA 的某个角色；若它是原版战役里玩家控制的额外 House，请在 `campaign.ini` 对应的 `[Scenario:...:House]` 段写 `PlayerNControl=yes`，否则它会保持 AI。
 - 大厅角色板只显示主角色 House；通过 `PlayerNControl=yes` 授权给某角色的共享 House 不会在开局前显示（B86）。
+- VMCE 自有 setup 代码决定每个席位可选的角色、客人只能改自己席位、对端角色更新准入，以及换图/换模式时清空角色声明；`MatchSession` 仍保存名单和角色状态，共享房间、选项传输和 Ready 路径负责发布与失效。没有重复的角色状态或角色随机源。
 
 原版遭遇战里，玩家选国家、游戏分配起点；VMCE 不会按多人起点 waypoint 自动给角色分配基地。地图作者通常需要为每个角色预置基地和单位，或由触发动作生成；VMCE 本身不会自动发基地车或建造厂。
 

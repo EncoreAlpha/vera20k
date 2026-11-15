@@ -69,50 +69,6 @@ pub(crate) fn vmce_owner_choice_text(owner: &str) -> String {
     owner.to_owned()
 }
 
-#[cfg(feature = "vmce")]
-fn vmce_role_choices(
-    state: &AppState,
-    row: u8,
-    details: &super::VmceMapDetails,
-) -> (i32, Vec<SetupChoice>) {
-    let launch = state
-        .match_state
-        .session
-        .network_setup()
-        .expect("setup view owns launch");
-    let assigned = launch
-        .humans
-        .iter()
-        .filter(|human| human.raw_slot_index.is_some() && human.raw_slot_index != Some(row))
-        .map(|human| human.role.native_value())
-        .collect::<Vec<_>>();
-    let current = launch
-        .humans
-        .iter()
-        .find(|human| human.raw_slot_index == Some(row))
-        .map_or(-2, |human| human.role.native_value());
-    let mut choices = vec![SetupChoice {
-        value: -2,
-        text: label(state, "GUI:Random"),
-        swatch: None,
-    }];
-    for (index, owner) in details.owners.iter().enumerate() {
-        let Some(owner) = owner.as_deref() else {
-            continue;
-        };
-        let value = index as i32;
-        if assigned.contains(&value) && current != value {
-            continue;
-        }
-        choices.push(SetupChoice {
-            value,
-            text: vmce_owner_choice_text(owner),
-            swatch: None,
-        });
-    }
-    (current, choices)
-}
-
 /// The first pair of authored roles whose Houses share one Country; a lobby
 /// error the role board reports. Read from the map details only, never from a
 /// peer's roster.
@@ -938,7 +894,23 @@ pub(crate) fn view(state: &AppState) -> Option<SetupView> {
         let authored_roles = mode_policy.authored_campaign_roles;
         #[cfg(feature = "vmce")]
         let (team, team_items) = if authored_roles {
-            vmce_role_choices(state, row, vera_details.expect("VERA map details"))
+            let (current, choices) = super::vmce_setup::role_choices(
+                launch,
+                row,
+                vera_details.expect("VERA map details"),
+            );
+            let items = choices
+                .into_iter()
+                .map(|choice| SetupChoice {
+                    value: choice.value,
+                    text: choice.owner.map_or_else(
+                        || label(state, "GUI:Random"),
+                        |owner| vmce_owner_choice_text(&owner),
+                    ),
+                    swatch: None,
+                })
+                .collect::<Vec<_>>();
+            (current, items)
         } else {
             // With Teams set, the room's teams only; a guest's own list leaves
             // out the full ones it is not on.

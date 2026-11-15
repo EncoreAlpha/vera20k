@@ -379,42 +379,45 @@ fn select(state: &mut AppState, control: u16, value: i32) -> anyhow::Result<()> 
             .network_setup()
             .is_some_and(|launch| launch.mode.class.policy().authored_campaign_roles)
     {
-        let launch = state.match_state.session.network_setup().unwrap();
-        let index = launch
-            .humans
-            .iter()
-            .position(|human| human.raw_slot_index == Some(row as u8))
-            .ok_or_else(|| anyhow::anyhow!("role row has no player"))?;
-        let local_index = launch.local_player_index;
-        anyhow::ensure!(
-            state.match_state.session.host() || index == local_index,
-            "guests may only assign their own role"
-        );
-        let role = crate::skirmish_launch::LaunchHumanRole::from_native(value);
-        state
-            .match_state
-            .session
-            .set_network_vmce_role(index, role)?;
-        if state.match_state.session.host() {
-            host_option_edited(state)?;
-            queue(state, NetworkSetupRequest::PublishOptions);
-            return Ok(());
+        let selection = {
+            let launch = state.match_state.session.network_setup().unwrap();
+            super::vmce_setup::role_selection(
+                launch,
+                row as u8,
+                value,
+                state.match_state.session.host(),
+            )?
+        };
+        match selection {
+            super::vmce_setup::VmceRoleSelection::Host { index, role } => {
+                state
+                    .match_state
+                    .session
+                    .set_network_vmce_role(index, role)?;
+                host_option_edited(state)?;
+                queue(state, NetworkSetupRequest::PublishOptions);
+            }
+            super::vmce_setup::VmceRoleSelection::Guest {
+                index,
+                row,
+                slot,
+                role,
+            } => {
+                state
+                    .match_state
+                    .session
+                    .set_network_vmce_role(index, role)?;
+                queue(
+                    state,
+                    NetworkSetupRequest::PlayerChoices {
+                        row,
+                        slot,
+                        observer: false,
+                        role: Some(role),
+                    },
+                );
+            }
         }
-        let human = state
-            .match_state
-            .session
-            .network_setup()
-            .unwrap()
-            .local_player();
-        queue(
-            state,
-            NetworkSetupRequest::PlayerChoices {
-                row: row as u8,
-                slot: human.slot.clone(),
-                observer: false,
-                role: Some(role),
-            },
-        );
         return Ok(());
     }
     let mut slot = state
@@ -804,6 +807,7 @@ pub(crate) fn commit_map_selection(
     );
     let mode = crate::skirmish_modes::mode_by_id(&state.frontend.skirmish_modes, mode_id)
         .ok_or_else(|| anyhow::anyhow!("unknown chosen game mode"))?;
+    let mode_class = mode.class;
     let map = state
         .frontend
         .scenario_catalog
@@ -884,21 +888,8 @@ pub(crate) fn commit_map_selection(
         file.clone(),
         map.player_capacity,
     )?;
-    #[cfg(feature = "vmce")]
-    if role_assignments_reset && mode.class.policy().authored_campaign_roles {
-        let count = state
-            .match_state
-            .session
-            .network_setup()
-            .expect("selected setup")
-            .humans
-            .len();
-        for index in 0..count {
-            state.match_state.session.set_network_vmce_role(
-                index,
-                crate::skirmish_launch::LaunchHumanRole::Player { group: -2 },
-            )?;
-        }
+    if role_assignments_reset {
+        super::vmce_setup::reset_roles_after_map_change(state)?;
     }
     state
         .match_state
@@ -912,7 +903,7 @@ pub(crate) fn commit_map_selection(
     // The selected map's authored primary roles are the room's slots: the host
     // caps the room at that count so no player joins without a role to pick.
     #[cfg(feature = "vmce")]
-    if mode.class.is_vmce()
+    if mode_class.is_vmce()
         && state.match_state.session.host()
         && state.match_state.session.network_several_observers()
     {

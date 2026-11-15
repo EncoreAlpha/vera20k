@@ -4,7 +4,9 @@
 //! this build cannot admit its setup.
 
 use super::AppState;
-use crate::skirmish_launch::{SkirmishHumanSlot, SkirmishLaunchSession};
+use crate::skirmish_launch::{
+    LaunchHumanRole, SkirmishHumanSlot, SkirmishLaunchSession, SkirmishLocalSlot,
+};
 use crate::skirmish_modes::MpModeClass;
 
 /// Preserve the host's VMCE identity, but reject it before any shared session
@@ -49,6 +51,48 @@ pub(super) fn start_permission(
 /// the backend refusal stays the reachable reason once a room has players.
 pub(super) fn minimum_players_met(launch: &SkirmishLaunchSession) -> bool {
     !launch.humans.is_empty() && launch.humans.iter().all(|human| !human.is_observer())
+}
+
+pub(super) enum VmceRoleSelection {
+    Host {
+        index: usize,
+        role: LaunchHumanRole,
+    },
+    Guest {
+        index: usize,
+        row: u8,
+        slot: SkirmishLocalSlot,
+        role: LaunchHumanRole,
+    },
+}
+
+pub(super) fn role_selection(
+    _launch: &SkirmishLaunchSession,
+    _row: u8,
+    _value: i32,
+    _host: bool,
+) -> anyhow::Result<VmceRoleSelection> {
+    anyhow::bail!("VMCE is not built in")
+}
+
+pub(super) fn validate_peer_role(
+    _state: &AppState,
+    _index: usize,
+    _role: LaunchHumanRole,
+) -> anyhow::Result<()> {
+    anyhow::bail!("VMCE is not built in")
+}
+
+pub(super) fn accept_peer_role(
+    _state: &mut AppState,
+    _index: usize,
+    _role: LaunchHumanRole,
+) -> anyhow::Result<()> {
+    anyhow::bail!("VMCE is not built in")
+}
+
+pub(super) fn reset_roles_after_map_change(_state: &mut AppState) -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// This migration bridge recognizes the VMCE mode, but it has no complete

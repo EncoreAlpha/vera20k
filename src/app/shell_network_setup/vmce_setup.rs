@@ -1,4 +1,5 @@
-//! VMCE setup state and its map-authored role metadata projection.
+//! VMCE setup state, its map-authored role metadata projection, and its
+//! lobby role-choice/selection/admission decisions.
 
 use super::{AppState, NetworkSetupProtocol};
 use crate::skirmish_launch::{SkirmishHumanSlot, SkirmishLaunchSession};
@@ -289,6 +290,150 @@ pub(super) fn frozen_start_houses(
         .lobby_difficulty()
         .native_row();
     Ok(Some(assignments))
+}
+
+/// One selectable authored player role, or the Random sentinel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct VmceRoleChoice {
+    pub value: i32,
+    /// The authored House owner; `None` for the Random row.
+    pub owner: Option<String>,
+}
+
+/// A row's VMCE role choice resolved to the shared launch/session indexes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum VmceRoleSelection {
+    Host {
+        index: usize,
+        role: crate::skirmish_launch::LaunchHumanRole,
+    },
+    Guest {
+        index: usize,
+        row: u8,
+        slot: crate::skirmish_launch::SkirmishLocalSlot,
+        role: crate::skirmish_launch::LaunchHumanRole,
+    },
+}
+
+/// VMCE's lobby role choice owner: the row's current claim and the authored
+/// roles it may still take. A shared view renders these; it does not decide
+/// which claims are available.
+pub(super) fn role_choices(
+    launch: &SkirmishLaunchSession,
+    row: u8,
+    details: &VmceMapDetails,
+) -> (i32, Vec<VmceRoleChoice>) {
+    let assigned = launch
+        .humans
+        .iter()
+        .filter(|human| human.raw_slot_index.is_some() && human.raw_slot_index != Some(row))
+        .map(|human| human.role.native_value())
+        .collect::<Vec<_>>();
+    let current = launch
+        .humans
+        .iter()
+        .find(|human| human.raw_slot_index == Some(row))
+        .map_or(-2, |human| human.role.native_value());
+    let mut choices = vec![VmceRoleChoice {
+        value: -2,
+        owner: None,
+    }];
+    for (index, owner) in details.owners.iter().enumerate() {
+        let Some(owner) = owner.as_deref() else {
+            continue;
+        };
+        let value = index as i32;
+        if assigned.contains(&value) && current != value {
+            continue;
+        }
+        choices.push(VmceRoleChoice {
+            value,
+            owner: Some(owner.to_owned()),
+        });
+    }
+    (current, choices)
+}
+
+/// VMCE's own role-claim rule: a guest may assign only its own row, while the
+/// host may assign any. The shared action still mutates the authoritative
+/// launch and publishes the options/PlayerChoices.
+pub(super) fn role_selection(
+    launch: &SkirmishLaunchSession,
+    row: u8,
+    value: i32,
+    host: bool,
+) -> anyhow::Result<VmceRoleSelection> {
+    anyhow::ensure!(launch.mode.class.is_vmce(), "role selection outside VMCE");
+    let index = launch
+        .humans
+        .iter()
+        .position(|human| human.raw_slot_index == Some(row))
+        .ok_or_else(|| anyhow::anyhow!("role row has no player"))?;
+    anyhow::ensure!(
+        host || index == launch.local_player_index,
+        "guests may only assign their own role"
+    );
+    let role = crate::skirmish_launch::LaunchHumanRole::from_native(value);
+    if host {
+        return Ok(VmceRoleSelection::Host { index, role });
+    }
+    Ok(VmceRoleSelection::Guest {
+        index,
+        row,
+        slot: launch.local_player().slot.clone(),
+        role,
+    })
+}
+
+/// Validate an incoming VMCE role change before the shared peer-choice
+/// transaction mutates the roster.
+pub(super) fn validate_peer_role(
+    state: &AppState,
+    index: usize,
+    role: crate::skirmish_launch::LaunchHumanRole,
+) -> anyhow::Result<()> {
+    state
+        .match_state
+        .session
+        .validate_network_vmce_role(index, role)
+}
+
+/// Apply an incoming VMCE role change after the shared peer-choice transaction
+/// has accepted the sender's other fields. The session remains the
+/// authoritative role-state owner.
+pub(super) fn accept_peer_role(
+    state: &mut AppState,
+    index: usize,
+    role: crate::skirmish_launch::LaunchHumanRole,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        state
+            .match_state
+            .session
+            .network_setup()
+            .is_some_and(|launch| launch.mode.class.is_vmce()),
+        "role update outside VMCE"
+    );
+    state.match_state.session.set_network_vmce_role(index, role)
+}
+
+/// A map or mode change clears every VMCE claim to Random before the shared
+/// map transaction publishes the new role rows.
+pub(super) fn reset_roles_after_map_change(state: &mut AppState) -> anyhow::Result<()> {
+    let Some(launch) = state.match_state.session.network_setup() else {
+        return Ok(());
+    };
+    if !launch.mode.class.is_vmce() {
+        return Ok(());
+    }
+    let count = launch.humans.len();
+    for index in 0..count {
+        state.match_state.session.set_network_vmce_role(
+            index,
+            crate::skirmish_launch::LaunchHumanRole::Player { group: -2 },
+        )?;
+    }
+    Ok(())
 }
 
 // ---- VMCE's lobby mode events -------------------------------------------
@@ -771,6 +916,106 @@ mod tests {
             validate_host_vmce_map_config(false, false, false, Some(map_file), &source, None)
                 .is_ok()
         );
+    }
+
+    fn role_launch() -> SkirmishLaunchSession {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let profile = crate::test_fixture::json("tools/map_observation.command-bar.example.json");
+        let mut launch: SkirmishLaunchSession =
+            serde_json::from_value(profile["launch"].clone()).unwrap();
+        launch.mode.class = crate::skirmish_modes::MpModeClass::Vmce;
+        let mut guest = launch.humans[0].clone();
+        guest.raw_slot_index = Some(1);
+        guest.name = "Guest".to_owned();
+        guest.role = LaunchHumanRole::Player { group: -2 };
+        launch.humans.push(guest);
+        launch.local_player_index = 1;
+        launch
+    }
+
+    #[test]
+    fn vmce_role_choices_offer_unclaimed_authors_and_keep_the_current_claim() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let mut launch = role_launch();
+        launch.humans[0].role = LaunchHumanRole::Player { group: 0 };
+        launch.humans[1].role = LaunchHumanRole::Player { group: -2 };
+        let details = VmceMapDetails {
+            owners: [
+                Some("Alpha".to_owned()),
+                Some("Beta".to_owned()),
+                None,
+                None,
+            ],
+            ..VmceMapDetails::default()
+        };
+
+        let (current, choices) = role_choices(&launch, 1, &details);
+        assert_eq!(current, -2);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.value)
+                .collect::<Vec<_>>(),
+            vec![-2, 1]
+        );
+        assert_eq!(choices[0].owner, None);
+        assert_eq!(choices[1].owner.as_deref(), Some("Beta"));
+
+        let (current, choices) = role_choices(&launch, 0, &details);
+        assert_eq!(current, 0);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.value)
+                .collect::<Vec<_>>(),
+            vec![-2, 0, 1],
+            "the current claim stays listed and an unclaimed author is added"
+        );
+        assert_eq!(choices[1].owner.as_deref(), Some("Alpha"));
+        assert_eq!(choices[2].owner.as_deref(), Some("Beta"));
+
+        launch.humans[1].role = LaunchHumanRole::Player { group: 1 };
+        let (_, choices) = role_choices(&launch, 0, &details);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.value)
+                .collect::<Vec<_>>(),
+            vec![-2, 0],
+            "another row's explicit claim is not offered"
+        );
+    }
+
+    #[test]
+    fn vmce_role_selection_restricts_a_guest_to_its_own_row() {
+        use crate::skirmish_launch::LaunchHumanRole;
+        let launch = role_launch();
+
+        assert!(role_selection(&launch, 0, 2, false).is_err());
+        let selection = role_selection(&launch, 1, 2, false).unwrap();
+        match selection {
+            VmceRoleSelection::Guest {
+                index,
+                row,
+                slot,
+                role,
+            } => {
+                assert_eq!(index, 1);
+                assert_eq!(row, 1);
+                assert_eq!(slot, launch.local_player().slot);
+                assert_eq!(role, LaunchHumanRole::Player { group: 2 });
+            }
+            VmceRoleSelection::Host { .. } => panic!("guest selection became a host action"),
+        }
+
+        let selection = role_selection(&launch, 0, 2, true).unwrap();
+        match selection {
+            VmceRoleSelection::Host { index, role } => {
+                assert_eq!(index, 0);
+                assert_eq!(role, LaunchHumanRole::Player { group: 2 });
+            }
+            VmceRoleSelection::Guest { .. } => panic!("host selection became a guest action"),
+        }
     }
 
     #[test]

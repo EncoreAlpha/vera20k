@@ -361,7 +361,6 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
         1,
         0,
     ),
-    ("app/shell_network_setup/service.rs", "service_event", 1, 0),
     ("app/shell_network_setup/view.rs", "view", 7, 0),
     ("app/shell_network_setup/wol.rs", "send_first_choices", 1, 0),
     ("app/shell_skirmish.rs", "commit_choose_map_selection", 2, 0),
@@ -373,6 +372,9 @@ const VMCE_SHARED_REFERENCE_CEILINGS: &[(&str, &str, usize, usize)] = &[
     ),
     ("sim/world/house_defeat.rs", "house_rung", 1, 0),
     ("skirmish_launch.rs", "all_allied", 1, 0),
+    // `service_event` has no entry: its VMCE role checks moved to the
+    // VMCE-owned setup module in the role-owner follow-up, so the shared
+    // service carries no direct VMCE mode branch for that event.
 ];
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -577,10 +579,10 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
     ("app/persistence/mod.rs", 1),
     ("app/shell_main_menu.rs", 4),
     ("app/shell_network_setup.rs", 20),
-    ("app/shell_network_setup/actions.rs", 17),
+    ("app/shell_network_setup/actions.rs", 16),
     ("app/shell_network_setup/actions/start.rs", 1),
     ("app/shell_network_setup/service.rs", 20),
-    ("app/shell_network_setup/view.rs", 26),
+    ("app/shell_network_setup/view.rs", 25),
     ("app/shell_skirmish.rs", 2),
     ("app/shell_wol/live_service/wire.rs", 1),
     ("app/shell_wol/quick_match.rs", 1),
@@ -612,7 +614,11 @@ const VMCE_PRODUCTION_GATE_BUDGETS: &[(&str, usize)] = &[
 const VMCE_PRODUCTION_GATE_UNLISTED_MAX: usize = 0;
 /// Sum of the exact pins above; kept explicit so the total is visible in the
 /// guard source and in the printed metric.
-const VMCE_PRODUCTION_GATE_TOTAL: usize = 459;
+// 2026-11-15 role-owner move: shared actions/view each drop one VMCE gate as
+// the role choice/selection decision moves to the VMCE-owned vmce_setup.rs;
+// the total falls 459 -> 457. The per-file pins above record the reduction;
+// the VMCE-owned module is not part of this budget.
+const VMCE_PRODUCTION_GATE_TOTAL: usize = 457;
 
 fn is_vmce_owned_file(rel: &str) -> bool {
     VMCE_OWNED_FILE_PREFIXES.iter().any(|prefix| {

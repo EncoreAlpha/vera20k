@@ -175,6 +175,10 @@ Each player role is a primary House from the map:
   player-controlled; otherwise it stays AI.
 - The lobby role board lists primary roles only; shared Houses granted through
   `PlayerNControl` are not shown before the mission (B86).
+- The VMCE-owned setup code decides which authored roles each row may claim, enforces the
+  guest's own-row rule, admits a peer's role update and clears claims on a map/mode change.
+  `MatchSession` keeps the roster and role state; the shared room, options transport and Ready
+  path publish and invalidate it. There is no duplicate role state or role RNG.
 
 VMCE does not use skirmish start waypoints to place bases. Map authors must place each role's
 base and units, or spawn them with triggers. VMCE does not grant an MCV or construction yard.
