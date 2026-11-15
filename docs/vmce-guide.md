@@ -21,8 +21,9 @@ This page is the player and map-author guide. The Chinese version is
 [zh-CN/vmce-guide.md](zh-CN/vmce-guide.md).
 
 This guide describes the merged 0.3.3 working tree. Per-player outcomes, the intermission room and
-local unlocks are implemented. The 0.3.3 LAN acceptance (`2p-win`, `2p-retry`, `2p-final`, `4p-win`)
-passed with 300 matching checksums each; the earlier 0.3.2 baseline had the full screenshot matrix
+local unlocks are implemented. The 0.3.3 LAN acceptance matched 300 checksums on
+`2p-win`, `2p-final` and `4p-win`, and the `2p-retry` receipt matched its
+pre-retry 300-checksum prefix before both peers reloaded the same stage/seed; the earlier 0.3.2 baseline had the full screenshot matrix
 (800x600, 1024x768 and 1600x900), the B4 LAN acceptance (93/93 checks) and the stock Cooperative
 continuation, and its 1024x768 default-window pages matched the pre-sync baseline (B103/B105
 closed). The
@@ -227,8 +228,8 @@ The result state, Continue and retry semantics belong to VMCE. Both pages are au
   guest voted, then restarts the same frozen stage with the same seed, roles and map — no timeout
   and no host vote. `Quit` becomes `离开房间`/Leave Room (host disbands, guest exits locally).
   The genuine VMCE 2p-retry capture passes on the merged baseline: the guest votes, the host
-  retries, both reload the same VMCE stage, 300 native checksums match, and host/guest table stats
-  are identical (it also passed on the pre-sync B4 base).
+  retries, both reload the same VMCE stage, the pre-retry 300 native checksums/20 hashes match, and
+  host/guest table stats are identical (it also passed on the pre-sync B4 base).
   Defeat statistics use each player's frozen House assignment, including when command-source
   order differs from seat order.
 - A stage with neither `NextScenario` nor `EndOfGame=yes` is an invalid campaign: VMCE
@@ -373,14 +374,17 @@ remaining acceptance are split between the [Chinese review](zh-CN/vmce-review.md
 The current baseline is upstream main `0f7dc1bbc` (merge `78b0aef4a`); see
 [VMCE fork baseline](vmce-baseline.md) for the validation state. The screenshot matrix, B4 LAN
 acceptance and stock Cooperative continuation were re-run on the earlier merged 0.3.2 baseline and
-passed (93/93 checks; B103/B105 closed); the 0.3.3 LAN acceptance passed with 300 matching checksums
-each. `tools/vmce_lan_acceptance.py` runs the real-process captures:
+passed (93/93 checks; B103/B105 closed); the 0.3.3 LAN acceptance matched 300 checksums on the
+win/final runs and the pre-retry 300-checksum prefix on the retry run.
+`tools/vmce_lan_acceptance.py` runs the real-process captures:
 
 - `--suite dev`: one short `2p-retry` flow probe. It caps each capture at 120 s
   and stops as soon as either peer exits non-zero, so a development probe
   cannot idle for the release timeout.
 - `--suite fast`: `4p-win`; `--suite smoke` and `--suite full`: `4p-win`,
-  `2p-win` and `2p-retry`, with the full 300-frame checksum comparison. `4p-win` accepts
+  `2p-win` and `2p-retry`. Win/final captures compare the full 300-frame prefix; the
+  retry compares its pre-retry 300-frame/20-hash prefix and the post-reload
+  `retry_mission` map/seed. `4p-win` accepts
   `--players 2|3|4`; `2p-final` needs a series whose `Entry` is the last stage (use `--entry`),
   and the manifest-extra probe reuses the 2p-final flow.
 - `VMCE_CAPTURE_TIMEOUT=<seconds>` overrides the per-capture cap (default
@@ -400,11 +404,12 @@ each. `tools/vmce_lan_acceptance.py` runs the real-process captures:
 - Cross-mission money is not carried over. Role reselection, whole-series admission verification
   and local stage unlocks are implemented; real cross-machine guest and failure paths still need
   connected validation.
-- The merged 0.3.3 baseline passed the real two-process `2p-win`, `2p-retry`
-  and `2p-final` captures and the four-process `4p-win` capture with 300
-  matching checksums each (fast build `vmce-upstream-0f7dc1bbc-r1`); the retry
-  kept its mirrored roles and the same stage, and the final run returned both
-  peers to the main menu.
+- The merged 0.3.3 baseline passed the real two-process `2p-win` and `2p-final`
+  captures and the four-process `4p-win` capture with 300 matching checksums
+  each (fast build `vmce-upstream-0f7dc1bbc-r1`). The `2p-retry` receipt matched
+  its pre-retry 300-checksum/20-hash prefix, then both peers kept the mirrored
+  roles and reloaded the same stage/seed; the final run returned both peers to
+  the main menu.
 - The earlier merged 0.3.2 baseline passed two-, three- and four-process win → next mission captures
   with 300 matching checksums (the same set passed on the pre-sync B4 base, where each peer's
   local unlock file contained only the designated next stage). They exercise the result board,
@@ -414,7 +419,8 @@ each. `tools/vmce_lan_acceptance.py` runs the real-process captures:
   return both to the main menu; it compared 300 checksums and did not watch the entire credits
   roll. The standard acceptance runner's `2p-final` scenario passed on the merged baseline
   (credits and campaign-end screenshots on both peers), and the VMCE `2p-retry` capture passed
-  there too (BC6 page, guest votes → host retry → same stage, 300 matching checksums). There are
+  there too (BC6 page, guest votes → host retry → same stage, 300 matching
+  pre-retry checksums; the receipt has no post-retry frame stream). There are
   no result-page timers anywhere: defeat uses the vote gate and campaign end the all-ready gate
   (B02 cancelled). Version `0.3.3` is the current fork version; the VMCE `0x103`/`0xBC6`
   pages are authored at 800x600 and were verified at 1024x768 (and 800x600/1600x900) against the

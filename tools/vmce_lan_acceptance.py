@@ -186,9 +186,10 @@ SCENARIOS = {
         expect_lobby_difficulty=2,
     ),
     # Real two-process defeat/retry: both observe, BC6 opens on both, both
-    # press Continue (guests vote, host starts once every online guest voted),
-    # and the retried mission reloads the same stage with 300 equal checksums.
-    # The lobby probe claims mirrored seat roles here so the retry diagnostic's
+    # press Continue (guests vote, host starts once every online guest voted).
+    # The receipt keeps the 300-frame/20-hash prefix recorded before the reload;
+    # the retried mission itself is the separate retry_mission map/seed/frame-0
+    # evidence. The lobby probe claims mirrored seat roles so the retry diagnostic's
     # score/House-order assertion is deterministic instead of depending on a
     # random role draw.
     "2p-retry": Scenario(
@@ -675,9 +676,22 @@ def _checksum_equal_check(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> 
 def _simulation_hash_checks(
     receipts: Sequence[tuple[str, Mapping[str, Any]]],
     allow_missing: bool,
+    *,
+    name_prefix: str = "",
+    note: str = "",
 ) -> list[Check]:
+    """Compare the recorded state-hash prefix, optionally labelled by phase.
+
+    The VMCE retry receipt records this prefix before the reload, so its caller
+    passes ``pre-retry`` and a note; ordinary win/final receipts keep the bare
+    names.  ``allow_missing`` only accepts absent or empty hashes; it never
+    accepts present values that disagree.
+    """
     values: list[tuple[str, Any]] = []
     missing: list[str] = []
+    name = f"{name_prefix}simulation_hashes"
+    equal_name = f"{name_prefix}simulation_hashes equal"
+    detail_prefix = f"{note}: " if note else ""
     for label, receipt in receipts:
         try:
             value = receipt_field(receipt, "lan.simulation_hashes")
@@ -693,25 +707,29 @@ def _simulation_hash_checks(
         if not allow_missing:
             return [
                 Check(
-                    "simulation_hashes",
+                    name,
                     False,
-                    "missing or empty lan.simulation_hashes in "
+                    detail_prefix
+                    + "missing or empty lan.simulation_hashes in "
                     + ", ".join(missing)
                     + " (pass --allow-missing-simulation-hashes to accept)",
                 ),
                 Check(
-                    "simulation_hashes equal",
+                    equal_name,
                     False,
                     "cannot compare while a receipt has no simulation hashes",
                 ),
             ]
         return [
             Check(
-                "simulation_hashes",
+                name,
                 True,
-                "missing or empty in " + ", ".join(missing) + " (allowed)",
+                detail_prefix
+                + "missing or empty in "
+                + ", ".join(missing)
+                + " (allowed)",
             ),
-            Check("simulation_hashes equal", True, "skipped (missing hashes allowed)"),
+            Check(equal_name, True, "skipped (missing hashes allowed)"),
         ]
 
     baseline_label, baseline = values[0]
@@ -721,17 +739,18 @@ def _simulation_hash_checks(
         if difference is not None:
             index, left, right = difference
             return [
-                Check("simulation_hashes", True, f"present in all {len(values)} receipts"),
+                Check(name, True, f"present in all {len(values)} receipts"),
                 Check(
-                    "simulation_hashes equal",
+                    equal_name,
                     False,
-                    f"lan.simulation_hashes[{index}]: {baseline_label}="
+                    detail_prefix
+                    + f"lan.simulation_hashes[{index}]: {baseline_label}="
                     f"{format_value(left)} {label}={format_value(right)}",
                 ),
             ]
     return [
-        Check("simulation_hashes", True, f"present in all {len(values)} receipts"),
-        Check("simulation_hashes equal", True, f"{len(baseline_seq)} entries"),
+        Check(name, True, f"present in all {len(values)} receipts"),
+        Check(equal_name, True, f"{len(baseline_seq)} entries"),
     ]
 
 
@@ -974,8 +993,27 @@ def _vmce_lobby_inputs_checks(
     return checks
 
 
+def _is_vmce_retry(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> bool:
+    """Whether the baseline receipt uses VMCE's defeat/retry evidence shape."""
+    if not receipts:
+        return False
+    try:
+        return receipt_field(receipts[0][1], "lan.vera_outcome.kind") == "retry"
+    except KeyError:
+        return False
+
+
 def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Check]:
-    """Both retry receipts loaded the same stage and ran 300 equal checksums."""
+    """Compare the pre-retry prefix and the post-retry mission identity.
+
+    A VMCE retry receipt records ``lan.native_checksums``,
+    ``lan.simulation_hashes`` and ``lan.vmce_statistics_rows`` at the defeat
+    page, before the reload; the retried mission is the separate
+    ``lan.vera_outcome.retry_mission`` map/seed/native-frame evidence. A stock
+    Cooperative retry receipt keeps its own ``lan.cooperative.retry_*`` fields
+    instead. The check names therefore say "pre-retry" where the data predates
+    the reload.
+    """
     checks: list[Check] = []
     baseline_label, baseline = receipts[0]
     # The classic co-op path carries its retried-mission ring; the VMCE
@@ -1010,17 +1048,18 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
             baseline_map = receipt_field(baseline, "lan.cooperative.retry_startup.map")
         except KeyError as exc:
             return [Check("retry receipt", False, f"{baseline_label} missing {exc}")]
+    checksum_name = "pre-retry checksums" if vmce else "retry checksums"
     if not isinstance(baseline_checksums, list) or len(baseline_checksums) < MIN_NATIVE_CHECKSUMS:
         return [
             Check(
-                "retry checksums count",
+                f"{checksum_name} count",
                 False,
                 f"{baseline_label} retry_checksums={format_value(baseline_checksums)}",
             )
         ]
     checks.append(
         Check(
-            "retry checksums count",
+            f"{checksum_name} count",
             True,
             f"{len(baseline_checksums)} entries",
         )
@@ -1032,19 +1071,36 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
                 rows = receipt_field(receipt, "lan.vmce_statistics_rows")
             except KeyError:
                 rows = None
-            if isinstance(rows, list):
-                if baseline_rows is None:
-                    baseline_rows = {row.get("player"): row for row in rows if isinstance(row, Mapping)}
-                else:
-                    other = {row.get("player"): row for row in rows if isinstance(row, Mapping)}
-                    checks.append(
-                        Check(
-                            f"retry statistics {label}",
-                            other == baseline_rows,
-                            "host/guest live table rows differ: "
-                            f"{format_value(baseline_rows)} vs {format_value(other)}",
-                        )
-                    )
+            valid_rows = (
+                isinstance(rows, list)
+                and bool(rows)
+                and all(
+                    isinstance(row, Mapping) and _is_str(row.get("player"))
+                    for row in rows
+                )
+            )
+            checks.append(
+                Check(
+                    f"defeat statistics present {label}",
+                    valid_rows,
+                    f"{len(rows)} rows"
+                    if valid_rows
+                    else "missing or empty lan.vmce_statistics_rows: "
+                    f"{format_value(rows)}",
+                )
+            )
+            if valid_rows:
+                other = {row["player"]: row for row in rows}
+                if label == baseline_label:
+                    baseline_rows = other
+                elif baseline_rows is not None:
+                    equal = other == baseline_rows
+                    detail = (
+                        "host/guest defeat rows match: "
+                        if equal
+                        else "host/guest defeat rows differ: "
+                    ) + f"{format_value(baseline_rows)} vs {format_value(other)}"
+                    checks.append(Check(f"defeat statistics {label}", equal, detail))
         if vmce:
             try:
                 victory = receipt_field(receipt, "lan.vera_outcome.dialog.victory")
@@ -1058,21 +1114,21 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
                 continue
             checks.append(
                 Check(
-                    f"retry verdict {label}",
+                    f"defeat verdict {label}",
                     victory is False,
                     f"victory={format_value(victory)}",
                 )
             )
             checks.append(
                 Check(
-                    f"retry stage {label}",
+                    f"retry mission {label}",
                     _is_str(retry_map),
                     f"retry_map={format_value(retry_map)}",
                 )
             )
             checks.append(
                 Check(
-                    f"retry checksum failure {label}",
+                    f"pre-retry checksum failure {label}",
                     failure == "None",
                     f"checksum_failure={format_value(failure)}",
                 )
@@ -1111,7 +1167,7 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
         if label != baseline_label:
             checks.append(
                 Check(
-                    "retry checksums equal",
+                    f"{checksum_name} equal",
                     checksums == baseline_checksums,
                     f"{baseline_label}={len(baseline_checksums)} entries, "
                     f"{label}={len(checksums) if isinstance(checksums, list) else '?'} entries",
@@ -1120,7 +1176,7 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
             if vmce:
                 checks.append(
                     Check(
-                        "retry stage equal",
+                        "retry mission equal",
                         retry_map == baseline_map,
                         f"{baseline_label}={format_value(baseline_map)} "
                         f"{label}={format_value(retry_map)}",
@@ -1197,6 +1253,15 @@ def evaluate_receipts(
 
     if expect_retry:
         checks.extend(_retry_checks(receipts))
+        if _is_vmce_retry(receipts):
+            checks.extend(
+                _simulation_hash_checks(
+                    receipts,
+                    allow_missing_simulation_hashes,
+                    name_prefix="pre-retry ",
+                    note="defeated-mission prefix recorded before the reload",
+                )
+            )
     else:
         checks.append(_checksum_count_check(receipts))
         checks.append(_checksum_equal_check(receipts))

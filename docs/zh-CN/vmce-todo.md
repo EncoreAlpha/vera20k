@@ -150,7 +150,7 @@ lang: zh-CN
 
 ## 已完成
 
-- **上游 0.3.3 同步（2026-11-15，本轮）：** 合并 upstream/main `0f7dc1bbc`（191 提交，版本 0.3.3）为 `78b0aef4a`；15 个冲突文件按“共享文件采用上游、VMCE 行为重放”解决，i18n 键取并集，运行时 Ares 开关与 VMCE preserve-empty 解析组合，任务收入字段/哈希保留。双配置检查与架构守卫 52/52 通过，聚焦 VMCE/Cooperative/LAN 测试通过；`vmce-upstream-0f7dc1bbc-r1` 的 `2p-win`、`2p-retry`、`2p-final`、`4p-win` 通过（各 300 个 native checksum）。残余见[基线](../vmce-baseline.md)。
+- **上游 0.3.3 同步（2026-11-15，本轮）：** 合并 upstream/main `0f7dc1bbc`（191 提交，版本 0.3.3）为 `78b0aef4a`；15 个冲突文件按“共享文件采用上游、VMCE 行为重放”解决，i18n 键取并集，运行时 Ares 开关与 VMCE preserve-empty 解析组合，任务收入字段/哈希保留。双配置检查与架构守卫 52/52 通过，聚焦 VMCE/Cooperative/LAN 测试通过；`vmce-upstream-0f7dc1bbc-r1` 的 `2p-win`、`2p-final`、`4p-win` 匹配 300 个 native checksum；`2p-retry` 匹配重试前 300 个 checksum/20 个模拟 hash，并以同关同 seed 重载。残余见[基线](../vmce-baseline.md)。
 - **失败重试验收角色顺序（2026-11-14，本轮）：** `2p-retry` 通过生产 Team 列动作认领镜像地图角色（`role_count - 1 - 座位行`），经正常 LAN 选项/PlayerChoices 同步，固定了失败结算诊断要求的席位/所属方非单位映射；`2p-win` 保持身份映射，未启用探针的场景保持随机角色。比较器按场景校验身份或镜像映射并读取运行时 `role_count`。新增镜像/Ready 过渡与身份映射拒绝测试，回退到旧身份逻辑时失败、修复后通过。本轮 `vmce-retry-probe-r3` 的 `2p-retry`（`LDA-Retry`）、`2p-win`（`LDA-Continue-real`）和 `4p-win`（`LDA-4p`）通过；证据与残余见[基线](../vmce-baseline.md)。
 - **大厅验收工具（席位角色与难度探针，2026-11-14）：** `2p-win` 生产验收通过生产 Team 列让双方各自认领与座位一致的地图角色、调用生产难度滑条动作处理器设置 Hard（不覆盖鼠标拖动），并在材料性 host-options 修订清掉 Ready 后重新 Accept；receipts 与比较器校验两端角色归属、大厅难度和冻结难度。验证与残余见[基线](../vmce-baseline.md)。
 - **阶段 3 第五个子链（开始许可归 VMCE）：** VMCE 模式可用性、选图、LAN 配置、共享种子与角色解析的开始许可及最低人数规则移入 VMCE 自有大厅模块，共享开始命令只分派并显示原因；迁移桥继续拒绝，普通模式与 Cooperative 路径不变。残余见上方子链小节。

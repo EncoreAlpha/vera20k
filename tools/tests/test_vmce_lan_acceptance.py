@@ -103,6 +103,55 @@ def reversed_lobby_probe_receipts() -> list[tuple[str, dict]]:
     return receipts
 
 
+def vmce_retry_receipts() -> list[tuple[str, dict]]:
+    """Two VMCE defeat/retry captures with the pre-retry evidence prefix."""
+    receipts = two_receipts()
+    for _, receipt in receipts:
+        receipt["lan"]["vera_outcome"] = {
+            "kind": "retry",
+            "native_frame": 630,
+            "state_hash": 123456789,
+            "dialog": {
+                "victory": False,
+                "rows": 2,
+                "can_continue": True,
+                "render_frame": 728,
+                "time": "00:00:21",
+            },
+            "retry_mission": {
+                "map": "VMCE/LDA-Retry/stage01/all01umd.map",
+                "native_frame": 0,
+                "render_frame": 2000,
+                "seed": 4242,
+            },
+        }
+        receipt["lan"]["vmce_statistics_rows"] = [
+            {"player": "LiveHost", "kills": 1, "losses": 5, "built": 97, "score": 1000, "income": 0},
+            {"player": "LiveGuest", "kills": 16, "losses": 0, "built": 92, "score": 7800, "income": 1000},
+        ]
+        receipt["screenshots"] = [
+            {"name": "vera-result-real-lose", "file": "shot-01.png", "byte_length": 1},
+            {"name": "vera-retry-mission", "file": "shot-02.png", "byte_length": 1},
+        ]
+    return receipts
+
+
+def cooperative_retry_receipts() -> list[tuple[str, dict]]:
+    """A stock Cooperative retry receipt: no VMCE outcome or simulation hashes."""
+    receipts = two_receipts()
+    for _, receipt in receipts:
+        del receipt["lan"]["vera_outcome"]
+        del receipt["lan"]["simulation_hashes"]
+        receipt["lan"]["cooperative"] = {
+            "retry_checksums": list(range(300)),
+            "retry_startup": {"map": "C2S01MD.MAP"},
+            "first_map": "C2S01MD.MAP",
+            "result": {"victory": False, "rows": ["LiveHost", "LiveGuest"]},
+            "checksum_failure": "None",
+        }
+    return receipts
+
+
 def failed(checks: list[acceptance.Check]) -> list[acceptance.Check]:
     return [check for check in checks if not check.ok]
 
@@ -191,6 +240,82 @@ class ComparatorTests(unittest.TestCase):
             expect_lobby_reversed_roles=True,
         )
         self.assertTrue(any(not check.ok and check.name == "roles" for check in checks))
+
+    def test_vmce_retry_compares_pre_retry_simulation_hashes(self):
+        receipts = vmce_retry_receipts()
+        assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
+
+        mismatched = vmce_retry_receipts()
+        mismatched[1][1]["lan"]["simulation_hashes"][0][1] = 999
+        checks = self.evaluate(mismatched, expect_retry=True)
+        self.assertTrue(
+            any(
+                not check.ok
+                and "simulation_hashes" in check.name
+                and "pre-retry" in check.name
+                for check in checks
+            ),
+            [(check.name, check.detail) for check in failed(checks)],
+        )
+
+        for mutation in ("delete", "empty"):
+            missing = vmce_retry_receipts()
+            if mutation == "delete":
+                del missing[1][1]["lan"]["simulation_hashes"]
+            else:
+                missing[1][1]["lan"]["simulation_hashes"] = []
+            strict = self.evaluate(missing, expect_retry=True)
+            self.assertTrue(
+                any(
+                    not check.ok
+                    and "simulation_hashes" in check.name
+                    and "pre-retry" in check.name
+                    for check in strict
+                ),
+                (mutation, [(check.name, check.detail) for check in failed(strict)]),
+            )
+            allowed = self.evaluate(
+                missing,
+                expect_retry=True,
+                allow_missing_simulation_hashes=True,
+            )
+            assert_all_pass(self, allowed)
+
+        # Allowing a missing prefix does not allow peers whose recorded values
+        # disagree.
+        allowed_mismatch = self.evaluate(
+            mismatched,
+            expect_retry=True,
+            allow_missing_simulation_hashes=True,
+        )
+        self.assertTrue(
+            any(not check.ok and "simulation_hashes" in check.name for check in allowed_mismatch)
+        )
+
+    def test_vmce_retry_requires_defeat_statistics_rows(self):
+        receipts = vmce_retry_receipts()
+        assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
+
+        for mutation in ("delete", "empty"):
+            missing = vmce_retry_receipts()
+            if mutation == "delete":
+                del missing[1][1]["lan"]["vmce_statistics_rows"]
+            else:
+                missing[1][1]["lan"]["vmce_statistics_rows"] = []
+            checks = self.evaluate(missing, expect_retry=True)
+            self.assertTrue(
+                any(
+                    not check.ok and "defeat statistics" in check.name
+                    for check in checks
+                ),
+                (mutation, [(check.name, check.detail) for check in failed(checks)]),
+            )
+
+    def test_cooperative_retry_keeps_its_receipt_contract(self):
+        # The stock co-op retry receipt has no simulation_hashes at all; the
+        # new VMCE pre-retry check must not turn that into a failure.
+        receipts = cooperative_retry_receipts()
+        assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
 
     def test_final_requires_both_peers_to_return_to_the_menu(self):
         receipts = two_receipts()

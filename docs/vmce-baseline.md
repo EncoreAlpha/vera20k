@@ -31,10 +31,9 @@ parser and unconditional helper signatures. `sim/economy.rs` and
 `sim/world/world_hash.rs` keep the mission `credits_earned` statistic beside
 upstream's always-compiled, runtime-Ares storage field/hash. The world-command
 tests pass the new `ares=false` argument. The shared-file VMCE gate pin drops
-461 -> 459 (two ini_parser `cfg` seams became the runtime switch); the
-diagnostics total rises 201 -> 206 for the retry role probe already committed
-before this sync. Both changes are recorded deliberately in
-`src/architecture_guards.rs`.
+461 -> 459 (two ini_parser `cfg` seams became the runtime switch) and stays
+enforced per file; the diagnostics total, raised from 201 to 206 by the retry
+role probe before this sync, is printed for observation and no longer pinned.
 
 Validation on this tree: `check -p vera20k --lib --bins` passes with and
 without `--features vmce`; architecture guards 52/52 in both configurations.
@@ -55,13 +54,18 @@ Acceptance: the vmce-feature fast build `vmce-upstream-0f7dc1bbc-r1`
 (executable SHA-256
 `4EF6CE5F0C193A7880EEDD93AABD4F8CED9067A0817E9557BA5DD3D54A5E1C64`) passed
 the two-process `2p-win` (`LDA-Continue-real`), `2p-retry` (`LDA-Retry`),
-`2p-final` (`LDA-2p-final` stage02) and four-process `4p-win` (`LDA-4p`) runs
-with 300 matching native checksums and 20 matching simulation hashes per peer.
-The win runs reported `rows=2` / `rows=4` and their expected next-stage or
-campaign-end receipts; the retry kept the same stage with its mirrored roles and
-statistics; the final run returned both peers to the main menu. Evidence lives
-in `.scratch/vmce-upstream-0f7dc1bbc-r11/`, `-r12/`, `-r14/` and `-r15/` (not
-committed).
+`2p-final` (`LDA-2p-final` stage02) and four-process `4p-win` (`LDA-4p`) runs.
+The win/final runs matched 300 native checksums and 20 simulation hashes per
+peer. The retry receipt matched the same 300-checksum / 20-hash prefix recorded
+at the defeat page, before the reload; both peers then reloaded the same
+`retry_mission` map and seed at native frame 0. The win runs reported `rows=2` /
+`rows=4` and their expected next-stage or campaign-end receipts; the retry kept
+its mirrored roles and defeat statistics; the final run returned both peers to
+the main menu. Evidence lives in `.scratch/vmce-upstream-0f7dc1bbc-r11/`,
+`-r12/`, `-r14/` and `-r15/` (not committed). The acceptance-tool wrap-up
+renamed the retry checks to `pre-retry ...`, requires the pre-retry simulation
+hashes and defeat statistics rows, and adds no claim of a post-retry frame
+stream.
 
 Residuals: this was a large upstream merge (860 files), but the conflict set and
 validation concentrate on the shared lobby/LAN/INI/economy/hash seams. No
@@ -99,6 +103,9 @@ vmce`, architecture guards 26/26 in both configurations, focused VMCE tests
 `160163127F0FA58186456F88C06188113DA721BDB5F77295EA84AF5A51179749`) passing the
 real two-process `2p-win`, `2p-retry` and `2p-final` acceptance (300 matching
 checksums each; start, result, retry, intermission continue and campaign end).
+The retry's 300 checksums in these older records are the prefix recorded at the
+defeat page, before the reload; the post-reload identity is `retry_mission`
+(map/seed/native frame 0), and the receipt has no post-retry frame stream.
 The 20,000-unit performance comparison and the VMCE+Ares combination were not
 run. The 2026-11-13 baseline kept VMCE as a compile-time `vmce` capability. That
 implementation decision is superseded by the 2026-11-14 migration target: remove
@@ -883,7 +890,8 @@ for every seat when claims are required; `vmce_runtime_receipt` also records the
 authored role count, so a random draw can no longer pass as a claim.
 
 Tests: the focused `app::diagnostics::shell_capture::movies::lan::live::vmce_ready_transition_tests` (4)
-pass with `vmce`; the acceptance tool's unit suite has 34 passing tests. The new mirror/Ready-transition
+pass with `vmce`; the acceptance tool's unit suite now has 37 passing tests (three retry-prefix and
+statistics cases were added by the follow-up wrap-up). The new mirror/Ready-transition
 assertions and the new Python comparator case were each run once against the pre-fix identity
 behavior in the working tree (temporarily reverted, not committed): the two Rust tests failed, and the
 identity-only comparator rejected the mirrored receipts; both pass with the fix. `check -p vera20k
@@ -897,17 +905,19 @@ Acceptance (this round): the vmce-feature fast build `vmce-retry-probe-r3` (exe 
 `B139A9E633F03B119D969AB35B2BF3C3DCCE63F9AECB837B4ACE3E3919E271F4`) passed the real two-process
 `2p-retry` run with the `LDA-Retry` series. Both peers reached the defeat page (`victory=false`,
 `rows=2`, equal `state_hash`), reported the same mirrored seats `[('LiveHost', 0, 1), ('LiveGuest', 1,
-0)]` with `role_count=2` and lobby/frozen difficulty 2, then readied and retried; both reloaded
-`VMCE/LDA-Retry/stage01/all01umd.map` with the same seed, ran 300 equal native checksums and 20 equal
-simulation hashes, and reported identical `vmce_statistics_rows` with non-zero House facts. The same
-build passed `2p-win` (identity probe, `LDA-Continue-real`) and `4p-win` (probe off, four random `-2`
-roles and `role_count=4`, `LDA-4p`). Evidence lives in
+0)]` with `role_count=2` and lobby/frozen difficulty 2, then readied and retried. The receipt's
+pre-retry prefix had 300 equal native checksums and 20 equal simulation hashes; both peers then
+reloaded `VMCE/LDA-Retry/stage01/all01umd.map` with the same seed at native frame 0, and the defeat
+statistics rows were identical with non-zero House facts. The same build passed `2p-win` (identity
+probe, `LDA-Continue-real`) and `4p-win` (probe off, four random `-2` roles and `role_count=4`,
+`LDA-4p`). Evidence lives in
 `.scratch/vmce-retry-probe-accept-r8/`, `-r9/` and `-r10/` (not committed).
 
 Residuals: the retry probe covers the allowed production role/difficulty path only; real mouse
 operation, rejected role choices, leaving/reselecting roles in the intermission room, WOL/mixed builds,
-cross-machine play and three-player rooms were not run. The comparator checks the peers' live
-statistics rows and the retry checksum/hash streams; it does not add a separate cross-peer `state_hash`
-assertion, so that equality was verified from the receipts for this round. Historical `2p-retry`
+cross-machine play and three-player rooms were not run. The comparator checks the peers' pre-retry
+checksum/hash prefix and defeat statistics rows; the receipt has no post-retry frame stream, so no
+post-retry hash claim is made. It does not add a separate cross-peer `state_hash` assertion, so that
+equality was verified from the receipts for this round. Historical `2p-retry`
 receipts made before this repair used random roles and may have crossed the same assertion only by
 draw.
