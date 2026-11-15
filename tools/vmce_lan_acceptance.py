@@ -1036,55 +1036,187 @@ def _is_vmce_retry(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> bool:
         return False
 
 
+def _roster_fail(label: str, detail: str) -> tuple[None, None, Check]:
+    return None, None, Check(f"defeat statistics roster {label}", False, detail)
+
+
 def _retry_statistics_roster(
     receipt: Mapping[str, Any], label: str
-) -> tuple[list[str] | None, Check]:
-    """The frozen participants the defeat statistics must cover.
+) -> tuple[list[str] | None, list[tuple[str, int | None]] | None, Check]:
+    """Return the non-observer frozen combatants and verify roster completeness.
 
-    VMCE admits no observers, so the frozen startup sources are the players.
-    This is intentionally not the number of network connections: a receipt
-    with a stale or partial roster must fail instead of defining its own row
-    set.
+    ``lan.startup.sources`` records ``launch.humans`` when the first mission
+    enters ``InGame`` (``network_startup_receipt``), whereas
+    ``lan.vmce.humans``, ``lan.vmce.grants``, ``lan.coop_setup`` and
+    ``lan.configured_participant_count`` record the admitted/frozen roster from
+    the lobby and ``ScenarioSession`` owners.  Verifying ``startup.sources``
+    against those independent records ensures a receipt cannot drop a combatant
+    from both ``startup.sources`` and ``vmce_statistics_rows`` and pass.
+    Observers are excluded from the expected statistics rows, while leavers and
+    shared Houses keep one row per non-observer frozen combatant.
     """
     path = "lan.startup.sources"
     try:
         sources = receipt_field(receipt, path)
     except KeyError:
-        return None, Check(
-            f"defeat statistics roster {label}", False, f"missing {path}"
-        )
+        return _roster_fail(label, f"missing {path}")
     if not isinstance(sources, list) or not sources:
-        return None, Check(
-            f"defeat statistics roster {label}",
-            False,
-            f"invalid {path}: {format_value(sources)}",
-        )
-    names: list[str] = []
+        return _roster_fail(label, f"invalid {path}: {format_value(sources)}")
+
+    source_entries: list[dict[str, Any]] = []
+    source_by_name: dict[str, dict[str, Any]] = {}
+    seen_raw_rows: set[int] = set()
+    seen_source_ids: set[int] = set()
     for source in sources:
         if not isinstance(source, Mapping):
-            return None, Check(
-                f"defeat statistics roster {label}",
-                False,
-                f"non-object entry in {path}: {format_value(source)}",
-            )
+            return _roster_fail(label, f"non-object entry in {path}: {format_value(source)}")
         name = source.get("name")
-        if not _is_str(name) or not name:
-            return None, Check(
-                f"defeat statistics roster {label}",
-                False,
-                f"entry without a player name in {path}: {format_value(source)}",
+        if not _is_str(name):
+            return _roster_fail(
+                label, f"entry without a player name in {path}: {format_value(source)}"
             )
-        if name in names:
-            return None, Check(
-                f"defeat statistics roster {label}",
-                False,
-                f"duplicate frozen player {name!r} in {path}",
+        if name in source_by_name:
+            return _roster_fail(label, f"duplicate frozen player {name!r} in {path}")
+        raw_row = source.get("raw_row")
+        if raw_row is not None:
+            if not _is_int(raw_row):
+                return _roster_fail(label, f"invalid raw_row in {path}: {format_value(source)}")
+            if raw_row in seen_raw_rows:
+                return _roster_fail(label, f"duplicate raw_row {raw_row} in {path}")
+            seen_raw_rows.add(raw_row)
+        source_id = source.get("source")
+        if source_id is not None:
+            if not _is_int(source_id):
+                return _roster_fail(label, f"invalid source index in {path}: {format_value(source)}")
+            if source_id in seen_source_ids:
+                return _roster_fail(label, f"duplicate source index {source_id} in {path}")
+            seen_source_ids.add(source_id)
+        entry = dict(source)
+        source_entries.append(entry)
+        source_by_name[name] = entry
+
+    lan = receipt.get("lan", {})
+    vmce = lan.get("vmce") if isinstance(lan, Mapping) else None
+    coop_setup = lan.get("coop_setup") if isinstance(lan, Mapping) else None
+    requires_humans = isinstance(vmce, Mapping) and (
+        "humans" in vmce
+        or "grants" in vmce
+        or "roles_claimed" in vmce
+        or "lobby_difficulty" in vmce
+        or coop_setup is not None
+    )
+
+    observer_names: set[str] = set()
+    if requires_humans:
+        if not isinstance(vmce, Mapping) or "humans" not in vmce:
+            return _roster_fail(label, "missing lan.vmce.humans for VMCE runtime roster")
+        humans = vmce["humans"]
+        if not isinstance(humans, list) or not humans:
+            return _roster_fail(label, f"invalid lan.vmce.humans: {format_value(humans)}")
+        human_by_name: dict[str, Mapping[str, Any]] = {}
+        for human in humans:
+            if not isinstance(human, Mapping):
+                return _roster_fail(label, f"non-object entry in lan.vmce.humans: {format_value(human)}")
+            name = human.get("name")
+            if not _is_str(name):
+                return _roster_fail(label, f"entry without name in lan.vmce.humans: {format_value(human)}")
+            if name in human_by_name:
+                return _roster_fail(label, f"duplicate participant {name!r} in lan.vmce.humans")
+            if "observer" in human and not isinstance(human["observer"], bool):
+                return _roster_fail(label, f"invalid observer flag in lan.vmce.humans: {format_value(human)}")
+            human_by_name[name] = human
+            if human.get("observer") is True:
+                observer_names.add(name)
+        missing_from_sources = sorted(set(human_by_name) - set(source_by_name))
+        extra_in_sources = sorted(set(source_by_name) - set(human_by_name))
+        if missing_from_sources or extra_in_sources:
+            return _roster_fail(
+                label,
+                f"{path} {sorted(source_by_name)} mismatches lan.vmce.humans "
+                f"{sorted(human_by_name)} (missing={missing_from_sources}, extra={extra_in_sources})",
             )
-        names.append(name)
-    return names, Check(
+        for name, human in human_by_name.items():
+            slot_index = human.get("raw_slot_index")
+            raw_row = source_by_name[name].get("raw_row")
+            if _is_int(slot_index) and raw_row is not None and raw_row != slot_index:
+                return _roster_fail(
+                    label,
+                    f"participant {name!r} raw_row={raw_row} mismatches raw_slot_index={slot_index}",
+                )
+
+    combatants = [entry["name"] for entry in source_entries if entry["name"] not in observer_names]
+    if not combatants:
+        return _roster_fail(label, f"{path} has no non-observer combatants")
+
+    if isinstance(vmce, Mapping) and vmce.get("grants") is not None:
+        grants_obj = vmce["grants"]
+        grants_list = grants_obj.get("grants") if isinstance(grants_obj, Mapping) else None
+        if not isinstance(grants_list, list) or not grants_list:
+            return _roster_fail(label, f"invalid lan.vmce.grants.grants: {format_value(grants_obj)}")
+        primary_grants = [
+            grant for grant in grants_list if isinstance(grant, Mapping) and _is_str(grant.get("primary"))
+        ]
+        if len(primary_grants) != len(combatants):
+            return _roster_fail(
+                label,
+                f"{path} combatant count {len(combatants)} mismatches frozen primary grants "
+                f"count {len(primary_grants)}",
+            )
+        combatant_source_ids = {
+            entry["source"]
+            for entry in source_entries
+            if entry["name"] not in observer_names and entry.get("source") is not None
+        }
+        if combatant_source_ids:
+            grant_sources = {
+                grant.get("source") for grant in primary_grants if _is_int(grant.get("source"))
+            }
+            if grant_sources != combatant_source_ids:
+                return _roster_fail(
+                    label,
+                    f"{path} combatant source ids {sorted(combatant_source_ids)} mismatch "
+                    f"grant sources {sorted(grant_sources)}",
+                )
+
+    if isinstance(coop_setup, Mapping) and isinstance(coop_setup.get("after_guest_ready"), Mapping):
+        participants = coop_setup["after_guest_ready"].get("participants")
+        if not isinstance(participants, list) or not participants:
+            return _roster_fail(
+                label,
+                f"invalid lan.coop_setup.after_guest_ready.participants: {format_value(participants)}",
+            )
+        admitted_names: set[str] = set()
+        for participant in participants:
+            if not isinstance(participant, Mapping) or not _is_str(participant.get("name")):
+                return _roster_fail(
+                    label,
+                    f"invalid entry in lan.coop_setup.after_guest_ready.participants: {format_value(participant)}",
+                )
+            admitted_names.add(participant["name"])
+        missing_admitted = sorted(admitted_names - set(source_by_name))
+        if missing_admitted:
+            return _roster_fail(
+                label,
+                f"{path} missing admitted lobby participant(s): {missing_admitted}",
+            )
+
+    if isinstance(lan, Mapping) and "configured_participant_count" in lan:
+        configured = lan["configured_participant_count"]
+        if not _is_int(configured) or configured != len(source_entries):
+            return _roster_fail(
+                label,
+                f"{path} count {len(source_entries)} != lan.configured_participant_count {format_value(configured)}",
+            )
+
+    frozen_identity = sorted(
+        (entry["name"], entry.get("raw_row") if _is_int(entry.get("raw_row")) else None)
+        for entry in source_entries
+        if entry["name"] not in observer_names
+    )
+    return combatants, frozen_identity, Check(
         f"defeat statistics roster {label}",
         True,
-        f"{len(names)} frozen players: {names}",
+        f"{len(combatants)} frozen combatants: {combatants}",
     )
 
 
@@ -1150,11 +1282,41 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
         )
     )
     baseline_rows = None
+    baseline_roster: list[tuple[str, int | None]] | None = None
     baseline_seed: Any = None
     for label, receipt in receipts:
         if vmce:
-            expected_players, roster_check = _retry_statistics_roster(receipt, label)
+            expected_players, frozen_identity, roster_check = _retry_statistics_roster(
+                receipt, label
+            )
             checks.append(roster_check)
+            if frozen_identity is not None:
+                if baseline_roster is None:
+                    baseline_roster = frozen_identity
+                elif frozen_identity != baseline_roster:
+                    checks.append(
+                        Check(
+                            f"defeat statistics roster match {label}",
+                            False,
+                            f"{baseline_label}={baseline_roster} {label}={frozen_identity}",
+                        )
+                    )
+            try:
+                dialog_rows = receipt_field(receipt, "lan.vera_outcome.dialog.rows")
+            except KeyError:
+                dialog_rows = None
+            if (
+                expected_players is not None
+                and (not _is_int(dialog_rows) or dialog_rows != len(expected_players))
+            ):
+                checks.append(
+                    Check(
+                        f"defeat statistics dialog rows {label}",
+                        False,
+                        f"lan.vera_outcome.dialog.rows={format_value(dialog_rows)} "
+                        f"!= frozen combatants {len(expected_players)}",
+                    )
+                )
             try:
                 rows = receipt_field(receipt, "lan.vmce_statistics_rows")
             except KeyError:
@@ -1427,6 +1589,16 @@ def evaluate_receipts(
                     Check(f"screenshot {expected_name}", True, "present in every receipt")
                 )
         checks.append(_series_sha_check(receipts))
+        if _is_vmce_retry(receipts) and expect_rows is not None:
+            checks.append(
+                _equal_check(
+                    receipts,
+                    "lan.vera_outcome.dialog.rows",
+                    "dialog.rows",
+                    expected=expect_rows,
+                    value_type=int,
+                )
+            )
         if expect_lobby_inputs:
             checks.extend(
                 _vmce_lobby_inputs_checks(

@@ -150,6 +150,85 @@ def vmce_retry_receipts() -> list[tuple[str, dict]]:
     return receipts
 
 
+def real_vmce_retry_receipts() -> list[tuple[str, dict]]:
+    """Real-structured 2p-retry receipts including frozen humans, grants, and lobby setup."""
+    receipts = vmce_retry_receipts()
+    host_humans = [
+        {"name": "LiveHost", "raw_slot_index": 0, "role": 1, "observer": False},
+        {"name": "LiveGuest", "raw_slot_index": 1, "role": 0, "observer": False},
+    ]
+    guest_humans = [
+        {"name": "LiveGuest", "raw_slot_index": 1, "role": 0, "observer": False},
+        {"name": "LiveHost", "raw_slot_index": 0, "role": 1, "observer": False},
+    ]
+    grants = {
+        "shared_house_sources": True,
+        "grants": [
+            {
+                "source": 0,
+                "primary": "Americans House",
+                "controlled": ["Americans House", "French House"],
+            },
+            {
+                "source": 1,
+                "primary": "Alliance House",
+                "controlled": ["Alliance House", "French House"],
+            },
+        ],
+    }
+    receipts[1][1]["lan"]["startup"]["sources"] = [
+        {
+            "source": 0,
+            "name": "LiveGuest",
+            "house": 0,
+            "raw_row": 1,
+            "endpoint": None,
+        },
+        {
+            "source": 1,
+            "name": "LiveHost",
+            "house": 1,
+            "raw_row": 0,
+            "endpoint": "127.0.0.1:32100",
+        },
+    ]
+    receipts[0][1]["lan"]["startup"]["sources"][0]["source"] = 0
+    receipts[0][1]["lan"]["startup"]["sources"][1]["source"] = 1
+    for index, (_, receipt) in enumerate(receipts):
+        receipt["lan"]["players"] = 2
+        receipt["lan"]["configured_participant_count"] = 2
+        receipt["lan"]["active_participant_count"] = 2
+        receipt["lan"]["vmce"]["lobby_difficulty"] = 2
+        receipt["lan"]["vmce"]["frozen_difficulty"] = 2
+        receipt["lan"]["vmce"]["role_count"] = 2
+        receipt["lan"]["vmce"]["roles_claimed"] = True
+        receipt["lan"]["vmce"]["humans"] = copy.deepcopy(
+            host_humans if index == 0 else guest_humans
+        )
+        receipt["lan"]["vmce"]["grants"] = copy.deepcopy(grants)
+        receipt["lan"]["coop_setup"] = {
+            "after_guest_ready": {
+                "participants": [
+                    {
+                        "name": "LiveHost",
+                        "raw_row": 0,
+                        "role": 1,
+                        "ready": True,
+                        "map_status": 1,
+                    },
+                    {
+                        "name": "LiveGuest",
+                        "raw_row": 1,
+                        "role": 0,
+                        "ready": True,
+                        "map_status": 1,
+                    },
+                ]
+            }
+        }
+    return receipts
+
+
 def three_receipts() -> list[tuple[str, dict]]:
     """Three ordinary VMCE win receipts for the multi-peer hash check."""
     host, guest = two_receipts()
@@ -360,6 +439,106 @@ class ComparatorTests(unittest.TestCase):
                 (mutation, [(check.name, check.detail) for check in failed(checks)]),
             )
 
+    def test_vmce_retry_rejects_simultaneous_omission_from_sources_and_statistics(self):
+        receipts = real_vmce_retry_receipts()
+        assert_all_pass(
+            self,
+            self.evaluate(
+                receipts,
+                expect_retry=True,
+                expect_rows=None,
+                expect_lobby_inputs=True,
+                expect_lobby_difficulty=2,
+                expect_lobby_reversed_roles=True,
+            ),
+        )
+
+        # Remove LiveGuest from both startup.sources and vmce_statistics_rows
+        # on both peers while preserving all other lobby/frozen evidence.
+        tampered = real_vmce_retry_receipts()
+        for _, receipt in tampered:
+            receipt["lan"]["startup"]["sources"] = [
+                source
+                for source in receipt["lan"]["startup"]["sources"]
+                if source["name"] != "LiveGuest"
+            ]
+            receipt["lan"]["vmce_statistics_rows"] = [
+                row
+                for row in receipt["lan"]["vmce_statistics_rows"]
+                if row["player"] != "LiveGuest"
+            ]
+
+        for extra in (
+            {"expect_rows": None},
+            {
+                "expect_rows": None,
+                "expect_lobby_inputs": True,
+                "expect_lobby_difficulty": 2,
+                "expect_lobby_reversed_roles": True,
+            },
+        ):
+            checks = self.evaluate(tampered, expect_retry=True, **extra)
+            self.assertTrue(
+                any(
+                    not check.ok and "defeat statistics" in check.name
+                    for check in checks
+                ),
+                (extra, [(check.name, check.detail) for check in failed(checks)]),
+            )
+
+    def test_vmce_retry_roster_handles_observer_leaver_and_shared_houses(self):
+        # Mid-match leaver: active_participant_count drops to 1, but frozen
+        # participants and defeat statistics still cover both players.
+        leaver = real_vmce_retry_receipts()
+        for _, receipt in leaver:
+            receipt["lan"]["active_participant_count"] = 1
+        assert_all_pass(
+            self,
+            self.evaluate(leaver, expect_retry=True, expect_rows=None),
+        )
+
+        # Observer: 3 connected receipts, 2 combatants + 1 observer. Statistics
+        # cover the 2 non-observer combatants, not all 3 network peers.
+        observer = real_vmce_retry_receipts()
+        obs = copy.deepcopy(observer[1][1])
+        obs["checkpoint"] = "lan-live-vera-campaign-guest2"
+        obs["lan"]["bind"] = "127.0.0.1:32120"
+        observer.append(("guest2", obs))
+        for _, receipt in observer:
+            receipt["lan"]["players"] = 3
+            receipt["lan"]["configured_participant_count"] = 3
+            receipt["lan"]["active_participant_count"] = 3
+            receipt["lan"]["startup"]["sources"].append(
+                {
+                    "source": 2,
+                    "name": "LiveObserver",
+                    "house": None,
+                    "raw_row": 2,
+                    "endpoint": "127.0.0.1:32120",
+                }
+            )
+            receipt["lan"]["vmce"]["humans"].append(
+                {
+                    "name": "LiveObserver",
+                    "raw_slot_index": 2,
+                    "role": -3,
+                    "observer": True,
+                }
+            )
+            receipt["lan"]["coop_setup"]["after_guest_ready"]["participants"].append(
+                {
+                    "name": "LiveObserver",
+                    "raw_row": 2,
+                    "role": -3,
+                    "ready": True,
+                    "map_status": 1,
+                }
+            )
+        assert_all_pass(
+            self,
+            self.evaluate(observer, players=3, expect_retry=True, expect_rows=None),
+        )
+
     def test_vmce_retry_identity_checks_the_seed(self):
         receipts = vmce_retry_receipts()
         assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
@@ -520,6 +699,50 @@ class CompareCliTests(unittest.TestCase):
                 status = acceptance.main(arguments)
             self.assertEqual(status, 1, output.getvalue())
             self.assertIn("RESULT: FAIL", output.getvalue())
+
+    def test_compare_retry_rejects_simultaneous_omission(self):
+        receipts = real_vmce_retry_receipts()
+        with tempfile.TemporaryDirectory() as base:
+            base = Path(base)
+            host_path = base / "host.json"
+            guest_path = base / "guest.json"
+            host_path.write_text(json.dumps(receipts[0][1]), encoding="utf-8")
+            guest_path.write_text(json.dumps(receipts[1][1]), encoding="utf-8")
+            arguments = [
+                "compare",
+                "--players",
+                "2",
+                "--expect-retry",
+                "--receipt",
+                str(host_path),
+                "--receipt",
+                str(guest_path),
+            ]
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = acceptance.main(arguments)
+            self.assertEqual(status, 0, output.getvalue())
+            self.assertIn("RESULT: PASS", output.getvalue())
+
+            for _, receipt in receipts:
+                receipt["lan"]["startup"]["sources"] = [
+                    source
+                    for source in receipt["lan"]["startup"]["sources"]
+                    if source["name"] != "LiveGuest"
+                ]
+                receipt["lan"]["vmce_statistics_rows"] = [
+                    row
+                    for row in receipt["lan"]["vmce_statistics_rows"]
+                    if row["player"] != "LiveGuest"
+                ]
+            host_path.write_text(json.dumps(receipts[0][1]), encoding="utf-8")
+            guest_path.write_text(json.dumps(receipts[1][1]), encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = acceptance.main(arguments)
+            self.assertEqual(status, 1, output.getvalue())
+            self.assertIn("RESULT: FAIL", output.getvalue())
+            self.assertIn("defeat statistics roster", output.getvalue())
 
 
 class ValidationTests(unittest.TestCase):
