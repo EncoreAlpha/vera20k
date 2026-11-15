@@ -160,7 +160,7 @@ EndOfGame=yes
 - `PlayerControl=yes` 是旧写法：只有在没有写 `Player1Control` 时它才等价于「授予角色 1」；要让多个角色都控制同一条共享 House，请显式写 `Player1Control`、`Player2Control`……
 - 地图里直接标了 `PlayerControl=yes` 的原版主 House **不会**自动交给 VERA 的某个角色；若它是原版战役里玩家控制的额外 House，请在 `campaign.ini` 对应的 `[Scenario:...:House]` 段写 `PlayerNControl=yes`，否则它会保持 AI。
 - 大厅角色板只显示主角色 House；通过 `PlayerNControl=yes` 授权给某角色的共享 House 不会在开局前显示（B86）。
-- VMCE 自有 setup 代码决定每个席位可选的角色、客人只能改自己席位、对端角色更新准入，以及换图/换模式时清空角色声明；`MatchSession` 仍保存名单和角色状态，共享房间、选项传输和 Ready 路径负责发布与失效。没有重复的角色状态或角色随机源。
+- VMCE 自有 setup 代码决定每个席位可选的角色、客人只能改自己席位，以及换图/换模式时清空角色声明；`MatchSession` 仍保存名单和角色状态，并在该状态边界校验对端角色数据，共享房间、选项传输和 Ready 路径负责发布与失效。没有重复的角色状态或角色随机源。
 
 原版遭遇战里，玩家选国家、游戏分配起点；VMCE 不会按多人起点 waypoint 自动给角色分配基地。地图作者通常需要为每个角色预置基地和单位，或由触发动作生成；VMCE 本身不会自动发基地车或建造厂。
 
@@ -532,7 +532,7 @@ VMCE 会把角色 House 标为人类控制。原版 AI 专用的动作（例如 
 当前基线是上游 main `0f7dc1bbc`（合并提交 `78b0aef4a`）；验收状态见 [VMCE 基线](../vmce-baseline.md)。0.3.3 已通过 `2p-win`、`2p-final` 与 `4p-win` LAN 采集（各 300 个 checksum 一致），以及 `2p-retry`（重试前 300 个 checksum/20 个模拟 hash，重载同关同 seed）；更早的 0.3.2 截图矩阵、B4 LAN 验收与原版 Cooperative 续关已在合并基线上复跑并通过（93/93 检查；B103/B105 已关闭）。`tools/vmce_lan_acceptance.py` 负责真实多进程采集：
 
 - `--suite dev`：只跑一次短的 `2p-retry` 流程探针；单个采集默认 120 秒上限，任一端非零退出立即停止。
-- `--suite fast` 跑 `4p-win`；`--suite smoke` 和 `--suite full` 跑 `4p-win`、`2p-win`、`2p-retry`。胜利/末关比对完整 300 帧；重试比对重试前 300 帧/20 个模拟 hash 和重载后的 `retry_mission` 地图/seed。`4p-win` 接受 `--players 2|3|4`；`2p-final` 需要 `Entry` 为末关的系列（用 `--entry`），manifest-extra 探针复用 2p-final 流程。
+- `--suite fast` 跑 `4p-win`；`--suite smoke` 和 `--suite full` 跑 `4p-win`、`2p-win`、`2p-retry`。胜利/末关比对完整 300 帧；重试比对重试前 300 帧/20 个模拟 hash 和重载后的 `retry_mission` 地图/seed，并按冻结的 `lan.startup.sources` 参战者校验失败统计行（每人恰好一行）；`--allow-missing-simulation-hashes` 只豁免缺失，仍比较所有实际存在的哈希列表。`4p-win` 接受 `--players 2|3|4`；`2p-final` 需要 `Entry` 为末关的系列（用 `--entry`），manifest-extra 探针复用 2p-final 流程。
 - `VMCE_CAPTURE_TIMEOUT=<秒>` 可覆盖单采集超时（非 dev 默认 300 秒）。
 - `compare` 离线比对 receipts；`run` 只负责拉起进程，收据保留在 `.scratch/`。
 - 共享显存有限的机器上建议一次只跑一个场景：刚退出的采集进程可能仍持有显存，紧接着跑下一个场景会在 wgpu 里报 “Out of Memory”（退出码 101）；分开单独跑则每个场景都能通过。

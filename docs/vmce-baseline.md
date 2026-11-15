@@ -68,21 +68,30 @@ the main menu. Evidence lives in `.scratch/vmce-upstream-0f7dc1bbc-r11/`,
 `-r12/`, `-r14/` and `-r15/` (not committed). The acceptance-tool wrap-up
 renamed the retry checks to `pre-retry ...`, requires the pre-retry simulation
 hashes and defeat statistics rows, and adds no claim of a post-retry frame
-stream.
+stream. It also checks the statistics row set against the receipt's frozen
+`lan.startup.sources` participants (each expected player exactly once, so a
+row omitted on both peers or a duplicated row fails), compares
+`retry_mission.seed` as well as the map, and in allow-missing mode compares
+every hash list that is actually present instead of skipping the comparison.
+The tool suite is now 40/40; the full Python suite remains at the same three
+known failures and six environment errors.
 
-Role-decision ownership: shared `view.rs`, `actions.rs` and `service.rs` now
-pass VMCE's role availability, guest-own-row rule, peer role admission and
-map-change reset to the VMCE-owned `shell_network_setup/vmce_setup.rs`.
-`MatchSession` remains the authoritative role/roster state owner; the shared
-room, options transport, Ready invalidation and network queue are unchanged.
-The fast build `vmce-role-owner-r1` (executable SHA-256
-`145B42BDE2FB8295ED48BFC31FEDBEBAF27FFBD95A8E1778DD37F42B75D17DA7`) passed the
+Role-decision ownership: shared `view.rs` and `actions.rs` pass VMCE's role
+availability, guest-own-row rule and map-change reset to the VMCE-owned
+`shell_network_setup/vmce_setup.rs`. `MatchSession` remains the authoritative
+role/roster state owner and keeps the mode/range/duplicate checks as state
+invariants for external LAN/role data; the thin peer-role forwarding wrapper
+was removed, and the shared service event calls that state owner directly.
+The shared room, options transport, Ready invalidation and network queue are
+unchanged.
+The fast build `vmce-accept-role-r1` (executable SHA-256
+`04BE3EE4E93CF052309FD108D794ED211A2A8ED3415296E74A7950BF24FB8C2E`) passed the
 real two-process `2p-retry` run with mirrored authored roles
 `[('LiveHost', 0, 1), ('LiveGuest', 1, 0)]` (not seat order), frozen Houses
 `LiveHost=1` / `LiveGuest=0`, the same `retry_mission` map/seed on both peers,
 300 equal pre-retry checksums and 20 equal pre-retry simulation hashes, and
-identical defeat statistics. Evidence is in `.scratch/vmce-role-owner-r1/`
-(not committed).
+identical defeat statistics. Evidence is in
+`.scratch/vmce-accept-role-retry-r1/` (not committed).
 
 Residuals: this was a large upstream merge (860 files), but the conflict set and
 validation concentrate on the shared lobby/LAN/INI/economy/hash seams. No

@@ -125,6 +125,20 @@ def vmce_retry_receipts() -> list[tuple[str, dict]]:
                 "seed": 4242,
             },
         }
+        receipt["lan"]["startup"]["sources"] = [
+            {
+                "name": "LiveHost",
+                "house": 1,
+                "raw_row": 0,
+                "endpoint": None,
+            },
+            {
+                "name": "LiveGuest",
+                "house": 0,
+                "raw_row": 1,
+                "endpoint": "127.0.0.1:32110",
+            },
+        ]
         receipt["lan"]["vmce_statistics_rows"] = [
             {"player": "LiveHost", "kills": 1, "losses": 5, "built": 97, "score": 1000, "income": 0},
             {"player": "LiveGuest", "kills": 16, "losses": 0, "built": 92, "score": 7800, "income": 1000},
@@ -134,6 +148,17 @@ def vmce_retry_receipts() -> list[tuple[str, dict]]:
             {"name": "vera-retry-mission", "file": "shot-02.png", "byte_length": 1},
         ]
     return receipts
+
+
+def three_receipts() -> list[tuple[str, dict]]:
+    """Three ordinary VMCE win receipts for the multi-peer hash check."""
+    host, guest = two_receipts()
+    third = copy.deepcopy(guest[1])
+    third["checkpoint"] = "lan-live-vera-campaign-guest2"
+    third["lan"]["bind"] = "127.0.0.1:32120"
+    for _, receipt in (host, guest, ("guest2", third)):
+        receipt["lan"]["vera_outcome"]["dialog"]["rows"] = 3
+    return [host, guest, ("guest2", third)]
 
 
 def cooperative_retry_receipts() -> list[tuple[str, dict]]:
@@ -310,6 +335,76 @@ class ComparatorTests(unittest.TestCase):
                 ),
                 (mutation, [(check.name, check.detail) for check in failed(checks)]),
             )
+
+    def test_vmce_retry_statistics_cover_the_frozen_roster_once(self):
+        receipts = vmce_retry_receipts()
+        assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
+
+        for mutation in ("missing_guest", "duplicate_host"):
+            broken = vmce_retry_receipts()
+            for _, receipt in broken:
+                rows = receipt["lan"]["vmce_statistics_rows"]
+                if mutation == "missing_guest":
+                    receipt["lan"]["vmce_statistics_rows"] = [copy.deepcopy(rows[0])]
+                else:
+                    receipt["lan"]["vmce_statistics_rows"] = [
+                        copy.deepcopy(rows[0]),
+                        copy.deepcopy(rows[0]),
+                    ]
+            checks = self.evaluate(broken, expect_retry=True)
+            self.assertTrue(
+                any(
+                    not check.ok and "defeat statistics" in check.name
+                    for check in checks
+                ),
+                (mutation, [(check.name, check.detail) for check in failed(checks)]),
+            )
+
+    def test_vmce_retry_identity_checks_the_seed(self):
+        receipts = vmce_retry_receipts()
+        assert_all_pass(self, self.evaluate(receipts, expect_retry=True))
+
+        for mutation in ("mismatch", "delete"):
+            broken = vmce_retry_receipts()
+            if mutation == "mismatch":
+                broken[1][1]["lan"]["vera_outcome"]["retry_mission"]["seed"] += 1
+            else:
+                del broken[1][1]["lan"]["vera_outcome"]["retry_mission"]["seed"]
+            checks = self.evaluate(broken, expect_retry=True)
+            self.assertTrue(
+                any(not check.ok and "retry seed" in check.name for check in checks),
+                (mutation, [(check.name, check.detail) for check in failed(checks)]),
+            )
+
+    def test_allow_missing_still_compares_every_present_hash(self):
+        mismatched = three_receipts()
+        mismatched[1][1]["lan"]["simulation_hashes"] = []
+        mismatched[2][1]["lan"]["simulation_hashes"][0][1] = 999
+        checks = self.evaluate(
+            mismatched,
+            players=3,
+            expect_rows=3,
+            allow_missing_simulation_hashes=True,
+        )
+        self.assertTrue(
+            any(not check.ok and "simulation_hashes" in check.name for check in checks),
+            [(check.name, check.detail) for check in failed(checks)],
+        )
+
+        equal = three_receipts()
+        equal[1][1]["lan"]["simulation_hashes"] = []
+        allowed = self.evaluate(
+            equal,
+            players=3,
+            expect_rows=3,
+            allow_missing_simulation_hashes=True,
+        )
+        assert_all_pass(self, allowed)
+
+        strict = self.evaluate(equal, players=3, expect_rows=3)
+        self.assertTrue(
+            any(not check.ok and "simulation_hashes" in check.name for check in strict)
+        )
 
     def test_cooperative_retry_keeps_its_receipt_contract(self):
         # The stock co-op retry receipt has no simulation_hashes at all; the

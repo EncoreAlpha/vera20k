@@ -385,38 +385,6 @@ pub(super) fn role_selection(
     })
 }
 
-/// Validate an incoming VMCE role change before the shared peer-choice
-/// transaction mutates the roster.
-pub(super) fn validate_peer_role(
-    state: &AppState,
-    index: usize,
-    role: crate::skirmish_launch::LaunchHumanRole,
-) -> anyhow::Result<()> {
-    state
-        .match_state
-        .session
-        .validate_network_vmce_role(index, role)
-}
-
-/// Apply an incoming VMCE role change after the shared peer-choice transaction
-/// has accepted the sender's other fields. The session remains the
-/// authoritative role-state owner.
-pub(super) fn accept_peer_role(
-    state: &mut AppState,
-    index: usize,
-    role: crate::skirmish_launch::LaunchHumanRole,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        state
-            .match_state
-            .session
-            .network_setup()
-            .is_some_and(|launch| launch.mode.class.is_vmce()),
-        "role update outside VMCE"
-    );
-    state.match_state.session.set_network_vmce_role(index, role)
-}
-
 /// A map or mode change clears every VMCE claim to Random before the shared
 /// map transaction publishes the new role rows.
 pub(super) fn reset_roles_after_map_change(state: &mut AppState) -> anyhow::Result<()> {

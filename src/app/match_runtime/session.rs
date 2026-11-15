@@ -2080,6 +2080,11 @@ impl MatchSession {
         }
     }
 
+    /// State invariant for VMCE's authoritative role field. The VMCE setup
+    /// owner decides which claim a row may offer and who may choose it; this
+    /// method is the state boundary that rejects an absent VMCE mode, an
+    /// out-of-range claim, or a duplicate explicit claim before any caller
+    /// (LAN peer choices, local actions, or map reset) mutates the roster.
     pub(crate) fn validate_network_vmce_role(
         &self,
         index: usize,

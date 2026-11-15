@@ -35,7 +35,7 @@ Cooperative continuation remain recorded there.
 
 | Area | State |
 |---|---|
-| Lobby | Four roles, Owner/Ready/colour board, invalid-campaign blocking/inline errors. The VMCE-owned setup module decides role availability, the guest-own-row rule, peer role admission and map-change reset; `MatchSession` keeps the authoritative roster/role state and the shared room/Ready/network controls |
+| Lobby | Four roles, Owner/Ready/colour board, invalid-campaign blocking/inline errors. The VMCE-owned setup module decides role availability, the guest-own-row rule and map-change reset; `MatchSession` keeps the authoritative roster/role state and enforces mode/range/duplicate invariants for peer role data, beside the shared room/Ready/network controls |
 | Campaign flow | `NextScenario`, `EndOfGame`, external series directory; the selected map's `campaign.ini` stage is validated strictly, and LAN admission verifies every manifest map's bytes |
 | Outcomes | Per-player win/loss from the map's actual diplomacy; an eliminated primary House keeps its authorized control and the mission continues until a map outcome trigger |
 | Intermission | Everyone returns to the campaign room on the designated next stage, reselects roles and readies; joins/leaves and role-count blocks are enforced |

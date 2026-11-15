@@ -176,9 +176,10 @@ Each player role is a primary House from the map:
 - The lobby role board lists primary roles only; shared Houses granted through
   `PlayerNControl` are not shown before the mission (B86).
 - The VMCE-owned setup code decides which authored roles each row may claim, enforces the
-  guest's own-row rule, admits a peer's role update and clears claims on a map/mode change.
-  `MatchSession` keeps the roster and role state; the shared room, options transport and Ready
-  path publish and invalidate it. There is no duplicate role state or role RNG.
+  guest's own-row rule and clears claims on a map/mode change. `MatchSession` keeps the
+  roster and role state and validates peer role data at that state boundary; the shared room,
+  options transport and Ready path publish and invalidate it. There is no duplicate role
+  state or role RNG.
 
 VMCE does not use skirmish start waypoints to place bases. Map authors must place each role's
 base and units, or spawn them with triggers. VMCE does not grant an MCV or construction yard.
@@ -388,9 +389,11 @@ win/final runs and the pre-retry 300-checksum prefix on the retry run.
 - `--suite fast`: `4p-win`; `--suite smoke` and `--suite full`: `4p-win`,
   `2p-win` and `2p-retry`. Win/final captures compare the full 300-frame prefix; the
   retry compares its pre-retry 300-frame/20-hash prefix and the post-reload
-  `retry_mission` map/seed. `4p-win` accepts
-  `--players 2|3|4`; `2p-final` needs a series whose `Entry` is the last stage (use `--entry`),
-  and the manifest-extra probe reuses the 2p-final flow.
+  `retry_mission` map/seed. The comparator also checks the defeat statistics rows
+  against the frozen `lan.startup.sources` players (each exactly once) and, with
+  `--allow-missing-simulation-hashes`, still compares every present hash list.
+  `4p-win` accepts `--players 2|3|4`; `2p-final` needs a series whose `Entry` is the last stage
+  (use `--entry`), and the manifest-extra probe reuses the 2p-final flow.
 - `VMCE_CAPTURE_TIMEOUT=<seconds>` overrides the per-capture cap (default
   300 s outside `dev`).
 - `compare` runs offline over receipts; the `run` command only launches the

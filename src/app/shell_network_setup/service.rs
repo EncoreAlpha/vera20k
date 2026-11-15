@@ -334,7 +334,12 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             role,
         } => {
             if let Some(role) = role {
-                super::vmce_setup::validate_peer_role(state, index, role)?;
+                // MatchSession is the authoritative role-state owner: this is
+                // its state-invariant check, not a second VMCE policy layer.
+                state
+                    .match_state
+                    .session
+                    .validate_network_vmce_role(index, role)?;
             }
             super::bans::admit_slot(state, &mut choices);
             // A guest's own team pick keeps to the room's Teams.
@@ -354,7 +359,10 @@ pub(crate) fn service_event(state: &mut AppState, event: NetworkSetupEvent) -> a
             change.options |= refused;
             let role_changed = role.is_some();
             if let Some(role) = role {
-                super::vmce_setup::accept_peer_role(state, index, role)?;
+                state
+                    .match_state
+                    .session
+                    .set_network_vmce_role(index, role)?;
             }
             if role_changed && dialog.wol() {
                 super::wol::clear_guest_acceptance(state)?;

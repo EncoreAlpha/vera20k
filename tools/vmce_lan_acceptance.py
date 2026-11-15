@@ -720,7 +720,7 @@ def _simulation_hash_checks(
                     "cannot compare while a receipt has no simulation hashes",
                 ),
             ]
-        return [
+        checks = [
             Check(
                 name,
                 True,
@@ -728,9 +728,42 @@ def _simulation_hash_checks(
                 + "missing or empty in "
                 + ", ".join(missing)
                 + " (allowed)",
-            ),
-            Check(equal_name, True, "skipped (missing hashes allowed)"),
+            )
         ]
+        if len(values) < 2:
+            checks.append(
+                Check(
+                    equal_name,
+                    True,
+                    "skipped (fewer than two present hash lists)",
+                )
+            )
+            return checks
+        baseline_label, baseline = values[0]
+        baseline_seq = tuple(baseline)
+        for label, value in values[1:]:
+            difference = _first_difference(baseline_seq, tuple(value))
+            if difference is not None:
+                index, left, right = difference
+                checks.append(
+                    Check(
+                        equal_name,
+                        False,
+                        detail_prefix
+                        + "present values disagree at "
+                        f"lan.simulation_hashes[{index}]: {baseline_label}="
+                        f"{format_value(left)} {label}={format_value(right)}",
+                    )
+                )
+                return checks
+        checks.append(
+            Check(
+                equal_name,
+                True,
+                f"{len(values)} present hash lists agree (missing values allowed)",
+            )
+        )
+        return checks
 
     baseline_label, baseline = values[0]
     baseline_seq = tuple(baseline)
@@ -1003,6 +1036,58 @@ def _is_vmce_retry(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> bool:
         return False
 
 
+def _retry_statistics_roster(
+    receipt: Mapping[str, Any], label: str
+) -> tuple[list[str] | None, Check]:
+    """The frozen participants the defeat statistics must cover.
+
+    VMCE admits no observers, so the frozen startup sources are the players.
+    This is intentionally not the number of network connections: a receipt
+    with a stale or partial roster must fail instead of defining its own row
+    set.
+    """
+    path = "lan.startup.sources"
+    try:
+        sources = receipt_field(receipt, path)
+    except KeyError:
+        return None, Check(
+            f"defeat statistics roster {label}", False, f"missing {path}"
+        )
+    if not isinstance(sources, list) or not sources:
+        return None, Check(
+            f"defeat statistics roster {label}",
+            False,
+            f"invalid {path}: {format_value(sources)}",
+        )
+    names: list[str] = []
+    for source in sources:
+        if not isinstance(source, Mapping):
+            return None, Check(
+                f"defeat statistics roster {label}",
+                False,
+                f"non-object entry in {path}: {format_value(source)}",
+            )
+        name = source.get("name")
+        if not _is_str(name) or not name:
+            return None, Check(
+                f"defeat statistics roster {label}",
+                False,
+                f"entry without a player name in {path}: {format_value(source)}",
+            )
+        if name in names:
+            return None, Check(
+                f"defeat statistics roster {label}",
+                False,
+                f"duplicate frozen player {name!r} in {path}",
+            )
+        names.append(name)
+    return names, Check(
+        f"defeat statistics roster {label}",
+        True,
+        f"{len(names)} frozen players: {names}",
+    )
+
+
 def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Check]:
     """Compare the pre-retry prefix and the post-retry mission identity.
 
@@ -1065,8 +1150,11 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
         )
     )
     baseline_rows = None
+    baseline_seed: Any = None
     for label, receipt in receipts:
         if vmce:
+            expected_players, roster_check = _retry_statistics_roster(receipt, label)
+            checks.append(roster_check)
             try:
                 rows = receipt_field(receipt, "lan.vmce_statistics_rows")
             except KeyError:
@@ -1075,19 +1163,50 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
                 isinstance(rows, list)
                 and bool(rows)
                 and all(
-                    isinstance(row, Mapping) and _is_str(row.get("player"))
+                    isinstance(row, Mapping)
+                    and _is_str(row.get("player"))
+                    and bool(row.get("player"))
                     for row in rows
                 )
             )
+            actual_players = (
+                [row["player"] for row in rows] if valid_rows else []
+            )
+            duplicates = sorted(
+                {name for name in actual_players if actual_players.count(name) > 1}
+            )
+            missing_players = [
+                name
+                for name in (expected_players or [])
+                if name not in actual_players
+            ]
+            unexpected_players = [
+                name
+                for name in actual_players
+                if expected_players is not None and name not in expected_players
+            ]
+            complete = (
+                expected_players is not None
+                and valid_rows
+                and not duplicates
+                and not missing_players
+                and not unexpected_players
+                and len(actual_players) == len(expected_players)
+            )
+            detail = (
+                f"frozen={expected_players} rows={actual_players}"
+                if valid_rows
+                else "missing or empty lan.vmce_statistics_rows: "
+                f"{format_value(rows)}"
+            )
+            if duplicates:
+                detail += f"; duplicate={duplicates}"
+            if missing_players:
+                detail += f"; missing={missing_players}"
+            if unexpected_players:
+                detail += f"; unexpected={unexpected_players}"
             checks.append(
-                Check(
-                    f"defeat statistics present {label}",
-                    valid_rows,
-                    f"{len(rows)} rows"
-                    if valid_rows
-                    else "missing or empty lan.vmce_statistics_rows: "
-                    f"{format_value(rows)}",
-                )
+                Check(f"defeat statistics rows {label}", complete, detail)
             )
             if valid_rows:
                 other = {row["player"]: row for row in rows}
@@ -1126,6 +1245,21 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
                     f"retry_map={format_value(retry_map)}",
                 )
             )
+            try:
+                retry_seed = receipt_field(
+                    receipt, "lan.vera_outcome.retry_mission.seed"
+                )
+            except KeyError:
+                retry_seed = None
+            checks.append(
+                Check(
+                    f"retry seed {label}",
+                    _is_int(retry_seed) and 0 <= retry_seed <= 0xFFFFFFFF,
+                    f"seed={format_value(retry_seed)}",
+                )
+            )
+            if label == baseline_label:
+                baseline_seed = retry_seed
             checks.append(
                 Check(
                     f"pre-retry checksum failure {label}",
@@ -1180,6 +1314,14 @@ def _retry_checks(receipts: Sequence[tuple[str, Mapping[str, Any]]]) -> list[Che
                         retry_map == baseline_map,
                         f"{baseline_label}={format_value(baseline_map)} "
                         f"{label}={format_value(retry_map)}",
+                    )
+                )
+                checks.append(
+                    Check(
+                        "retry seed equal",
+                        retry_seed == baseline_seed,
+                        f"{baseline_label}={format_value(baseline_seed)} "
+                        f"{label}={format_value(retry_seed)}",
                     )
                 )
     return checks

@@ -75,22 +75,6 @@ pub(super) fn role_selection(
     anyhow::bail!("VMCE is not built in")
 }
 
-pub(super) fn validate_peer_role(
-    _state: &AppState,
-    _index: usize,
-    _role: LaunchHumanRole,
-) -> anyhow::Result<()> {
-    anyhow::bail!("VMCE is not built in")
-}
-
-pub(super) fn accept_peer_role(
-    _state: &mut AppState,
-    _index: usize,
-    _role: LaunchHumanRole,
-) -> anyhow::Result<()> {
-    anyhow::bail!("VMCE is not built in")
-}
-
 pub(super) fn reset_roles_after_map_change(_state: &mut AppState) -> anyhow::Result<()> {
     Ok(())
 }
