@@ -84,6 +84,27 @@ invariants for external LAN/role data; the thin peer-role forwarding wrapper
 was removed, and the shared service event calls that state owner directly.
 The shared room, options transport, Ready invalidation and network queue are
 unchanged.
+
+Ready/GO boundary chain (investigation; no production change): a host role or
+map change publishes options through `lan_service/options.rs`; on admission
+`invalidate_network_agreement` clears guest readiness and remote MapStatus.
+The host then requires fresh MapStatus/Ready before `request_start`, whose
+`Go` request is checked by the shared agreement/map/roster owner and by the
+VMCE-owned `lan_service/vmce_setup.rs` boundary ticket, then frozen through
+`frozen_start_houses`. `accept_lan_peer_choices` keeps peer role validation in
+`MatchSession`; the existing B58 tests cover stale and changed series identity.
+The local names `coop_lan` and `validate_current_coop_campaign` describe VMCE
+LAN/series code, and `cooperative_difficulty` is the shared lobby row, not a
+Cooperative rule. No VMCE Ready/GO path reads Cooperative state, so no code
+migration was made.
+
+The opt-in A03 real capture was attempted on this tree:
+`a03-stale-later-map` did not produce a completed refusal capture. The 300 s
+run timed out at the host Start gate; a 600 s retry reached a host loading
+refusal (`Another player did not finish loading`) but made no further progress
+and was stopped, and the immediately following `a03-recovery-2p-win` passed.
+The refusal/room-exit path therefore remains unverified; this is not claimed
+as a passing B58 capture.
 The fast build `vmce-accept-role-r1` (executable SHA-256
 `04BE3EE4E93CF052309FD108D794ED211A2A8ED3415296E74A7950BF24FB8C2E`) passed the
 real two-process `2p-retry` run with mirrored authored roles
