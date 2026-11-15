@@ -590,7 +590,7 @@ lang: zh-CN
 - **问题与影响：** 玩家 Ready 后更改系列中尚未选中的地图，随后开始任务；已验证的清单和当前地图仍相同，开局可能继续使用旧的整套系列结果，不能保证双方文件一致。
 - **依据：** [边界票据](../../src/app/lan_service/vmce_setup.rs#L637)绑定所选地图及系列摘要；[票据绑定](../../src/app/lan_service/vmce_setup.rs#L676)在发送 Ready、Go 或 GuestPrepare 前重新核对当前身份，旧票据不能替代新交接。
 - **修正：** 为实际 Ready 或 Go 交接分配带身份和代次的一次性复验票据；异步扫描期间保留心跳，并让同一请求的 deferred 重试复用正在进行的扫描。文件身份变化和离房时失效；当前交接失败时撤销准备并显示原因。
-- **验收：** 定向生产回归覆盖 Ready 后修改未选中地图、恢复后重新验证，以及旧票据/失败发布对当前交接的影响。原同机验收口径仍是：房主和客人在地图改变后拒绝 Go、恢复后可重新验证开局，并覆盖重复请求与旧扫描结果晚到。2026-11-15 在 `vmce-accept-role-r1` 上尝试 `a03-stale-later-map`：host 300 秒超时；加长到 600 秒后 host 到达加载拒绝，但没有继续完成拒绝/离房采集，随即的 `a03-recovery-2p-win` 通过。拒绝路径仍未验证，不能计入 B58 通过。
+- **验收：** 定向生产回归覆盖 Ready 后修改未选中地图、恢复后重新验证，以及旧票据/失败发布对当前交接的影响。2026-11-15 的 fast 构建 `vmce-a03-peer-timeout-r2` 已完成真实双进程采集：客人获得 admitted Ready 后只修改未选中的 `stage02/all01umd.map`，显示锁定的 `TXT_UNABLE_PLAY_WAAUGH` 并恢复原始字节；host 进入 loading 但未进入游戏，随后以 B10 的“另一名玩家未完成加载”拒绝返回 shell；紧接着的 `a03-recovery-2p-win` 进入 stage02，300 个 checksum 与 20 个模拟 hash 一致。采集现在同时接受 B10 peer-timeout 和旧的 original-admission no-majority 日志；生产代码未改。重复请求/旧扫描晚到由定向回归覆盖，不含在本次双进程采集中。
 
 ## 已锁定的实现约束
 

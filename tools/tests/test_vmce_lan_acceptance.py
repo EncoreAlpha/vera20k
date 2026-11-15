@@ -1056,6 +1056,29 @@ class A03AcceptanceTests(unittest.TestCase):
                     checks = acceptance._a03_host_startup_log_checks(log_path)
                     self.assertTrue(any(not check.ok for check in checks))
 
+    def test_a03_accepts_the_b10_peer_timeout_refusal_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "ra2.log"
+            log_path.write_text(
+                "Could not load map: Another player did not finish loading the "
+                "mission. The load was cancelled and the room returned to the LAN lobby.\n"
+                "Returned to the shell\n",
+                encoding="utf-8",
+            )
+            assert_all_pass(self, acceptance._a03_host_startup_log_checks(log_path))
+
+            log_path.write_text(
+                "Could not load map: Another player did not finish loading the "
+                "mission.\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    not check.ok
+                    for check in acceptance._a03_host_startup_log_checks(log_path)
+                )
+            )
+
     def test_a03_marker_and_fixture_restoration_match_source_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -335,10 +335,14 @@ The implementations below are closed. The explicit residuals and missing validat
   hand off a consumable revision-bound ticket and the current handoff fails closed; focused
   production regressions cover a changed unselected map, a restored map and stale tickets.
   The original same-machine acceptance (host and guest refuse Go after a map change, recover
-  after restoring, duplicate and late scans) still needs a real capture. Attempted on
-  2026-11-15 with `a03-stale-later-map` on build `vmce-accept-role-r1`: the host timed out at
-  300 s; a 600 s retry reached a loading refusal but made no further progress and was stopped.
-  Its following `a03-recovery-2p-win` passed. The refusal/room-exit capture remains open.
+  after restoring, duplicate and late scans) now has a real capture: build
+  `vmce-a03-peer-timeout-r2` ran `a03-stale-later-map` and its `a03-recovery-2p-win` on
+  2026-11-15. The guest mutated only the unselected later map after admitted Ready, showed the
+  locked blocking notice and restored the bytes; the host reached loading, entered no gameplay,
+  returned to the shell with B10's peer-timeout refusal, and the recovery run reached stage02
+  with equal 300 checksums/20 hashes. The capture accepts both that B10 path and the older
+  original-admission no-majority log; production code is unchanged. Duplicate/late scans were
+  covered by the focused regressions, not by this two-process capture.
 
 - **B64 — round-control authority (closed in B4):** an admitted guest can send `Begin`/`Go` to peers without
   the receiver checking that the sender is the host; Ack also lacks host and round-phase checks.

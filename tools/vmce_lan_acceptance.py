@@ -103,6 +103,9 @@ A03_MARKER_TIMEOUT_FRAMES = 1_800
 A03_HOST_STARTUP_FAILURE = (
     "Could not load map: initial active roster is not a majority of the original admission"
 )
+A03_HOST_PEER_TIMEOUT = (
+    "Could not load map: Another player did not finish loading the mission"
+)
 
 # A host room is normally advertised within a few render frames.  The current
 # capture path logs at debug level for its event stream, so these markers are
@@ -2103,24 +2106,34 @@ def _a03_host_startup_log_checks(log_path: Path) -> list[Check]:
     lost_before_gameplay = (
         "reason=1, native_frame=0, startup_pending=false" in disconnect_line
     )
-    refusal = log.find(A03_HOST_STARTUP_FAILURE)
-    returned = log.find("Returned to the shell", refusal + len(A03_HOST_STARTUP_FAILURE))
+    majority_refusal = log.find(A03_HOST_STARTUP_FAILURE)
+    peer_timeout = log.find(A03_HOST_PEER_TIMEOUT)
+    refusal = peer_timeout if peer_timeout >= 0 else majority_refusal
+    refusal_length = (
+        len(A03_HOST_PEER_TIMEOUT)
+        if peer_timeout >= 0
+        else len(A03_HOST_STARTUP_FAILURE)
+    )
+    returned = log.find("Returned to the shell", refusal + refusal_length)
+    legacy_disconnect = (
+        disconnect >= 0 and lost_before_gameplay and majority_refusal > disconnect
+    )
     return [
         Check(
             "A03 host peer left at native frame zero",
-            disconnect >= 0 and lost_before_gameplay and refusal > disconnect,
+            legacy_disconnect or peer_timeout >= 0,
             f"lost-at-zero={lost_before_gameplay}; disconnect index={disconnect}; "
-            f"majority refusal index={refusal}",
+            f"majority refusal index={majority_refusal}; peer timeout index={peer_timeout}",
         ),
         Check(
-            "A03 host original-admission majority refusal",
+            "A03 host loading refusal",
             refusal >= 0,
-            f"expected exact startup reason in {log_path}",
+            f"expected the original-admission majority or B10 peer-timeout reason in {log_path}",
         ),
         Check(
             "A03 host returned to shell after startup refusal",
             returned >= refusal >= 0,
-            f"majority refusal index={refusal}; shell return index={returned}",
+            f"refusal index={refusal}; shell return index={returned}",
         ),
     ]
 

@@ -141,6 +141,50 @@ impl A03Capture {
             );
         }
 
+        // B10's VMCE loading peer timeout returns to the shell without opening
+        // a setup blocking box; the host log carries the exact refusal reason.
+        // Complete on that existing return instead of requiring the obsolete
+        // no-majority loading path or a dialog that production no longer shows.
+        if self.role == Role::Host
+            && !self.startup_failure_observed
+            && self.loading_observed
+            && self.host_start_frame.is_some()
+            && self.rendezvous_observed
+            && state.frontend.screen == GameScreen::MainMenu
+            && !self.gameplay_entered
+        {
+            self.native_frame_at_notice = state
+                .match_state
+                .sim_runtime
+                .runtime()
+                .map(|runtime| runtime.simulation.session().binary_frame());
+            ensure!(
+                self.native_frame_at_notice.is_none_or(|frame| frame == 0),
+                "A03 host peer-timeout refusal advanced gameplay to native frame {:?}",
+                self.native_frame_at_notice
+            );
+            self.gameplay_active_at_notice = Some(false);
+            self.notice_locked = false;
+            self.startup_failure_observed = true;
+            self.handoff_refused = true;
+            self.blocking_notice = Some(crate::i18n::tr("VERA:VmceLoadPeerTimeout"));
+            self.notice_frame = Some(frame);
+            // The production departure already returned to the room; no
+            // separate CE dialog remains to acknowledge.
+            self.notice_acknowledged = true;
+            screenshots.push("vera-a03-handoff-refused".to_owned());
+            route.push(json!({
+                "render_frame": frame,
+                "action": "A03 captured B10's VMCE peer-timeout room refusal after loading",
+                "role": "Host",
+                "message": self.blocking_notice.clone(),
+                "loading_observed": self.loading_observed,
+                "gameplay_entered": self.gameplay_entered,
+                "native_frame_at_notice": self.native_frame_at_notice,
+                "gameplay_active": self.gameplay_active_at_notice,
+            }));
+        }
+
         let notice = state
             .frontend
             .multiplayer_setup

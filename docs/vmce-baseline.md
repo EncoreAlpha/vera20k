@@ -73,8 +73,8 @@ stream. It also checks the statistics row set against the receipt's frozen
 row omitted on both peers or a duplicated row fails), compares
 `retry_mission.seed` as well as the map, and in allow-missing mode compares
 every hash list that is actually present instead of skipping the comparison.
-The tool suite is now 40/40; the full Python suite remains at the same three
-known failures and six environment errors.
+The tool suite is now 44/44; the full Python suite ran 1066 tests and remains
+at the same three known failures and six environment errors.
 
 Role-decision ownership: shared `view.rs` and `actions.rs` pass VMCE's role
 availability, guest-own-row rule and map-change reset to the VMCE-owned
@@ -98,13 +98,19 @@ LAN/series code, and `cooperative_difficulty` is the shared lobby row, not a
 Cooperative rule. No VMCE Ready/GO path reads Cooperative state, so no code
 migration was made.
 
-The opt-in A03 real capture was attempted on this tree:
-`a03-stale-later-map` did not produce a completed refusal capture. The 300 s
-run timed out at the host Start gate; a 600 s retry reached a host loading
-refusal (`Another player did not finish loading`) but made no further progress
-and was stopped, and the immediately following `a03-recovery-2p-win` passed.
-The refusal/room-exit path therefore remains unverified; this is not claimed
-as a passing B58 capture.
+The opt-in A03 real capture now passes on the current tree. Fast build
+`vmce-a03-peer-timeout-r2` (executable SHA-256
+`48A667B577B9EA21775ACE0D554BD27E368C015A1D82AB37FFE2F5122B42F134`) ran
+`a03-stale-later-map`: the guest acquired admitted Ready, mutated only
+`stage02/all01umd.map` (selected map and manifest unchanged), showed the locked
+`TXT_UNABLE_PLAY_WAAUGH` box and restored the exact bytes; the host observed
+loading, never entered gameplay, then returned to the shell with B10's
+`Another player did not finish loading` refusal. The immediately following
+`a03-recovery-2p-win` passed through stage02 with 300 equal checksums, 20 equal
+simulation hashes and the expected next-stage receipt. The A03 diagnostic and
+comparator now accept B10's peer-timeout refusal as well as the older
+original-admission no-majority log; production code is unchanged. Evidence is
+in `.scratch/vmce-a03-r5/` (not committed).
 The fast build `vmce-accept-role-r1` (executable SHA-256
 `04BE3EE4E93CF052309FD108D794ED211A2A8ED3415296E74A7950BF24FB8C2E`) passed the
 real two-process `2p-retry` run with mirrored authored roles
